@@ -279,28 +279,33 @@ pass "a-failing-jq-leaves-no-temp-beside-the-sidecar"
 # gets asked, so it may not be.
 #
 # The refusal is at the ONE call site that needs the library rather than over the whole script, so
-# `end' - which needs none - is never disabled by this script's own guard. (It still restores
-# nothing here, because `scripts/agent-state' sources the same library and is the thing that would
-# have to write; that is agent-state's loud failure, not a silent one of ours.)
+# `end' - which needs none - is never disabled by this script's own guard. The guard is the call's
+# own `|| exit 0', which catches the 127 a missing function gives; what it buys is stopping BEFORE
+# `write_state asking', since a row flipped to `asking' with no sidecar behind it is exactly the
+# stale state this hook exists to clear.
 tmp="$(new_fixture)"
-run_state "$tmp" Cyclops asking --bead cb-1 --phase build --pid 42
+run_state "$tmp" Cyclops working --bead cb-1 --phase build --pid 42
 f="$(state_file "$tmp" Cyclops)"
 s="$(sidecar_file "$tmp" Cyclops)"
-printf '{"state":"working","bead":"cb-1","phase":"build"}\n' > "$s"
+before="$(cat "$f")"
 rm -f "$tmp/.claude/cerebro/scripts/state-write.sh"
 status=0
 out="$(run_asking "$tmp" Cyclops begin)" || status=$?
 [[ $status -eq 0 ]] || fail "a-missing-state-write-library: begin exited $status"
 [[ -z "$out" ]] || fail "a-missing-state-write-library: begin wrote to stdout: $out"
-# begin took the already-`asking' short circuit, which removes a stale sidecar; put one back so
-# `end' has a restore path to reach.
+[[ ! -e "$s" ]] || fail "a-missing-state-write-library: begin wrote a sidecar without the library"
+[[ "$before" == "$(cat "$f")" ]] \
+  || fail "a-missing-state-write-library: begin flipped the row with no sidecar behind it"
+# `end' now, on a row a live session had already put at `asking' with a sidecar of its own. It
+# restores nothing, because `scripts/agent-state' sources the same library and is the thing that
+# would have to write - that is agent-state failing loudly, not this hook failing silently. What is
+# observable here is that `end' passes no library guard of its own: it consumes the sidecar.
 printf '{"state":"working","bead":"cb-1","phase":"build"}\n' > "$s"
 status=0
 out="$(run_asking "$tmp" Cyclops end)" || status=$?
 [[ $status -eq 0 ]] || fail "a-missing-state-write-library: end exited $status"
 [[ -z "$out" ]] || fail "a-missing-state-write-library: end wrote to stdout: $out"
-# It reached the restore path rather than exiting at a guard of its own: the sidecar is consumed.
-[[ ! -e "$s" ]] || fail "a-missing-state-write-library: end did not reach its restore path"
+[[ ! -e "$s" ]] || fail "a-missing-state-write-library: end did not consume the sidecar"
 rm -rf "$tmp"
 pass "a-missing-state-write-library-does-not-fail-the-question"
 

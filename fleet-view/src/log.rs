@@ -745,7 +745,6 @@ mod tests {
             source: "/repos/x/.claude/cerebro/scripts/roster".into(),
             status: Some(2),
             stderr: "roster.conf line 3".into(),
-            stdout: String::new(),
         };
         let bd = ReadError::Spawn { source: "bd".into(), message: "no such file".into() };
 

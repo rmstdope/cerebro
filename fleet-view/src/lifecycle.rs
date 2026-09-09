@@ -1632,11 +1632,8 @@ mod tests {
     #[test]
     fn refusal_sentences_read_as_agreed() {
         for reason in [
-            ReadOnlyReason::ConfiguredFor(crate::supervisor::SupervisorKind::Emacs),
-            ReadOnlyReason::OwnedBy(crate::supervisor::SupervisorKind::Emacs),
-            ReadOnlyReason::InvalidDeclaration("rat".to_string()),
+            ReadOnlyReason::OwnedBy,
             ReadOnlyReason::LockError("boom".to_string()),
-            ReadOnlyReason::DeclarationUnreadable("boom".to_string()),
             ReadOnlyReason::NotOwned,
         ] {
             assert_eq!(
@@ -1786,7 +1783,6 @@ mod tests {
             source: "bd".into(),
             status: Some(1),
             stderr: String::new(),
-            stdout: String::new(),
         }
     }
 

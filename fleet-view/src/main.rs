@@ -41,7 +41,7 @@ use ratatui::Terminal;
 
 use cerebro_tui::app::{
     self, App, AppAction, DetailWorker, FleetWorker, GhWorker, HealthWorker, HistoryWorker,
-    SupervisorWorker, SweepWorker,
+    SweepWorker,
     WorkWorker, WriteWorker,
 };
 use cerebro_tui::lifecycle;
@@ -53,7 +53,7 @@ use cerebro_tui::readers::{
 };
 use cerebro_tui::supervisor::{
     reconcile_supervision, AcquireError, ReadOnlyReason, ReconcileAction, SupervisionMode,
-    SupervisorKind, SupervisorLease,
+    SupervisorLease,
 };
 use cerebro_tui::session::{self, SessionHost};
 use cerebro_tui::triggers::{self, StartLedger, TriggerFacts};
@@ -127,9 +127,8 @@ fn reader_paths(read: impl Fn(&str) -> Option<String>) -> Result<ReaderPaths, St
 /// early return, a `?` and a panic all respect.
 ///
 /// The endpoint, identity and record are read ONCE, before the terminal is entered. They are
-/// facts about the checkout rather than about this run, and reading them here is what lets a
-/// process configured for the TUI own the checkout on its first frame instead of flashing
-/// "Emacs owns supervision" on its way there.
+/// facts about the checkout rather than about this run, and reading them here is what lets this
+/// process own the checkout on its first frame.
 struct SupervisorController {
     lease: Option<SupervisorLease>,
     endpoint: Option<SocketAddr>,
@@ -179,9 +178,9 @@ impl SupervisorController {
         self.diagnostic.as_deref()
     }
 
-    /// Is a fresh reading of the declaration due? Five seconds, the fleet pane's own cadence: a
-    /// declaration that moved supervision has to be obeyed about as fast as a state file that
-    /// moved an agent.
+    /// Is a fresh attempt on the lease due? Five seconds, the fleet pane's own cadence: a lease
+    /// that a crashed owner released has to be picked up about as fast as a state file that moved
+    /// an agent.
     fn due(&self, now: Instant) -> bool {
         match self.last_request {
             None => true,
@@ -193,40 +192,15 @@ impl SupervisorController {
         self.last_request = Some(now);
     }
 
-    /// Apply one answer from the worker: decide, act on the lease, and return what to display.
+    /// Reconcile the lease this tick, and return what to display.
     ///
-    /// A reader that could not run at all gets `DeclarationUnreadable` - its own reason, which
-    /// says nothing about who holds the lease, because this process may well be holding it.
-    /// Rounding it to `emacs` would be the fail-open this whole bead exists to refuse.
-    fn apply(&mut self, answer: Result<Result<SupervisorKind, String>, ReadError>) -> SupervisionMode {
-        let configured = match answer {
-            Ok(configured) => configured,
-            // A reader that could not run is read-only, and KEEPS whatever lease it holds. The
-            // failures here are transient - a five-second timeout, a fork that failed, a
-            // non-answer - and releasing on one would hand the checkout to an observer over a
-            // subprocess hiccup, which from cb-kcs.2 means moving live sessions. It is the same
-            // rule the table already states for a declaration that is not ours: never release out
-            // from under something. Emacs does not release here either.
-            Err(error) => {
-                // Its OWN reason, not a lock error: this process may be holding the lease while
-                // this happens, and "the lease is held by another process" would be false twice.
-                self.note_diagnostic(format!("cannot read fleet_supervisor: {error}"));
-                return SupervisionMode::ReadOnly(ReadOnlyReason::DeclarationUnreadable(
-                    error.to_string(),
-                ));
-            }
-        };
-        let (mode, action) = reconcile_supervision(
-            SupervisorKind::Tui,
-            configured,
-            self.lease.is_some(),
-        );
+    /// One boolean in and one mode out: hold it and this window supervises, or try to take it.
+    /// There is nothing to read and nothing to declare, so this cannot fail on its own — only the
+    /// bind can, and its reason is what the header then shows.
+    fn apply(&mut self) -> SupervisionMode {
+        let (mode, action) = reconcile_supervision(self.lease.is_some());
         let mode = match action {
             ReconcileAction::Keep => mode,
-            ReconcileAction::Release => {
-                self.release();
-                mode
-            }
             ReconcileAction::Acquire => self.acquire(),
         };
         if !Self::keeps_diagnostic(&mode) {
@@ -237,16 +211,10 @@ impl SupervisorController {
 
     /// Is this mode one in which the exit diagnostic is still worth printing?
     ///
-    /// Everything else is healthy - supervising, an honest owner, a declaration that
-    /// names the other view - and a fault that resolved must not be the parting line of an
-    /// hour-long session. Emacs re-arms on exactly the same rule
-    /// (`cerebro--report-supervision-error`), and the two sides are meant to say the same thing.
+    /// Everything else is healthy - supervising, an honest owner - and a fault that resolved must
+    /// not be the parting line of an hour-long session.
     fn keeps_diagnostic(mode: &SupervisionMode) -> bool {
-        matches!(
-            mode,
-            SupervisionMode::ReadOnly(ReadOnlyReason::LockError(_))
-                | SupervisionMode::ReadOnly(ReadOnlyReason::DeclarationUnreadable(_))
-        )
+        matches!(mode, SupervisionMode::ReadOnly(ReadOnlyReason::LockError(_)))
     }
 
     fn acquire(&mut self) -> SupervisionMode {
@@ -255,22 +223,19 @@ impl SupervisorController {
         else {
             // No diagnostic: this is the DOCUMENTED degrade path, not a fault. A consumer whose
             // submodule predates `scripts/fleet-supervisor` has no lease for anybody to hold, and
-            // Emacs says nothing in exactly this case ("the behaviour every consumer had before
-            // ownership existed"). Printing here would make the new output channel loudest where
-            // nothing is wrong.
-            return SupervisionMode::ReadOnly(ReadOnlyReason::DeclarationUnreadable(
+            // this is the behaviour every consumer had before ownership existed. Printing here
+            // would make the output channel loudest where nothing is wrong.
+            return SupervisionMode::ReadOnly(ReadOnlyReason::LockError(
                 "cannot locate the supervision lease".to_string(),
             ));
         };
-        match SupervisorLease::try_acquire(endpoint, record, identity, SupervisorKind::Tui) {
+        match SupervisorLease::try_acquire(endpoint, record, identity) {
             Ok(lease) => {
                 self.lease = Some(lease);
                 SupervisionMode::Supervising
             }
             // An honest live owner is the ordinary case and says everything on the header.
-            Err(AcquireError::OwnedBy(kind)) => {
-                SupervisionMode::ReadOnly(ReadOnlyReason::OwnedBy(kind))
-            }
+            Err(AcquireError::OwnedBy) => SupervisionMode::ReadOnly(ReadOnlyReason::OwnedBy),
             // Everything else is a diagnosis the navigator cannot make from the header alone -
             // an endpoint collision naming another checkout above all, which the whole
             // two-checksum port design rests on being VISIBLE.
@@ -281,12 +246,31 @@ impl SupervisorController {
         }
     }
 
-    fn release(&mut self) {
-        self.lease = None;
-    }
 }
 
-/// How often the declaration is re-read. The fleet pane's cadence, for the same reason.
+/// Reconcile the lease and put the answer on the screen, the log and the exit line.
+///
+/// The one place ownership is applied, so the five-second clock and `g` cannot come to disagree
+/// about what a mode implies for the logger or the diagnostic.
+fn reconcile_ownership(app: &mut App, state: &mut LoopState, at: DateTime<Utc>) {
+    state.controller.requested(Instant::now());
+    let mode = state.controller.apply();
+    // Before anything else this tick writes: a view that has just gone read-only must have
+    // written nothing further, and one that has just taken the checkout may.
+    state.logger.set_enabled(mode.may_supervise());
+    match state.controller.diagnostic() {
+        // Already one-per-fault by construction (`clear_diagnostic`); `Logger::error`'s own
+        // dedupe is what keeps a persisting one to a single line.
+        Some(diagnostic) => {
+            let diagnostic = diagnostic.to_string();
+            state.logger.error("supervision", &diagnostic, at);
+        }
+        None => state.logger.clear_error("supervision"),
+    }
+    app.set_supervision(mode);
+}
+
+/// How often the lease is reconciled. The fleet pane's cadence, for the same reason.
 const SUPERVISION_INTERVAL: Duration = Duration::from_secs(5);
 
 /// Anything that can end the loop: a terminal that stopped working, an event source that failed.
@@ -317,7 +301,6 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
     // A NINTH thread for `scripts/fleet-health`, on its own five-minute cadence and for the same
     // reason: a `jq` walk over logs that grow without limit (cb-xhu.4.2).
     let health_worker = HealthWorker::spawn(paths.clone(), commands.clone());
-    let supervisor_worker = SupervisorWorker::spawn(paths.clone(), commands.clone());
     // An EIGHTH thread for the two board writes, for the reason the other seven exist: a
     // `bd dolt push` is a network call bounded at thirty seconds, and running it on the drawing
     // thread froze the screen - keys and all - for as long as the remote took (cb-21g).
@@ -330,13 +313,12 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
         sweep: sweep_worker,
         history: history_worker,
         health: health_worker,
-        supervisor: supervisor_worker,
         write: write_worker,
     };
-    // Ownership before the first frame: the one blocking read this binary allows itself, and the
-    // reason a TUI that owns the checkout never shows an "Emacs owns supervision" frame first.
+    // Ownership before the first frame: the lease is taken here, so a window that owns the
+    // checkout never draws a `Cerebro — starting` frame it has already left.
     let mut controller = SupervisorController::new(&paths, commands.as_ref());
-    let initial = controller.apply(readers::read_configured_supervisor(&paths, commands.as_ref()));
+    let initial = controller.apply();
     let enabled = initial.may_supervise();
     let mut app = App::with_supervision(initial);
     // Created here and enabled from the mode this frame is drawn with: a logger that defaulted to
@@ -1425,7 +1407,6 @@ struct Workers {
     sweep: SweepWorker,
     history: HistoryWorker,
     health: HealthWorker,
-    supervisor: SupervisorWorker,
     write: WriteWorker,
 }
 
@@ -1632,32 +1613,16 @@ where
             }
             app.finish_health_refresh(result, clock());
         }
-        // Ownership is a third state, polled like the other two and failing apart from them: a
-        // declaration that cannot be read says nothing about the fleet or the board.
-        if let Some(answer) = workers.supervisor.poll() {
-            let mode = state.controller.apply(answer);
-            // Before anything else this tick writes: a view that has just gone read-only must
-            // have written nothing further, and one that has just taken the checkout may.
-            state.logger.set_enabled(mode.may_supervise());
-            match state.controller.diagnostic() {
-                // Already one-per-fault by construction (`clear_diagnostic`); `Logger::error`'s
-                // own dedupe is what keeps a persisting one to a single line.
-                Some(diagnostic) => {
-                    let diagnostic = diagnostic.to_string();
-                    state.logger.error("supervision", &diagnostic, clock());
-                }
-                None => state.logger.clear_error("supervision"),
-            }
-            app.set_supervision(mode);
+        // Ownership, reconciled inline on its own five-second clock. It had a worker of its own
+        // while it meant a bounded subprocess; what is left is a `TcpListener::bind`, which cannot
+        // block a drawing thread, and a worker that computes nothing is a thread and a channel to
+        // read past (cb-abs.2).
+        if state.controller.due(Instant::now()) {
+            reconcile_ownership(app, state, clock());
         }
-        // What makes `reconcile_supervision`'s drain branch reachable: a declaration that moved
-        // supervision while this process hosts children keeps the lease until the last one ends.
         // The watcher, on its own five-second clock and outside the fleet poll: it is nothing to
         // do with what any agent wrote in a state file (cb-kcs.5.2).
         prune(app, &mut state.pruner, &mut state.logger, &config.paths, clock(), Instant::now());
-        if state.controller.due(Instant::now()) && workers.supervisor.request() {
-            state.controller.requested(Instant::now());
-        }
 
         let ticked = app.on_tick(Instant::now());
         debug_assert!(!matches!(ticked, AppAction::Write(_)));
@@ -1672,11 +1637,10 @@ where
                         break;
                     }
                     // `g` retries ownership as well as data (the navigator's choice): a second
-                    // Ratatui stays open as a read-only observer and takes the checkout with `g`
-                    // once the owner closes. Its own request, so an in-flight ownership read can
-                    // never swallow the fleet/work retry the key was pressed for.
-                    if action == AppAction::RefreshAll && workers.supervisor.request() {
-                        state.controller.requested(Instant::now());
+                    // window stays open as a read-only observer and takes the checkout with `g`
+                    // once the owner closes.
+                    if action == AppAction::RefreshAll {
+                        reconcile_ownership(app, state, clock());
                     }
                     dispatch(action, app, workers, &clock);
                 }
@@ -2876,7 +2840,6 @@ mod main_tests {
             sweep: sweep_worker(),
             history: history_worker(),
             health: health_worker(),
-            supervisor: SupervisorWorker::spawn(nowhere().0, Arc::new(RealCommands)),
             write: write_worker(),
         }
     }
@@ -2935,73 +2898,24 @@ mod main_tests {
         SweepWorker::spawn(paths, programs, Arc::new(RealCommands))
     }
 
-    /// A reader that could not answer must not cost this process a lease it holds.
-    ///
-    /// `read_configured_supervisor` fails on a five-second timeout, a fork that failed, or any
-    /// non-2 exit - all transient. Releasing on one would hand the checkout to an observer over a
-    /// subprocess hiccup, which from cb-kcs.2 means moving live sessions; Emacs does not release
-    /// here either.
-    #[test]
-    fn a_transient_reader_failure_goes_read_only_without_releasing() {
-        let (paths, _) = nowhere();
-        let mut controller = SupervisorController::new(&paths, &RealCommands);
-
-        // Hold a lease on a port this test owns for its whole life.
-        let dir = tempfile::tempdir().expect("tempdir");
-        let record = dir.path().join("supervisor.json");
-        controller.identity = Some("/repos/x".to_string());
-        controller.record = Some(record.clone());
-        // Whatever port is actually free: between a probe closing and the lease binding, anything
-        // on the machine may take it, so a lost race here is setup noise and simply tries again.
-        let held = probe::wait_until(probe::POLL_BOUND, || {
-            controller.endpoint = Some(probe::free_endpoint());
-            controller.apply(Ok(Ok(SupervisorKind::Tui))) == SupervisionMode::Supervising
-        });
-        assert!(held && controller.lease.is_some(), "the setup must actually hold a lease");
-
-        let failure = ReadError::Timeout { source: "fleet-supervisor".into(), seconds: 5 };
-        let mode = controller.apply(Err(failure));
-        assert!(
-            matches!(mode, SupervisionMode::ReadOnly(ReadOnlyReason::DeclarationUnreadable(_))),
-            "a failed read is read-only for its own reason: {mode:?}"
-        );
-        assert!(
-            controller.lease.is_some(),
-            "and it keeps the lease: a subprocess hiccup must not hand the checkout away"
-        );
-        // ... and it must not claim somebody else holds what it is holding.
-        assert_eq!(
-            cerebro_tui::ui::supervision_title(&mode),
-            "Cerebro — read-only; fleet_supervisor could not be read",
-            "a holder must never be told the lease is held by another process"
-        );
-        assert!(
-            controller.diagnostic().is_some(),
-            "and the detail is kept for the exit line rather than thrown away"
-        );
-
-        // The next good answer takes it straight back to supervising, with no reacquisition.
-        assert_eq!(controller.apply(Ok(Ok(SupervisorKind::Tui))), SupervisionMode::Supervising);
-        assert!(
-            controller.diagnostic().is_none(),
-            "a fault that resolved must not be the parting line of an hour-long session"
-        );
-    }
-
-    /// A collision that resolved into a healthy mode is not the parting line either - and
-    /// "healthy" is every mode but the two that ARE the fault, not `Supervising` alone.
+    /// A collision that resolved is not the parting line of an hour-long session.
     #[test]
     fn a_resolved_collision_does_not_become_the_parting_line() {
         let (paths, _) = nowhere();
         let mut controller = SupervisorController::new(&paths, &RealCommands);
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        controller.identity = Some("/repos/x".to_string());
+        controller.record = Some(dir.path().join("supervisor.json"));
         controller.note_diagnostic("supervision lease at 127.0.0.1:9: collided".to_string());
 
-        let mode = controller.apply(Ok(Ok(SupervisorKind::Emacs)));
-        assert_eq!(
-            mode,
-            SupervisionMode::ReadOnly(ReadOnlyReason::ConfiguredFor(SupervisorKind::Emacs)),
-            "configured for the other view, holding nothing: healthy"
-        );
+        // Whatever port is actually free: between a probe closing and the lease binding, anything
+        // on the machine may take it, so a lost race here is setup noise and simply tries again.
+        let held = probe::wait_until(probe::POLL_BOUND, || {
+            controller.endpoint = Some(probe::free_endpoint());
+            controller.apply() == SupervisionMode::Supervising
+        });
+        assert!(held && controller.lease.is_some(), "the setup must actually hold a lease");
         assert!(
             controller.diagnostic().is_none(),
             "a fault that resolved must not be printed on the way out"
@@ -3021,9 +2935,9 @@ mod main_tests {
             "the setup must actually have no lease machinery"
         );
 
-        let mode = controller.apply(Ok(Ok(SupervisorKind::Tui)));
+        let mode = controller.apply();
         match mode {
-            SupervisionMode::ReadOnly(ReadOnlyReason::DeclarationUnreadable(ref detail)) => {
+            SupervisionMode::ReadOnly(ReadOnlyReason::LockError(ref detail)) => {
                 assert_eq!(detail, "cannot locate the supervision lease")
             }
             other => panic!("the degrade path has its own reason: {other:?}"),
@@ -4347,9 +4261,7 @@ mod main_tests {
         let dir = tempfile::tempdir().unwrap();
         let paths = scratch(dir.path(), "sleep 5");
         let read_only = SupervisionMode::ReadOnly(
-            cerebro_tui::supervisor::ReadOnlyReason::ConfiguredFor(
-                cerebro_tui::supervisor::SupervisorKind::Emacs,
-            ),
+            cerebro_tui::supervisor::ReadOnlyReason::OwnedBy,
         );
         for key in ['s', 'f', 'k'] {
             let mut app = lifecycle_app(
@@ -5087,20 +4999,20 @@ mod main_tests {
     }
 
 
-    /// A view that could not READ the declaration keeps every promise it made (cb-nc8).
+    /// A view that could not TAKE the lease keeps every promise it made (cb-nc8).
     ///
-    /// One transient `project-conf` failure used to hand over for a single tick and empty
-    /// the armed set for good, so every name became permanently ineligible and only `s` brought
-    /// one back. The elisp counterpart is
-    /// `cerebro-test/an-unreadable-declaration-leaves-the-armed-set-alone'.
+    /// One transient failure used to hand over for a single tick and empty the armed set for
+    /// good, so every name became permanently ineligible and only `s` brought one back. Only
+    /// `OwnedBy` — somebody else genuinely holding it — is a handover; a failure to find out is
+    /// an outage.
     #[test]
-    fn an_unreadable_declaration_leaves_the_armed_set_alone() {
+    fn a_lock_error_leaves_the_armed_set_alone() {
         let dir = tempfile::tempdir().unwrap();
         let paths = scratch(dir.path(), "sleep 5");
         let now = Utc::now();
         let mut host = SessionHost::default();
         let mode = cerebro_tui::supervisor::SupervisionMode::ReadOnly(
-            cerebro_tui::supervisor::ReadOnlyReason::DeclarationUnreadable("boom".into()),
+            cerebro_tui::supervisor::ReadOnlyReason::LockError("bind refused".into()),
         );
         let mut app = standby_app(
             mode,
@@ -5119,26 +5031,6 @@ mod main_tests {
     }
 
 
-    /// The navigator's typo is not somebody else taking the checkout either (cb-nc8, Q2).
-    #[test]
-    fn an_invalid_declaration_leaves_the_armed_set_alone() {
-        let dir = tempfile::tempdir().unwrap();
-        let paths = scratch(dir.path(), "sleep 5");
-        let now = Utc::now();
-        let mut host = SessionHost::default();
-        let mode = cerebro_tui::supervisor::SupervisionMode::ReadOnly(
-            cerebro_tui::supervisor::ReadOnlyReason::InvalidDeclaration("tui2".into()),
-        );
-        let mut app = standby_app(
-            mode,
-            vec![planner_row("Xavier", cerebro_tui::model::RowState::Dead)],
-            None,
-            now,
-        );
-
-        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &paths, now, Instant::now());
-        assert!(app.armed.contains("Xavier"), "one edited line brings the declaration back");
-    }
 
     /// A real handover still disarms, and says how many names it took (cb-nc8, Q3).
     ///
@@ -5151,9 +5043,7 @@ mod main_tests {
         let now = Utc::now();
         let mut host = SessionHost::default();
         let mode = cerebro_tui::supervisor::SupervisionMode::ReadOnly(
-            cerebro_tui::supervisor::ReadOnlyReason::ConfiguredFor(
-                cerebro_tui::supervisor::SupervisorKind::Emacs,
-            ),
+            cerebro_tui::supervisor::ReadOnlyReason::OwnedBy,
         );
         let mut app = standby_app(
             mode,
@@ -6019,9 +5909,7 @@ mod main_tests {
         hosted_echo(&mut host, "Cerebro");
         let mut swept = cerebro_tui::lifecycle::SweepLedger::default();
         let mut app = App::with_supervision(cerebro_tui::supervisor::SupervisionMode::ReadOnly(
-            cerebro_tui::supervisor::ReadOnlyReason::ConfiguredFor(
-                cerebro_tui::supervisor::SupervisorKind::Emacs,
-            ),
+            cerebro_tui::supervisor::ReadOnlyReason::OwnedBy,
         ));
         app.finish_refresh(Ok(vec![cerebro_row(cerebro_tui::model::RowState::Idle, 1800, now)]), now);
 
@@ -6108,9 +5996,7 @@ mod main_tests {
                 cerebro_tui::supervisor::ReadOnlyReason::NotOwned,
             ),
             cerebro_tui::supervisor::SupervisionMode::ReadOnly(
-                cerebro_tui::supervisor::ReadOnlyReason::ConfiguredFor(
-                    cerebro_tui::supervisor::SupervisorKind::Emacs,
-                ),
+                cerebro_tui::supervisor::ReadOnlyReason::OwnedBy,
             ),
         ] {
             let dir = tempfile::tempdir().unwrap();
@@ -6176,9 +6062,7 @@ mod main_tests {
         // The production wiring: `Logger::new` starts disabled; `may_supervise()` enables it.
         let mut logger = Logger::new(dir.path());
         let read_only = cerebro_tui::supervisor::SupervisionMode::ReadOnly(
-            cerebro_tui::supervisor::ReadOnlyReason::ConfiguredFor(
-                cerebro_tui::supervisor::SupervisorKind::Emacs,
-            ),
+            cerebro_tui::supervisor::ReadOnlyReason::OwnedBy,
         );
         logger.set_enabled(read_only.may_supervise());
         let now = Utc::now();
@@ -6768,9 +6652,7 @@ mod main_tests {
         let programs = Programs::default();
         let fake = cerebro_tui::readers::testing::FakeCommands::always("");
         let mut app = app_with_finding(SupervisionMode::ReadOnly(
-            cerebro_tui::supervisor::ReadOnlyReason::ConfiguredFor(
-                cerebro_tui::supervisor::SupervisorKind::Emacs,
-            ),
+            cerebro_tui::supervisor::ReadOnlyReason::OwnedBy,
         ));
         let mut host = SessionHost::default();
         drive_and_settle(&mut app, &mut host, &paths, &programs, &fake, vec![ch('x'), ch('y')]);
@@ -7092,7 +6974,6 @@ mod main_tests {
                     source: "bd".into(),
                     status: Some(1),
                     stderr: "no remote".into(),
-                    stdout: String::new(),
                 })
             } else {
                 Ok(Vec::new())
@@ -7121,7 +7002,6 @@ mod main_tests {
                 source: "bd".into(),
                 status: Some(1),
                 stderr: "refused".into(),
-                stdout: String::new(),
             }
         });
         let mut app = app_with_bead(SupervisionMode::Supervising, Some(1));
@@ -7159,9 +7039,7 @@ mod main_tests {
         let programs = Programs::default();
         let fake = cerebro_tui::readers::testing::FakeCommands::always("");
         let mut app = app_with_bead(
-            SupervisionMode::ReadOnly(cerebro_tui::supervisor::ReadOnlyReason::ConfiguredFor(
-                cerebro_tui::supervisor::SupervisorKind::Emacs,
-            )),
+            SupervisionMode::ReadOnly(cerebro_tui::supervisor::ReadOnlyReason::OwnedBy),
             Some(1),
         );
         let mut host = SessionHost::default();
@@ -7296,7 +7174,6 @@ mod main_tests {
                     source: "bd".into(),
                     status: Some(1),
                     stderr: "refused".into(),
-                    stdout: String::new(),
                 })
             } else {
                 Ok(Vec::new())
@@ -7350,7 +7227,7 @@ mod main_tests {
     /// one is about a fixture executable the test WRITES and then runs (the `ETXTBSY` race), and
     /// these are tracked scripts and a system `emacs`. `supervisor.rs`'s own `mod tests` spawns
     /// Emacs for the same reason.
-    fn supervisor_consumer(declaration: Option<&str>) -> (tempfile::TempDir, ReaderPaths) {
+    fn supervisor_consumer() -> (tempfile::TempDir, ReaderPaths) {
         let dir = tempfile::tempdir().expect("tempdir");
         let root = dir.path().to_path_buf();
         let scripts = root.join(".claude/cerebro/scripts");
@@ -7390,42 +7267,12 @@ mod main_tests {
             .expect("run place-scripts");
         assert!(status.success(), "place-scripts failed for the fixture");
 
-        if let Some(declaration) = declaration {
-            write_declaration(&root, declaration);
-        }
-
         let paths = ReaderPaths {
             consumer_root: root.clone(),
             shared_root: root,
             scripts_dir: scripts,
         };
         (dir, paths)
-    }
-
-    /// Write `fleet_supervisor <word>` and make sure the change is VISIBLE to a reader that
-    /// caches on mtime.
-    ///
-    /// The Emacs side re-reads the declaration only when `.cerebro/project.conf`'s mtime has
-    /// moved (`cerebro--configured-supervisor`, `emacs/cerebro.el`), because it runs on every
-    /// five-second tick and a fork per tick is not allowed. A rewrite landing inside the
-    /// filesystem's timestamp granularity is not seen at all, so the mtime is bumped explicitly
-    /// rather than papered over with a sleep - on a coarse filesystem a sleep works and on a fast
-    /// one it hides the requirement.
-    fn write_declaration(root: &std::path::Path, word: &str) {
-        let conf = root.join(".cerebro/project.conf");
-        // Derived from the file's OWN mtime, not from the wall clock, so successive declarations
-        // are monotonically distinct BY CONSTRUCTION. Two wall-clock bumps milliseconds apart
-        // truncate to the same second on a one-second-granularity filesystem - which is exactly
-        // the filesystem this comment is about - and an mtime-keyed cache would then not move at
-        // all, leaving the second read answering from the first.
-        let before = std::fs::metadata(&conf).and_then(|meta| meta.modified()).ok();
-        std::fs::write(&conf, format!("fleet_supervisor {word}\n")).expect("write declaration");
-        let file = std::fs::File::options()
-            .write(true)
-            .open(&conf)
-            .expect("reopen the declaration");
-        file.set_modified(before.unwrap_or_else(std::time::SystemTime::now) + Duration::from_secs(2))
-            .expect("bump the declaration's mtime so an mtime-keyed cache re-reads it");
     }
 
     /// `apply`, retried on a short sleep until it answers `want`.
@@ -7437,17 +7284,17 @@ mod main_tests {
     /// attempt is a flake by construction.
     fn apply_until(
         controller: &mut SupervisorController,
-        paths: &ReaderPaths,
         want: &SupervisionMode,
     ) -> SupervisionMode {
         let mut mode = SupervisionMode::ReadOnly(ReadOnlyReason::NotOwned);
-        // `probe::POLL_BOUND`, NOT the plan's count x interval (40 x 50ms = 2s). That identity
-        // holds only when an attempt is free, and each attempt here FORKS `fleet-supervisor`, so
-        // 2s of wall clock buys far fewer attempts than the old loop had. This is the case
-        // cb-kcs.5.3 spent 25 minutes diagnosing for being one attempt short; shrinking its
-        // budget is the opposite of what this bead is for.
+        // `probe::POLL_BOUND`, NOT a count x interval: that identity holds only when an attempt
+        // is free, and each attempt here binds a socket. This is the case cb-kcs.5.3 spent 25
+        // minutes diagnosing for being one attempt short; shrinking its budget is the opposite of
+        // what this bead is for. Only `AddrInUse` is retried - `apply` answers `LockError` for
+        // anything else, which `want` will never match, so the bound is spent and the case fails
+        // with the mode it actually got.
         probe::wait_for(probe::POLL_BOUND, || {
-            mode = controller.apply(readers::read_configured_supervisor(paths, &RealCommands));
+            mode = controller.apply();
             (&mode == want).then_some(())
         });
         mode
@@ -7462,56 +7309,40 @@ mod main_tests {
         controller.record.clone().expect("the script reported a record path")
     }
 
-    /// The cutover and the rollback, driven by the file alone.
+    /// A lease this controller releases is genuinely released, not merely reported released.
     ///
-    /// Read-only -> supervising -> released -> supervising again, with a real
-    /// declaration, a real bound listener and a real record. This is the mechanism
-    /// `docs/cerebro-supervision.md` describes; nothing else in the crate proves it end to end.
+    /// A real endpoint, a real bound listener and a real record, through the script that reports
+    /// all three. Nothing else in the crate proves the release end to end — and with one window
+    /// the release that matters is the one a process makes by exiting, which is what a successor
+    /// binding the same endpoint is evidence of.
     #[test]
-    fn a_declaration_change_moves_the_lease_and_back() {
-        let (dir, paths) = supervisor_consumer(Some("emacs"));
+    fn a_released_lease_is_bindable_by_a_successor() {
+        let (_dir, paths) = supervisor_consumer();
         let mut controller = SupervisorController::new(&paths, &RealCommands);
         let record = reported_record(&controller);
 
-        // 1. Declared for the other view: read-only, and a read-only view writes NOTHING.
         assert_eq!(
-            controller.apply(readers::read_configured_supervisor(&paths, &RealCommands)),
-            SupervisionMode::ReadOnly(ReadOnlyReason::ConfiguredFor(SupervisorKind::Emacs))
-        );
-        assert!(!record.exists(), "a read-only view writes no supervisor record");
-
-        // 2. The declaration moves: this process acquires, and says so in the record.
-        write_declaration(dir.path(), "tui");
-        assert_eq!(
-            apply_until(&mut controller, &paths, &SupervisionMode::Supervising),
+            apply_until(&mut controller, &SupervisionMode::Supervising),
             SupervisionMode::Supervising
         );
         let written = std::fs::read_to_string(&record).expect("the record exists once supervising");
         assert!(
-            written.contains("\"owner\":\"tui\""),
-            "the record names this view as the owner, not {written}"
+            written.contains(&format!("\"pid\":{}", std::process::id())),
+            "the record names this process, not {written}"
         );
 
-        // 3. It moves away again: released at once, and `SupervisorLease`'s Drop takes the
-        //    record with it - a record whose identity is its own.
-        write_declaration(dir.path(), "emacs");
-        assert_eq!(
-            controller.apply(readers::read_configured_supervisor(&paths, &RealCommands)),
-            SupervisionMode::ReadOnly(ReadOnlyReason::ConfiguredFor(SupervisorKind::Emacs))
-        );
-        assert!(!record.exists(), "releasing the lease removes the record it wrote");
+        // `SupervisorLease`'s Drop takes the record with it - a record whose identity is its own.
+        drop(controller);
+        assert!(!record.exists(), "dropping the lease removes the record it wrote");
 
-        // 4. A SECOND, independent controller takes it - the endpoint was genuinely released
-        //    rather than merely reported released.
-        write_declaration(dir.path(), "tui");
+        // A SECOND, independent controller takes it.
         let mut successor = SupervisorController::new(&paths, &RealCommands);
         assert_eq!(
-            apply_until(&mut successor, &paths, &SupervisionMode::Supervising),
+            apply_until(&mut successor, &SupervisionMode::Supervising),
             SupervisionMode::Supervising,
             "the released endpoint is bindable by another process"
         );
     }
-
 
     // --- the pinned bead, in the running program (cb-41r) --------------------------------------
 
@@ -7802,9 +7633,7 @@ mod main_tests {
         logger.set_enabled(true);
 
         let read_only = cerebro_tui::supervisor::SupervisionMode::ReadOnly(
-            cerebro_tui::supervisor::ReadOnlyReason::ConfiguredFor(
-                cerebro_tui::supervisor::SupervisorKind::Emacs,
-            ),
+            cerebro_tui::supervisor::ReadOnlyReason::OwnedBy,
         );
         let mut app = lifecycle_app(read_only, vec![stuck_fleet_row("Storm", 8 * 3600, now)]);
         supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(),

@@ -100,7 +100,7 @@ pub use readers::{
 };
 pub use supervisor::{
     reconcile_supervision, AcquireError, ReadOnlyReason, ReconcileAction, SupervisionMode,
-    SupervisorKind, SupervisorLease,
+    SupervisorLease,
 };
 pub use session::{
     exit_line, key_bytes, materialise, paste_bytes, transcript, Ended, Retained, Session,
@@ -108,7 +108,7 @@ pub use session::{
 };
 pub use app::{
     work_body, work_line_of_cursor, App, AppAction, FleetWorker, Metrics, Pane, PaneContent,
-    HistoryWorker, PaneFocus, PaneMetrics, Prompt, SupervisorWorker, SweepWorker,
+    HistoryWorker, PaneFocus, PaneMetrics, Prompt, SweepWorker,
     WorkBodyLine, WorkWorker,
 };
 pub use sweeps::{

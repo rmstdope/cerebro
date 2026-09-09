@@ -26,7 +26,6 @@ use wait_timeout::ChildExt;
 
 use chrono::{DateTime, Utc};
 
-use crate::supervisor::SupervisorKind;
 use crate::sweeps::{self, Candidate, Finding, LiveSession, Snapshot, Sweep};
 use crate::model::{
     self, Bead, BeadDetailFields, FleetRow, GhIssue, GhPull, GhSnapshot, ProcessRow, RosterEntry, StateInputs,
@@ -163,12 +162,6 @@ pub enum ReadError {
         source: Invocation,
         status: Option<i32>,
         stderr: String,
-        /// What the program printed before it failed. Carried because one reader's refusal is
-        /// still an answer: `scripts/fleet-supervisor` exits 2 on an invalid declaration and
-        /// prints the raw offending value, which is what the header has to name. It is the value
-        /// that makes an exit 2 an answer at all - exit 3, and an exit 2 carrying nothing, are the
-        /// script failing to read the declaration (cb-nc8). Everywhere else this is simply empty.
-        stdout: String,
     },
     Invalid { source: Invocation, message: String },
     Timeout { source: Invocation, seconds: u64 },
@@ -329,7 +322,6 @@ impl CommandRunner for RealCommands {
             source: invocation,
             status: status.code(),
             stderr: String::from_utf8_lossy(&stderr).into_owned(),
-            stdout: String::from_utf8_lossy(&stdout).into_owned(),
         });
     }
     Ok(stdout)
@@ -406,7 +398,7 @@ fn read_roster_names(
 /// answer**, returned beside the map so the caller can say so out loud once rather than silently
 /// using a fallback.
 ///
-/// Runs once, at startup, beside `read_configured_supervisor` - not per tick and not per row.
+/// Runs once, at startup - not per tick and not per row.
 pub fn read_role_spacing(
     paths: &ReaderPaths,
     roles: &[&str],
@@ -476,35 +468,6 @@ pub fn read_planner_multiple(
                 "project.conf: {key} is not a whole number above zero (\"{bad}\"); using 1."
             )),
         ),
-    }
-}
-
-/// Which implementation this project declares may supervise, from `scripts/fleet-supervisor`
-/// (cb-kcs.1).
-///
-/// The refusal is an answer, not a failure to paper over: an invalid declaration exits 2 and
-/// prints the raw offending value, and this returns it as `Err(raw)` so the header can name it.
-/// A declaration this build cannot read is NEVER rounded to `emacs` - that fallback is the one
-/// thing fail-closed forbids, because a typo that read as the default would leave supervision
-/// where the navigator moved it away from.
-pub fn read_configured_supervisor(
-    paths: &ReaderPaths,
-    commands: &dyn CommandRunner,
-) -> Result<Result<SupervisorKind, String>, ReadError> {
-    let program = paths.scripts_dir.join("fleet-supervisor");
-    match commands.run(&program, &[], Some(&paths.consumer_root), COMMAND_TIMEOUT) {
-        Ok(stdout) => {
-            let word = String::from_utf8_lossy(&stdout).trim().to_string();
-            Ok(SupervisorKind::parse(&word).ok_or(word))
-        }
-        // Exit 2 with the raw value on stdout is the documented invalid-declaration answer - and
-        // the value is what makes it one. An exit 2 carrying NOTHING is the script failing to say
-        // why (cb-nc8): read it as unreadable, which keeps the lease and claims nothing about
-        // ownership, rather than as a declaration of the empty string.
-        Err(ReadError::Exit { status: Some(2), stdout, .. }) if !stdout.trim().is_empty() => {
-            Ok(Err(stdout.trim().to_string()))
-        }
-        Err(other) => Err(other),
     }
 }
 
@@ -1034,7 +997,6 @@ mod tests {
             source: "fake".into(),
             status: Some(status),
             stderr: stderr.into(),
-            stdout: String::new(),
         }
     }
 
@@ -1263,62 +1225,9 @@ mod tests {
         ));
     }
 
-    /// The declaration reader: both words, and the refusal that is still an answer (cb-kcs.1).
-    #[test]
-    fn configured_supervisor_reader_preserves_default_invalid_and_shared_root() {
-        let paths = paths_at(Path::new("/consumer"));
 
-        assert_eq!(
-            read_configured_supervisor(&paths, &FakeCommands::always("emacs\n")).unwrap(),
-            Ok(SupervisorKind::Emacs)
-        );
-        assert_eq!(
-            read_configured_supervisor(&paths, &FakeCommands::always("tui\n")).unwrap(),
-            Ok(SupervisorKind::Tui)
-        );
 
-        // The refusal is an answer: exit 2 with the RAW value on stdout, which survives and is
-        // NOT rounded to the default.
-        let refused = FakeCommands::failing(|| ReadError::Exit {
-            source: "fleet-supervisor".into(),
-            status: Some(2),
-            stderr: "invalid".into(),
-            stdout: "rat\n".into(),
-        });
-        assert_eq!(
-            read_configured_supervisor(&paths, &refused).unwrap(),
-            Err("rat".to_string())
-        );
-
-        let calls = refused.calls();
-        assert!(calls[0].program.ends_with("fleet-supervisor"), "{:?}", calls[0].program);
-        assert_eq!(calls[0].cwd.as_deref(), Some(paths.consumer_root.as_path()));
-    }
-
-    /// An exit 2 that carries no value is the SCRIPT failing, not a declaration (cb-nc8).
-    ///
-    /// Exit 2 is documented as a value that was read and refused, and it always prints that value
-    /// alone on stdout. Reading a valueless exit 2 as `Ok(Err(""))` made an authoritative answer
-    /// out of an outage, which drained the view for one tick and emptied its armed set for good.
-    #[test]
-    fn an_exit_2_with_no_value_is_unreadable_not_an_empty_declaration() {
-        let paths = paths_at(Path::new("/consumer"));
-
-        for status in [2, 3] {
-            let broken = FakeCommands::failing(move || ReadError::Exit {
-                source: "fleet-supervisor".into(),
-                status: Some(status),
-                stderr: "project-conf: boom".into(),
-                stdout: "\n".into(),
-            });
-            assert!(
-                read_configured_supervisor(&paths, &broken).is_err(),
-                "exit {status} with no value must be unreadable, not a declaration"
-            );
-        }
-    }
-
-    /// A reader that cannot run at all is an error, never `emacs`. Fail-open here is the one
+    /// A reader that cannot run at all is an error, never a guess. Fail-open here is the one
     /// failure cb-kcs.1 exists to refuse.
     #[test]
     fn a_missing_supervisor_script_is_an_error_not_a_default() {
@@ -1327,7 +1236,6 @@ mod tests {
             source: "fleet-supervisor".into(),
             message: "No such file or directory".into(),
         });
-        assert!(read_configured_supervisor(&paths, &missing).is_err());
         assert!(read_supervisor_endpoint(&paths, &missing).is_err());
     }
 
@@ -1473,7 +1381,6 @@ mod tests {
                     source: "ps".into(),
                     status: Some(3),
                     stderr: "ps: boom".into(),
-                    stdout: String::new(),
                 })
             }
         });
@@ -1492,7 +1399,6 @@ mod tests {
                     source: Invocation::new(&call.program, &[]),
                     status: Some(2),
                     stderr: "roster: refusing".into(),
-                    stdout: String::new(),
                 })
             } else {
                 Ok(Vec::new())
@@ -1621,7 +1527,6 @@ mod tests {
                 source: "project-conf".into(),
                 status: Some(1),
                 stderr: String::new(),
-                stdout: String::new(),
             }),
             _ => Ok(b"\n".to_vec()),
         });
@@ -1671,7 +1576,6 @@ mod tests {
                 source: "project-conf".into(),
                 status: Some(1),
                 stderr: String::new(),
-                stdout: String::new(),
             })
         });
         assert_eq!(read_planner_multiple(&paths, &failed), (1, None));
@@ -1693,7 +1597,6 @@ mod tests {
                         source: "gh".into(),
                         status: Some(4),
                         stderr: "gh: not logged in".into(),
-                        stdout: String::new(),
                     })
                 } else {
                     Ok(b"navigator\n".to_vec())

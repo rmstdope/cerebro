@@ -31,7 +31,7 @@ use ratatui::Frame;
 use unicode_width::UnicodeWidthStr;
 
 use crate::lifecycle::LastExit;
-use crate::supervisor::{ReadOnlyReason, SupervisionMode, SupervisorKind};
+use crate::supervisor::{ReadOnlyReason, SupervisionMode};
 use crate::app::{
     self, App, FleetBodyLine, LayoutFacts, Metrics, Pane, PaneContent, PaneFocus, PaneMetrics, PaneSizes,
 };
@@ -127,54 +127,31 @@ pub fn clamp_stacked_work(requested: u16, available_height: u16, fleet_outer: u1
     requested.clamp(MIN_PANE_ROWS, ceiling)
 }
 
-/// The exact title agreed in the parent epic's interview, em dash and all - now the read-only
-/// spelling of five, one per supervision state (`supervision_title`).
-const TITLE: &str = "Cerebro — read-only";
-
 /// The header's first span: what this process is allowed to do with the checkout (cb-kcs.1).
 ///
 /// The navigator chose the header line as the WHOLE of the TUI's ownership surface, over a third
 /// bordered pane and over an unfocusable strip: ownership must not take a Tab stop or rows from
-/// Fleet and Work. So the remediation and no-action lines in `docs/ui/cb-kcs-supervisor.html`
-/// are not rendered here - they remain the approved wording for the Emacs mode line, which keeps
-/// them.
+/// Fleet and Work.
 ///
-/// **The ordinary case says nothing.** A project that has not moved supervision - which is every
-/// consumer today - gets the bare `Cerebro — read-only` this screen has always shown, because
-/// spelling ownership out there cost the pane and scroll hints their room at a hundred columns
-/// and told the navigator nothing they did not already know. The long spellings are spent where
-/// there is something to say: the lease is contested, or the declaration is wrong. That is the
-/// navigator's own call, taken when the measurement was put to them.
+/// **Four spellings, and these are all of them** — agreed at cb-abs's design stage, em dash and
+/// all. With one window there is nothing to declare, so no spelling names a second implementation
+/// or a declaration that could not be read: a project whose `project.conf` still carries a
+/// `fleet_supervisor` line is not read at all and nothing is said about it. A fifth spelling
+/// appearing here is a design change, not a refactor.
+///
+/// The detail behind `could not take charge` — which endpoint, which other checkout, which record
+/// was malformed — goes to stderr when the screen exits and never into the header: an absolute
+/// path in a status line is unreadable at any width.
 pub fn supervision_title(mode: &SupervisionMode) -> String {
     match mode {
         SupervisionMode::Supervising => "Cerebro — supervising".to_string(),
-        // Configured for the other view, or configured for us and not yet asked for: the
-        // uncontested cases, and the screen every consumer sees today.
-        SupervisionMode::ReadOnly(ReadOnlyReason::ConfiguredFor(_))
-        | SupervisionMode::ReadOnly(ReadOnlyReason::NotOwned) => TITLE.to_string(),
-        // Contested: somebody else is holding a lease this project says is ours.
-        SupervisionMode::ReadOnly(ReadOnlyReason::OwnedBy(SupervisorKind::Emacs)) => {
-            "Cerebro — read-only; Emacs owns supervision".to_string()
+        // Not holding it yet, and nothing has failed: the half-second before the first acquire.
+        SupervisionMode::ReadOnly(ReadOnlyReason::NotOwned) => "Cerebro — starting".to_string(),
+        SupervisionMode::ReadOnly(ReadOnlyReason::OwnedBy) => {
+            "Cerebro — read-only; another window is driving this fleet".to_string()
         }
-        SupervisionMode::ReadOnly(ReadOnlyReason::OwnedBy(SupervisorKind::Tui)) => {
-            "Cerebro — read-only; another Ratatui process owns supervision".to_string()
-        }
-        SupervisionMode::ReadOnly(ReadOnlyReason::InvalidDeclaration(raw)) => {
-            format!("Cerebro — read-only; invalid fleet_supervisor {raw:?}")
-        }
-        // True of every lock error, which "held by another process" was not: a bind that
-        // succeeded and a record that then could not be written, and a bind refused for a reason
-        // that is not `AddrInUse`, are both states in which nobody holds anything. The detail -
-        // which endpoint, which other checkout - goes to stderr when the screen exits, never into
-        // the header: an absolute path in a status line is unreadable at any width, and the
-        // navigator asked for the short sentence here (cb-kcs.1).
         SupervisionMode::ReadOnly(ReadOnlyReason::LockError(_)) => {
-            "Cerebro — read-only; the supervision lease could not be taken".to_string()
-        }
-        // Says nothing about who holds the lease, because this process may well be holding it:
-        // what failed is reading the declaration that says whose it is.
-        SupervisionMode::ReadOnly(ReadOnlyReason::DeclarationUnreadable(_)) => {
-            "Cerebro — read-only; fleet_supervisor could not be read".to_string()
+            "Cerebro — read-only; this window could not take charge of the fleet".to_string()
         }
     }
 }
@@ -2087,7 +2064,6 @@ mod tests {
             source: "ps".into(),
             status: Some(3),
             stderr: "ps: boom".into(),
-            stdout: String::new(),
         }
     }
 
@@ -2096,7 +2072,6 @@ mod tests {
             source: "bd".into(),
             status: Some(1),
             stderr: "bd list failed: database is locked".into(),
-            stdout: String::new(),
         }
     }
 
@@ -2544,7 +2519,7 @@ mod tests {
         let buffer = render(&app, 100, 20);
         let rendered = lines(&buffer);
 
-        assert!(rendered[0].starts_with("Cerebro — read-only"), "{:?}", rendered[0]);
+        assert!(rendered[0].starts_with("Cerebro — starting"), "{:?}", rendered[0]);
         assert!(rendered[0].contains("g refresh"), "{:?}", rendered[0]);
         assert!(rendered[0].contains("q/Esc/Ctrl-C quit"), "{:?}", rendered[0]);
         assert!(!rendered[0].contains("refreshing..."), "nothing is in flight");
@@ -2702,7 +2677,9 @@ mod tests {
         // The mark is dim; the phase word beside it is not, and the glyph stays green.
         assert!(style_of(&buffer, "?").add_modifier.contains(Modifier::DIM));
         assert_eq!(style_of(&buffer, "●").fg, Some(GREEN));
-        assert!(!style_of(&buffer, "l").add_modifier.contains(Modifier::DIM));
+        // `style_where`, not `style_of`: the phase word this is about is on Beast's row, and a
+        // whole-screen scan for one letter answers about whichever row happens to hold it first.
+        assert!(!style_where(&buffer, "plan ").add_modifier.contains(Modifier::DIM));
     }
 
     #[test]
@@ -3066,39 +3043,31 @@ mod tests {
         // replacement. Its own rows are below the fold at that size, so the heading is what
         // proves the pane is the fleet's.
         let rendered = lines(&render(&app, 40, 12));
-        assert!(rendered[0].contains("Cerebro — read-only"));
+        assert!(rendered[0].contains("Cerebro — starting"));
         assert!(line_with(&rendered, "AGENT").contains("AGENT"));
     }
 
-    /// The five approved header spellings, and nothing else (cb-kcs.1).
+    /// The four approved header spellings, and nothing else (cb-abs.2).
     ///
-    /// The navigator chose the header line as the whole of the TUI's ownership surface, so this
-    /// is where every ownership state has to be legible. A sixth spelling appearing here is a
-    /// design change, not a refactor.
+    /// The navigator chose the header line as the whole of the window's ownership surface, so this
+    /// is where every ownership state has to be legible. A fifth spelling appearing here is a
+    /// design change, not a refactor — and the enum has exactly four inhabited shapes, so the
+    /// compiler is what proves there is no fifth to draw.
     #[test]
     fn the_header_names_every_supervision_state() {
         let cases = [
             (SupervisionMode::Supervising, "Cerebro — supervising"),
-            // The ordinary case is silent: no project has moved supervision, so the screen says
-            // what it has always said and keeps every hint (the navigator's call).
+            (SupervisionMode::ReadOnly(ReadOnlyReason::NotOwned), "Cerebro — starting"),
             (
-                SupervisionMode::ReadOnly(ReadOnlyReason::ConfiguredFor(SupervisorKind::Emacs)),
-                "Cerebro — read-only",
+                SupervisionMode::ReadOnly(ReadOnlyReason::OwnedBy),
+                "Cerebro — read-only; another window is driving this fleet",
             ),
             (
                 SupervisionMode::ReadOnly(ReadOnlyReason::LockError(
                     "the supervision lease is held, but /some/very/long/path.json is malformed"
                         .into(),
                 )),
-                "Cerebro — read-only; the supervision lease could not be taken",
-            ),
-            (
-                SupervisionMode::ReadOnly(ReadOnlyReason::OwnedBy(SupervisorKind::Tui)),
-                "Cerebro — read-only; another Ratatui process owns supervision",
-            ),
-            (
-                SupervisionMode::ReadOnly(ReadOnlyReason::InvalidDeclaration("rat".into())),
-                "Cerebro — read-only; invalid fleet_supervisor \"rat\"",
+                "Cerebro — read-only; this window could not take charge of the fleet",
             ),
         ];
         for (mode, expected) in cases {
@@ -3261,9 +3230,9 @@ mod tests {
     /// discoverable.
     #[test]
     fn the_ordinary_screen_keeps_every_hint_at_a_hundred_columns() {
-        let app = populated(); // App::new(): no declaration, so read-only because Emacs
+        let app = populated(); // App::new(): the frame before the lease is asked for
         let rendered = lines(&render(&app, 100, 20));
-        assert!(rendered[0].starts_with("Cerebro — read-only |"), "{:?}", rendered[0]);
+        assert!(rendered[0].starts_with("Cerebro — starting |"), "{:?}", rendered[0]);
         for hint in ["Tab/Shift-Tab/F1-F3 pane", "↑/↓/PgUp/PgDn move", "g refresh", "q/Esc/Ctrl-C quit"] {
             assert!(rendered[0].contains(hint), "the default screen keeps {hint}: {:?}", rendered[0]);
         }
@@ -3295,12 +3264,12 @@ mod tests {
     /// from the screen stay.
     #[test]
     fn a_long_ownership_title_shortens_the_hints_rather_than_losing_them() {
-        let owned = SupervisionMode::ReadOnly(ReadOnlyReason::OwnedBy(SupervisorKind::Tui));
+        let owned = SupervisionMode::ReadOnly(ReadOnlyReason::OwnedBy);
         let mut app = populated();
         app.set_supervision(owned.clone());
         let used = supervision_title(&owned).width();
         assert!(
-            supervision_title(&owned).contains("another Ratatui process owns supervision"),
+            supervision_title(&owned).contains("another window is driving this fleet"),
             "the title this test is about"
         );
 
@@ -5083,9 +5052,7 @@ mod tests {
             Finding::Unclaim { id: "cb-a".into() },
             "unclaim cb-a — Storm stalled",
         )]);
-        app.set_supervision(SupervisionMode::ReadOnly(ReadOnlyReason::ConfiguredFor(
-            SupervisorKind::Emacs,
-        )));
+        app.set_supervision(SupervisionMode::ReadOnly(ReadOnlyReason::NotOwned));
         let header = lines(&render(&app, 160, 30))[0].clone();
         assert!(header.contains("x act"), "{header:?}");
         assert!(!header.contains("s/f/k"), "a read-only view offers no lifecycle key: {header:?}");
@@ -5201,7 +5168,6 @@ mod tests {
                 source: "fleet-history".into(),
                 status: Some(1),
                 stderr: "no transitions log".into(),
-                stdout: String::new(),
             }),
             at(86_400),
         );
@@ -5408,7 +5374,7 @@ mod tests {
     /// cb-41r's `Enter bead` is what made a hundred-column header need it.
     #[test]
     fn the_cursor_clauses_are_the_last_thing_to_give_way() {
-        let owned = SupervisionMode::ReadOnly(ReadOnlyReason::OwnedBy(SupervisorKind::Tui));
+        let owned = SupervisionMode::ReadOnly(ReadOnlyReason::OwnedBy);
         let mut app = work_app(WorkBuckets {
             claimed: vec![bead("cb-41r", Some(2), "Enter on a bead opens it")],
             ..WorkBuckets::default()
@@ -5622,9 +5588,7 @@ mod tests {
     #[test]
     fn no_screen_loses_a_required_hint_tier_at_its_own_width() {
         let mut owned = populated();
-        owned.set_supervision(SupervisionMode::ReadOnly(ReadOnlyReason::OwnedBy(
-            SupervisorKind::Tui,
-        )));
+        owned.set_supervision(SupervisionMode::ReadOnly(ReadOnlyReason::OwnedBy));
 
         let mut stale = work_app(WorkBuckets {
             claimed: vec![bead("cb-123", Some(1), "Preserve session output")],
@@ -5637,8 +5601,8 @@ mod tests {
         // `the_ordinary_screen_keeps_every_hint_at_a_hundred_columns` has always asserted despite
         // its name.
         let rows: Vec<(&'static str, App, usize, HintRank)> = vec![
-            ("read-only", populated(), 100, HintRank::Movement),
-            ("read-only, another Tui owns supervision", owned, 100, HintRank::Kept),
+            ("starting", populated(), 100, HintRank::Movement),
+            ("read-only, another window is driving", owned, 100, HintRank::Kept),
             ("supervising", supervising(), 100, HintRank::Kept),
             ("supervising, wide", supervising(), 200, HintRank::Movement),
             ("work focus, cursor on a bead", pinned_app(), 160, HintRank::Cursor),
@@ -5661,22 +5625,24 @@ mod tests {
         }
     }
 
-    /// The ordinary read-only screen's remaining slack at a hundred columns, as a number.
+    /// The starting screen's remaining slack at a hundred columns, as a number.
     ///
     /// This PINS A MEASUREMENT, not a policy. All three sightings of the overflow were this
     /// screen, and the number is what a plan needs before it fixes a clause literal. If it
     /// changes, the report in the failure message carries the new one - putting it here and in
     /// the test's name is fine, as long as the change was deliberate.
     #[test]
-    fn the_ordinary_screen_has_one_cell_of_slack_at_a_hundred_columns() {
+    fn the_ordinary_screen_has_two_cells_of_slack_at_a_hundred_columns() {
         let app = populated();
         let budget = HintBudget::measure(
-            "read-only",
+            "starting",
             &hint_clauses(&app),
             header_used(&app),
             HINT_BUDGET_COLUMNS,
         );
-        assert_eq!(budget.slack(), 1, "{}", budget.report(HintRank::Movement));
+        // Two rather than cb-41r's one: `Cerebro — starting` is a cell shorter than the
+        // `Cerebro — read-only` this screen said before cb-abs.2 collapsed the spellings.
+        assert_eq!(budget.slack(), 2, "{}", budget.report(HintRank::Movement));
     }
 
     /// An overspent budget says which clause, what it costs, and by how many cells the line is

@@ -36,13 +36,10 @@
 //! issue, and an hourly floor per role. Both JSONL logs remain cb-kcs.4.4's.
 //!
 //! Since cb-kcs.1 it may hold ONE piece of state - the supervision lease
-//! (`supervisor`), a bound loopback listener that says which fleet view a
-//! project has declared may act on this checkout. Holding it is not acting:
-//! this crate takes the lease when `.cerebro/project.conf` says `tui` and
-//! then does nothing further with it, because the sessions, the lifecycle
-//! keys and the triggers are `cb-kcs.2` onwards. With the declaration absent
-//! or `emacs` - which is every consumer today, this one included - the lease
-//! is Emacs's and this crate is exactly the reader it always was. The bead panel is `cb-vyp.3`; since cb-vyp.2
+//! (`supervisor`), a bound loopback listener that says which window may act on
+//! this checkout. Since cb-abs.2 that is the whole of the rule: there is
+//! nothing to declare, the first window open takes the lease, and a second one
+//! on the same checkout draws everything and acts on nothing. The bead panel is `cb-vyp.3`; since cb-vyp.2
 //! this crate also carries the screen itself - the pure parsing/derivation
 //! (`model`), the impure readers that feed it (`readers`), the display state
 //! and refresh schedule (`app`) and the renderer (`ui`). The binary in
@@ -61,7 +58,7 @@
 //! Since cb-kcs.2.3 the navigator can press `s`, `f` and `k` - start the selected
 //! agent, toggle its stop flag, and kill a session this process hosts after a
 //! confirmation - each of them gated on `SupervisionMode` (`may_supervise` to
-//! start, `may_end` to finish or kill) and each refused with a visible line when
+//! start, finish or kill) and each refused with a visible line when
 //! it is not. `lifecycle` is where all three decide and where every write lives;
 //! `main::route_key` is the one path a keystroke takes to reach them.
 //!
@@ -99,8 +96,8 @@ pub use readers::{
     Commands, Invocation, Programs, ReadError, ReaderPaths, RealCommands,
 };
 pub use supervisor::{
-    reconcile_supervision, AcquireError, ReadOnlyReason, ReconcileAction, SupervisionMode,
-    SupervisorKind, SupervisorLease,
+    reconcile_supervision, AcquireError, ReadOnlyReason, SupervisionMode,
+    SupervisorLease,
 };
 pub use session::{
     exit_line, key_bytes, materialise, paste_bytes, transcript, Ended, Retained, Session,
@@ -108,7 +105,7 @@ pub use session::{
 };
 pub use app::{
     work_body, work_line_of_cursor, App, AppAction, FleetWorker, Metrics, Pane, PaneContent,
-    HistoryWorker, PaneFocus, PaneMetrics, Prompt, SupervisorWorker, SweepWorker,
+    HistoryWorker, PaneFocus, PaneMetrics, Prompt, SweepWorker,
     WorkBodyLine, WorkWorker,
 };
 pub use sweeps::{

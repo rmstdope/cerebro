@@ -782,7 +782,7 @@ impl SessionHost {
             .insert(name.to_string(), crate::lifecycle::LastExit::GaveUp { failures });
     }
 
-    /// How many children are alive. This is what `SupervisorController::hosted_sessions` reads.
+    /// How many children are alive.
     pub fn live_count(&self) -> usize {
         self.live.len()
     }

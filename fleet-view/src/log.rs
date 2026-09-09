@@ -1,10 +1,9 @@
 //! The three append-only JSONL files this view writes: what it decided, what it evaluated, and
 //! what went wrong.
 //!
-//! The port of `emacs/cerebro.el`'s own log (`cerebro--log` and its neighbours). The SAME three
-//! files, in the same directory, in the same shapes: the lease guarantees exactly one supervisor,
-//! so the two views can never write at once, and a navigator who switches supervisor keeps one
-//! continuous history.
+//! Three append-only files under `.cerebro/state/`. The lease guarantees exactly one supervisor,
+//! so two windows open on one checkout can never write at once and the history stays continuous
+//! however many are opened and closed.
 //!
 //! Split the way the rest of the crate is: a pure half that is a total function of plain data and
 //! is tested over literals, and one small impure half - `Logger` - which owns the three files.
@@ -85,9 +84,10 @@ pub enum Event {
     /// `SweepTell`'s reason: two decisions sharing one value makes the log unreadable for the
     /// diagnosis it exists for. A stuck row this view hosts writes two lines per occurrence -
     /// `stuck`, the observation, and `resume`, what was done about it. Written only when the line
-    /// actually went into a session, exactly as `Triage` is: a resume the view suppressed - a
-    /// draining view, or a row already told within this stuck stretch - is not a decision it
-    /// carried out.
+    /// actually went into a session, exactly as `Triage` is: a resume the view suppressed - a row
+    /// already told within this stuck stretch - is not a decision it carried out. That is the
+    /// whole of the suppression since cb-abs.2; a view that does not hold the checkout never
+    /// reaches the row loop at all (`main::supervise`'s own top-level return).
     Resume,
     /// One name leaving the armed set with no other line to say so: `k`, and the standby
     /// disarm beside it. `retire` and `give-up` already say it for the paths they cover, and
@@ -328,9 +328,8 @@ impl Logger {
 
     /// Write when this view may act, and not otherwise.
     ///
-    /// Driven from `SupervisionMode::may_end`, which is true for `Supervising` and `Draining` and
-    /// false for every `ReadOnly`. A **draining** view still ends the sessions it hosts, so it
-    /// still has decisions to record. A read-only one writes nothing at all, not even an error: it
+    /// Driven from `SupervisionMode::may_supervise`, which is true for `Supervising` and false
+    /// for every `ReadOnly`. A read-only view writes nothing at all, not even an error: it
     /// decides nothing, and its reader failures are the same fleet seen through a second window,
     /// which would put two accounts of one fleet in the supervisor's own file.
     pub fn set_enabled(&mut self, enabled: bool) {
@@ -746,7 +745,6 @@ mod tests {
             source: "/repos/x/.claude/cerebro/scripts/roster".into(),
             status: Some(2),
             stderr: "roster.conf line 3".into(),
-            stdout: String::new(),
         };
         let bd = ReadError::Spawn { source: "bd".into(), message: "no such file".into() };
 

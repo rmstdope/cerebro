@@ -23,7 +23,7 @@ use crossterm::event::{
 use ratatui::layout::Rect;
 use unicode_width::UnicodeWidthStr;
 
-use crate::supervisor::{ReadOnlyReason, SupervisionMode, SupervisorKind};
+use crate::supervisor::{ReadOnlyReason, SupervisionMode};
 use crate::model::{
     self, Bead, BeadDetailFields, FleetHealth, FleetRow, GhSnapshot, HealthFinding, HealthTone,
     HistoryRow, RowState, WorkBuckets,
@@ -31,7 +31,7 @@ use crate::model::{
 use crate::lifecycle::LastExit;
 use crate::session::SessionView;
 use crate::readers::{
-    read_bead_detail, read_configured_supervisor, read_fleet, read_gh, read_health, read_history,
+    read_bead_detail, read_fleet, read_gh, read_health, read_history,
     read_sweeps, read_work,
     Commands, Judged, Programs, ReaderPaths, ReadError,
 };
@@ -1803,17 +1803,15 @@ impl Default for App {
 
 impl App {
     pub fn new() -> Self {
-        Self::with_supervision(SupervisionMode::ReadOnly(ReadOnlyReason::ConfiguredFor(
-            SupervisorKind::Emacs,
-        )))
+        Self::with_supervision(SupervisionMode::ReadOnly(ReadOnlyReason::NotOwned))
     }
 
     /// An `App` whose ownership is known before the first frame.
     ///
-    /// `new()` starts read-only-because-Emacs, which is what an absent declaration means and so
-    /// what almost every consumer is. Production reads the real answer before entering the
-    /// terminal and constructs through this, so a process configured for the TUI never flashes an
-    /// "Emacs owns supervision" frame on its way to owning the checkout.
+    /// `new()` starts at `NotOwned`, which is the `Cerebro — starting` frame the mockup shows:
+    /// nothing has been asked for yet and nothing has failed. Production constructs through this
+    /// once the first acquire has answered, so that frame is the real half-second before the
+    /// window takes charge rather than a default nobody sees.
     pub fn with_supervision(supervision: SupervisionMode) -> Self {
         Self {
             fleet: Pane::default(),
@@ -2568,7 +2566,7 @@ impl App {
     ///
     /// True when an agent is selected AND the Session pane is holding something: a live child,
     /// one starting, a retained pass, or a refused launch. False only for `SessionView::None`.
-    /// Supervision is not part of the question: a view that drained to read-only still holds the
+    /// Supervision is not part of the question: a view that has lost the lease still holds the
     /// retained transcripts of the sessions it hosted, so the same rule serves both, which is the
     /// navigator's own choice. The one place this question is answered: the key below and the
     /// header's own hint both read it, so the clause and the key can never disagree. Matching
@@ -3212,15 +3210,6 @@ pub struct Worker<T, Req = ()> {
 pub type FleetWorker = Worker<Vec<FleetRow>>;
 /// The bead panel's worker: `read_work` on its own thread.
 pub type WorkWorker = Worker<WorkBuckets>;
-/// Ownership's worker: `read_configured_supervisor` on its own thread (cb-kcs.1).
-///
-/// A third worker rather than a question asked on the UI thread, for the reason the other two
-/// exist: `scripts/fleet-supervisor` is a subprocess with a five-second bound, and a declaration
-/// that takes five seconds to answer would freeze the screen - keys and all - for exactly as long
-/// as the thing that went wrong. The inner `Result` is the answer (`Err(raw)` for an invalid
-/// declaration); the outer one is whether the reader ran at all.
-pub type SupervisorWorker = Worker<Result<SupervisorKind, String>>;
-
 impl<T: Send + 'static, Req: Send + 'static> Worker<T, Req> {
     /// `FnMut`, not `Fn`: the `gh` reader keeps the login it has learnt between requests, and the
     /// loop below calls it from one thread only. A `RefCell` in the closure instead would be
@@ -3520,12 +3509,6 @@ pub fn run_write(
         WriteRequest::Finding { finding } => WriteAnswer::Finding {
             outcome: crate::lifecycle::run_finding(paths, programs, commands, &finding),
         },
-    }
-}
-
-impl Worker<Result<SupervisorKind, String>> {
-    pub fn spawn(paths: ReaderPaths, commands: Commands) -> Self {
-        Self::spawn_reader(move |()| read_configured_supervisor(&paths, commands.as_ref()))
     }
 }
 
@@ -3873,7 +3856,6 @@ mod tests {
             source: "ps".into(),
             status: Some(3),
             stderr: "ps: boom".into(),
-            stdout: String::new(),
         }
     }
 
@@ -3882,7 +3864,6 @@ mod tests {
             source: "bd".into(),
             status: Some(1),
             stderr: "bd list failed: database is locked".into(),
-            stdout: String::new(),
         }
     }
 

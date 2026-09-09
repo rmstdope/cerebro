@@ -9,7 +9,7 @@
 # WHY IT IS ONE FILE. A row answered wrongly is an idle Cerebro told twice about one unranked set,
 # or never told at all - and neither failure announces itself, because a typed line is
 # fire-and-forget and Cerebro writes nothing back to say it heard. Read
-# `tests/lib/supervisor.cases`' header for the conventions this one copies deliberately.
+# `tests/lib/supervise.cases`' header for the conventions this one copies deliberately.
 #
 # WHAT BOTH READERS MUST BIND. The rows assume `cerebro-triage-repeat' / `TRIAGE_REPEAT_SECONDS'
 # is 600, so a reader binds or passes exactly that number rather than whatever the running fleet

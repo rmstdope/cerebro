@@ -4,9 +4,7 @@
 //! *act* on it. This module is that rule, in two halves that are deliberately kept apart:
 //!
 //! * [`reconcile_supervision`] is pure. It answers "what am I, and what do I do about the lease?"
-//!   from four values and nothing else, and it is held to `tests/lib/supervisor.cases` - the same
-//!   table `cerebro--supervision-decision` answers, because Emacs and Ratatui disagreeing here is
-//!   either two supervisors or none.
+//!   from one value and nothing else: whether this process holds the listener.
 //! * [`SupervisorLease`] is the lease itself: a bound loopback [`TcpListener`] that accepts
 //!   nothing. **The bind is the lock.** No pid file, no timestamp, no heartbeat, no lease duration
 //!   and no stale-entry sweep takes part in acquisition, and that is the whole point - the kernel
@@ -14,8 +12,8 @@
 //!   anybody deciding it had crashed. Every timeout-based scheme has a window in which a live owner
 //!   looks dead; this one has none.
 //!
-//! The JSON record beside it (`supervisor.json`) is **diagnosis only**. It says who to name in
-//! `read-only; Emacs owns supervision`, and it never grants, transfers or withholds ownership: a
+//! The JSON record beside it (`supervisor.json`) is **diagnosis only**. It names the checkout
+//! whose window holds the lease, and it never grants, transfers or withholds ownership: a
 //! missing, malformed or foreign record on a bound port is a visible lock error, never permission
 //! to take over. A stale record left by a crash is harmless, because the successful bind that
 //! overwrites it is what was authoritative all along.
@@ -26,57 +24,16 @@ use std::io::ErrorKind;
 use std::net::{SocketAddr, TcpListener};
 use std::path::{Path, PathBuf};
 
-/// Which implementation a process is. The declaration names one of these; a process is one.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum SupervisorKind {
-    Emacs,
-    Tui,
-}
-
-impl SupervisorKind {
-    /// The word `scripts/fleet-supervisor` prints, and the word the record carries.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            SupervisorKind::Emacs => "emacs",
-            SupervisorKind::Tui => "tui",
-        }
-    }
-
-    /// The declaration's two accepted spellings, and nothing else - a value this does not
-    /// recognise is an invalid declaration, never a default.
-    pub fn parse(word: &str) -> Option<Self> {
-        match word {
-            "emacs" => Some(SupervisorKind::Emacs),
-            "tui" => Some(SupervisorKind::Tui),
-            _ => None,
-        }
-    }
-}
-
-impl fmt::Display for SupervisorKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
 /// Why this process is not supervising. Each variant is a different sentence on the header line,
 /// which is the whole of the TUI's ownership surface (the navigator's choice in cb-kcs.1).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ReadOnlyReason {
-    /// The project declares the other implementation.
-    ConfiguredFor(SupervisorKind),
-    /// The project declares us, but somebody else holds the lease.
-    OwnedBy(SupervisorKind),
-    /// The declaration is neither `emacs` nor `tui`; the string is the raw offending value.
-    InvalidDeclaration(String),
+    /// Somebody else holds the lease. The one thing that means a second window is driving this
+    /// fleet, and the one read-only reason that hands the armed set over.
+    OwnedBy,
     /// The lease could not be read or bound, and we refuse to guess.
     LockError(String),
-    /// The declaration itself could not be read - the reader timed out, failed to spawn, or
-    /// answered in a way this build does not understand. Distinct from `LockError` because it
-    /// says nothing about who holds the lease: a process in this state may well be holding it
-    /// itself, and saying "the lease is held by another process" there would be false twice over.
-    DeclarationUnreadable(String),
-    /// Configured for us, not holding it yet, and no attempt has failed. The provisional answer
+    /// Not holding it yet, and no attempt has failed. The provisional answer
     /// [`reconcile_supervision`] returns with [`ReconcileAction::Acquire`]; a caller replaces it
     /// within the same tick with `Supervising` or with the reason the bind failed.
     NotOwned,
@@ -87,21 +44,14 @@ pub enum ReadOnlyReason {
 pub enum SupervisionMode {
     ReadOnly(ReadOnlyReason),
     Supervising,
-    /// Holding a lease the declaration has taken away, with sessions still hosted. New starts and
-    /// nudges stop; the sessions stay usable; the lease goes when the last one ends.
-    Draining {
-        configured_for: Option<SupervisorKind>,
-        live_sessions: usize,
-    },
 }
 
 impl SupervisionMode {
-    /// The coarse word `tests/lib/supervisor.cases` speaks.
+    /// The coarse word the log's `mode` field carries.
     pub fn word(&self) -> &'static str {
         match self {
             SupervisionMode::ReadOnly(_) => "read-only",
             SupervisionMode::Supervising => "supervising",
-            SupervisionMode::Draining { .. } => "draining",
         }
     }
 
@@ -109,20 +59,6 @@ impl SupervisionMode {
     /// caller in either implementation asks through this rather than matching the enum itself.
     pub fn may_supervise(&self) -> bool {
         matches!(self, SupervisionMode::Supervising)
-    }
-
-    /// May this process END something it is already hosting? `Supervising`, and also `Draining` -
-    /// a view that has been told to hand over still has to be able to finish and kill the sessions
-    /// it holds, because ending them is what ends the drain (`emacs/cerebro.el:4635-4641`, the same
-    /// rule).
-    ///
-    /// Starting asks [`SupervisionMode::may_supervise`]; ending asks this. No caller matches the
-    /// enum itself.
-    pub fn may_end(&self) -> bool {
-        matches!(
-            self,
-            SupervisionMode::Supervising | SupervisionMode::Draining { .. }
-        )
     }
 
     /// Does this mode mean somebody ELSE has, or is taking, this checkout?
@@ -134,24 +70,16 @@ impl SupervisionMode {
     ///
     /// [`may_supervise`]: SupervisionMode::may_supervise
     pub fn hands_over(&self) -> bool {
-        match self {
-            SupervisionMode::Draining { .. } => true,
-            SupervisionMode::ReadOnly(ReadOnlyReason::ConfiguredFor(_)) => true,
-            SupervisionMode::ReadOnly(ReadOnlyReason::OwnedBy(_)) => true,
-            SupervisionMode::ReadOnly(_) | SupervisionMode::Supervising => false,
-        }
+        matches!(self, SupervisionMode::ReadOnly(ReadOnlyReason::OwnedBy))
     }
 }
 
 impl ReadOnlyReason {
-    /// The log's word for this reason, spelled as `emacs/cerebro.el`'s own reason symbols are.
+    /// The log's word for this reason.
     pub fn word(&self) -> &'static str {
         match self {
-            ReadOnlyReason::ConfiguredFor(_) => "configured-for",
-            ReadOnlyReason::OwnedBy(_) => "owned-by",
-            ReadOnlyReason::InvalidDeclaration(_) => "invalid",
+            ReadOnlyReason::OwnedBy => "owned-by",
             ReadOnlyReason::LockError(_) => "lock-error",
-            ReadOnlyReason::DeclarationUnreadable(_) => "declaration-unreadable",
             ReadOnlyReason::NotOwned => "not-owned",
         }
     }
@@ -162,81 +90,37 @@ impl ReadOnlyReason {
 pub enum ReconcileAction {
     Acquire,
     Keep,
-    Release,
 }
 
-impl ReconcileAction {
-    pub fn word(self) -> &'static str {
-        match self {
-            ReconcileAction::Acquire => "acquire",
-            ReconcileAction::Keep => "keep",
-            ReconcileAction::Release => "release",
-        }
-    }
-}
-
-/// The whole ownership rule, as a function of four values.
+/// The whole ownership rule, as a function of one value.
 ///
-/// `configured` is `Ok(kind)` for a declaration this build understands and `Err(raw)` for one it
-/// does not - the raw word, so the header can name it. `holds_lease` is whether this process holds
-/// the listener *now*; `hosted_sessions` is how many agent sessions it is hosting (always 0 until
-/// cb-kcs.2 adds PTYs, and written for them now so the drain is not retrofitted later).
+/// `holds_lease` is whether this process holds the listener *now*. Holding it is supervision;
+/// not holding it is read-only, and the answer is to try to take it. A retry after a failed
+/// attempt is the same decision as the first attempt, which is what makes `g` a retry key rather
+/// than a special case, and there is no third answer.
 ///
-/// Every row of `tests/lib/supervisor.cases` runs through this, and through
-/// `cerebro--supervision-decision` in Emacs. The two must agree row for row.
-pub fn reconcile_supervision(
-    local: SupervisorKind,
-    configured: Result<SupervisorKind, String>,
-    holds_lease: bool,
-    hosted_sessions: usize,
-) -> (SupervisionMode, ReconcileAction) {
-    // Configured for us: supervise if we hold it, otherwise try to take it. A retry after a failed
-    // attempt is the same decision as the first attempt, which is what makes `g` a retry key
-    // rather than a special case.
-    if configured.as_ref().ok() == Some(&local) {
-        return if holds_lease {
-            (SupervisionMode::Supervising, ReconcileAction::Keep)
-        } else {
-            (
-                SupervisionMode::ReadOnly(ReadOnlyReason::NotOwned),
-                ReconcileAction::Acquire,
-            )
-        };
+/// Read-only is the honest answer until the bind actually succeeds: a process that called itself
+/// supervising before it owned anything is exactly the double supervisor the lease prevents.
+pub fn reconcile_supervision(holds_lease: bool) -> (SupervisionMode, ReconcileAction) {
+    if holds_lease {
+        (SupervisionMode::Supervising, ReconcileAction::Keep)
+    } else {
+        (
+            SupervisionMode::ReadOnly(ReadOnlyReason::NotOwned),
+            ReconcileAction::Acquire,
+        )
     }
-
-    // Configured for somebody else, or not configured at all. An invalid declaration lands here
-    // deliberately: fail-closed, so a typo neither grants supervision nor drops live sessions.
-    let reason = match &configured {
-        Ok(other) => ReadOnlyReason::ConfiguredFor(*other),
-        Err(raw) => ReadOnlyReason::InvalidDeclaration(raw.clone()),
-    };
-
-    if !holds_lease {
-        return (SupervisionMode::ReadOnly(reason), ReconcileAction::Keep);
-    }
-
-    if hosted_sessions == 0 {
-        return (SupervisionMode::ReadOnly(reason), ReconcileAction::Release);
-    }
-
-    (
-        SupervisionMode::Draining {
-            configured_for: configured.ok(),
-            live_sessions: hosted_sessions,
-        },
-        ReconcileAction::Keep,
-    )
 }
 
 /// Why an acquisition did not happen. None of these is ever a reason to take the lease anyway.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AcquireError {
     /// The port is bound and the record names this checkout: an honest, live owner.
-    OwnedBy(SupervisorKind),
+    OwnedBy,
     /// The port is bound but the record names a different checkout - two roots hashed onto one
     /// port. Fail-closed: neither side acts.
     EndpointCollision { identity: String },
-    /// The port is bound and the record is missing, malformed, or names an unknown owner; or the
+    /// The port is bound and the record is missing or malformed; or the
     /// record could not be written after a successful bind.
     LockError(String),
 }
@@ -244,7 +128,7 @@ pub enum AcquireError {
 impl fmt::Display for AcquireError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            AcquireError::OwnedBy(kind) => write!(f, "the lease is held by {kind}"),
+            AcquireError::OwnedBy => write!(f, "the lease is already held"),
             AcquireError::EndpointCollision { identity } => write!(
                 f,
                 "the lease endpoint is bound by another checkout ({identity})"
@@ -276,7 +160,6 @@ impl SupervisorLease {
         endpoint: SocketAddr,
         record_path: &Path,
         identity: &str,
-        owner: SupervisorKind,
     ) -> Result<Self, AcquireError> {
         let listener = match TcpListener::bind(endpoint) {
             Ok(listener) => listener,
@@ -295,7 +178,7 @@ impl SupervisorLease {
             record_path: record_path.to_path_buf(),
             identity: identity.to_string(),
         };
-        lease.write_record(owner).map_err(|message| {
+        lease.write_record().map_err(|message| {
             // Drop the listener with the error rather than holding an lease no other process could
             // attribute: an unattributable lease is exactly the `LockError` deadlock we refuse.
             AcquireError::LockError(message)
@@ -308,7 +191,7 @@ impl SupervisorLease {
         self.listener.local_addr()
     }
 
-    fn write_record(&self, owner: SupervisorKind) -> Result<(), String> {
+    fn write_record(&self) -> Result<(), String> {
         if let Some(parent) = self.record_path.parent() {
             fs::create_dir_all(parent)
                 .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
@@ -317,9 +200,8 @@ impl SupervisorLease {
         // half-written record is a `LockError` that would stall the other implementation.
         let temp = self.record_path.with_extension("json.tmp");
         let body = format!(
-            "{{\"identity\":{},\"owner\":\"{}\",\"pid\":{}}}\n",
+            "{{\"identity\":{},\"pid\":{}}}\n",
             json_string(&self.identity),
-            owner.as_str(),
             std::process::id()
         );
         fs::write(&temp, body).map_err(|e| format!("cannot write {}: {e}", temp.display()))?;
@@ -343,20 +225,13 @@ impl Drop for SupervisorLease {
 
 struct RecordFields {
     identity: String,
-    owner: Option<SupervisorKind>,
 }
 
 /// The record on a bound port, read for diagnosis alone. Whatever this returns, the caller does
 /// not get the lease.
 fn diagnose_holder(record_path: &Path, identity: &str) -> AcquireError {
     match read_record(record_path) {
-        Some(fields) if fields.identity == identity => match fields.owner {
-            Some(kind) => AcquireError::OwnedBy(kind),
-            None => AcquireError::LockError(format!(
-                "the supervision lease is held, but {} names an owner this build does not know",
-                record_path.display()
-            )),
-        },
+        Some(fields) if fields.identity == identity => AcquireError::OwnedBy,
         Some(fields) => AcquireError::EndpointCollision {
             identity: fields.identity,
         },
@@ -367,13 +242,12 @@ fn diagnose_holder(record_path: &Path, identity: &str) -> AcquireError {
     }
 }
 
-/// A deliberately small hand parser rather than `serde_json`: the record has three flat fields and
+/// A deliberately small hand parser rather than `serde_json`: the record has two flat fields and
 /// is read on a path that must not fail in interesting ways.
 fn read_record(path: &Path) -> Option<RecordFields> {
     let text = fs::read_to_string(path).ok()?;
     let identity = json_field(&text, "identity")?;
-    let owner = json_field(&text, "owner").and_then(|word| SupervisorKind::parse(&word));
-    Some(RecordFields { identity, owner })
+    Some(RecordFields { identity })
 }
 
 fn json_field(text: &str, key: &str) -> Option<String> {
@@ -420,12 +294,7 @@ mod tests {
     use crate::probe;
     use std::net::Ipv4Addr;
 
-    // --- the shared transition table ------------------------------------------------------------
-
-    fn kind(word: &str) -> SupervisorKind {
-        SupervisorKind::parse(word)
-            .unwrap_or_else(|| panic!("supervisor.cases: unknown kind {word}"))
-    }
+    // --- the ownership rule --------------------------------------------------------------------
 
     /// Which modes empty the armed set, exhaustively (cb-nc8).
     ///
@@ -438,22 +307,13 @@ mod tests {
     fn only_a_handover_hands_over() {
         use ReadOnlyReason::*;
 
-        let hands_over = [
-            SupervisionMode::Draining {
-                configured_for: Some(SupervisorKind::Emacs),
-                live_sessions: 2,
-            },
-            SupervisionMode::ReadOnly(ConfiguredFor(SupervisorKind::Emacs)),
-            SupervisionMode::ReadOnly(OwnedBy(SupervisorKind::Tui)),
-        ];
-        for mode in hands_over {
-            assert!(mode.hands_over(), "{mode:?} is a handover");
-        }
+        assert!(
+            SupervisionMode::ReadOnly(OwnedBy).hands_over(),
+            "somebody else holds it: that IS the handover"
+        );
 
         let keeps = [
-            SupervisionMode::ReadOnly(InvalidDeclaration("tui2".into())),
             SupervisionMode::ReadOnly(LockError("bind refused".into())),
-            SupervisionMode::ReadOnly(DeclarationUnreadable("boom".into())),
             SupervisionMode::ReadOnly(NotOwned),
             SupervisionMode::Supervising,
         ];
@@ -466,125 +326,43 @@ mod tests {
     #[test]
     fn every_read_only_reason_has_a_log_word() {
         use ReadOnlyReason::*;
-        assert_eq!(ConfiguredFor(SupervisorKind::Emacs).word(), "configured-for");
-        assert_eq!(OwnedBy(SupervisorKind::Tui).word(), "owned-by");
-        assert_eq!(InvalidDeclaration("rat".into()).word(), "invalid");
+        assert_eq!(OwnedBy.word(), "owned-by");
         assert_eq!(LockError("x".into()).word(), "lock-error");
-        assert_eq!(DeclarationUnreadable("x".into()).word(), "declaration-unreadable");
         assert_eq!(NotOwned.word(), "not-owned");
     }
 
     #[test]
-    fn a_draining_view_may_end_but_not_start() {
-        let supervising = SupervisionMode::Supervising;
-        assert!(supervising.may_supervise());
-        assert!(supervising.may_end());
-
-        let draining = SupervisionMode::Draining {
-            configured_for: Some(SupervisorKind::Emacs),
-            live_sessions: 2,
-        };
-        assert!(!draining.may_supervise());
-        assert!(draining.may_end());
+    fn only_supervising_may_supervise() {
+        assert!(SupervisionMode::Supervising.may_supervise());
 
         for reason in [
-            ReadOnlyReason::ConfiguredFor(SupervisorKind::Emacs),
-            ReadOnlyReason::OwnedBy(SupervisorKind::Emacs),
-            ReadOnlyReason::InvalidDeclaration("rat".to_string()),
+            ReadOnlyReason::OwnedBy,
             ReadOnlyReason::LockError("boom".to_string()),
-            ReadOnlyReason::DeclarationUnreadable("boom".to_string()),
             ReadOnlyReason::NotOwned,
         ] {
             let mode = SupervisionMode::ReadOnly(reason.clone());
             assert!(!mode.may_supervise(), "may_supervise for {reason:?}");
-            assert!(!mode.may_end(), "may_end for {reason:?}");
         }
     }
 
-    /// Every row of `tests/lib/supervisor.cases`, which `cerebro--supervision-decision` answers
-    /// too. A row either side answers differently is a fleet with two supervisors or none.
+    /// The whole ownership rule, which is one boolean and has exactly two answers.
+    ///
+    /// This replaced `tests/lib/supervisor.cases` in cb-abs.2. A `tests/lib/` table exists to hold
+    /// two implementations to one rule; there is one implementation now, and the rule shrank to a
+    /// bool - so the two rows it would carry are worth more here, beside the function.
     #[test]
-    fn both_implementations_follow_the_shared_transition_table() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../tests/lib/supervisor.cases");
-        let text = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("cannot read {path}: {e}"));
-        let mut rows = 0;
-        for line in text.lines() {
-            let trimmed = line.trim();
-            if trimmed.is_empty() || trimmed.starts_with('#') {
-                continue;
-            }
-            let fields: Vec<&str> = trimmed.split_whitespace().collect();
-            assert_eq!(fields.len(), 6, "supervisor.cases: malformed row: {line}");
-            let local = kind(fields[0]);
-            let configured = match fields[1] {
-                "invalid" => Err("rat".to_string()),
-                word => Ok(kind(word)),
-            };
-            let holds = match fields[2] {
-                "yes" => true,
-                "no" => false,
-                other => panic!("supervisor.cases: expected yes or no, got {other}"),
-            };
-            let hosted: usize = fields[3]
-                .parse()
-                .unwrap_or_else(|_| panic!("supervisor.cases: bad hosted count: {line}"));
-
-            let (mode, action) = reconcile_supervision(local, configured, holds, hosted);
-            assert_eq!(mode.word(), fields[4], "mode for row: {line}");
-            assert_eq!(action.word(), fields[5], "action for row: {line}");
-            rows += 1;
-        }
-        assert!(rows >= 20, "supervisor.cases: only {rows} rows ran");
-    }
-
-    #[test]
-    fn a_drain_names_who_it_is_draining_for_and_how_many_are_left() {
-        let (mode, action) = reconcile_supervision(
-            SupervisorKind::Emacs,
-            Ok(SupervisorKind::Tui),
-            true,
-            3,
-        );
-        assert_eq!(action, ReconcileAction::Keep);
+    fn holding_the_lease_is_the_whole_of_supervision() {
         assert_eq!(
-            mode,
-            SupervisionMode::Draining {
-                configured_for: Some(SupervisorKind::Tui),
-                live_sessions: 3
-            }
+            reconcile_supervision(true),
+            (SupervisionMode::Supervising, ReconcileAction::Keep)
         );
-        assert!(!mode.may_supervise(), "a draining view must not act");
-    }
-
-    #[test]
-    fn an_invalid_declaration_drains_for_nobody_and_keeps_its_raw_word() {
-        let (mode, action) = reconcile_supervision(
-            SupervisorKind::Emacs,
-            Err("rat".to_string()),
-            true,
-            1,
-        );
-        assert_eq!(action, ReconcileAction::Keep);
         assert_eq!(
-            mode,
-            SupervisionMode::Draining { configured_for: None, live_sessions: 1 }
+            reconcile_supervision(false),
+            (
+                SupervisionMode::ReadOnly(ReadOnlyReason::NotOwned),
+                ReconcileAction::Acquire
+            )
         );
-
-        let (mode, action) =
-            reconcile_supervision(SupervisorKind::Tui, Err("rat".to_string()), false, 0);
-        assert_eq!(action, ReconcileAction::Keep);
-        assert_eq!(
-            mode,
-            SupervisionMode::ReadOnly(ReadOnlyReason::InvalidDeclaration("rat".to_string()))
-        );
-    }
-
-    #[test]
-    fn only_supervising_may_act() {
-        assert!(SupervisionMode::Supervising.may_supervise());
-        assert!(!SupervisionMode::ReadOnly(ReadOnlyReason::NotOwned).may_supervise());
-        assert!(!SupervisionMode::Draining { configured_for: None, live_sessions: 1 }
-            .may_supervise());
     }
 
     // --- the lease itself -----------------------------------------------------------------------
@@ -594,11 +372,10 @@ mod tests {
     fn acquire_on_a_free_port(
         record: &Path,
         identity: &str,
-        owner: SupervisorKind,
     ) -> (SupervisorLease, SocketAddr) {
         probe::wait_for(probe::POLL_BOUND, || {
             let addr = probe::free_endpoint();
-            SupervisorLease::try_acquire(addr, record, identity, owner)
+            SupervisorLease::try_acquire(addr, record, identity)
                 .ok()
                 .map(|lease| (lease, addr))
         })
@@ -618,14 +395,13 @@ mod tests {
         addr: SocketAddr,
         record: &Path,
         identity: &str,
-        owner: SupervisorKind,
     ) -> SupervisorLease {
         let mut last = None;
         // `probe::POLL_BOUND` rather than the plan's count x interval (200 x 20ms = 4s): that
         // identity only holds when an attempt is free, and this one binds a socket. The bound is
         // the wall clock the case gets, not an attempt budget.
         let lease = probe::wait_for(probe::POLL_BOUND, || {
-            match SupervisorLease::try_acquire(addr, record, identity, owner) {
+            match SupervisorLease::try_acquire(addr, record, identity) {
                 Ok(lease) => Some(lease),
                 Err(error) => {
                     last = Some(error);
@@ -651,19 +427,18 @@ mod tests {
     fn one_owner_at_a_time_and_the_record_names_it() {
         let dir = tempfile::tempdir().expect("tempdir");
         let record = dir.path().join("state/supervisor.json");
-        let (held, addr) = acquire_on_a_free_port(&record, "/repos/x", SupervisorKind::Tui);
+        let (held, addr) = acquire_on_a_free_port(&record, "/repos/x");
         let body = std::fs::read_to_string(&record).expect("the record exists");
-        assert!(body.contains("\"owner\":\"tui\""), "record: {body}");
         assert!(body.contains("\"identity\":\"/repos/x\""), "record: {body}");
 
-        match SupervisorLease::try_acquire(addr, &record, "/repos/x", SupervisorKind::Emacs) {
-            Err(AcquireError::OwnedBy(SupervisorKind::Tui)) => {}
+        match SupervisorLease::try_acquire(addr, &record, "/repos/x") {
+            Err(AcquireError::OwnedBy) => {}
             other => panic!("a second acquisition must be refused, got {other:?}"),
         }
 
         drop(held);
         assert!(!record.exists(), "dropping the lease removes its own record");
-        acquire_once_free(addr, &record, "/repos/x", SupervisorKind::Emacs);
+        acquire_once_free(addr, &record, "/repos/x");
     }
 
 
@@ -672,9 +447,9 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let record = dir.path().join("supervisor.json");
         let (_held, addr) =
-            acquire_on_a_free_port(&record, "/repos/other", SupervisorKind::Emacs);
+            acquire_on_a_free_port(&record, "/repos/other");
 
-        match SupervisorLease::try_acquire(addr, &record, "/repos/mine", SupervisorKind::Tui) {
+        match SupervisorLease::try_acquire(addr, &record, "/repos/mine") {
             Err(AcquireError::EndpointCollision { identity }) => {
                 assert_eq!(identity, "/repos/other");
             }
@@ -689,7 +464,7 @@ mod tests {
         // Somebody else's listener, with nothing of ours behind it.
         let (_foreign, addr) = foreign_listener();
 
-        match SupervisorLease::try_acquire(addr, &record, "/repos/x", SupervisorKind::Tui) {
+        match SupervisorLease::try_acquire(addr, &record, "/repos/x") {
             Err(AcquireError::LockError(message)) => {
                 assert!(message.contains("missing or malformed"), "message: {message}");
             }
@@ -704,7 +479,7 @@ mod tests {
         std::fs::write(&record, "{ this is not json").expect("write");
         let (_foreign, addr) = foreign_listener();
 
-        match SupervisorLease::try_acquire(addr, &record, "/repos/x", SupervisorKind::Tui) {
+        match SupervisorLease::try_acquire(addr, &record, "/repos/x") {
             Err(AcquireError::LockError(_)) => {}
             other => panic!("a malformed record must be a lock error, got {other:?}"),
         }
@@ -715,12 +490,11 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let record = dir.path().join("supervisor.json");
         // What a crashed owner leaves behind: a record, and no listener.
-        std::fs::write(&record, "{\"identity\":\"/repos/x\",\"owner\":\"emacs\",\"pid\":1}\n")
-            .expect("write");
+        std::fs::write(&record, "{\"identity\":\"/repos/stale\",\"pid\":1}\n").expect("write");
 
-        let (_held, _addr) = acquire_on_a_free_port(&record, "/repos/x", SupervisorKind::Tui);
+        let (_held, _addr) = acquire_on_a_free_port(&record, "/repos/x");
         let body = std::fs::read_to_string(&record).expect("record");
-        assert!(body.contains("\"owner\":\"tui\""), "record: {body}");
+        assert!(body.contains("\"identity\":\"/repos/x\""), "record: {body}");
     }
 
     #[test]
@@ -728,9 +502,8 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let record = dir.path().join("supervisor.json");
         let weird = "/repos/with \"quotes\" and \\ backslash";
-        let (_held, _addr) = acquire_on_a_free_port(&record, weird, SupervisorKind::Emacs);
+        let (_held, _addr) = acquire_on_a_free_port(&record, weird);
         let fields = read_record(&record).expect("record parses");
         assert_eq!(fields.identity, weird);
-        assert_eq!(fields.owner, Some(SupervisorKind::Emacs));
     }
 }

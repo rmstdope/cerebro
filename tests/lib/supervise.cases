@@ -6,8 +6,17 @@
 # (cb-abs.1). The rows stay: they ARE the rule, and re-typing them into assertions would
 # lose the one thing a table is good at.
 #
-# WHY IT IS ONE FILE. It is `tests/lib/supervisor.cases`'s reason, one layer in. Read that file's
-# header for the conventions this one copies deliberately.
+# WHY IT IS ONE FILE. The rule it encodes - "given what an agent wrote in its state file and how
+# long ago, what does this view do about the session?" - is a table rather than prose because a
+# wrong answer is invisible until a session is ended or nudged that should not have been.
+#
+# THIS HEADER IS THE REFERENCE COPY for the `tests/lib/*.cases` conventions, which is what its
+# siblings mean when they say they copy them (cb-abs.2 - it was `supervisor.cases`' header until
+# that file went with the second implementation it existed to hold). The conventions are: a
+# comment block naming every reader by symbol; a WHY IT IS ONE FILE paragraph saying what a wrong
+# answer costs; WHAT BOTH READERS MUST BIND, naming every threshold a row assumes so a reader binds
+# those numbers rather than whatever the running fleet is customised to; THE COLUMNS, in order,
+# tab- or space-separated, one word per cell; and the rows themselves in commented groups.
 #
 # WHAT BOTH READERS MUST BIND. The rows assume `cerebro-end-grace' 30 and
 # `cerebro-answer-timeout' 900, and `cerebro-interactive-answer-timeout' 1800, so a reader binds or

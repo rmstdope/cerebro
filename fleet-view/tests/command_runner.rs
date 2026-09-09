@@ -108,23 +108,6 @@ fn a_non_zero_exit_carries_status_and_stderr() {
     }
 }
 
-/// A refusal is still an answer: `scripts/fleet-supervisor` exits 2 and prints the raw offending
-/// value on STDOUT, which the header has to name — so `ReadError::Exit` carries stdout too.
-#[test]
-fn a_refusal_carries_stdout_as_well() {
-    let err = RealCommands
-        .run(&fixture("refusing"), &[], None, Duration::from_secs(60))
-        .unwrap_err();
-    match err {
-        ReadError::Exit { status, stdout, stderr, .. } => {
-            assert_eq!(status, Some(2));
-            assert_eq!(stdout, "raw-value\n");
-            assert!(stderr.contains("refusing"), "{stderr}");
-        }
-        other => panic!("expected Exit, got {other:?}"),
-    }
-}
-
 /// A program that is not there is a spawn failure, not an empty answer.
 #[test]
 fn a_program_that_does_not_exist_is_a_spawn_failure() {

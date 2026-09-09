@@ -1,38 +1,24 @@
 #!/usr/bin/env bash
-# Which fleet view may supervise this checkout, and where its lease lives (cb-kcs.1):
+# Where this checkout's supervision lease lives (cb-kcs.1, cb-abs.2):
 #
-#     fleet-supervisor                    -> "emacs" or "tui"
 #     fleet-supervisor --endpoint         -> "127.0.0.1:<port>"
 #     fleet-supervisor --identity         -> the canonical absolute shared root
 #     fleet-supervisor --record           -> <shared root>/.cerebro/state/supervisor.json
 #     fleet-supervisor --endpoint-for <r> -> the endpoint any given root would take
 #
 #   exit 0  answered
-#   exit 2  a usage error, an invalid declaration, an unresolvable root, or a root that cannot be
-#           written into the diagnostic record
-#   exit 3  the declaration could not be READ - `project-conf' itself failed. Distinct from 2
-#           because a reader's failure is not a fact about the project: 2 means a value was read
-#           and refused, and always prints that value on stdout, so an exit 2 carrying nothing is
-#           a lie a caller cannot detect (cb-nc8).
+#   exit 2  a usage error, an unresolvable root, or a root that cannot be written into the
+#           diagnostic record
 #
-# THE ONE PLACE either implementation answers this. `emacs/cerebro.el' and `fleet-view/' both call
-# this script rather than parsing project.conf or hashing a root themselves. That is the whole
-# reason a lease is safe to hold across two languages: a port or an identity computed twice can
-# disagree once, and a disagreement here is two supervisors on one fleet, each starting the
-# sessions the other cannot see.
+# THE ONE PLACE the lease's address is computed. `fleet-view/' calls this script rather than
+# hashing a root itself, so a port or an identity computed twice cannot disagree once - and a
+# disagreement here is two supervisors on one fleet, each starting the sessions the other cannot
+# see.
 #
-# ABSENCE MEANS `emacs', which is the backwards-compatibility guarantee for every consumer whose
-# project.conf predates this key. It is `project-conf''s ordinary missing-value contract, so an
-# explicitly empty value means `emacs' too.
-#
-# AN INVALID VALUE IS FAIL-CLOSED AND LOUD, and this is the one place it must not behave like
-# `project-conf'. Every other reader in this repository treats a value it does not understand as a
-# reason to fall back; here a fallback would silently keep supervision in Emacs after the navigator
-# moved it to the TUI - or, worse, hand it back to Emacs while a TUI still holds the lease. So a
-# value that is not exactly `emacs' or `tui' exits 2, says the exact sentence on stderr, and prints
-# THE RAW OFFENDING VALUE ALONE on stdout. Two channels because two readers: a navigator reads the
-# sentence, and a view that has to render `invalid fleet_supervisor "<value>"' takes the value from
-# stdout rather than parsing English out of stderr.
+# THERE IS NOTHING TO DECLARE (cb-abs.2). With one window, `fleet_supervisor' is gone: this script
+# no longer reads the declaration, no longer exits 3, and a bare invocation is a usage error rather
+# than a default answer to "which one did you mean". A project.conf that still carries the key is
+# not read at all and nothing is said about it.
 #
 # THE SHARED ROOT, NOT THE ENCLOSING ONE. Every worktree of one checkout supervises the same
 # sessions, so all four answers come from `consumer-root --shared', the same rule `project-conf'
@@ -53,10 +39,6 @@
 # handing anybody. 20000-32767 is entirely below the ephemeral ranges of both platforms the fleet
 # runs on (macOS starts at 49152).
 #
-# THE ENDPOINT, IDENTITY AND RECORD ANSWER EVEN WHEN THE DECLARATION IS INVALID. That is not an
-# oversight - it is when a view most needs them, because "who holds this lease" is the question an
-# invalid declaration leaves open.
-#
 # IT WRITES NOTHING. Not the state directory, not the record, not a declaration it failed to find.
 # The record is written by whichever implementation actually binds the listener, and only after it
 # binds; this script only says where it goes.
@@ -65,7 +47,7 @@ set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
 usage() {
-  echo "usage: fleet-supervisor [--endpoint | --identity | --record | --endpoint-for <root>]" >&2
+  echo "usage: fleet-supervisor (--endpoint | --identity | --record | --endpoint-for <root>)" >&2
   exit 2
 }
 
@@ -125,7 +107,7 @@ identity_of() {
   printf '%s\n' "$root"
 }
 
-case "${1:---declaration}" in
+case "${1-}" in
   --endpoint-for)
     [[ $# -eq 2 && -n "$2" ]] || usage
     endpoint_for "$2"
@@ -144,30 +126,6 @@ case "${1:---declaration}" in
     [[ $# -eq 1 ]] || usage
     root="$(shared_root)" || exit 2
     printf '%s/.cerebro/state/supervisor.json\n' "$root"
-    ;;
-  --declaration)
-    [[ $# -eq 0 ]] || usage
-    # `project-conf' says on stderr which branch it took, which is noise here: this script's stderr
-    # is the invalid-declaration sentence and nothing else. Its own failures are not swallowed
-    # though - a declaration left at the retired path is a `project-conf' refusal, and is re-run so
-    # its own diagnosis reaches the caller rather than being replaced by a guess. Any such failure
-    # leaves here as exit 3, never 2: this script has no value to print, and an exit 2 carrying
-    # nothing is a lie the caller cannot detect (cb-nc8).
-    set +e
-    value="$("$here/project-conf" fleet_supervisor emacs 2>/dev/null)"
-    status=$?
-    set -e
-    if [[ $status -ne 0 ]]; then
-      "$here/project-conf" fleet_supervisor emacs >/dev/null || true
-      exit 3
-    fi
-    case "$value" in
-      emacs|tui) printf '%s\n' "$value" ;;
-      *)
-        printf '%s\n' "$value"
-        echo "fleet-supervisor: invalid fleet_supervisor \"$value\" - expected \"emacs\" or \"tui\"" >&2
-        exit 2 ;;
-    esac
     ;;
   *)
     usage

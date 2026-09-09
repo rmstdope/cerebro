@@ -195,7 +195,7 @@ mod tests {
     fn a_view_that_may_act_keeps_one_watcher() {
         assert_eq!(prune_action(false, true), PruneAction::Start);
         assert_eq!(prune_action(true, true), PruneAction::Leave);
-        // A drain is not a failure, and a read-only view keeps none at all.
+        // A read-only view keeps no watcher at all: the pruner is a writer.
         assert_eq!(prune_action(false, false), PruneAction::Stop);
         assert_eq!(prune_action(true, false), PruneAction::Stop);
     }

@@ -100,15 +100,12 @@ once does not start them in one breath; `role_start_spacing_<role> <seconds>` de
 one role, `0` means never space that role, and an absent key leaves the fleet view's own built-in
 number in force.
 
-`fleet_supervisor emacs|tui` says which fleet view may act on the checkout — start a session, nudge
-one, prune a worktree. Absent means `emacs`, which is what every project has had until now, so
-leaving it out changes nothing. The other view stays open beside it and reads: both may draw the
-fleet at the same time, and only the declared one acts. Exclusion is a socket the owner binds
-rather than a file it writes, so an owner that crashes releases immediately instead of leaving a
-lock somebody has to judge stale. A value that is neither word takes **both** views read-only and
-says so on screen, rather than one of them quietly assuming the default. Changing the declaration
-while sessions are running is safe: the old owner starts nothing more, keeps those sessions usable,
-and hands over when the last one ends.
+Which window may act on the checkout — start a session, nudge one, prune a worktree — is not
+declared at all: the first fleet view to open takes the checkout, and a second one open beside it
+draws everything and acts on nothing, saying so in its header. Exclusion is a socket the owner
+binds rather than a file it writes, so an owner that crashes releases immediately instead of
+leaving a lock somebody has to judge stale, and the second window takes over on `g` or on its next
+five-second tick.
 This repository's own `.cerebro/project.conf` is a commented example, and
 the header of `scripts/project-conf` states the format.
 
@@ -206,10 +203,10 @@ jump straight to the Fleet, Work and Session panes from any focus; the
 focused widget has a bright-blue thick-line border and `↑`/`↓`/`PgUp`/`PgDn` scroll only it. `g`
 refreshes both panes, and `q`, `Esc` or `Ctrl-C` quits.
 
-**What it may do is your project's declaration, not a property of the program.** With
-`fleet_supervisor tui` it operates the fleet: it hosts sessions, starts them on their triggers,
-ends a pass, runs the sweeps and prunes worktrees. With anything else it draws all of that and
-acts on none of it, and says so in its header. Building it needs Rust and Cargo (step 1); the first
+**What it may do is whether it holds the checkout's lease, not a property of the program.** The
+window that holds it operates the fleet: it hosts sessions, starts them on their triggers, ends a
+pass, runs the sweeps and prunes worktrees. A second window open on the same checkout draws all of
+that and acts on none of it, and says so in its header. Building it needs Rust and Cargo (step 1); the first
 run in a fresh checkout compiles the workspace, so give it a minute before deciding it has hung.
 
 ## Launchers

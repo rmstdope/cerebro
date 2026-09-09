@@ -775,7 +775,8 @@ fn lifecycle_hint(mode: &SupervisionMode) -> Option<&'static str> {
 enum HintRank {
     /// A clause offered on every screen whatever is on it, and therefore paid for on every
     /// screen. The first thing to go, and it goes ALONE: the ordinary hundred-column screen has
-    /// one cell of slack (cb-xhu.4.2), so an unconditional clause at any higher rank drops a
+    /// very little slack - `the_ordinary_screen_has_one_cell_of_slack_at_a_hundred_columns` is
+    /// where that number is pinned - so an unconditional clause at any higher rank drops a
     /// whole tier of hints the navigator asked by name to keep
     /// (`the_ordinary_screen_keeps_every_hint_at_a_hundred_columns`).
     Optional,
@@ -866,7 +867,9 @@ fn fit_hints(clauses: &[HintClause], used: usize, width: usize) -> String {
 ///
 /// The order is the drawn string, and it is the order the literal format strings this replaces
 /// had: the lifecycle clause between the movement hints and `x act`. Adding a hint is one row
-/// here plus a rank, never a width decision (cb-51u).
+/// here plus a rank, never a width decision (cb-51u) - and
+/// `no_screen_loses_a_required_hint_tier_at_its_own_width` is what says whether the row you added
+/// fits, naming the clause and the overspend if it does not.
 fn hint_clauses(app: &App) -> Vec<HintClause> {
     let mut clauses = vec![
         HintClause { text: "Tab/Shift-Tab/F1-F3 pane", rank: HintRank::Movement },
@@ -5290,6 +5293,73 @@ mod tests {
     /// sum, through the same function it uses.
     fn header_used(app: &App) -> usize {
         header_state_spans(app).iter().map(|span| span.content.width()).sum()
+    }
+
+    /// The guard this bead exists to add: no screen loses a hint tier it has to keep, and no
+    /// screen's line runs past its own terminal.
+    ///
+    /// The rows are the screens the three retrospectives actually broke, at the widths they broke
+    /// at - cb-41r (99), cb-5kk (100, 160) and cb-xhu.4.2 (100) - rather than every fixture in
+    /// this file. A guard nobody can read is one somebody deletes.
+    #[test]
+    fn no_screen_loses_a_required_hint_tier_at_its_own_width() {
+        let mut owned = populated();
+        owned.set_supervision(SupervisionMode::ReadOnly(ReadOnlyReason::OwnedBy(
+            SupervisorKind::Tui,
+        )));
+
+        let mut stale = work_app(WorkBuckets {
+            claimed: vec![bead("cb-123", Some(1), "Preserve session output")],
+            ..WorkBuckets::default()
+        });
+        stale.finish_work_refresh(Err(bd_failure()), at(86_400 + 5));
+
+        // `read-only` requires `Movement` and not `Optional`: the ordinary hundred-column screen
+        // drops the optional tier, which is what
+        // `the_ordinary_screen_keeps_every_hint_at_a_hundred_columns` has always asserted despite
+        // its name.
+        let rows: Vec<(&'static str, App, usize, HintRank)> = vec![
+            ("read-only", populated(), 100, HintRank::Movement),
+            ("read-only, another Tui owns supervision", owned, 100, HintRank::Kept),
+            ("supervising", supervising(), 100, HintRank::Kept),
+            ("supervising, wide", supervising(), 200, HintRank::Movement),
+            ("handing over, 3 live agents", handing_over(3), 100, HintRank::Kept),
+            ("work focus, cursor on a bead", pinned_app(), 160, HintRank::Cursor),
+            ("stale work", stale, 99, HintRank::Kept),
+        ];
+
+        for (label, app, width, required) in rows {
+            let budget =
+                HintBudget::measure(label, &hint_clauses(&app), header_used(&app), width);
+            assert!(
+                budget.chosen <= required,
+                "{}",
+                budget.report(required)
+            );
+            assert!(
+                budget.slack() >= 0,
+                "the terminal would cut this line in half (cb-41r)\n{}",
+                budget.report(required)
+            );
+        }
+    }
+
+    /// The ordinary read-only screen's remaining slack at a hundred columns, as a number.
+    ///
+    /// This PINS A MEASUREMENT, not a policy. All three sightings of the overflow were this
+    /// screen, and the number is what a plan needs before it fixes a clause literal. If it
+    /// changes, the report in the failure message carries the new one - putting it here and in
+    /// the test's name is fine, as long as the change was deliberate.
+    #[test]
+    fn the_ordinary_screen_has_one_cell_of_slack_at_a_hundred_columns() {
+        let app = populated();
+        let budget = HintBudget::measure(
+            "read-only",
+            &hint_clauses(&app),
+            header_used(&app),
+            HINT_BUDGET_COLUMNS,
+        );
+        assert_eq!(budget.slack(), 1, "{}", budget.report(HintRank::Movement));
     }
 
     /// An overspent budget says which clause, what it costs, and by how many cells the line is

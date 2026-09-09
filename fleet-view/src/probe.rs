@@ -4,7 +4,6 @@
 //! the integration targets are separate crates and cannot see a `#[cfg(test)]` item here.
 
 use std::net::{Ipv4Addr, SocketAddr, TcpListener};
-use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use ratatui::text::Line;

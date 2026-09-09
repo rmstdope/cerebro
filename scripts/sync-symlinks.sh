@@ -232,7 +232,7 @@ sync_links() {
 
 # Until cb-pq4 this script linked the consumer's root `.dir-locals.el' to
 # templates/consumer-dir-locals.el, so that `M-x cerebro' existed for every contributor. That
-# template is gone - the fleet view has its own command, `scripts/cerebro' - and every consumer
+# template is gone - the fleet view has its own command, `scripts/cerebro-tui' - and every consumer
 # that ever synced still carries the link, which now dangles and which Emacs complains about on
 # every file opened. So the link that names the retired template is removed here, and ONLY that
 # one: a `.dir-locals.el' the project wrote itself, or linked somewhere of its own, is the

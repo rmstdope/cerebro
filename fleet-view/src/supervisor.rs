@@ -418,7 +418,7 @@ fn json_string(value: &str) -> String {
 mod tests {
     use super::*;
     use crate::probe;
-    use std::net::{Ipv4Addr, SocketAddrV4};
+    use std::net::Ipv4Addr;
 
     // --- the shared transition table ------------------------------------------------------------
 
@@ -589,16 +589,6 @@ mod tests {
 
     // --- the lease itself -----------------------------------------------------------------------
 
-    // Between a probe closing and the caller binding, anything on the machine may take the port -
-    // so NOTHING below asserts on a bind that used `probe::free_endpoint` directly. Setting up a
-    // lease goes through `acquire_on_a_free_port`, which retries, and a test that needs a foreign
-    // listener binds it on port 0 and asks it what it got. Two of these cases were written the
-    // obvious way first and failed about one run in ten, which is the kind of test this repository
-    // refuses to ship.
-    fn endpoint(port: u16) -> SocketAddr {
-        SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port))
-    }
-
     /// A held lease, on whatever loopback port was actually free. A lost race here is setup
     /// noise, never the thing under assertion, so it simply tries the next port.
     fn acquire_on_a_free_port(
@@ -676,17 +666,6 @@ mod tests {
         acquire_once_free(addr, &record, "/repos/x", SupervisorKind::Emacs);
     }
 
-
-    /// Is this pid still running? `kill -0`, which needs no crate and no unsafe block.
-    fn alive(pid: i32) -> bool {
-        std::process::Command::new("kill")
-            .args(["-0", &pid.to_string()])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map(|status| status.success())
-            .unwrap_or(false)
-    }
 
     #[test]
     fn a_record_from_another_checkout_is_a_collision_not_a_takeover() {

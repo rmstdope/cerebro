@@ -154,8 +154,8 @@ ux_agreed_count() {
 #
 # Two overshoots are accepted rather than guessed at: a builder the navigator retired with `f' while
 # it was waiting is disarmed, and a `dead' one refused its launch - neither is visible to the shell,
-# since armed-ness lives only in one running fleet view. Both count, and the cost is one bead built when the
-# navigator next presses `s'; the buffer is a floor, not a ceiling.
+# since armed-ness lives only in one running fleet view. Both count, and the cost is one bead built
+# when the navigator next presses `s'; the buffer is a floor, not a ceiling.
 #
 # The shared checkout, never the enclosing tree: from a worktree `.cerebro/state' is the worktree's,
 # while the fleet writes its stop flags into the checkout it actually runs in.

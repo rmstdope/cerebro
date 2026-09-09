@@ -336,7 +336,7 @@ the commit sha; and then exactly these two commands.
 >
 > ```bash
 > git push origin <default_branch>
-> .claude/cerebro/scripts/cerebro      # then press s on a planner's row
+> .claude/cerebro/scripts/cerebro-tui  # then press s on a planner's row
 > ```
 
 No written summary of the project. It is already in `CLAUDE.md` and in the epics' own descriptions,

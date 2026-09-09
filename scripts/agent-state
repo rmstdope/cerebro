@@ -54,7 +54,8 @@
 # survives a state change and a working session reads as one whose turn ended.
 #
 # Writes atomically through `scripts/state-write.sh' - one whole object built elsewhere and renamed
-# over the target - so the fleet view never reads a torn file. That library, not this script, is where
+# over the target - so the fleet view never reads a torn file. That library, not this script, is
+# where
 # the scratch-name rule for a file two processes write now lives.
 
 set -euo pipefail

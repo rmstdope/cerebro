@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
 # The one place the fleet is declared: name, role, and (derived) kind, one agent per line. Every
-# other reader — `scripts/launch`, `scripts/agent-state`, `fleet-view/src/model.rs`, and the tests — reads
-# this file rather than keeping its own copy, which is what let those copies drift from each other
-# and from the launchers before this script existed.
+# other reader — `scripts/launch`, `scripts/agent-state`, `fleet-view/src/model.rs`, and the tests
+# — reads this file rather than keeping its own copy, which is what let those copies drift from
+# each other and from the launchers before this script existed.
 #
 # Order matters: interactive agents first, then implementers, in the order the fleet view shows them
 # and the order Cerebro picks the next unused implementer name from. Keep new entries in that shape.

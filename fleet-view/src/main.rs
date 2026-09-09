@@ -4730,6 +4730,79 @@ mod main_tests {
         app
     }
 
+    /// A row whose role is one of the two staged planning roles (cb-lz5).
+    fn staged_row(
+        name: &str,
+        role: &str,
+        state: cerebro_tui::model::RowState,
+    ) -> cerebro_tui::model::FleetRow {
+        cerebro_tui::model::FleetRow {
+            role: role.into(),
+            ..fleet_row(name, cerebro_tui::model::AgentKind::Interactive, state)
+        }
+    }
+
+    /// cb-m0c increment 1 — a design agent's row comes back to standby.
+    ///
+    /// Regression cover rather than a fix: `Supervision::End` deliberately does not disarm, so an
+    /// armed name whose pass has ended reads `Standby` again on the next fleet read. The promise
+    /// is what the bead is named after, and nothing pinned it.
+    #[test]
+    fn a_finished_ux_pass_leaves_the_row_on_standby() {
+        for role in ["ux", "build-design"] {
+            let dir = tempfile::tempdir().unwrap();
+            let paths = scratch(dir.path(), "sleep 5");
+            let now = Utc::now();
+            let mut host = SessionHost::default();
+            hosted(&mut host, &paths, "Xavier");
+
+            let log_root = tempfile::tempdir().unwrap();
+            let decisions = log_root.path().join(".cerebro/state/decisions.jsonl");
+            let mut logger = Logger::new(log_root.path());
+            logger.set_enabled(true);
+
+            let mut app = App::with_supervision(supervising());
+            app.armed.insert("Xavier".to_string());
+            app.finish_refresh(
+                Ok(vec![cerebro_tui::model::FleetRow {
+                    since: Some(now - chrono::Duration::seconds(31)),
+                    bead: Some("cb-m0c".into()),
+                    ..staged_row("Xavier", role, cerebro_tui::model::RowState::Waiting)
+                }]),
+                now,
+            );
+
+            supervise(
+                &mut app,
+                &mut host,
+                &mut cerebro_tui::triggers::StartLedger::default(),
+                &mut logger,
+                &paths,
+                now,
+                Instant::now(),
+            );
+            assert!(!host.supervisable("Xavier"), "{role}: the finished pass was ended");
+            assert!(app.armed.contains("Xavier"), "{role}: ending a pass never disarms");
+
+            // The next fleet read: no state file, no process.
+            app.finish_refresh(
+                Ok(vec![staged_row("Xavier", role, cerebro_tui::model::RowState::Dead)]),
+                now,
+            );
+            assert_eq!(
+                app.fleet_rows()[0].state,
+                cerebro_tui::model::RowState::Standby,
+                "{role}: an armed name that ended a pass is on standby again"
+            );
+
+            let written = std::fs::read_to_string(&decisions).unwrap_or_default();
+            assert!(written.contains("\"end\""), "{role}: the end is recorded");
+            assert!(!written.contains("\"disarm\""), "{role}: and no disarm beside it");
+
+            settle_gone(&mut host, "Xavier");
+        }
+    }
+
     #[test]
     fn a_standby_planner_whose_buffer_is_short_is_started() {
         let dir = tempfile::tempdir().unwrap();

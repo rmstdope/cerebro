@@ -1,0 +1,125 @@
+<!doctype html><html lang="en"><head>
+<meta charset="utf-8">
+<style>
+  :root { --ink:#1b1f23; --dim:#6a737d; --line:#e1e4e8; --bad:#b31d28; --good:#22863a; --bg:#fafbfc; }
+  body { font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+         color: var(--ink); margin: 0; padding: 2.5rem 2rem 5rem; max-width: 62rem; }
+  h1 { font-size: 1.5rem; margin: 0 0 .3rem; }
+  h2 { font-size: 1.1rem; margin: 2.4rem 0 .4rem; padding-top: 1.2rem; border-top: 1px solid var(--line); }
+  h3 { font-size: .95rem; margin: 1.5rem 0 .2rem; }
+  p.lede { color: var(--dim); margin: 0 0 2rem; }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+  pre { background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+        padding: .7rem .9rem; overflow-x: auto; margin: .4rem 0; white-space: pre-wrap; }
+  pre.term { background:#1b1f23; color:#e6edf3; border-color:#1b1f23; }
+  pre.term .warn { color:#e3b341; } pre.term .err { color:#ff7b72; } pre.term .dim { color:#8b949e; }
+  .note { color: var(--dim); font-size: 13.5px; }
+  .cmt { color: var(--dim); }
+  .key { color:#2f6f9f; font-weight:600; }
+  table { border-collapse: collapse; width: 100%; margin-top: .6rem; font-size: 13px; }
+  th, td { text-align: left; border-bottom: 1px solid var(--line); padding: .4rem .5rem; vertical-align: top; }
+  th { color: var(--dim); font-weight: 600; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
+  .win { border:1px solid var(--line); border-radius:6px; padding:.6rem .8rem; margin:.4rem 0; }
+</style>
+<title>cb-94y — agents.conf, the agreed shape</title></head><body>
+<h1>cb-94y — <code>agents.conf</code>, the agreed shape</h1>
+<p class="lede">Agreed over three rounds on 2026-09-10. Which tool an agent runs on stops being one
+declaration for the whole checkout and becomes a per-agent choice, written by hand beside that
+agent's model and effort, in a file called <code>agents.conf</code>.</p>
+
+<h2>The file</h2>
+<p class="note">This is what ships, filled in, so a checkout that never touches it behaves exactly as
+it does today.</p>
+<pre><span class="cmt"># What each agent runs on: which tool, which model, how hard it thinks.
+#
+# One line per agent. The most specific line that names an agent is the one it gets, whole:
+# its own name first, then its role, then "default". Anything that line doesn't say is left
+# to the tool itself.
+#
+#     &lt;agent name | role | default&gt;   tool=...  [model=...] [effort=...]
+#
+# Every line must say its tool. Every start prints the line it used.
+# Anything from a # to the end of a line is a comment.</span>
+
+default      tool=claude  model=opus
+implementer  tool=claude  model=sonnet
+planner      tool=claude  model=opus     effort=high
+architect    tool=claude  model=opus     effort=high
+</pre>
+
+<h3>And a fleet that has been edited</h3>
+<pre>default      tool=claude   model=opus
+implementer  tool=claude   model=sonnet
+
+<span class="cmt"># one planner on the other tool, to compare them on the same queue</span>
+Beast        tool=copilot  model=gpt-5.5  effort=high
+Xavier       tool=claude   model=opus     effort=high
+
+<span class="cmt"># let claude pick its own model here</span>
+Psylocke     tool=claude
+</pre>
+
+<h2>How a line is chosen</h2>
+<p class="note">The most specific line that names the agent wins <b>outright</b>. The others are not
+consulted, and anything the winning line does not say is left to the tool itself.</p>
+<table>
+<tr><th>Agent</th><th>Line used</th><th>Runs on</th><th>Model</th><th>Effort</th></tr>
+<tr><td>Beast <span class="note">(a planner)</span></td><td><code>Beast</code></td><td>copilot</td><td>gpt-5.5</td><td>high</td></tr>
+<tr><td>Psylocke <span class="note">(a verifier)</span></td><td><code>Psylocke</code></td><td>claude</td><td>claude's own</td><td>claude's own</td></tr>
+<tr><td>Rogue <span class="note">(an implementer)</span></td><td><code>implementer</code></td><td>claude</td><td>sonnet</td><td>claude's own</td></tr>
+<tr><td>Cypher <span class="note">(a reviewer — nothing names it)</span></td><td><code>default</code></td><td>claude</td><td>opus</td><td>claude's own</td></tr>
+</table>
+<p class="note">Two agents of the same role may now be on two different tools at the same time, in
+the same checkout. That is the whole point of the change.</p>
+
+<h2>Every state, and every word</h2>
+
+<h3>An agent starts</h3>
+<pre class="term">launch: agents.conf ("Beast") -&gt; copilot, gpt-5.5 at high effort</pre>
+<p class="note">Printed on every start without exception, so a session behaving oddly three days
+later is traceable to the file nobody remembers editing.</p>
+
+<h3>An agent no line names</h3>
+<pre class="term">launch: agents.conf ("default") -&gt; claude, opus</pre>
+
+<h3>A line that leaves the model out</h3>
+<pre class="term">launch: agents.conf ("Psylocke") -&gt; claude, claude's own model and effort</pre>
+
+<h3>There is no file at all</h3>
+<pre class="term">launch: no agents.conf - claude picks its own model and effort</pre>
+
+<h3>A line asks for a tool nobody has heard of</h3>
+<pre>Beast        tool=copilo  model=gpt-5.5</pre>
+<pre class="term">launch: <span class="err">agents.conf ("Beast"): tool=copilo is not a tool I know. Try: claude, copilot.</span></pre>
+<div class="win"><b>In the fleet window</b><br>
+<pre style="margin:.4rem 0">Beast  planner  <span style="color:#b31d28">dead</span>  agents.conf ("Beast"): tool=copilo is not a tool I know</pre>
+<span class="note">That agent does not start and its row carries the reason until the line is fixed.
+The rest of the fleet is untouched.</span></div>
+
+<h3>A line does not say which tool</h3>
+<pre>Beast        model=fable</pre>
+<pre class="term">launch: <span class="err">agents.conf ("Beast"): no tool. Every line must say one. Try: claude, copilot.</span></pre>
+
+<h3>A setting name is misspelt</h3>
+<pre>Beast        tool=claude  modle=fable</pre>
+<pre class="term">launch: <span class="err">agents.conf ("Beast"): modle is not a setting I know. Try: tool, model, effort.</span></pre>
+
+<h3>A line names an agent that is not in the fleet</h3>
+<pre>Wolverine    tool=claude  model=sonnet</pre>
+<p class="note">Nothing at all is said. No session is ever started under that name, so the line never
+matches and never refuses anything.</p>
+
+<h3>A model the tool does not have</h3>
+<pre class="term">launch: agents.conf ("Beast") -&gt; claude, gpt-5.5 at high effort</pre>
+<p class="note">Started. Only the tool itself can say whether a model exists, and it will, in its own
+words. Nothing here second-guesses it.</p>
+
+<h3>A checkout that still holds the old file</h3>
+<p class="note">Nothing is said. A <code>models.conf</code> left behind, and the old fleet-wide tool
+declaration in the project settings, are simply not read.</p>
+
+<h2>The rule behind the three refusals</h2>
+<p class="note">Nothing ever runs on a setting nobody wrote. A line that means something other than
+what it says stops that agent, where a line that is merely optimistic — a model this tool may not
+have — starts it and lets the tool answer.</p>
+</body></html>

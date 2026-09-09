@@ -797,6 +797,55 @@ struct HintClause {
     rank: HintRank,
 }
 
+/// What a clause costs the line beyond its own text.
+///
+/// It LEADS each clause rather than joining pairs, which is how `fit_hints` has always built the
+/// string. That is load-bearing for the arithmetic: because every drawn piece begins with it, the
+/// width of the concatenation is the plain sum of the pieces' widths, with no off-by-one for the
+/// joins. A future change that put a separator BETWEEN clauses instead would silently make
+/// `tier_width` disagree with the string `fit_hints` builds.
+const HINT_SEPARATOR: &str = " | ";
+
+/// The width the hint budget is measured against.
+///
+/// Deliberately its own constant and NOT [`SPLIT_COLUMNS`], which is also 100 today: that one is
+/// where the screen splits into a left column and a session pane. The two agreeing is a
+/// coincidence, not a fact either should inherit from the other.
+const HINT_BUDGET_COLUMNS: usize = 100;
+
+impl HintClause {
+    /// The cells this clause costs when it is drawn, its leading separator included.
+    ///
+    /// Cells and not chars or bytes: `⇧`, `←`, `→` and `·` all appear in clause texts, and what
+    /// the budget is about is what the terminal draws.
+    fn width(&self) -> usize {
+        HINT_SEPARATOR.width() + self.text.width()
+    }
+}
+
+/// The cells the clauses at or above `floor` cost together, separators included.
+fn tier_width(clauses: &[HintClause], floor: HintRank) -> usize {
+    clauses
+        .iter()
+        .filter(|clause| clause.rank >= floor)
+        .map(HintClause::width)
+        .sum()
+}
+
+/// The floor [`fit_hints`] settles on for `clauses` beside `used` cells at `width`.
+///
+/// The lowest of `Optional`, `Movement`, `Cursor` whose join fits, and `Kept` when none of them
+/// does. `fit_hints` is this plus the join, so the fitter and anything that measures the budget
+/// can never disagree about which tier a screen gets.
+fn hint_floor(clauses: &[HintClause], used: usize, width: usize) -> HintRank {
+    for floor in [HintRank::Optional, HintRank::Movement, HintRank::Cursor] {
+        if used + tier_width(clauses, floor) <= width {
+            return floor;
+        }
+    }
+    HintRank::Kept
+}
+
 /// The hint string that fits `width` cells beside the `used` cells already drawn.
 ///
 /// Drops the lowest rank present, whole, and tries again. `HintRank::Kept` is never dropped, so a
@@ -805,21 +854,12 @@ struct HintClause {
 /// The leading `" | "` belongs to each clause: `header_line` pushes this as a span with no
 /// separator of its own.
 fn fit_hints(clauses: &[HintClause], used: usize, width: usize) -> String {
-    let join = |floor: HintRank| -> String {
-        clauses
-            .iter()
-            .filter(|clause| clause.rank >= floor)
-            .map(|clause| format!(" | {}", clause.text))
-            .collect()
-    };
-    for floor in [HintRank::Optional, HintRank::Movement, HintRank::Cursor] {
-        let text = join(floor);
-        // Cells, not chars: `·` and the arrows are one cell each here, but the rule is the measure.
-        if used + text.width() <= width {
-            return text;
-        }
-    }
-    join(HintRank::Kept)
+    let floor = hint_floor(clauses, used, width);
+    clauses
+        .iter()
+        .filter(|clause| clause.rank >= floor)
+        .map(|clause| format!("{HINT_SEPARATOR}{}", clause.text))
+        .collect()
 }
 
 /// Every clause this screen offers, in the order they are drawn.
@@ -5148,6 +5188,25 @@ mod tests {
         for (label, clauses, used, width, expected) in cases {
             assert_eq!(fit_hints(clauses, used, width), expected, "{label}");
         }
+    }
+
+    /// A clause costs its own text plus the `" | "` that leads it, in CELLS.
+    ///
+    /// Cells and not chars: `⇧`, `←` and `→` are multi-byte and the arithmetic the hint budget
+    /// does is about what the terminal draws.
+    #[test]
+    fn a_clause_costs_its_text_and_its_separator() {
+        assert_eq!(
+            HintClause { text: "g refresh", rank: HintRank::Kept }.width(),
+            " | g refresh".width()
+        );
+        let size = HintClause { text: "⇧←→ size", rank: HintRank::Optional };
+        assert_eq!(size.width(), " | ⇧←→ size".width());
+        assert_ne!(
+            size.width(),
+            " | ⇧←→ size".len(),
+            "bytes are not cells, and the budget is cells"
+        );
     }
 
     /// Which clauses each screen offers, in the order they are drawn, with their ranks.

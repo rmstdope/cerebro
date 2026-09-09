@@ -26,7 +26,9 @@ urgent piece of work whose experience is agreed, read that record and its mockup
 architecture, the files, the increments, the tests and the verification, file the plan where an
 implementer reads it, and end the pass — and everything about how that is done lives there.
 
-**One piece of work per pass.** When the plan is filed, the pass ends, whatever else is waiting.
+**One piece of work per pass.** When the plan is filed, the pass ends, whatever else is waiting —
+with the single exception the skill states, a P0, which pre-empts the buffer and is planned in the
+pass that found it however many there are.
 
 ## Ending a pass
 
@@ -54,4 +56,4 @@ question sandwich — is in the skill's *Telling the fleet view what you are doi
 - **Never take a candidate out of a family another build-design agent owns** — except a P0, which is
   planned wherever it lives.
 - **Never branch in the main checkout.**
-- **Never take a second piece of work in one pass.**
+- **Never take a second piece of work in one pass** — except a P0, which pre-empts the buffer.

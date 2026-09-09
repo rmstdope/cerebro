@@ -198,7 +198,8 @@ whatever the buffer says:
   | jq -r '.[] | select(.priority==0) | "\(.id)\t\(.title)"'
 ```
 
-**Everything else is one piece of work per pass.** When the plan is filed, end the pass.
+**Everything else is one piece of work per pass.** When the plan is filed, end the pass — and when
+there was more than one P0, the pass ends once the last of them is filed.
 
 ## Choosing what to take
 
@@ -299,8 +300,10 @@ parent, and retyping the parent as an epic. Two things are this stage's own:
   record*.
 
   ```bash
-  bd show <id> --json | jq -r '(if type=="array" then .[0] else . end).acceptance' > /tmp/agreed-<id>.md
-  bd update <child> --acceptance "$(cat /tmp/agreed-<id>.md)"
+  agreed="$(mktemp)"          # `mktemp` here for the same reason as the reclaim loop above
+  bd show <id> --json | jq -r '(if type=="array" then .[0] else . end).acceptance' > "$agreed"
+  bd update <child> --acceptance "$(cat "$agreed")"
+  rm -f "$agreed"
   ```
 
   **Quoted.** `bd update` has no `--acceptance-file` and no stdin form, and an unquoted expansion
@@ -472,6 +475,10 @@ buffer says afterwards. A send-back ends a pass the same way, and so does a pass
 take. Say in one line what the pass did and **stop producing output**. Never a sleep loop inside your
 own session, and never a second piece of work.
 
+**The one exception is a P0**, and it is the whole of *How much is waiting*'s pre-emption: when
+`stage-candidates` returned more than one, they are all planned in this pass, however many there
+are, and the pass ends when the last of them is filed. Nothing else earns a second piece of work.
+
 ## What you never do
 
 - **Never agree an experience, and never edit a bead's `acceptance` field.** The one thing you may do
@@ -486,4 +493,5 @@ own session, and never a second piece of work.
 - **Never touch a hold you did not set**, and never leave your own behind.
 - **Never take a candidate out of a family another build-design agent owns** — except a P0.
 - **Never branch in the main checkout.**
-- **Never take a second piece of work in one pass.**
+- **Never take a second piece of work in one pass** — except a P0, which pre-empts the buffer: every
+  P0 waiting for a build design is planned in the pass that found it.

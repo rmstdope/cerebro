@@ -36,13 +36,10 @@
 //! issue, and an hourly floor per role. Both JSONL logs remain cb-kcs.4.4's.
 //!
 //! Since cb-kcs.1 it may hold ONE piece of state - the supervision lease
-//! (`supervisor`), a bound loopback listener that says which fleet view a
-//! project has declared may act on this checkout. Holding it is not acting:
-//! this crate takes the lease when `.cerebro/project.conf` says `tui` and
-//! then does nothing further with it, because the sessions, the lifecycle
-//! keys and the triggers are `cb-kcs.2` onwards. With the declaration absent
-//! or `emacs` - which is every consumer today, this one included - the lease
-//! is Emacs's and this crate is exactly the reader it always was. The bead panel is `cb-vyp.3`; since cb-vyp.2
+//! (`supervisor`), a bound loopback listener that says which window may act on
+//! this checkout. Since cb-abs.2 that is the whole of the rule: there is
+//! nothing to declare, the first window open takes the lease, and a second one
+//! on the same checkout draws everything and acts on nothing. The bead panel is `cb-vyp.3`; since cb-vyp.2
 //! this crate also carries the screen itself - the pure parsing/derivation
 //! (`model`), the impure readers that feed it (`readers`), the display state
 //! and refresh schedule (`app`) and the renderer (`ui`). The binary in

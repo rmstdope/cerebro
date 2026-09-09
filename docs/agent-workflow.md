@@ -64,11 +64,10 @@ Everything below can be done from a terminal, and almost nobody does. The fleet 
 every agent on the roster with its state, the bead or PR it is on, and how long it has been there.
 
 **Whether this window operates the fleet** — every key below, every trigger, every stop flag and
-every state file deleted — is the project's own declaration: `fleet_supervisor emacs|tui` in
-`.cerebro/project.conf`, and this repository declares `tui`. A window that is not the owner reads
-and draws and does nothing else, and says so in its header; only one process can hold the lease at
-a time even when two are open on one checkout. `docs/cerebro-supervision.md` is how supervision
-moves.
+every state file deleted — is whether it holds the checkout's lease. The first one open takes it;
+a second window on the same checkout reads and draws and does nothing else, and says so in its
+header. There is nothing to declare and nothing to move: close the owner and the other takes over
+on `g` or on its next five-second tick.
 
 | Key | Does |
 |---|---|
@@ -629,8 +628,7 @@ bd update <id> --remove-label human                        # back to a planner
 ## Watching without interfering
 
 The fleet view is the short answer — the agent list, the bead panel and the sweeps in one window,
-and where a project declares `fleet_supervisor tui` as this one does, it is also the view that
-acts:
+and the window holding the checkout's lease is also the one that acts:
 
 ```bash
 .claude/cerebro/scripts/cerebro-tui     # needs cargo; anywhere inside the consumer
@@ -639,11 +637,11 @@ acts:
 It draws the same fleet rows and the same six queues — Claimed, Planned unclaimed, Being planned,
 Unplanned, Waiting on you, Merged unverified — as two separately bordered widgets stacked one above
 the other, Fleet on top and Work below, each scrolling independently of the other. Its header says
-what it is allowed to do, and says nothing in the ordinary case: `Cerebro — read-only` in a project
-that has not moved supervision — exactly what it has always said — and `Cerebro — supervising` in
-one that declared `fleet_supervisor tui`. The longer spellings are spent only where there is
-something to say, such as `Cerebro — read-only; another Ratatui process owns supervision` when a
-second one is already running. Fleet refreshes
+what it is allowed to do, in one of exactly four spellings: `Cerebro — starting` for the moment
+before it has the lease, then `Cerebro — supervising`. The other two are spent where there is
+something to say — `Cerebro — read-only; another window is driving this fleet` when a second one is
+already running, and `Cerebro — read-only; this window could not take charge of the fleet` when the
+lease could not be taken at all. Fleet refreshes
 every five seconds and Work every thirty. `Tab`/`Shift-Tab` swap which widget is focused, and `F1`/`F2`/`F3` jump
 straight to the Fleet, Work and Session panes from any focus; the
 focused one draws a bright-blue thick-line border and `↑`/`↓`/`PgUp`/`PgDn` scroll only it — and
@@ -655,9 +653,8 @@ empty. `g` refreshes both panes regardless of focus, `q`/`Esc`/`Ctrl-C` quits. I
 two readers fails, that pane keeps its last good data and says when it went stale; the other
 carries on.
 
-Whether `s`, `f` and `k` act is the declaration. The keys that write to the board rather than to
-this checkout's sessions, `x` and the priority keys, act either way; `docs/cerebro-supervision.md`
-is how supervision moves.
+Whether `s`, `f` and `k` act is whether this window holds the lease. The keys that write to the
+board rather than to this checkout's sessions, `x` and the priority keys, act either way.
 
 In a terminal:
 

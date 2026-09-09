@@ -48,7 +48,7 @@ while IFS= read -r path; do
       exit 0
       ;;
     docs/*)
-      # Nothing in tests/, tests/gate or emacs/*.el opens anything else under docs/.
+      # Nothing in tests/ or tests/gate opens anything else under docs/.
       ;;
     README.md)
       # Read by nobody: the reason, for whoever edits this list next.

@@ -131,9 +131,7 @@ aside first.
 
 Not prose — files, each tracked so that every clone has it.
 
-- `.cerebro/project.conf` — this project's name, default branch, audience, **which fleet view may
-  supervise** (`fleet_supervisor emacs|tui`, absent means `emacs` — see *fleet-view/* below and
-  `scripts/fleet-supervisor`), which paths are
+- `.cerebro/project.conf` — this project's name, default branch, audience, which paths are
   the application, which agent CLI its sessions run on (`agent_cli`, answered by
   `scripts/agent-cli` — `claude` or, since cb-d59.6, `copilot`, both runnable rather than one
   planned; absent means `claude`), and the gate. Both gates name `tests/gate`, which runs exactly what
@@ -520,7 +518,7 @@ never drawn.
 
 Since cb-kcs.5.2 it runs the supervisor's last two unattended jobs as well. It keeps one
 `prune-worktrees.sh --watch` child alive beside itself on a five-second clock while it may act,
-kills it when it may not — a drain is a handover, and the pruner is a writer — and says
+kills it when it may not — the pruner is a writer — and says
 `Worktree pruning stopped: <cause>` in **red** in the header's notice slot when the child will not
 start or has died, once and then again every ten minutes while it stays broken (the cost of
 swallowing it is worktrees quietly not being pruned). And it types the triage line into an
@@ -609,13 +607,13 @@ the row that is drawn cannot come from two pieces of arithmetic. `sorted_by_prio
 `sorted_by_recency`, `paused_age`, `SectionKind` and `WORK_ROWS_PER_SECTION` live in `app.rs` for
 that reason.
 
-**Exactly one view supervises, and `.cerebro/project.conf` says which** (`fleet_supervisor
-emacs|tui`, absent means `emacs`, so every consumer that predates the key is untouched).
-`scripts/fleet-supervisor` is the one place either implementation reads it, and the one place the
-lease's address is computed — a port derived from the *shared* root, so every worktree of a
-checkout contends for one lease. An invalid value is fail-closed and loud: exit 2, the sentence on
-stderr, the raw word on stdout, and **both views go read-only** rather than one of them assuming
-the default.
+**Exactly one window supervises, and the lease is the whole of the rule** (cb-abs.2). There is
+nothing to declare: `fleet_supervisor` is gone, and so is every answer that named one of two
+implementations. `scripts/fleet-supervisor` keeps its name and is the one place the lease's address
+is computed — a port derived from the *shared* root, so every worktree of a checkout contends for
+one lease; a bare invocation is now a usage error, since every remaining question is an explicit
+flag. `supervisor::reconcile_supervision` is a function of one bool — hold the listener and this
+window supervises, otherwise try to take it — and there is no third answer.
 
 **The lease is a bound loopback listener and nothing else.** No pid file, no timestamp, no
 heartbeat, no lease duration, no stale-entry sweep: the kernel closes a listener when its holder
@@ -623,23 +621,25 @@ dies, so a crashed owner releases immediately and nobody has to decide it had cr
 timeout scheme has a window in which a live owner looks dead; this one has none.
 `.cerebro/state/supervisor.json` beside it is **diagnosis only** — it names who to put on the
 header or the mode line, and a missing, malformed or foreign record on a bound port is a visible
-lock error, never permission to take over. `tests/lib/supervisor.cases` is the transition table
-this implementation answers; two views disagreeing about ownership was a fleet with
-two supervisors or with none.
+lock error, never permission to take over. The rule it gates is one boolean, asserted beside
+`reconcile_supervision` itself: `tests/lib/supervisor.cases` is gone with the second
+implementation it existed to hold to the same table (cb-abs.2).
 
 A view that does not own the checkout starts, nudges, arms, triages and prunes nothing — the
 **session lifecycle** is what the lease gates. The bead panel's own keys are deliberately outside
 it: `x` on a sweep finding and the priority keys write to the shared board rather than to this
 checkout's sessions, they are the navigator's own act and each asks first, and a board `bd` runs
-the same from any machine whether or not this view supervises anything. A view whose
-declaration moved *while it hosts sessions* **drains** — it keeps the lease so the new owner cannot
-start duplicates, keeps those sessions usable, and releases when the last one ends. It shows this
-in its header line and nowhere else, which is the navigator's choice: ownership takes neither a row
-nor a Tab stop from Fleet and Work.
+the same from any machine whether or not this view supervises anything. **There is no drain**
+(cb-abs.2): with one window there is nobody to hand over to gracefully, so a view that does not
+hold the lease releases it at once, hosted sessions or not. Ownership shows in the header line and
+nowhere else, which is the navigator's choice: it takes neither a row nor a Tab stop from Fleet and
+Work, and the header says one of exactly four things — `Cerebro — starting`,
+`Cerebro — supervising`, `Cerebro — read-only; another window is driving this fleet` and
+`Cerebro — read-only; this window could not take charge of the fleet`.
 
 **The family is complete.** `cb-kcs.1` brought ownership, `.2` the PTYs, `.3` retirement, `.4` the
-triggers and `.5` the sweeps, the pruner, the triage line and the cutover itself. This repository
-declares `fleet_supervisor tui`.
+triggers and `.5` the sweeps, the pruner, the triage line and the cutover itself; `cb-abs` removed
+the second window and, with it, everything that existed to choose between two.
 
 One screen, **three** independently bordered, independently scrolling widgets since cb-kcs.2.1:
 Fleet, Work and Session, each with its own title, focus and scroll offset rather than one shared
@@ -761,9 +761,8 @@ pure half with plain data:
   answered from the ids the one board read already holds, so a childless epic partitions like any
   other bead; `scripts/work-beads`, whose list is scoped to one status, asks `bd children` instead). It is the Rust copy of the elisp rules, held to the same
   `tests/lib/session-args.cases` table as every other reader of the marker sentence.
-- `supervisor.rs` — ownership: the pure `reconcile_supervision`, held to
-  `tests/lib/supervisor.cases` the way `model.rs` is held to its own table, and `SupervisorLease`,
-  the bound listener that IS the lock.
+- `supervisor.rs` — ownership: the pure `reconcile_supervision`, one bool in and one mode out,
+  and `SupervisorLease`, the bound listener that IS the lock.
 - `readers.rs` — every file and subprocess: `scripts/roster`, `ps -axo pid=,ppid=,args=`, and one
   `bd --readonly -C <shared root> list --status open,in_progress,blocked,deferred,closed --json
   --brief`. Each child has a wall-clock bound - five seconds, or `BD_TIMEOUT`'s thirty for the two `bd` reads,

@@ -277,15 +277,30 @@ pass "a-failing-jq-leaves-no-temp-beside-the-sidecar"
 # The deliberate divergence from agent-state and agent-turn: they source the library above their
 # guards, so a missing one is loud. This script's non-zero exit is a question the navigator never
 # gets asked, so it may not be.
+#
+# The refusal is at the ONE call site that needs the library rather than over the whole script, so
+# `end' - which needs none - is never disabled by this script's own guard. (It still restores
+# nothing here, because `scripts/agent-state' sources the same library and is the thing that would
+# have to write; that is agent-state's loud failure, not a silent one of ours.)
 tmp="$(new_fixture)"
-run_state "$tmp" Cyclops working --bead cb-1 --phase build --pid 42
+run_state "$tmp" Cyclops asking --bead cb-1 --phase build --pid 42
+f="$(state_file "$tmp" Cyclops)"
+s="$(sidecar_file "$tmp" Cyclops)"
+printf '{"state":"working","bead":"cb-1","phase":"build"}\n' > "$s"
 rm -f "$tmp/.claude/cerebro/scripts/state-write.sh"
-for mode in begin end; do
-  status=0
-  out="$(run_asking "$tmp" Cyclops "$mode")" || status=$?
-  [[ $status -eq 0 ]] || fail "a-missing-state-write-library: $mode exited $status"
-  [[ -z "$out" ]] || fail "a-missing-state-write-library: $mode wrote to stdout: $out"
-done
+status=0
+out="$(run_asking "$tmp" Cyclops begin)" || status=$?
+[[ $status -eq 0 ]] || fail "a-missing-state-write-library: begin exited $status"
+[[ -z "$out" ]] || fail "a-missing-state-write-library: begin wrote to stdout: $out"
+# begin took the already-`asking' short circuit, which removes a stale sidecar; put one back so
+# `end' has a restore path to reach.
+printf '{"state":"working","bead":"cb-1","phase":"build"}\n' > "$s"
+status=0
+out="$(run_asking "$tmp" Cyclops end)" || status=$?
+[[ $status -eq 0 ]] || fail "a-missing-state-write-library: end exited $status"
+[[ -z "$out" ]] || fail "a-missing-state-write-library: end wrote to stdout: $out"
+# It reached the restore path rather than exiting at a guard of its own: the sidecar is consumed.
+[[ ! -e "$s" ]] || fail "a-missing-state-write-library: end did not reach its restore path"
 rm -rf "$tmp"
 pass "a-missing-state-write-library-does-not-fail-the-question"
 

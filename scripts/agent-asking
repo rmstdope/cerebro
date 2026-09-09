@@ -49,8 +49,10 @@ trap exit_quietly ERR
 
 # Sourced BELOW the ERR trap, which is where this script differs from `scripts/agent-state' and
 # `scripts/agent-turn': there a missing library is a loud failure, and here it may not be, because
-# this script's non-zero exit is a question the navigator never gets asked.
-source "$script_dir/state-write.sh" 2>/dev/null || exit 0
+# this script's non-zero exit is a question the navigator never gets asked. And a missing one is
+# NOT fatal here either, only to `begin': `end' needs no library, and it is the half that clears a
+# stale `asking'. So the refusal lives at the one call site, not over the whole script.
+source "$script_dir/state-write.sh" 2>/dev/null || true
 
 name="${CEREBRO_AGENT_NAME:-}"
 [[ -n "$name" ]] || exit 0
@@ -102,6 +104,7 @@ case "$mode" in
       rm -f "$sidecar"
       exit 0
     fi
+    type cerebro_state_write_atomic >/dev/null 2>&1 || exit 0
     cerebro_state_write_atomic "$sidecar" \
       jq -n --arg state "$state" --arg bead "$bead" --arg phase "$phase" \
       '{state: $state, bead: $bead, phase: $phase}' 2>/dev/null || exit 0

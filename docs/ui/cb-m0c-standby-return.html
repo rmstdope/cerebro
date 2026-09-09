@@ -1,0 +1,116 @@
+<style>
+body{font-family:Menlo,Monaco,monospace;font-size:13px;margin:24px;background:#8a8a8a;color:#111}
+h1{font-size:16px;color:#fff;margin:0 0 2px}h2{font-size:14px;margin:26px 0 8px;color:#fff}
+h3{font-size:13px;margin:14px 0 6px;color:#eee;font-weight:normal}
+pre{margin:0;line-height:1.45;white-space:pre}
+.screen{background:#1e1e1e;color:#d4d4d4;padding:10px 12px;border:1px solid #333;display:inline-block;vertical-align:top;margin:0 14px 10px 0}
+.note{color:#eee;max-width:104ch;background:#333;padding:9px 13px;margin-top:12px;line-height:1.5}
+.lede{color:#fff;max-width:104ch;margin:0 0 14px;line-height:1.5}
+.g{color:#6a9955}.d{color:#777}.b{color:#569cd6}.y{color:gold}.e{color:#f14c4c}
+.hd{font-weight:bold;color:#ddd}.dim{color:#888}b.k{color:#fff}
+</style>
+<meta charset="utf-8"><title>cb-m0c — a design agent that comes back</title>
+
+<h1>cb-m0c — a design agent that comes back</h1>
+<p class="lede">Every piece of work now passes two stages before anyone builds it: someone agrees
+<b>what a person will see</b>, then someone works out <b>how it gets built</b>. Each stage has its own
+agent, and each agent has a row on the fleet screen. The row is a promise: while it is
+<span class="b">blue</span> the screen will start that agent again by itself, the moment there is work
+for it. While it is <span class="d">grey</span> nothing ever will, until you start it by hand.</p>
+<p class="lede"><b>Agreed with the navigator, 2026-09-09.</b> Section 3 was chosen in round one;
+section 5 was settled in round two.</p>
+
+<h2>1. What happens today</h2>
+<p class="lede">The design agent finishes a piece of work, its session closes, and its row goes grey
+for good — even though there are three more pieces of work waiting for a design. Nothing will start
+it again, and because design is the <i>first</i> of the two stages, everything behind it stops too.</p>
+
+<div class="screen"><pre><span class="dim">a design session, mid-work</span>
+<span class="b">│</span><span class="g">●</span> Xavier    ux             cb-m0c            <span class="b">│</span>
+
+<span class="dim">it finishes; the screen closes it down</span>
+<span class="b">│</span><span class="d">○</span> Xavier    ux             <span class="d">dead</span>              <span class="b">│</span>  <span class="e">← and it stays there for ever</span>
+<span class="b">│</span><span class="d">○</span> Beast     build-design   <span class="d">dead</span>              <span class="b">│</span>  <span class="e">← the same, one stage later</span></pre></div>
+
+<h2>2. What it should do</h2>
+<p class="lede">A finished pass is not a retirement. The row goes back to <span class="b">ready and
+waiting</span>, carrying the short note that says what would wake it — and the next piece of work
+needing a design starts it again with nobody pressing anything.</p>
+
+<div class="screen"><pre><span class="dim">it finishes; the screen closes it down</span>
+<span class="b">│</span><span class="b">◌</span> Xavier    ux             <span class="b">standby</span>  <span class="b">→ agreed 0/4</span> <span class="b">│</span>  <span class="g">← it will come back on its own</span>
+
+<span class="dim">a moment later, work is waiting — it starts itself</span>
+<span class="b">│</span><span class="g">●</span> Xavier    ux             cb-4t9            <span class="b">│</span></pre></div>
+
+<p class="note">Nothing else about the row changes. Ending a session <b>by hand</b> still means gone
+for good — grey, and only started again by hand. This is only about a pass that ended by itself
+because the work was finished.</p>
+
+<h2>3. The waiting note — agreed</h2>
+<p class="lede">The note after <span class="b">standby</span> says what the agent is waiting for. Each
+of the two stages names the pile it fills, and carries the count as it moves: the design agent makes
+work <i>agreed</i>, the build agent makes it <i>planned</i>.</p>
+
+<div class="screen"><pre><span class="dim">two of the four wanted are ready for the stage after</span>
+<span class="b">│</span><span class="b">◌</span> Xavier    ux             <span class="b">standby</span>  <span class="b">→ agreed 2/4</span>  <span class="b">│</span>
+<span class="b">│</span><span class="b">◌</span> Beast     build-design   <span class="b">standby</span>  <span class="b">→ planned 2/4</span> <span class="b">│</span>
+
+<span class="dim">the pile is full — nothing to do, and the row says so</span>
+<span class="b">│</span><span class="b">◌</span> Xavier    ux             <span class="b">standby</span>  <span class="b">→ agreed 4/4</span>  <span class="b">│</span>
+<span class="b">│</span><span class="b">◌</span> Beast     build-design   <span class="b">standby</span>  <span class="b">→ planned 4/4</span> <span class="b">│</span></pre></div>
+
+<p class="note">Rejected in round one: <span class="b">→ UX&lt;4</span> and <span class="b">→
+buffer&lt;4</span>, the two notes as they read today. Two adjacent stages said the same idea two
+different ways, and neither said how full the pile actually was, so a sleeping row with work piling
+up and a sleeping row with nothing to do looked identical. The cost taken knowingly: the number
+moves while the agent sleeps, so the row is no longer completely still.</p>
+
+<h2>4. The states</h2>
+<p class="lede">Everything the row can say, so nothing is decided by the happy path alone.</p>
+
+<div class="screen"><pre><span class="dim">working</span>
+<span class="b">│</span><span class="g">●</span> Xavier    ux             cb-m0c            <span class="b">│</span>
+
+<span class="dim">waiting for an answer from you</span>
+<span class="b">│</span><span class="y">?</span> Xavier    <span class="y">asking</span>         cb-m0c            <span class="b">│</span>
+
+<span class="dim">the pass is over; the screen closes it in half a minute</span>
+<span class="b">│</span><span class="y">◐</span> Xavier    <span class="y">waiting</span>        cb-m0c            <span class="b">│</span>
+
+<span class="dim">ready and waiting — work is short, it starts on the next look</span>
+<span class="b">│</span><span class="b">◌</span> Xavier    ux             <span class="b">standby</span>  <span class="b">→ agreed 2/4</span> <span class="b">│</span>
+
+<span class="dim">ready and waiting — the pile is full, so nothing to do</span>
+<span class="b">│</span><span class="b">◌</span> Xavier    ux             <span class="b">standby</span>  <span class="b">→ agreed 4/4</span> <span class="b">│</span>
+
+<span class="dim">ready and waiting — everything left is already being designed by somebody</span>
+<span class="b">│</span><span class="b">◌</span> Xavier    ux             <span class="b">standby</span>  <span class="b">→ 0 free</span>     <span class="b">│</span>
+
+<span class="dim">it failed to start, and will try again</span>
+<span class="b">│</span><span class="b">◌</span> Xavier    ux             <span class="b">standby</span>  <span class="b">↻ retry in 30s, 2 failed</span> <span class="b">│</span>
+
+<span class="dim">you ended it by hand, or it failed to start five times running</span>
+<span class="b">│</span><span class="d">○</span> Xavier    ux             <span class="d">dead</span>              <span class="b">│</span>
+
+<span class="dim">this screen is only watching — it promises nothing it cannot do</span>
+<span class="b">│</span><span class="d">○</span> Xavier    ux             <span class="d">dead</span>              <span class="b">│</span></pre></div>
+
+<h2>5. The moment in between — agreed</h2>
+<p class="lede">Closing a session down is not instant. For a few seconds between the pass ending and
+the row settling, the screen has nothing to go on and shows the agent as plain
+<span class="g">green and running</span>, with the piece of work gone from its row.</p>
+
+<div class="screen"><pre><span class="dim">today, in order, over about half a minute</span>
+<span class="b">│</span><span class="y">◐</span> Xavier    <span class="y">waiting</span>        cb-m0c            <span class="b">│</span>  <span class="dim">the pass is over</span>
+<span class="b">│</span><span class="g">●</span> Xavier    <span class="g">up</span>                               <span class="b">│</span>  <span class="e">← looks busy, is shutting down</span>
+<span class="b">│</span><span class="b">◌</span> Xavier    ux             <span class="b">standby</span>  <span class="b">→ agreed 2/4</span> <span class="b">│</span>  <span class="dim">settled</span></pre></div>
+
+<div class="screen"><pre><span class="dim">agreed — the middle line goes, and the row holds its last honest word until it settles</span>
+<span class="b">│</span><span class="y">◐</span> Xavier    <span class="y">waiting</span>        cb-m0c            <span class="b">│</span>
+<span class="b">│</span><span class="y">◐</span> Xavier    <span class="y">waiting</span>        cb-m0c            <span class="b">│</span>  <span class="g">← still closing; nothing new to say</span>
+<span class="b">│</span><span class="b">◌</span> Xavier    ux             <span class="b">standby</span>  <span class="b">→ agreed 2/4</span> <span class="b">│</span></pre></div>
+
+<p class="note">A row that reads <span class="g">up</span> with nothing beside it is the same picture
+as an agent that is running and has taken nothing — which is the one thing you would want to notice.
+Spending it on a session that is closing makes it mean nothing, so it goes.</p>

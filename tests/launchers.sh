@@ -132,17 +132,6 @@ run_launcher() {
   run_launcher_at "$fixture_scripts" "$@"
 }
 
-model_of() {
-  # $1 = role. Same one-liner as `scripts/launch` — this test is allowed to know the contract.
-  awk 'NR==1 && $0=="---"{f=1; next} f && $0=="---"{exit} f && $1=="model:"{print $2; exit}' \
-    "$repo_root/agents/$1.md"
-}
-
-effort_of() {
-  awk 'NR==1 && $0=="---"{f=1; next} f && $0=="---"{exit} f && $1=="effort:"{print $2; exit}' \
-    "$repo_root/agents/$1.md"
-}
-
 # --- roster ---
 
 # The BUILT-IN table, read from a copy that sits inside no consumer. `$repo_root/scripts/roster`
@@ -628,8 +617,10 @@ ROSTER
 out="$(run_launcher_at "$roster_consumer/.claude/cerebro/scripts" launch Ada)"
 arg_follows "$out" '^ARG:--agent$' '^ARG:archivist$' \
   || fail "launch Ada (consumer-only role): expected --agent archivist, got: $out"
-arg_follows "$out" '^ARG:--model$' '^ARG:sonnet$' \
-  || fail "launch Ada (consumer-only role): expected the consumer agent file's model, got: $out"
+# The consumer's own agent file carries `model: sonnet' and it is NOT read: since cb-94y.2
+# `.cerebro/agents.conf' is the only place a model comes from, and this consumer writes none.
+grep -q '^ARG:--model$' <<<"$out" \
+  && fail "launch Ada (consumer-only role): the agent file's frontmatter must not be read, got: $out"
 pass "a consumer-only role resolves its agent file from the consumer and launches"
 
 cat > "$consumer_roster_file" <<'ROSTER'
@@ -659,17 +650,12 @@ while IFS=$'\t' read -r name role kind; do
   arg_follows "$out" '^ARG:--name$' "^ARG:${name}\$" || fail "launch $name: expected --name $name, got: $out"
   arg_follows "$out" '^ARG:--remote-control$' "^ARG:${name}\$" || fail "launch $name: expected --remote-control $name, got: $out"
 
-  expected_model="$(model_of "$role")"
-  if [[ -n "$expected_model" ]]; then
-    arg_follows "$out" '^ARG:--model$' "^ARG:${expected_model}\$" \
-      || fail "launch $name: expected --model $expected_model, got: $out"
-  fi
-
-  expected_effort="$(effort_of "$role")"
-  if [[ -n "$expected_effort" ]]; then
-    arg_follows "$out" '^ARG:--effort$' "^ARG:${expected_effort}\$" \
-      || fail "launch $name: expected --effort $expected_effort, got: $out"
-  fi
+  # No --model and no --effort: the fixture consumer declares no agents.conf, and since cb-94y.2
+  # that file is the only place either comes from.
+  grep -q '^ARG:--model$' <<<"$out" \
+    && fail "launch $name: no agents.conf, so no --model should be passed: $out"
+  grep -q '^ARG:--effort$' <<<"$out" \
+    && fail "launch $name: no agents.conf, so no --effort should be passed: $out"
 
   grep -q '^ARG:--permission-mode$' <<<"$out" || fail "launch $name: missing --permission-mode"
   arg_follows "$out" '^ARG:--permission-mode$' '^ARG:auto$' || fail "launch $name: expected auto"
@@ -700,14 +686,13 @@ pass "launch: every roster row reaches the stub with the right actor, agent, nam
 # The override model is deliberately not the declared one: the assertion is that the caller's
 # --model lands *after* the launcher's and so wins, which says nothing if both are the same word.
 #
-# The declared one comes from `.cerebro/models.conf', which is now the ONLY place a model is
-# declared - the agent files stopped carrying `model:'/`effort:' frontmatter when the fleet moved
-# to GitHub Copilot, where those words mean nothing (`agent-cli --agent-file-models'). The file is
-# written for this case and removed again, because every other case against this fixture asserts
-# what a consumer with no models.conf does.
-printf 'planner opus\n' > "$fixture_dir/.cerebro/models.conf"
+# The declared one comes from `.cerebro/agents.conf', which since cb-94y.2 is the ONLY place a model
+# is declared - the agent files stopped carrying `model:'/`effort:' frontmatter when the fleet moved
+# to GitHub Copilot, where those words mean nothing. The file is written for this case and removed
+# again, because every other case against this fixture asserts what a consumer with none does.
+printf 'planner tool=claude model=opus\n' > "$fixture_dir/.cerebro/agents.conf"
 out="$(run_launcher launch Xavier --model sonnet)"
-rm -f "$fixture_dir/.cerebro/models.conf"
+rm -f "$fixture_dir/.cerebro/agents.conf"
 before_sonnet="$(line_of "$out" '^ARG:sonnet$' || true)"
 before_declared="$(line_of "$out" '^ARG:opus$' || true)"
 [[ -n "$before_declared" && -n "$before_sonnet" && $before_declared -lt $before_sonnet ]] \
@@ -852,102 +837,153 @@ grep -q '^ARG:--agent$' <<<"$out" || fail "launch Forge (consumer): stub was not
   || fail "launch Forge (consumer): expected a relative link to ../cerebro/agents/architect.md"
 pass "launch Forge links the consumer's agents before starting the session"
 
-# --- .cerebro/models.conf: switching models without editing an agent definition ---
+# --- .cerebro/agents.conf: which tool, which model, how hard it thinks (cb-94y.2) ---
 #
-# The config lives in the consumer, not here, so a fabricated consumer is the only place these can
-# run. `models_conf` writes one and `launched_flag` reports the value a flag reached the stub with.
-models_conf() {
+# The declaration lives in the consumer, not here, so a fabricated consumer is the only place these
+# can run. `agents_conf' writes one and `launched_flag' reports the value a flag reached the stub
+# with. `scripts/agents-conf' is the one place the file is parsed; what these cases assert is what
+# `launch' DOES with its answer - the flags passed on, and the sentence said out loud.
+agents_conf() {
   mkdir -p "$consumer_dir/.cerebro"
-  printf '%s\n' "$@" > "$consumer_dir/.cerebro/models.conf"
+  printf '%s\n' "$@" > "$consumer_dir/.cerebro/agents.conf"
 }
-no_models_conf() { rm -f "$consumer_dir/.cerebro/models.conf"; }
+no_agents_conf() { rm -f "$consumer_dir/.cerebro/agents.conf"; }
 launched_flag() {
   # $1 = agent name, $2 = flag (--model/--effort). Prints the value, or nothing if the flag is
-  # absent - which is an answer here ("Xavier -" passes no --model), not a failure. `arg_value'
-  # answers with the empty string rather than a non-zero status, so the `|| true' the old pipeline
-  # needed under `set -euo pipefail' is gone with the pipeline.
+  # absent - which is an answer here (a line with no model= passes no --model), not a failure.
   local out
   out="$(run_launcher_at "$consumer_dir/.claude/cerebro/scripts" launch "$1")"
   arg_value "$out" "$2"
 }
+launch_stderr() {
+  run_launcher_at "$consumer_dir/.claude/cerebro/scripts" launch "$1" 2>&1 >/dev/null
+}
 
-# With no models.conf and no frontmatter left in the agent files, a launch passes no --model and
-# no --effort at all and runs on the CLI's own defaults. `model_of'/`effort_of' still read the
-# frontmatter, so they answer empty here and go on answering for a consumer that adds one back.
-no_models_conf
-[[ "$(launched_flag Xavier --model)" == "$(model_of planner)" ]] \
-  || fail "no models.conf: expected the agent file's model '$(model_of planner)', got '$(launched_flag Xavier --model)'"
-[[ -z "$(launched_flag Xavier --model)" ]] \
-  || fail "no models.conf: the agent files declare no model, so none should be passed"
-pass "with nothing declared in either place, a launch passes no --model"
+# A line naming the agent by name: its tool, its model and its effort, and the sentence naming the
+# line it used.
+agents_conf "Beast tool=claude model=fable effort=high"
+[[ "$(launched_flag Beast --model)" == "fable" ]] \
+  || fail "agents.conf name: expected --model fable, got '$(launched_flag Beast --model)'"
+[[ "$(launched_flag Beast --effort)" == "high" ]] \
+  || fail "agents.conf name: expected --effort high, got '$(launched_flag Beast --effort)'"
+err="$(launch_stderr Beast)"
+grep -qF 'launch: agents.conf ("Beast") -> claude, fable at high effort' <<<"$err" \
+  || fail "agents.conf name: expected the agreed sentence, got: $err"
+pass "agents.conf: a line starts its agent on the tool, model and effort it names"
 
-models_conf "default fable"
-[[ "$(launched_flag Xavier --model)" == "fable" ]] || fail "models.conf default: expected fable"
-[[ "$(launched_flag Xavier --effort)" == "$(effort_of planner)" ]] \
-  || fail "models.conf default: a model-only line must leave the agent file's effort alone"
-[[ "$(launched_flag Cyclops --model)" == "fable" ]] \
-  || fail "models.conf default: applies to an agent whose definition declares no model"
-pass "models.conf: a default line switches every agent's model, keeping declared efforts"
+# A role line, past a comment and a blank.
+agents_conf "# what each agent runs on" "" "planner tool=claude model=opus"
+[[ "$(launched_flag Xavier --model)" == "opus" ]] \
+  || fail "agents.conf role: expected --model opus, got '$(launched_flag Xavier --model)'"
+[[ -z "$(launched_flag Xavier --effort)" ]] \
+  || fail "agents.conf role: a line with no effort= must pass no --effort"
+grep -qF 'launch: agents.conf ("planner") -> claude, opus' <<<"$(launch_stderr Xavier)" \
+  || fail "agents.conf role: expected the sentence naming the role line"
+pass "agents.conf: a role line switches that role, and is named as the one used"
 
-models_conf "# a comment" "" "planner fable low"
-[[ "$(launched_flag Xavier --model)" == "fable" ]] || fail "models.conf role: expected fable"
-[[ "$(launched_flag Xavier --effort)" == "low" ]] || fail "models.conf role: expected effort low"
-[[ "$(launched_flag Forge --model)" == "$(model_of architect)" ]] \
-  || fail "models.conf role: a role not named must keep whatever its agent file declares"
-pass "models.conf: a role line switches that role only, model and effort, past comments and blanks"
+# The default line, named as the one used rather than as an absence.
+agents_conf "default tool=claude model=opus"
+[[ "$(launched_flag Cyclops --model)" == "opus" ]] \
+  || fail "agents.conf default: expected --model opus for an agent no line names"
+grep -qF 'launch: agents.conf ("default") -> claude, opus' <<<"$(launch_stderr Cyclops)" \
+  || fail "agents.conf default: expected the sentence to name the default line"
+pass "agents.conf: the default line is used, and named as the one used"
 
-models_conf "default opus # everything, with a note about why" "planner fable high  # and this role lower"
-[[ "$(launched_flag Xavier --model)" == "fable" ]] || fail "models.conf inline comment: expected fable"
-[[ "$(launched_flag Xavier --effort)" == "high" ]] \
-  || fail "models.conf inline comment: expected effort high, not the comment"
-[[ "$(launched_flag Cerebro --model)" == "opus" ]] \
-  || fail "models.conf inline comment: a model-only line must not read '#' as its effort"
-[[ "$(launched_flag Cerebro --effort)" == "$(effort_of orchestrator)" ]] \
-  || fail "models.conf inline comment: expected the agent file's effort, got the comment"
-pass "models.conf: an inline # comment is not the effort column"
+# The most specific line wins outright, so two planners can differ.
+agents_conf "planner tool=claude model=opus effort=high" "Beast tool=claude model=fable"
+[[ "$(launched_flag Xavier --model)" == "opus" ]] || fail "agents.conf specificity: Xavier keeps the role line"
+[[ "$(launched_flag Beast --model)" == "fable" ]] || fail "agents.conf specificity: Beast takes its own line"
+[[ -z "$(launched_flag Beast --effort)" ]] \
+  || fail "agents.conf specificity: the winning line wins WHOLE - no effort inherited from the role line"
+pass "agents.conf: an agent name beats its role, and the winning line wins whole"
 
-models_conf "planner fable" "Beast sonnet"
-[[ "$(launched_flag Beast --model)" == "sonnet" ]] || fail "models.conf name: expected sonnet for Beast"
-[[ "$(launched_flag Xavier --model)" == "fable" ]] || fail "models.conf name: Xavier keeps the role line"
-pass "models.conf: an agent name beats its role, so two planners can differ"
+# A line that leaves model= out: the tool picks, and the sentence says so. The apostrophe in
+# "claude's own model and effort" is the bash-3.2 trap scripts/launch records - it may not be built
+# inside a ${x:-word} expansion.
+agents_conf "Psylocke tool=claude"
+[[ -z "$(launched_flag Psylocke --model)" ]] \
+  || fail "agents.conf no model: expected no --model at all"
+[[ -z "$(launched_flag Psylocke --effort)" ]] \
+  || fail "agents.conf no model: expected no --effort at all"
+grep -qF "launch: agents.conf (\"Psylocke\") -> claude, claude's own model and effort" \
+  <<<"$(launch_stderr Psylocke)" \
+  || fail "agents.conf no model: expected the tool's-own-model sentence, got: $(launch_stderr Psylocke)"
+pass "agents.conf: a line with no model= passes no --model and says the tool picks"
 
-models_conf "Xavier -"
-[[ -z "$(launched_flag Xavier --model)" ]] \
-  || fail "models.conf '-': expected no --model at all, got $(launched_flag Xavier --model)"
-pass "models.conf: '-' passes no --model, leaving the session on claude's own default"
+# --- the two ways nothing matches ---
+no_agents_conf
+[[ -z "$(launched_flag Xavier --model)" ]] || fail "no agents.conf: expected no --model"
+[[ -z "$(launched_flag Xavier --effort)" ]] || fail "no agents.conf: expected no --effort"
+grep -qF 'launch: no agents.conf - claude picks its own model and effort' <<<"$(launch_stderr Xavier)" \
+  || fail "no agents.conf: expected the no-file sentence, got: $(launch_stderr Xavier)"
+pass "with no agents.conf a launch passes no --model and no --effort, and says so"
 
-# --- models.conf keys carrying a provider (cb-d59.6) ---
+agents_conf "Wolverine tool=claude model=fable"
+[[ -z "$(launched_flag Xavier --model)" ]] || fail "agents.conf naming nobody: expected no --model"
+grep -qF 'launch: agents.conf names no line for Xavier - claude picks its own model and effort' \
+  <<<"$(launch_stderr Xavier)" \
+  || fail "agents.conf naming nobody: expected the no-line sentence, got: $(launch_stderr Xavier)"
+pass "a file that names the agent nowhere passes no flags, and names the agent it found nothing for"
+
+# A malformed line for an agent nobody starts costs nothing: only the winning line is validated.
+agents_conf "Wolverine tol=x" "planner tool=claude model=opus"
+[[ "$(launched_flag Xavier --model)" == "opus" ]] \
+  || fail "agents.conf malformed elsewhere: Xavier should launch on its own line"
+pass "a malformed line for an agent nobody starts says nothing and refuses nothing"
+
+# --- a refused line stops that agent, and only that agent ---
 #
-# The key may name the agent CLI it is about, and within one key the provider-scoped row beats the
-# plain one. This consumer declares no agent_cli, so it runs on claude.
-models_conf "planner fable" "planner@claude sonnet"
-[[ "$(launched_flag Xavier --model)" == "sonnet" ]] \
-  || fail "models.conf @provider: expected sonnet, the claude-scoped row beating the plain one"
-pass "models.conf: a provider-scoped key beats the plain one for the running provider"
+# Nothing ever runs on a setting nobody wrote: the stub must never be reached. The sentence is
+# `scripts/agents-conf's and is passed through unchanged; `launch-refused' says it with its own
+# `cerebro: ' prefix and records it, which is how it reaches the fleet row (cb-ccl).
+refusal_case() {  # refusal_case <line> <name> <sentence>
+  agents_conf "$1" "planner tool=claude model=opus"
+  local out status
+  set +e
+  out="$(run_launcher_at "$consumer_dir/.claude/cerebro/scripts" launch "$2" 2>&1)"
+  status=$?
+  set -e
+  [[ $status -eq 2 ]] || fail "agents.conf refusal ($2): expected exit 2, got $status: $out"
+  grep -qF "$3" <<<"$out" || fail "agents.conf refusal ($2): expected '$3', got: $out"
+  grep -q '^ARG:--agent$' <<<"$out" \
+    && fail "agents.conf refusal ($2): the stub must never be reached: $out"
+  return 0
+}
 
-models_conf "planner@copilot gpt-5.5"
-[[ "$(launched_flag Xavier --model)" == "$(model_of planner)" ]] \
-  || fail "models.conf @copilot: a key scoped to another provider must never match"
-pass "models.conf: a key scoped to another provider never matches"
+refusal_case "Beast tool=copilo model=fable" Beast \
+  'agents.conf ("Beast"): tool=copilo is not a tool I know. Try: claude, copilot.'
+errors="$consumer_dir/.cerebro/state/errors.jsonl"
+[[ -f "$errors" ]] || fail "agents.conf refusal: expected a line in $errors"
+grep -qF 'is not a tool I know' "$errors" \
+  || fail "agents.conf refusal: expected the sentence in errors.jsonl, got: $(cat "$errors")"
+pass "a line naming an unknown tool refuses that agent, records it, and never reaches the stub"
 
-# One warning per offending row per launch, not one per key probed: six probes over a file read
-# once, rather than six reads.
+[[ "$(launched_flag Xavier --model)" == "opus" ]] \
+  || fail "agents.conf refusal: Xavier launches from the same file"
+pass "a refused line stops that agent and only that agent"
+
+refusal_case "Beast model=fable" Beast \
+  'agents.conf ("Beast"): no tool. Every line must say one. Try: claude, copilot.'
+pass "a line that does not say which tool refuses in its own words"
+
+refusal_case "Beast tool=claude modle=fable" Beast \
+  'agents.conf ("Beast"): modle is not a setting I know. Try: tool, model, effort.'
+pass "a misspelt setting name refuses in its own words"
+
+# --- the old file is inert ---
 #
-# The prefix is `model-for:' rather than `launch:' since cb-4z6.1: the file is parsed by
-# `scripts/model-for' now, and every script here names itself in what it says (project-conf,
-# agent-cli). The line the launcher still says for itself - `launch: models.conf (<key>) -> ...' -
-# is asserted with its own prefix by the cases above, and did not move.
-models_conf "planner@copilo gpt-5.5"
-warn_out="$(run_launcher_at "$consumer_dir/.claude/cerebro/scripts" launch Xavier 2>&1 >/dev/null)"
-grep -q 'model-for: models.conf: planner@copilo names no agent CLI cerebro knows' <<<"$warn_out" \
-  || fail "models.conf unknown provider: expected the warning, got: $warn_out"
-count="$(grep -c 'names no agent CLI cerebro knows' <<<"$warn_out")"
-[[ "$count" -eq 1 ]] || fail "models.conf unknown provider: expected one warning, got $count"
-[[ "$(launched_flag Xavier --model)" == "$(model_of planner)" ]] \
-  || fail "models.conf unknown provider: the row must be ignored, not applied"
-pass "models.conf: an unknown provider on a key warns once and is ignored"
+# `.cerebro/models.conf' and `project.conf's `agent_cli' decide nothing on this path any more, and
+# nothing is said about either.
+agents_conf "planner tool=claude model=opus"
+printf 'planner fable\n' > "$consumer_dir/.cerebro/models.conf"
+[[ "$(launched_flag Xavier --model)" == "opus" ]] \
+  || fail "models.conf inert: expected opus from agents.conf, got '$(launched_flag Xavier --model)'"
+grep -q 'models.conf' <<<"$(launch_stderr Xavier)" \
+  && fail "models.conf inert: nothing should be said about it, got: $(launch_stderr Xavier)"
+pass "a leftover models.conf is not read, and nothing is said about it"
+rm -f "$consumer_dir/.cerebro/models.conf"
 
-no_models_conf
+no_agents_conf
 
 # --- a sync failure aborts the launch: the stub is never reached ---
 # The first run above already symlinked .claude/skills/plan-bead; remove that link before
@@ -1147,9 +1183,12 @@ printf 'gate_fast make check\n' > "$fake_consumer/.cerebro/project.conf"
 cat > "$fake_consumer/.claude/cerebro/scripts/agent-cli" <<'FAKE'
 #!/usr/bin/env bash
 set -euo pipefail
+# The told-tool interface (cb-94y.2): the four launch-path verbs take `--tool <t>' and this fixture
+# answers whatever it is told, which is what makes the case about `launch' spelling nothing itself.
 case "${1:-}" in
-  --binary) echo fake-cli ;;
-  --check)  exit 0 ;;
+  --default-tool) echo fake-tool ;;
+  --binary)       echo fake-cli ;;
+  --check)        exit 0 ;;
   --argv)
     shift
     name=""
@@ -1159,7 +1198,7 @@ case "${1:-}" in
     done
     printf '%s\0' --dialect fake --who "$name"
     ;;
-  --prompt-argv) printf '%s\0' "$2" ;;
+  --prompt-argv) shift; [ "${1:-}" = "--tool" ] && shift 2; printf '%s\0' "$1" ;;
   *) echo fake ;;
 esac
 FAKE
@@ -1193,8 +1232,9 @@ pass "launch passes exactly the argv agent-cli emits, and adds none of its own"
 
 # --- a whole launch on GitHub Copilot (cb-d59.6) ---
 #
-# Its own consumer, declaring `agent_cli copilot', with a stub `copilot' first on PATH - which is
-# also what satisfies `agent-cli --check''s `command -v copilot'. Nothing writes
+# Its own consumer, whose `.cerebro/agents.conf' says `tool=copilot' (cb-94y.2 - `project.conf's
+# `agent_cli' decides nothing on this path any more), with a stub `copilot' first on PATH - which
+# is also what satisfies `agent-cli --check''s `command -v copilot'. Nothing writes
 # .github/agents/planner.agent.md by hand: launch-preflight runs the sync before every launch and
 # it writes both layouts in every consumer (cb-d59.4).
 #
@@ -1202,7 +1242,8 @@ pass "launch passes exactly the argv agent-cli emits, and adds none of its own"
 # cases above depend on that. These assert on the raw output instead, as the fake-provider case
 # does.
 copilot_consumer="$(consumer_new copilot-consumer --copy)"
-printf 'gate_fast make check\nagent_cli copilot\n' > "$copilot_consumer/.cerebro/project.conf"
+printf 'gate_fast make check\n' > "$copilot_consumer/.cerebro/project.conf"
+printf 'default tool=copilot\n' > "$copilot_consumer/.cerebro/agents.conf"
 copilot_dir="$(mktemp -d)"
 cleanup_add "$copilot_dir"
 cp "$stub_dir/claude" "$copilot_dir/copilot"
@@ -1244,30 +1285,23 @@ pass "the marker sentence reaches copilot inside the -i argument"
 err="$(copilot_launch Xavier 2>&1 >/dev/null)"
 out="$(copilot_launch Xavier 2>/dev/null)"
 grep -q '^ARG:--model$' <<<"$out" \
-  && fail "copilot launch with no models.conf: --model reached copilot, got: $out"
+  && fail "copilot launch, no model=: --model reached copilot, got: $out"
 grep -q '^ARG:--effort$' <<<"$out" \
-  && fail "copilot launch with no models.conf: --effort reached copilot, got: $out"
-grep -q 'no models.conf entry for copilot' <<<"$err" \
-  || fail "copilot launch with no models.conf: expected the fallback line, got: $err"
-# The second line - `the planner declares model X, which is Claude Code's name for it' - is
-# conditional on the agent file carrying a `model:', and none of them do any more: the frontmatter
-# models went when the fleet moved to Copilot, where they mean nothing. So the launch says the one
-# thing that is true and nothing about a declaration that is not there.
-grep -q "which is Claude Code's name for it" <<<"$err" \
-  && fail "copilot launch with no models.conf: the agent files declare no model, so the clause should not appear: $err"
-pass "a copilot launch with no models.conf passes no --model and no --effort, and says so"
+  && fail "copilot launch, no model=: --effort reached copilot, got: $out"
+grep -qF "launch: agents.conf (\"default\") -> copilot, copilot's own model and effort" <<<"$err" \
+  || fail "copilot launch, no model=: expected the tool's-own-model sentence, got: $err"
+pass "a copilot launch whose line names no model passes no --model and no --effort, and says so"
 
-mkdir -p "$copilot_consumer/.cerebro"
-printf 'planner@copilot gpt-5.5 high\n' > "$copilot_consumer/.cerebro/models.conf"
+printf 'planner tool=copilot model=gpt-5.5 effort=high\n' > "$copilot_consumer/.cerebro/agents.conf"
 err="$(copilot_launch Xavier 2>&1 >/dev/null)"
 out="$(copilot_launch Xavier 2>/dev/null)"
 arg_follows "$out" '^ARG:--model$' '^ARG:gpt-5.5$' \
-  || fail "copilot launch with models.conf: expected --model gpt-5.5, got: $out"
+  || fail "copilot launch with a model: expected --model gpt-5.5, got: $out"
 arg_follows "$out" '^ARG:--effort$' '^ARG:high$' \
-  || fail "copilot launch with models.conf: expected --effort high, got: $out"
-grep -q 'models.conf (planner@copilot) -> gpt-5.5 at high effort' <<<"$err" \
-  || fail "copilot launch with models.conf: expected the decision line, got: $err"
-pass "a copilot launch takes its model and effort from a models.conf row"
+  || fail "copilot launch with a model: expected --effort high, got: $out"
+grep -qF 'launch: agents.conf ("planner") -> copilot, gpt-5.5 at high effort' <<<"$err" \
+  || fail "copilot launch with a model: expected the decision line, got: $err"
+pass "a copilot launch takes its tool, model and effort from one agents.conf line"
 
 # --- one launch resolves the consumer root once, and hands the answer down (cb-ue0) --------------
 #

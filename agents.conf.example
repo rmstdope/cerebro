@@ -1,0 +1,20 @@
+# What each agent runs on: which tool, which model, how hard it thinks.
+#
+# One line per agent. The most specific line that names an agent is the one it gets, whole:
+# its own name first, then its role, then "default". Anything that line doesn't say is left
+# to the tool itself.
+#
+#     <agent name | role | default>   tool=...  [model=...] [effort=...]
+#
+# Every line must say its tool. Every start prints the line it used.
+# Anything from a # to the end of a line is a comment.
+#
+# Copy to `.cerebro/agents.conf` in the consumer repository (not here - this submodule is shared
+# by every consumer):
+#
+#     cp .claude/cerebro/agents.conf.example .cerebro/agents.conf
+
+default      tool=claude  model=opus
+implementer  tool=claude  model=sonnet
+planner      tool=claude  model=opus     effort=high
+architect    tool=claude  model=opus     effort=high

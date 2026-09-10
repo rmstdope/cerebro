@@ -11,14 +11,18 @@
 # meant rewriting both launchers; now it is a second arm in this file.
 #
 #     agent-cli                       the provider this fleet runs on          -> claude
-#     agent-cli --binary              the executable to exec and to find       -> claude
-#     agent-cli --argv --role <role> --name <Name> [--model <m>] [--effort <e>]
+#     agent-cli --default-tool        the tool a fleet that declares nothing runs on -> claude
+#     agent-cli --binary --tool <t>   the executable to exec and to find
+#     agent-cli --argv --tool <t> --role <role> --name <Name> [--model <m>] [--effort <e>]
 #                                     [--settings <path>]
 #                                     every argv token between the binary and the caller's own
 #                                     extra arguments, NUL-separated
-#     agent-cli --prompt-argv <text>  the tokens that carry a seed prompt, NUL-separated
-#     agent-cli --check <Name>        exit 0 if this fleet can launch; otherwise refuse through
+#     agent-cli --prompt-argv --tool <t> <text>
+#                                     the tokens that carry a seed prompt, NUL-separated
+#     agent-cli --check --tool <t> <Name>
+#                                     exit 0 if a session on <t> can start; otherwise refuse through
 #                                     launch-refused and exit 3
+#
 #     agent-cli --known               the providers this cerebro can run, one per line
 #     agent-cli --agent-file-models   `yes' if the `model:'/`effort:' words in agents/<role>.md are
 #                                     this fleet's provider's ids, `no' if they are another
@@ -33,6 +37,13 @@
 #                                     skills directory (both relative to the consumer root), and
 #                                     the agent-file suffix. A skill keeps its directory name in
 #                                     both, so there is no skill suffix column.
+#
+# Those four verbs are TOLD which tool they are answering about (cb-94y.2) and no longer ask
+# `resolve': `.cerebro/agents.conf' decides that, per agent, and `scripts/agents-conf' is where it
+# is read. `--tool' is REQUIRED on each of them, and a value outside KNOWN is a USAGE error rather
+# than a refusal - by the time `launch' calls these the word has already come out of `agents-conf',
+# which validated it against `--known' itself, so a bad value here is a caller's bug and not a
+# navigator's. `--default-tool' exists so that `scripts/launch' still spells no provider's name.
 #
 # NUL and not one token per line, because `launch`'s trailing prompt contains a newline: a
 # line-delimited protocol would split it into two argv entries. Read it back with
@@ -75,6 +86,10 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # `--settings' unconditionally and keeps doing so; it is the provider arm that decides whether to
 # spell it.
 KNOWN="claude copilot"
+# What a fleet that declares nothing runs on, answered by `--default-tool' BEFORE `resolve' - a
+# fleet with no agents.conf is precisely the one whose project.conf may say nothing, and one
+# advisory line above every session is the defect that guard exists to avoid.
+DEFAULT_TOOL="claude"
 # PLANNED is empty, and stays declared. Do NOT delete it, nor `resolve''s planned branch, nor
 # `refusal_sentence''s planned arm: they are the only thing that tells a consumer sitting on an
 # older cerebro, which declares a provider a newer cerebro has, to BUMP THE SUBMODULE rather than
@@ -167,7 +182,7 @@ resolve() {
 }
 
 usage() {
-  echo "usage: agent-cli [--binary | --known | --layouts | --hooks | --agent-file-models | --check <Name> | --argv ... | --prompt-argv <text>]" >&2
+  echo "usage: agent-cli [--known | --layouts | --hooks | --default-tool | --agent-file-models | --binary --tool <t> | --check --tool <t> <Name> | --argv --tool <t> ... | --prompt-argv --tool <t> <text>]" >&2
   exit 2
 }
 
@@ -188,6 +203,13 @@ case "$verb" in
     printf '%b\n' "$HOOKS"
     exit 0
     ;;
+  --default-tool)
+    # Answered BEFORE `resolve', like --known: the consumer this matters to is the one that
+    # declares nothing at all, where `resolve' would print its fallback line above every session.
+    [[ $# -eq 1 ]] || usage
+    printf '%s\n' "$DEFAULT_TOOL"
+    exit 0
+    ;;
   --layouts)
     # Answered BEFORE resolve, and deliberately: a sync must get every provider's layout in a
     # consumer that declares nothing (where resolve would print its fallback line in front of every
@@ -201,12 +223,29 @@ case "$verb" in
   *) usage ;;
 esac
 
-resolve
+# The told verbs: `--tool <t>' comes first and is consumed here, so each arm below sees exactly the
+# arguments it saw before. `--argv' reads its own `--tool' inside its flag loop, having no fixed
+# argument order at all.
+told=""
+case "$verb" in
+  --binary|--check|--prompt-argv)
+    [[ "${2:-}" == "--tool" && -n "${3:-}" ]] || usage
+    in_list "$3" "$KNOWN" || usage
+    provider="$3"
+    told=1
+    shift 3
+    set -- "$verb" "$@"
+    ;;
+  --argv) told=1 ;;
+esac
 
-# The plain verbs' backstop: a declaration this cerebro cannot run, asked of anything but --check.
-if [[ -n "$refusal_kind" && "$verb" != "--check" ]]; then
-  echo "agent-cli: $(refusal_sentence)" >&2
-  exit 3
+if [[ -z "$told" ]]; then
+  resolve
+  # The plain verbs' backstop: a declaration this cerebro cannot run.
+  if [[ -n "$refusal_kind" ]]; then
+    echo "agent-cli: $(refusal_sentence)" >&2
+    exit 3
+  fi
 fi
 
 case "$verb" in
@@ -264,6 +303,7 @@ case "$verb" in
     have_settings=""
     while [[ $# -gt 0 ]]; do
       case "$1" in
+        --tool)     provider="${2:-}"; shift 2 ;;
         --role)     role="${2:-}"; shift 2 ;;
         --name)     name="${2:-}"; shift 2 ;;
         --model)    model="${2:-}"; shift 2 ;;
@@ -273,6 +313,9 @@ case "$verb" in
       esac
     done
     [[ -n "$role" && -n "$name" ]] || usage
+    # Required and validated here rather than before the loop, `--argv' having no fixed order.
+    [[ -n "$provider" ]] || usage
+    in_list "$provider" "$KNOWN" || usage
     case "$provider" in
       claude)
         printf '%s\0' --agent "$role" --name "$name" --remote-control "$name"

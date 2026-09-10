@@ -12,9 +12,12 @@
 # (ah-bri) - a launcher used to go `up` for half a second and then `dead` with
 # nothing to read anywhere when `agents/architect.md` was missing.
 #
-# usage: launch-preflight <role> <name>
+# usage: launch-preflight <role> <name> <tool>
 #   <role>  the role the launcher is about to start (architect, planner, ...)
 #   <name>  the display name for messages (Bishop, Cyclops, ...)
+#   <tool>  the agent CLI this session is about to start on, which `.cerebro/agents.conf' decided
+#           for this agent and `scripts/launch' resolved through `scripts/agents-conf' (cb-94y.2).
+#           Required: nothing here guesses a tool, and `project.conf' decides none of it.
 #
 # Every check this script owns - the agent CLI, asked of `agent-cli`, and the submodule carrying
 # the role's agent file - exits 2 with one line on stderr naming what is wrong and the command that fixes
@@ -29,8 +32,9 @@ set -euo pipefail
 
 role="${1:-}"
 name="${2:-}"
-if [[ -z "$role" || -z "$name" ]]; then
-  echo "usage: launch-preflight <role> <name>" >&2
+tool="${3:-}"
+if [[ -z "$role" || -z "$name" || -z "$tool" ]]; then
+  echo "usage: launch-preflight <role> <name> <tool>" >&2
   exit 2
 fi
 
@@ -46,7 +50,7 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 #
 # It keeps its position, FIRST, before `consumer-root`: outside a consumer `project-conf` resolves
 # no root, `agent-cli` answers `claude`, and the PATH check behaves exactly as it did.
-"$script_dir/agent-cli" --check "$name" || exit 2
+"$script_dir/agent-cli" --check --tool "$tool" "$name" || exit 2
 
 # The launch path's hint first (cb-ue0): `launch' has already resolved this and exported it, and
 # every fork of `consumer-root' below this line was a re-derivation of the same answer. It is
@@ -233,11 +237,10 @@ fi
 # Defensive only: after a successful sync above, the link this checks for cannot be
 # missing unless the sync itself is broken - there is no test for this branch.
 #
-# Where to look is the DECLARED provider's business (cb-d59.4): the sync writes every layout, but
-# only one of them is where the CLI about to be exec'd will look, and checking the other would pass
-# while that CLI found nothing. Both facts come from agent-cli - the provider from the bare verb,
-# its discovery paths from --layouts - so no path is spelt here.
-declared_cli="$("$script_dir/agent-cli" 2>/dev/null)" || declared_cli=""
+# Where to look is the business of the tool this session is starting on (cb-d59.4, cb-94y.2): the
+# sync writes every layout, but only one of them is where the CLI about to be exec'd will look, and
+# checking the other would pass while that CLI found nothing. The tool is the argument above and its
+# discovery paths come from --layouts, so no path is spelt here.
 agents_dir="" agent_suffix=""
 # The loop reads every row rather than breaking on the match, and that is not tidiness: breaking
 # closes the process substitution's pipe under a writer that has not finished, and `agent-cli' then
@@ -246,7 +249,7 @@ agents_dir="" agent_suffix=""
 # case in tests/launch-preflight.sh asserts on the WHOLE of stderr, so the line is a red suite
 # rather than noise. The rows number one per provider - draining them costs nothing.
 while IFS=$'\t' read -r layout_p layout_ad _ layout_sx; do
-  [[ "$layout_p" == "$declared_cli" ]] || continue
+  [[ "$layout_p" == "$tool" ]] || continue
   [[ -z "$agents_dir" ]] || continue
   agents_dir="$layout_ad"; agent_suffix="$layout_sx"
 done < <("$script_dir/agent-cli" --layouts)

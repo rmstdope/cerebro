@@ -40,7 +40,7 @@
 # THE PATHSPEC IS PART OF THE DESIGN. Only `skills/' and `agents/' are scanned - the two directories
 # `sync-symlinks.sh' links into a consumer's discovery paths, so they are what an agent actually
 # loads and pastes from. Scanning wider would make this suite read `docs/', `README.md', `LICENSE'
-# or `models.conf.example' - `scripts/ci-needed''s skip list - and a suite that starts reading one
+# or `agents.conf.example' - `scripts/ci-needed''s skip list - and a suite that starts reading one
 # of them makes a green pull request that should have been red. Both directories are on ci-needed's
 # `*)' arm, so ci-needed needs no edit for this.
 #

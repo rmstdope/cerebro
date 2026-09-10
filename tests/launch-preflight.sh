@@ -55,7 +55,8 @@ run_preflight() {
   local consumer="$1"
   local role="${2:-planner}"
   local name="${3:-Xavier}"
-  PATH="$stub_dir:$PATH" bash "$consumer/.claude/cerebro/scripts/launch-preflight" "$role" "$name"
+  local tool="${4:-claude}"
+  PATH="$stub_dir:$PATH" bash "$consumer/.claude/cerebro/scripts/launch-preflight" "$role" "$name" "$tool"
 }
 
 head_of() { git -C "$1" rev-parse HEAD; }
@@ -386,7 +387,7 @@ pass "an unreachable origin stays quiet"
 standalone="$work_dir/x/cerebro"
 mkdir -p "$work_dir/x"
 copy_cerebro_into "$standalone"
-PATH="$stub_dir:$PATH" bash "$standalone/scripts/launch-preflight" planner Xavier \
+PATH="$stub_dir:$PATH" bash "$standalone/scripts/launch-preflight" planner Xavier claude \
   || fail "standalone: expected exit 0"
 pass "a standalone clone is untouched"
 
@@ -481,20 +482,38 @@ run_preflight "$self_consumer" planner Xavier || fail "self-consumer: expected e
   || fail "self-consumer: the skill link does not resolve to a SKILL.md"
 pass "cerebro mounted in its own checkout passes the preflight and gets working links"
 
-# --- an agent CLI this cerebro cannot run is refused, by agent-cli rather than by this script -----
+# --- the tool is an argument, and the declaration decides nothing (cb-94y.2) ---------------------
 #
-# The provider is `scripts/agent-cli`'s answer since cb-d59.2, and the preflight asks rather than
-# spelling `claude` itself. A declaration it cannot run must therefore stop a launch here, where the
-# `claude`-missing refusal already does.
-c="$(make_consumer wrong-cli)"
-printf 'agent_cli emacs-doctor\n' > "$c/.cerebro/project.conf"
+# `.cerebro/agents.conf' decides which tool an agent starts on, per agent, and `scripts/launch'
+# passes that word down. So the third argument is required, and a consumer declaring `agent_cli
+# claude' still gets a copilot refusal when copilot is what this launch was told.
+c="$(make_consumer told-tool)"
 set +e
-out="$(run_preflight "$c" 2>&1)"
+out="$(PATH="$stub_dir:$PATH" bash "$c/.claude/cerebro/scripts/launch-preflight" architect Forge 2>&1)"
 status=$?
 set -e
-[[ $status -eq 2 ]] || fail "wrong-cli: expected exit 2, got $status"
-grep -q "is not an agent CLI cerebro knows" <<<"$out" \
-  || fail "wrong-cli: expected agent-cli's own sentence, got: $out"
-pass "launch-preflight refuses when the consumer declares an agent CLI cerebro cannot run"
+[[ $status -eq 2 ]] || fail "no tool: expected exit 2, got $status"
+grep -q '^usage: launch-preflight <role> <name> <tool>$' <<<"$out" \
+  || fail "no tool: expected the usage line naming <tool>, got: $out"
+pass "launch-preflight refuses without a tool, naming it in its usage line"
+
+printf 'agent_cli claude\n' > "$c/.cerebro/project.conf"
+# A PATH of its own, carrying `claude' and the ordinary tools but never `copilot' - the navigator's
+# own machine may well have copilot installed, and a case that depended on that would pass here and
+# fail on a runner, or the other way about.
+nocopilot_dir="$(mktemp -d)"
+cleanup_add "$nocopilot_dir"
+ln -s "$stub_dir/claude" "$nocopilot_dir/claude"
+for t in dirname bash grep tail mkdir date git jq sed awk cut; do
+  [[ -x "$nocopilot_dir/$t" ]] || ln -s "$(command -v "$t")" "$nocopilot_dir/$t"
+done
+set +e
+out="$(PATH="$nocopilot_dir" bash "$c/.claude/cerebro/scripts/launch-preflight" architect Forge copilot 2>&1)"
+status=$?
+set -e
+[[ $status -eq 2 ]] || fail "told copilot: expected exit 2, got $status: $out"
+grep -q 'copilot is not on PATH' <<<"$out" \
+  || fail "told copilot: expected the copilot arm's refusal, got: $out"
+pass "launch-preflight checks the tool it is told, not the one the project declares"
 
 suite_passed

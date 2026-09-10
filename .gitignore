@@ -29,10 +29,10 @@ dist/
 # the agents' worktrees, their state files and stop flags, and the planners' scratchpad, the drafts
 # and rejected mockup variants `skills/plan-bead` writes before a plan reaches the bead. Everything
 # else in it is tracked - the project's declarations (project.conf, roster.conf, traps.md; cb-epr)
-# and models.conf, which this project commits so every clone runs the fleet on the same models
-# (eb6ffdb). A project that wants models.conf personal adds `.cerebro/models.conf` here. A new
-# runtime artifact must be added to this list, or it arrives committable: that is the trade for
-# committing models.conf.
+# and agents.conf, which this project commits so every clone runs the fleet on the same tools and
+# models (cb-94y.2). A project that wants agents.conf personal adds `.cerebro/agents.conf` here. A
+# new runtime artifact must be added to this list, or it arrives committable: that is the trade for
+# committing agents.conf.
 .cerebro/worktrees
 .cerebro/state
 .cerebro/scratch

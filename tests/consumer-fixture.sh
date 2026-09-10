@@ -210,7 +210,9 @@ pass "sync-symlinks.sh links every agent and skill relatively, and leaves the co
 # Derived from the roster, never listed: a list here would be this suite keeping its own copy of the
 # fleet, which is the drift the roster exists to end.
 while IFS=$'\t' read -r name role _; do
-  run_at launch-preflight "$role" "$name" >/dev/null 2>&1 \
+  # The third argument since cb-94y.2: the tool this session would start on, which
+  # `.cerebro/agents.conf' decides per agent and `scripts/launch' passes down.
+  run_at launch-preflight "$role" "$name" claude >/dev/null 2>&1 \
     || fail "launch-preflight: refused $name ($role) on a current, correctly declared consumer"
 done <<<"$roster_out"
 pass "launch-preflight passes for every role on the consumer's own roster, archivist included"

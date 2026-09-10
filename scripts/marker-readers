@@ -34,7 +34,7 @@
 # THE SCAN SET IS PART OF THE DESIGN, the same way tracked-links' pathspec is. Only `scripts',
 # `tests', `hooks', `githooks' and, since cb-vyp.1, `fleet-view' are scanned. Scanning the
 # whole repository would make this suite read `docs/', `README.md', `LICENSE' and
-# `models.conf.example' - the entries on `scripts/ci-needed''s skip list - and a suite that starts
+# `agents.conf.example' - the entries on `scripts/ci-needed''s skip list - and a suite that starts
 # reading one of them makes a green pull request that should have been red. All five are on
 # ci-needed's `*)' arm, so it needs no edit for this. `CLAUDE.md' and the files under `docs/' quote
 # the sentence as prose, and prose is not a parser.

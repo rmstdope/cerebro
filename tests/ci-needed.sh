@@ -85,7 +85,7 @@ grep -q 'none of 1 paths' <<<"$err" || fail "a retrospective: does not count the
 $err"
 pass "a retrospective under docs/ is skippable"
 
-run $'docs/ui/cb-ypx-a.html\nREADME.md\nLICENSE\nmodels.conf.example\n'
+run $'docs/ui/cb-ypx-a.html\nREADME.md\nLICENSE\nagents.conf.example\n'
 [[ $status -eq 0 ]] || fail "the whole skip list: expected exit 0, got $status
 $err"
 [[ "$out" == "run=false" ]] || fail "the whole skip list: stdout is not exactly run=false

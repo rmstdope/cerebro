@@ -672,7 +672,8 @@ started by `scripts/launch` itself, on a an agent whose `agents.conf` line names
 A throwaway consumer, never this checkout: a `mktemp -d`, `git init`, a **copy** of this checkout at
 `.claude/cerebro` (a symlink there makes `consumer-root` climb into the cerebro repository instead —
 the self-mount, and it syncs the wrong tree), `printf 'gate_fast true\n' >
-.cerebro/project.conf`, then `sync-symlinks.sh`. Each session started under a **real pty** with an
+.cerebro/project.conf`, `printf 'default tool=copilot\n' > .cerebro/agents.conf`, then
+`sync-symlinks.sh`. Each session started under a **real pty** with an
 explicit window size, since without one Copilot degrades to a single-shot run and exits (M11):
 
 ```python
@@ -805,8 +806,8 @@ from claude.ai or from a phone. It runs where it was started, and the fleet view
 it.
 
 **Models are yours to declare.** Copilot's model ids are Copilot's own, and the agent definitions
-name Claude Code's — so on Copilot they are ignored and no `--model` and no `--effort` are passed at
-all. The fleet then runs on whatever Copilot picks, and every launch says so:
+name Claude Code's. If the selected `agents.conf` line omits `model` and `effort`, no such flags are
+passed and Copilot picks its own values; every launch says so:
 
 ```
 launch: no agents.conf model or effort - copilot picks its own model and effort.

@@ -235,6 +235,9 @@ pub struct TriggerFacts {
     /// the `ux` role may take. Empty on a board where nothing carries `ux:agreed`, which is every
     /// board not running the cb-lz5 trial.
     pub undesigned_ids: Vec<String>,
+    /// The board revisions paired with `undesigned_ids`, so a bead returned from a later stage
+    /// breaks the UX unchanged-work guard even when its id and labels are unchanged.
+    pub undesigned_revisions: Vec<(String, Option<DateTime<Utc>>)>,
     /// Those of `undesigned_ids` at priority 0, in bucket order.
     pub p0_undesigned: Vec<String>,
     /// Ids of the unplanned, unparked, non-P4 beads carrying `ux:agreed` - what the
@@ -390,6 +393,11 @@ impl TriggerFacts {
                 .filter(|bead| bead.priority != Some(4))
                 .map(|bead| bead.id.clone())
                 .collect(),
+            undesigned_revisions: undesigned
+                .iter()
+                .filter(|bead| bead.priority != Some(4))
+                .map(|bead| (bead.id.clone(), bead.updated_at.clone()))
+                .collect(),
             p0_undesigned: undesigned
                 .iter()
                 .filter(|bead| bead.priority == Some(0))
@@ -496,6 +504,7 @@ pub enum Fingerprint {
         ux_agreed: usize,
         implementers: usize,
         undesigned_ids: Vec<String>,
+        undesigned_revisions: Vec<(String, Option<DateTime<Utc>>)>,
     },
     BuildDesign {
         p0_ux_agreed: Vec<String>,
@@ -528,6 +537,7 @@ pub fn fingerprint(role: &str, facts: &TriggerFacts) -> Option<Fingerprint> {
             ux_agreed: facts.ux_agreed,
             implementers: facts.implementers,
             undesigned_ids: facts.undesigned_ids.clone(),
+            undesigned_revisions: facts.undesigned_revisions.clone(),
         }),
         "build-design" => Some(Fingerprint::BuildDesign {
             p0_ux_agreed: facts.p0_ux_agreed.clone(),
@@ -1366,6 +1376,47 @@ mod tests {
     }
 
     #[test]
+    fn a_returned_ux_bead_breaks_the_unchanged_work_guard() {
+        let mut first_bead = bead("cb-u1", "open", &[], 2);
+        first_bead.updated_at = Some(at(0));
+        let mut second_bead = bead("cb-u2", "open", &[], 2);
+        second_bead.updated_at = Some(at(0));
+        let first = facts_for(vec![first_bead, second_bead], &[]);
+        let first_print = fingerprint("ux", &first).expect("the UX fingerprint exists");
+        let completed_pass = AgentFacts {
+            role: "ux",
+            started_at: Some(at(0)),
+            ended_at: Some(at(1)),
+            last_fingerprint: Some(&first_print),
+        };
+
+        assert_eq!(
+            trigger(&first, completed_pass, at(2)),
+            None,
+            "the unchanged candidate revisions retain the no-repeat guard"
+        );
+
+        let mut returned_bead = bead("cb-u2", "open", &[], 2);
+        returned_bead.updated_at = Some(at(2));
+        let returned = facts_for(
+            vec![
+                {
+                    let mut bead = bead("cb-u1", "open", &[], 2);
+                    bead.updated_at = Some(at(0));
+                    bead
+                },
+                returned_bead,
+            ],
+            &[],
+        );
+        assert_eq!(
+            trigger(&returned, completed_pass, at(3)),
+            Some("UX 0 of 2".to_string()),
+            "a newer revision makes the returned UX queue eligible again"
+        );
+    }
+
+    #[test]
     fn one_planned_bead_starts_one_implementer() {
         let beads = || vec![bead("cb-p1", "open", &["planned"], 2)];
         let free = facts_for(beads(), &[]);
@@ -1710,6 +1761,7 @@ mod tests {
         TriggerFacts {
             p0_unplanned: Vec::new(),
             undesigned_ids: Vec::new(),
+            undesigned_revisions: Vec::new(),
             p0_undesigned: Vec::new(),
             ux_agreed_ids: Vec::new(),
             p0_ux_agreed: Vec::new(),

@@ -4687,6 +4687,88 @@ mod main_tests {
         settle_gone(&mut host, "Xavier");
     }
 
+    #[test]
+    fn a_returned_ux_bead_starts_the_armed_ux_agent() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let now = Utc::now();
+        let previous = now - chrono::Duration::seconds(20);
+        let ended = now - chrono::Duration::seconds(10);
+        let mut host = SessionHost::default();
+        let roster = vec![
+            RosterEntry {
+                name: "Xavier".into(),
+                role: "ux".into(),
+                kind: AgentKind::Interactive,
+            },
+            RosterEntry {
+                name: "Cyclops".into(),
+                role: "implementer".into(),
+                kind: AgentKind::Implementer,
+            },
+        ];
+        let mut previous_bead = cerebro_tui::model::Bead {
+            id: "cb-u1".into(),
+            title: "returned UX work".into(),
+            status: "open".into(),
+            issue_type: "task".into(),
+            labels: Vec::new(),
+            priority: Some(2),
+            updated_at: Some(previous),
+            assignee: None,
+            metadata: serde_json::Value::Null,
+            external_ref: None,
+        };
+        let previous_work =
+            cerebro_tui::model::partition_beads(vec![previous_bead.clone()]);
+        let previous_facts = TriggerFacts::derive(
+            &previous_work,
+            &roster,
+            BTreeMap::new(),
+            |_| false,
+            triggers::GhAnswer::Unanswered,
+            1,
+        );
+        let mut ledger = StartLedger::default();
+        ledger.note_started(
+            "Xavier",
+            previous,
+            triggers::fingerprint("ux", &previous_facts),
+        );
+        ledger.note_ended("Xavier", ended);
+
+        previous_bead.updated_at = Some(now);
+        let returned_work =
+            cerebro_tui::model::partition_beads(vec![previous_bead]);
+        let mut app = standby_app(
+            supervising(),
+            vec![staged_row("Xavier", "ux", RowState::Dead)],
+            Some(returned_work),
+            now,
+        );
+
+        start_due(
+            &mut app,
+            &mut host,
+            &mut ledger,
+            &mut test_logger(),
+            &paths,
+            &BTreeMap::new(),
+            1,
+            &roster,
+            now,
+        );
+
+        assert!(host.is_live("Xavier"), "the returned UX bead starts its agent");
+        assert_eq!(
+            app.notice.as_deref(),
+            Some("Started Xavier — UX 0 of 2."),
+            "the existing UX start notice is retained"
+        );
+        host.kill(&paths, "Xavier");
+        settle_gone(&mut host, "Xavier");
+    }
+
     fn implementer_row(name: &str, state: cerebro_tui::model::RowState) -> cerebro_tui::model::FleetRow {
         cerebro_tui::model::FleetRow {
             role: "implementer".into(),

@@ -178,6 +178,22 @@ line. Keys are an agent's name, a role, or `default`, most specific first, so
 models on the same queue. It takes effect at the next launch; a session already running keeps the
 tool and model it started with, and the launcher says which key it matched when it starts one.
 
+Copilot agents can also select a reusable external OpenAI model from the same file:
+
+```text
+# external model: name, provider, URL, access-key reference, and model
+external research openai https://api.openai.com/v1 ${OPENAI_API_KEY} gpt-5.4
+Beast tool=copilot model=research
+```
+
+The access-key field is an environment-variable reference, not a secret, and the definition can be
+reused by several agents. A usable selection starts with
+`launch: agents.conf ("Beast") -> copilot, external model "research" (OpenAI gpt-5.4)`.
+If the definition or referenced variable is unavailable, the session still starts on Copilot's
+default model and says
+`launch: external model "research" is unavailable; Beast will use Copilot's default model.` See
+[`docs/ui/cb-2fs-external-model.html`](ui/cb-2fs-external-model.html) for the agreed states.
+
 ## Starting a planner — there are two of them
 
 **Xavier and Beast both hold the planner role** (`scripts/roster --role planner`). One planner keeps

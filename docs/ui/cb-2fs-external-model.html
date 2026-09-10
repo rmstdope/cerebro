@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>cb-2fs — External models for Copilot agents</title>
+<style>
+  :root { --ink:#1b1f23; --dim:#6a737d; --line:#d0d7de; --bg:#f6f8fa; --good:#1a7f37; --warn:#9a6700; }
+  body { color:var(--ink); font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; margin:0 auto; max-width:860px; padding:40px 24px; }
+  h1 { font-size:24px; margin:0 0 4px; } h2 { border-top:1px solid var(--line); font-size:17px; margin-top:36px; padding-top:22px; }
+  .lede,.note { color:var(--dim); } .window { border:1px solid var(--line); border-radius:8px; overflow:hidden; margin:16px 0; }
+  .bar { background:var(--bg); border-bottom:1px solid var(--line); font-weight:600; padding:9px 14px; }
+  pre { background:#0d1117; color:#e6edf3; font:13px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace; margin:0; padding:16px; white-space:pre-wrap; }
+  .comment { color:#8b949e; } .ok { color:#7ee787; } .warning { color:#e3b341; }
+  .callout { background:#ddf4ff; border:1px solid #54aeff; border-radius:6px; margin:16px 0; padding:12px 14px; }
+  @media (max-width:500px) { body { padding:24px 14px; } h1 { font-size:21px; } pre { padding:12px; } }
+</style></head><body>
+<h1>External models for Copilot agents</h1>
+<p class="lede">A navigator defines an external OpenAI model once, then chooses it by name for any
+Copilot agent. An ordinary Copilot model remains an ordinary model name.</p>
+
+<h2>Define and choose an external model</h2>
+<div class="window"><div class="bar">.cerebro/agents.conf</div><pre><span class="comment"># external model: name, provider, URL, access-key reference, and model</span>
+external research openai https://api.openai.com/v1 ${OPENAI_API_KEY} gpt-5.4
+
+Beast   tool=copilot  model=research
+Xavier  tool=copilot  model=gpt-5.6
+</pre></div>
+<div class="callout"><strong>Everything is in one place.</strong> The external model can be reused,
+but its URL, access-key reference, and model are written once. The key is a reference, never its
+secret value. Xavier's ordinary Copilot model remains unchanged.</div>
+
+<h2>When Beast starts</h2>
+<div class="window"><div class="bar">Session</div><pre><span class="ok">launch: agents.conf ("Beast") -&gt; copilot, external model "research" (OpenAI gpt-5.4)</span>
+
+This session is Beast of the Cerebro fleet rooted at /your/project/.</pre></div>
+<p class="note">The confirmation appears before the session begins and identifies the external
+model without revealing credentials.</p>
+
+<h2>External model unavailable</h2>
+<div class="window"><div class="bar">Session</div><pre><span class="warning">launch: external model "research" is unavailable; Beast will use Copilot's default model.</span>
+
+This session is Beast of the Cerebro fleet rooted at /your/project/.</pre></div>
+<p class="note">The agent still starts. The confirmation says what could not be used and that
+Copilot's default model is running instead.</p>
+
+<h2>Narrow window</h2>
+<div class="window" style="max-width:430px"><div class="bar">Session</div><pre><span class="ok">launch: agents.conf ("Beast")
+  -&gt; copilot, external model
+  "research" (OpenAI gpt-5.4)</span></pre></div>
+<p class="note">The source, external-model name, and underlying model wrap together so the selected
+model cannot be mistaken for Copilot's ordinary choice.</p>
+</body></html>

@@ -16,10 +16,14 @@
 #     exit 2  usage - an unknown flag, a flag with no value, or either of --name/--role missing
 #     exit 3  refused
 #
-# A caller reads it with one unconditional
-#     IFS=$'\t' read -r kind a b c d <<<"$(agents-conf --name "$n" --role "$r")"
-# and branches on $kind. `<model>' and `<effort>' may be empty and the line still carries its tabs,
-# so that single `read' always fills five variables.
+# A caller branches on $kind, and SPLITS THE LINE BY HAND rather than with
+#     IFS=$'\t' read -r kind a b c d <<<"$(agents-conf --name "$n" --role "$r")"    # WRONG
+# which this header recommended until cb-94y.2 found out otherwise. TAB is IFS *whitespace*, so a
+# `read' folds a run of tabs into ONE delimiter: a hit whose model is empty and whose effort is not
+# - `hit<TAB>key<TAB>claude<TAB><TAB>high' - arrives as four fields with the effort sitting in the
+# model's variable, and the caller then starts a session on a model called `high'. `scripts/launch'
+# carries the five-field split that does work; copy it. A caller that also reads the STATUS must
+# capture it (`out="$(...)" || status=$?'), a refusal being exit 3 under the caller's own errexit.
 #
 # The leading kind word is the one departure from `scripts/model-for', which this script is
 # otherwise modelled on: `model-for' tells a miss from an answer by printing nothing at all,

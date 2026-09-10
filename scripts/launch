@@ -62,7 +62,7 @@ fi
 # the values were always supposed to come from.
 #
 # HERE, and not lower down, so everything this launcher itself spawns - `roster', `launch-preflight'
-# and through it `project-conf', `agent-cli', `model-for' and `sync-symlinks.sh' - is already running
+# and through it `project-conf', `agent-cli', `agents-conf' and `sync-symlinks.sh' - is already running
 # in the cleaned environment, not only the agent CLI. `scripts/cargo-env.sh' is the whole of the rule
 # (which names, and which are protected); this is its only caller.
 source "$here/cargo-env.sh"
@@ -73,7 +73,7 @@ source "$here/cargo-env.sh"
 cerebro_strip_cargo_env "${CEREBRO_CONSUMER_SHARED_ROOT:-}" >/dev/null
 
 # One line on stderr, only when something went - this file's own habit, for the reason it gives
-# about models.conf: a session behaving oddly three days later is otherwise a mystery. The CARGO_*
+# about agents.conf: a session behaving oddly three days later is otherwise a mystery. The CARGO_*
 # family is counted rather than spelled out (eighteen lines of noise on every launch); the config
 # names are listed, because that is the half a navigator cannot guess.
 _cleared_cargo=${#cerebro_cargo_stripped_injected[@]}
@@ -206,86 +206,104 @@ fi
 # its needles from it, and neither carries the text any more. See scripts/session-marker.sh.
 source "$here/session-marker.sh"
 
-# ah-cuc: link whatever a submodule bump brought in, so the agent CLI finds the role by name.
-# ah-bri: refuse with one line if it cannot, instead of exiting silently.
-"$here/launch-preflight" "$role" "$name"
-
-# The consumer's own `.claude/agents/' first, the submodule's second. The consumer directory is
-# tracked and already holds a symlink into the submodule for every role cerebro ships, so this one
-# path answers for both a shipped role and a role only this consumer declares (ah-qled.5.1) - the
-# fallback is for a consumer whose symlinks have not been synced yet.
-agent_file="$here/../../agents/$role.md"
-[[ -f "$agent_file" ]] || agent_file="$here/../agents/$role.md"
-model="$(awk 'NR==1 && $0=="---"{f=1; next} f && $0=="---"{exit} f && $1=="model:"{print $2; exit}' "$agent_file")"
-effort="$(awk 'NR==1 && $0=="---"{f=1; next} f && $0=="---"{exit} f && $1=="effort:"{print $2; exit}' "$agent_file")"
-
-# Which agent CLI this fleet runs on, and whether the frontmatter just read is written in ITS model
-# ids. 2>/dev/null on both is REQUIRED, not incidental: `resolve' prints
-# `agent-cli: no agent_cli declared; running on claude' on every call in an undeclared consumer,
-# and `--binary' below already triggers it once. Two identical lines above every session is the
-# defect this guard exists to avoid - the same guard `launch-preflight' takes for the same reason.
-provider="$("$here/agent-cli" 2>/dev/null)" || provider=""
-agent_file_models="$("$here/agent-cli" --agent-file-models 2>/dev/null)" || agent_file_models="yes"
-
-# Only the exact word `no' changes anything: an agent-cli too old to know the verb exits 2 and the
-# `||' above gives `yes', and a consumer's own fabricated agent-cli answering something else keeps
-# today's behaviour. The agent definitions declare Claude Code's words (`model: opus'), and cb-d59
-# rejected growing a per-provider key in every one of them - so on any other provider they are not
-# this provider's ids and are dropped, and .cerebro/models.conf is the only place its models are
-# chosen.
-frontmatter_model="$model"          # kept only for the fallback sentence below
-if [[ "$agent_file_models" == "no" ]]; then
-  model="" effort=""
-fi
-
-# The agent definition carries the model the role was *written* for; `.cerebro/models.conf` in the
-# consumer is where a navigator changes their mind about it without editing a submodule they share
-# with every other consumer, and without a commit. Absent - the ordinary case - nothing here
-# happens. A `--model` typed on the command line still beats all of it, since it is appended after
-# (see the exec below).
+# Which tool this agent runs on, and on which model at which effort, is `.cerebro/agents.conf's
+# answer alone since cb-94y.2 - `scripts/agents-conf' is the one place that file is parsed and its
+# precedence decided, and its header is where the shape and the four answer lines are written down.
+# The agent definitions' frontmatter and `.cerebro/models.conf' are both gone from this path: the
+# first had carried no `model:' for some time, and the second is retired with `scripts/model-for'.
 #
-# `scripts/model-for' is the ONE place that file is parsed and its precedence decided (cb-4z6.1);
-# its header is where the shape, the six probes and the unknown-provider warning are written down.
-# It answers only what the FILE says - every decision below is still this launcher's: merging onto
-# the frontmatter defaults, `-' meaning no `--model' at all, and the line said out loud. The
-# provider is passed because it has already been resolved above; letting model-for resolve one of
-# its own would be a second `agent-cli' fork per launch.
-#
-# A miss prints NOTHING rather than an empty line, which is what lets `-' - a real answer meaning
-# "pass no --model" - be told apart from "the file said nothing".
-conf_key="" conf_model="" conf_effort=""
-conf_line="$("$here/model-for" ${provider:+--provider "$provider"} --name "$name" --role "$role")" || true
-[[ -n "$conf_line" ]] && IFS=$'\t' read -r conf_key conf_model conf_effort <<<"$conf_line"
+# `|| conf_status=$?' and not a bare capture: a refusal is exit 3, and `x="$(cmd)"' under `set -e'
+# takes the substitution's status, so an unguarded capture would end this launcher BEFORE the
+# refusal could be said (.cerebro/traps.md, "an advisory step can eat the exit status that follows
+# it").
+conf_out=""
+conf_status=0
+conf_out="$("$here/agents-conf" --name "$name" --role "$role")" || conf_status=$?
 
-matched=""
-if [[ -n "$conf_key" ]]; then
-  # `-' means "pass no --model": the session runs on whatever the CLI itself defaults to, which is
-  # the one thing a model name cannot express.
-  if [[ "$conf_model" == "-" ]]; then
-    model=""
+# Split on TAB by hand, and not with `IFS=$'\t' read -r a b c d e'. Tab is IFS *whitespace*, so a
+# `read' folds a run of them into one delimiter: a hit whose model is empty and whose effort is not
+# - `hit<TAB>key<TAB>tool<TAB><TAB>high' - arrives with the effort sitting in the model's variable,
+# and the session then starts on a model called `high'. Five fields, every one of them possibly
+# empty, is what this loop guarantees; builtins only, for the narrowed PATH.
+conf_kind="" conf_a="" conf_b="" conf_c="" conf_d=""
+_conf_rest="$conf_out"
+for _conf_i in 1 2 3 4 5; do
+  if [[ "$_conf_rest" == *$'\t'* ]]; then
+    _conf_field="${_conf_rest%%$'\t'*}"
+    _conf_rest="${_conf_rest#*$'\t'}"
   else
-    model="$conf_model"
+    _conf_field="$_conf_rest"
+    _conf_rest=""
   fi
-  [[ -n "$conf_effort" ]] && effort="$conf_effort"
-  matched=1
-  # Said out loud: a session on an unexpected model is otherwise a mystery three days later, and
-  # this is the file nobody remembers editing.
-  # The apostrophe in "claude's" is deliberately absent: bash 3.2 mis-parses a quote inside
-  # ${x:-word} within double quotes, which is a syntax error rather than a stray character.
-  echo "launch: models.conf ($conf_key) -> ${model:-the CLI default}${conf_effort:+ at $conf_effort effort}" >&2
+  case "$_conf_i" in
+    1) conf_kind="$_conf_field" ;;
+    2) conf_a="$_conf_field" ;;
+    3) conf_b="$_conf_field" ;;
+    4) conf_c="$_conf_field" ;;
+    5) conf_d="$_conf_field" ;;
+  esac
+done
+
+# An answer that is neither a hit, a miss nor a refusal is a REFUSAL of its own, never a miss: a
+# fork that failed, a crash inside `agents-conf', a usage error a future caller introduces. Read as
+# a miss, the session would start on the default tool with no model at all while saying the file
+# names no line for this agent - a sentence about a file nobody managed to read, and a session
+# running on settings nobody wrote, which is the one thing the agreed record forbids outright.
+case "$conf_kind" in
+  hit|miss|refused) ;;
+  *)
+    "$here/launch-refused" "$name" "agents.conf could not be read (agents-conf exited $conf_status) - fix it, or run .claude/cerebro/scripts/agents-conf --name $name --role $role to see why"
+    exit 2
+    ;;
+esac
+
+# Read BEFORE `launch-preflight', reversing the order `model-for' had: nothing downstream can be
+# checked without the tool - `--check' has no binary to look for and the layouts match has no row to
+# pick. The cost is that the `git merge --ff-only' inside the preflight can bring in an agents.conf
+# newer than the one just read, and this session then runs on the previous line; the next start
+# reads the new one.
+tool="" model="" effort=""
+if [[ "$conf_kind" == "hit" ]]; then
+  tool="$conf_b" model="$conf_c" effort="$conf_d"
+  # Said out loud on every start, without exception: a session on an unexpected model is otherwise a
+  # mystery three days later, and this is the file nobody remembers editing. Plain double-quoted
+  # strings and an `if' chain rather than `${x:+...}': the apostrophe in "$tool's own model and
+  # effort" is a syntax error inside a ${x:-word} expansion under bash 3.2.
+  if [[ -z "$model" && -n "$effort" ]]; then
+    # The line named an effort and no model, so the effort IS passed - honouring what somebody wrote
+    # is the rule - and the sentence says both halves. Saying "its own model and effort" here while
+    # handing `--effort' to the CLI would be a sentence contradicting the argv, which is exactly the
+    # mystery three days later this line exists to prevent.
+    echo "launch: agents.conf (\"$conf_a\") -> $tool, $tool's own model at $effort effort" >&2
+  elif [[ -z "$model" ]]; then
+    echo "launch: agents.conf (\"$conf_a\") -> $tool, $tool's own model and effort" >&2
+  elif [[ -n "$effort" ]]; then
+    echo "launch: agents.conf (\"$conf_a\") -> $tool, $model at $effort effort" >&2
+  else
+    echo "launch: agents.conf (\"$conf_a\") -> $tool, $model" >&2
+  fi
+elif [[ "$conf_kind" == "refused" ]]; then
+  # Said and recorded by `launch-refused' (cb-ccl), so the sentence reaches the fleet row even when
+  # the vterm buffer died before it was drawn. Nothing between it and the `exit 2': an advisory
+  # there could eat this status.
+  "$here/launch-refused" "$name" "$conf_a"
+  exit 2
+else
+  # A miss: no model and no effort at all, and the session runs on the tool's own defaults. Said out
+  # loud, or a fleet nobody has configured looks exactly like one deliberately on defaults. Which of
+  # the two sentences depends on whether there was a file to look in.
+  tool="$("$here/agent-cli" --default-tool)"
+  if [[ "$conf_a" == "no-file" ]]; then
+    echo "launch: no agents.conf - $tool picks its own model and effort" >&2
+  else
+    echo "launch: agents.conf names no line for $name - $tool picks its own model and effort" >&2
+  fi
 fi
 
-# Nothing matched, on a provider whose ids the agent files are not written in: no --model and no
-# --effort are passed at all and the session runs on the CLI's own defaults. Said out loud, or a
-# fleet nobody has configured looks exactly like one deliberately on defaults. Plain
-# double-quoted strings, so the apostrophe in "Claude Code's" is safe - it would not be inside a
-# ${x:-word} expansion, which is this file's own bash-3.2 trap.
-if [[ "$agent_file_models" == "no" && -z "$matched" ]]; then
-  echo "launch: no models.conf entry for $provider - $provider picks its own model and effort." >&2
-  if [[ -n "$frontmatter_model" ]]; then
-    echo "        The $role declares model $frontmatter_model, which is Claude Code's name for it." >&2
-  fi
-fi
+# ah-cuc: link whatever a submodule bump brought in, so the agent CLI finds the role by name.
+# ah-bri: refuse with one line if it cannot, instead of exiting silently. The tool is passed: what
+# it checks for is the CLI this session is about to start on, not a fleet-wide declaration.
+"$here/launch-preflight" "$role" "$name" "$tool"
 
 # Cerebro's own marker sentence: the WHOLE of the liveness rule since cb-d59.3, and the reason
 # neither `cerebro--session-args-p' nor `scripts/agent-alive' contains a provider's spelling any
@@ -330,18 +348,18 @@ fi
 # NUL-separated and read through a PROCESS SUBSTITUTION, not a pipe: the prompt below carries an
 # embedded newline, so a line-delimited protocol would split it into two argv entries, and
 # `x | while read' would build the array in a subshell that is gone by the next line.
-binary="$("$here/agent-cli" --binary)"
+binary="$("$here/agent-cli" --binary --tool "$tool")"
 
 argv=()
 while IFS= read -r -d '' tok; do argv+=("$tok"); done < <(
-  "$here/agent-cli" --argv --role "$role" --name "$name" \
+  "$here/agent-cli" --argv --tool "$tool" --role "$role" --name "$name" \
     ${model:+--model "$model"} \
     ${effort:+--effort "$effort"} \
     --settings "$CEREBRO_HOOK_SETTINGS")
 
 prompt_argv=()
 while IFS= read -r -d '' tok; do prompt_argv+=("$tok"); done < <(
-  "$here/agent-cli" --prompt-argv "$prompt")
+  "$here/agent-cli" --prompt-argv --tool "$tool" "$prompt")
 
 # The caller's own arguments sit between the flags and the prompt, exactly where they used to: that
 # is what makes a `--model' typed on the command line beat the one resolved above.

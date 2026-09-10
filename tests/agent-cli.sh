@@ -48,7 +48,7 @@ err="$(cat "$work_dir/err")"
 pass "a declared agent_cli claude answers claude and says nothing"
 
 # --- --binary, --known, and an unknown verb ------------------------------------------------------
-out="$("$agent_cli" --binary 2>/dev/null)"
+out="$("$agent_cli" --binary --tool claude 2>/dev/null)"
 [[ "$out" == "claude" ]] || fail "--binary: expected 'claude', got '$out'"
 pass "--binary is the executable the claude arm execs"
 
@@ -76,14 +76,14 @@ err="$(cat "$work_dir/err")"
 [[ -z "$err" ]] || fail "agent_cli copilot: expected nothing on stderr, got: $err"
 pass "a declared agent_cli copilot resolves and says nothing"
 
-out="$("$agent_cli" --binary 2>/dev/null)"
+out="$("$agent_cli" --binary --tool copilot 2>/dev/null)"
 [[ "$out" == "copilot" ]] || fail "--binary (copilot): expected 'copilot', got '$out'"
 pass "--binary is the executable the copilot arm execs"
 
 # --- an unknown declaration is still a refusal ---------------------------------------------------
 printf 'agent_cli emacs-doctor\n' > "$conf"
 set +e
-out="$("$agent_cli" --binary 2>"$work_dir/err")"; status=$?
+out="$("$agent_cli" 2>"$work_dir/err")"; status=$?
 set -e
 err="$(cat "$work_dir/err")"
 [[ $status -eq 3 ]] || fail "an unknown agent_cli: expected exit 3, got $status"
@@ -93,23 +93,55 @@ grep -q 'emacs-doctor' <<<"$err" \
   || fail "an unknown agent_cli: the sentence should name the declared value, got: $err"
 pass "an unknown agent_cli exits 3 saying it is not an agent CLI cerebro knows"
 
-# --- --check refuses through launch-refused, and records it --------------------------------------
-set +e
-out="$("$agent_cli" --check Storm 2>"$work_dir/err")"; status=$?
-set -e
+# --- a told tool beats the declaration ------------------------------------------------------------
+#
+# The whole point of cb-94y.2: `agents.conf' decides, per agent, and `project.conf' decides nothing
+# on this path any more. So a consumer declaring claude answers copilot when copilot is what it is
+# told, and never consults `resolve' at all.
+printf 'agent_cli claude\n' > "$conf"
+out="$("$agent_cli" --binary --tool copilot 2>"$work_dir/err")"
 err="$(cat "$work_dir/err")"
-[[ $status -eq 3 ]] || fail "--check on an unknown agent_cli: expected exit 3, got $status"
-grep -q '^cerebro: ' <<<"$err" \
-  || fail "--check: the refusal must come from launch-refused, got: $err"
-grep -q 'before starting Storm$' <<<"$err" \
-  || fail "--check: the sentence should end by naming the agent, got: $err"
-pass "--check on an unknown agent_cli refuses and names the agent"
+[[ "$out" == "copilot" ]] || fail "--binary --tool copilot: expected 'copilot', got '$out'"
+[[ -z "$err" ]] || fail "--binary --tool copilot: expected nothing on stderr, got: $err"
+pass "--binary answers the tool it is told, whatever the consumer declares"
 
-errors="$consumer/.cerebro/state/errors.jsonl"
-[[ -f "$errors" ]] || fail "--check: expected a line in $errors"
-[[ "$(jq -r 'select(.event == "error") | .context' "$errors" | tail -1)" == "launch Storm" ]] \
-  || fail "--check: expected the errors.jsonl context to be 'launch Storm'"
-pass "--check writes the refusal to errors.jsonl"
+# --- --tool is required, and must name a tool this cerebro knows ----------------------------------
+#
+# A usage error and not a refusal: by the time `launch' calls these the word has already come out of
+# `agents-conf', which validated it against `--known' itself, so a bad value here is a caller's bug
+# and there is no navigator-facing sentence for it.
+for bad in "--binary" "--binary --tool" "--binary --tool emacs-doctor" \
+           "--prompt-argv hello" "--prompt-argv --tool emacs-doctor hello" \
+           "--check Storm" "--check --tool emacs-doctor Storm" \
+           "--argv --role planner --name Xavier" \
+           "--argv --tool emacs-doctor --role planner --name Xavier"; do
+  set +e
+  out="$("$agent_cli" $bad 2>&1)"; status=$?
+  set -e
+  [[ $status -eq 2 ]] || fail "'$bad': expected exit 2, got $status"
+  grep -q '^usage: ' <<<"$out" || fail "'$bad': expected the usage line, got: $out"
+done
+pass "--tool is required on the four told verbs, and an unknown tool is a usage error"
+
+# --- --default-tool: what a fleet that declares nothing runs on -----------------------------------
+#
+# Answered BEFORE `resolve', which is what this case pins by asking it in a consumer declaring
+# nothing at all: `resolve' would print its fallback line above every session in exactly that
+# consumer. It exists so that `scripts/launch' still spells no provider's name.
+: > "$conf"
+out="$("$agent_cli" --default-tool 2>"$work_dir/err")"
+err="$(cat "$work_dir/err")"
+[[ "$out" == "claude" ]] || fail "--default-tool: expected 'claude', got '$out'"
+[[ -z "$err" ]] || fail "--default-tool: expected nothing on stderr, got: $err"
+pass "--default-tool answers claude and says nothing"
+
+set +e
+"$agent_cli" --default-tool x >/dev/null 2>&1; status=$?
+set -e
+[[ $status -eq 2 ]] || fail "--default-tool with an argument: expected exit 2, got $status"
+pass "--default-tool takes no arguments"
+
+printf 'agent_cli claude\n' > "$conf"
 
 # --- --check, with claude declared and the binary missing ----------------------------------------
 printf 'agent_cli claude\n' > "$conf"
@@ -118,18 +150,35 @@ cleanup_add "$bare_dir"
 ln -s "$(command -v dirname)" "$bare_dir/dirname"
 ln -s "$(command -v bash)" "$bare_dir/bash"
 set +e
-out="$(PATH="$bare_dir" "$(command -v bash)" "$agent_cli" --check Storm 2>&1)"; status=$?
+out="$(PATH="$bare_dir" "$(command -v bash)" "$agent_cli" --check --tool claude Storm 2>&1)"; status=$?
 set -e
 [[ $status -eq 3 ]] || fail "--check (claude missing): expected exit 3, got $status"
 grep -q 'claude is not on PATH - install Claude Code' <<<"$out" \
   || fail "--check (claude missing): expected launch-preflight's own sentence, got: $out"
 pass "--check refuses when the arm's binary is not on PATH"
 
+# The refusal has to REACH the fleet view, and errors.jsonl is the only way it does (cb-ccl). A PATH
+# of its own rather than $bare_dir: launch-refused needs jq, date and mkdir to write the line at
+# all, and it must still not find `claude'.
+noclaude_dir="$(mktemp -d)"
+cleanup_add "$noclaude_dir"
+for t in dirname bash grep tail mkdir date git jq; do
+  [[ -x "$noclaude_dir/$t" ]] || ln -s "$(command -v "$t")" "$noclaude_dir/$t"
+done
+set +e
+PATH="$noclaude_dir" "$(command -v bash)" "$agent_cli" --check --tool claude Storm >/dev/null 2>&1
+set -e
+errors="$consumer/.cerebro/state/errors.jsonl"
+[[ -f "$errors" ]] || fail "--check: expected a line in $errors"
+[[ "$(jq -r 'select(.event == "error") | .context' "$errors" | tail -1)" == "launch Storm" ]] \
+  || fail "--check: expected the errors.jsonl context to be 'launch Storm'"
+pass "--check writes the refusal to errors.jsonl"
+
 stub_dir="$(mktemp -d)"
 cleanup_add "$stub_dir"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$stub_dir/claude"
 chmod +x "$stub_dir/claude"
-out="$(PATH="$stub_dir:$PATH" "$agent_cli" --check Storm 2>&1)"
+out="$(PATH="$stub_dir:$PATH" "$agent_cli" --check --tool claude Storm 2>&1)"
 [[ -z "$out" ]] || fail "--check (claude present): expected silence, got: $out"
 pass "--check exits 0 and says nothing when claude is declared and present"
 
@@ -143,7 +192,7 @@ read_argv() {
   while IFS= read -r -d '' tok; do argv+=("$tok"); done < <("$@")
 }
 
-read_argv "$agent_cli" --argv --role implementer --name Storm \
+read_argv "$agent_cli" --argv --tool claude --role implementer --name Storm \
   --model opus --effort high --settings /tmp/s.json
 expected=(--agent implementer --name Storm --remote-control Storm
           --model opus --effort high
@@ -162,7 +211,7 @@ grep -q -- '--append-system-prompt' <<<"${argv[*]}" \
   && fail "--argv still emits --append-system-prompt: ${argv[*]}"
 pass "--argv emits no --append-system-prompt, the marker having moved into the prompt"
 
-read_argv "$agent_cli" --argv --role planner --name Xavier
+read_argv "$agent_cli" --argv --tool claude --role planner --name Xavier
 expected=(--agent planner --name Xavier --remote-control Xavier --permission-mode auto)
 [[ "${argv[*]}" == "${expected[*]}" ]] \
   || fail "--argv (nothing optional): expected '${expected[*]}', got '${argv[*]}'"
@@ -170,14 +219,14 @@ pass "--argv omits --model, --effort and --settings when not given"
 
 prompt="You are Storm. Your agent definition (implementer) is the whole of your instructions: follow it from
 the top, and start now rather than waiting to be spoken to."
-read_argv "$agent_cli" --prompt-argv "$prompt"
+read_argv "$agent_cli" --prompt-argv --tool claude "$prompt"
 [[ "${#argv[@]}" -eq 1 ]] || fail "--prompt-argv: expected one token, got ${#argv[@]}"
 [[ "${argv[0]}" == "$prompt" ]] || fail "--prompt-argv: the prompt should arrive whole, got '${argv[0]}'"
 pass "--prompt-argv carries a prompt containing a newline as one token"
 
 set +e
-"$agent_cli" --argv --name Storm >/dev/null 2>&1; no_role=$?
-"$agent_cli" --argv --role implementer >/dev/null 2>&1; no_name=$?
+"$agent_cli" --argv --tool claude --name Storm >/dev/null 2>&1; no_role=$?
+"$agent_cli" --argv --tool claude --role implementer >/dev/null 2>&1; no_name=$?
 set -e
 [[ $no_role -eq 2 ]] || fail "--argv without --role: expected exit 2, got $no_role"
 [[ $no_name -eq 2 ]] || fail "--argv without --name: expected exit 2, got $no_name"
@@ -243,7 +292,7 @@ pass "--agent-file-models takes no arguments"
 
 # --- the copilot arm's argv, token for token and in order ----------------------------------------
 printf 'agent_cli copilot\n' > "$conf"
-read_argv "$agent_cli" --argv --role implementer --name Storm \
+read_argv "$agent_cli" --argv --tool copilot --role implementer --name Storm \
   --model gpt-5-mini --effort medium --settings /tmp/s.json
 expected=(--agent implementer --name Storm
           --model gpt-5-mini --effort medium
@@ -264,7 +313,7 @@ grep -q -- '/tmp/s.json' <<<"${argv[*]}" \
   && fail "--argv (copilot): the settings path must not appear: ${argv[*]}"
 pass "the copilot arm emits no --remote-control, no --settings and no --permission-mode"
 
-read_argv "$agent_cli" --argv --role planner --name Xavier
+read_argv "$agent_cli" --argv --tool copilot --role planner --name Xavier
 expected=(--agent planner --name Xavier --allow-all)
 [[ "${argv[*]}" == "${expected[*]}" ]] \
   || fail "--argv (copilot, nothing optional): expected '${expected[*]}', got '${argv[*]}'"
@@ -285,7 +334,7 @@ done
   || fail "--argv (copilot): --allow-all-tools is the narrower flag and must not be emitted: ${argv[*]}"
 pass "the copilot arm's permission flag allows paths and URLs, not tools alone"
 
-read_argv "$agent_cli" --prompt-argv "$prompt"
+read_argv "$agent_cli" --prompt-argv --tool copilot "$prompt"
 [[ "${#argv[@]}" -eq 2 ]] || fail "--prompt-argv (copilot): expected two tokens, got ${#argv[@]}"
 [[ "${argv[0]}" == "-i" ]] || fail "--prompt-argv (copilot): expected -i, got '${argv[0]}'"
 [[ "${argv[1]}" == "$prompt" ]] \
@@ -304,7 +353,7 @@ for t in dirname bash grep tail mkdir date git; do
   [[ -x "$nocopilot_dir/$t" ]] || ln -s "$(command -v "$t")" "$nocopilot_dir/$t"
 done
 set +e
-out="$(PATH="$nocopilot_dir" "$(command -v bash)" "$agent_cli" --check Storm 2>&1)"; status=$?
+out="$(PATH="$nocopilot_dir" "$(command -v bash)" "$agent_cli" --check --tool copilot Storm 2>&1)"; status=$?
 set -e
 [[ $status -eq 3 ]] || fail "--check (copilot missing): expected exit 3, got $status"
 grep -q 'copilot is not on PATH - install GitHub Copilot CLI' <<<"$out" \
@@ -315,7 +364,7 @@ pass "--check refuses when copilot is not on PATH"
 
 printf '#!/usr/bin/env bash\nexit 0\n' > "$stub_dir/copilot"
 chmod +x "$stub_dir/copilot"
-out="$(PATH="$stub_dir:$PATH" "$agent_cli" --check Storm 2>&1)"
+out="$(PATH="$stub_dir:$PATH" "$agent_cli" --check --tool copilot Storm 2>&1)"
 [[ -z "$out" ]] || fail "--check (copilot present): expected silence, got: $out"
 pass "--check exits 0 and says nothing when copilot is declared and present"
 

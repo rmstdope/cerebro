@@ -21,7 +21,7 @@
 #   exit 2   usage.
 #
 # THE PATHSPEC IS PART OF THE DESIGN. Only `.claude/' and `.github/' are scanned. Scanning the whole
-# repository would make this suite read `docs/', `README.md', `LICENSE' and `models.conf.example' -
+# repository would make this suite read `docs/', `README.md', `LICENSE' and `agents.conf.example' -
 # the four entries on `scripts/ci-needed''s skip list - and a suite that starts reading one of them
 # makes a green pull request that should have been red. Both directories are on ci-needed's `*)'
 # arm, so a change under either always runs the whole matrix: ci-needed needs no edit for this.

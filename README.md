@@ -17,8 +17,8 @@ The fleet is bash and Rust on top of programs it does not ship:
 
 - **One agent CLI** — every agent is a session of it. Either `claude`
   ([Claude Code](https://claude.com/claude-code)) or `copilot`
-  ([GitHub Copilot CLI](https://github.com/github/copilot-cli)), declared once in step 4 as
-  `agent_cli`; absent means `claude`. What a fleet on Copilot gets and does not is
+  ([GitHub Copilot CLI](https://github.com/github/copilot-cli)); each agent's tool is named in
+  `agents.conf`. What a fleet on Copilot gets and does not is
   [docs/providers/copilot.md](docs/providers/copilot.md).
 - `bd` — the bead board every role reads and writes ([beads](https://github.com/steveyegge/beads)),
   with a Dolt remote so every machine and session sees one board.
@@ -51,7 +51,7 @@ Check: `.claude/cerebro/scripts/consumer-root` prints your repository's absolute
 Claude Code discovers `.claude/skills/<name>/SKILL.md` and `.claude/agents/<name>.md`; GitHub
 Copilot discovers `.github/skills/<name>/` and `.github/agents/<name>.agent.md`, and its hooks from
 `.github/hooks/`. The sync writes relative symlinks into **both** layouts in every project, whatever
-`agent_cli` you declare — so switching CLI stays one line in step 4 and nothing else.
+any `agents.conf` line names — so switching CLI stays one line per agent and nothing else.
 
 ```bash
 .claude/cerebro/scripts/sync-symlinks.sh
@@ -82,7 +82,6 @@ app_paths      ^src/         # a regex: which changed paths those people could s
 gate_fast      make test     # what an implementer runs before it opens a pull request
 gate_full      make test     # what a pull request is judged by
 install        npm ci        # omit it when there is nothing to install
-# agent_cli    copilot       # which CLI the sessions run on; absent means claude
 ```
 
 An absent key is a default, with one exception: without `app_paths` the fleet refuses to classify a
@@ -121,19 +120,16 @@ implementers are taken in file order.
 
 Check: `.claude/cerebro/scripts/roster` prints your fleet, one `name<TAB>role<TAB>kind` per line.
 
-### 6. Traps and models (optional)
+### 6. Traps and agent settings (optional)
 
 - `.cerebro/traps.md` — the facts this project has already paid for, read by planners and
   implementers before they start. Absent is where every project starts.
-- `.cerebro/models.conf` — which model each agent runs on:
-  `cp .claude/cerebro/models.conf.example .cerebro/models.conf` and uncomment a line. A key may name
-  the CLI it is about — `planner@copilot gpt-5.5` applies only on Copilot, and beats a plain
-  `planner` row there — which is how one file covers both; on a CLI other than Claude Code it is the
-  **only** place models come from, the agent definitions declaring Claude Code's words. Commit it to
-  share the fleet's models with every clone, or ignore it (step 8) to keep it personal.
+- `.cerebro/agents.conf` — which tool, model and effort each agent runs on:
+  `cp .claude/cerebro/agents.conf.example .cerebro/agents.conf`. Each line names an agent, role or
+  `default`, then `tool=`, `model=` and `effort=` settings. The most specific line wins outright.
+  Commit it to share the fleet's settings with every clone, or ignore it (step 8) to keep it personal.
 
-Check: with a `models.conf` line uncommented, `launch` says `launch: models.conf (<key>) -> <model>`
-on stderr as it starts a session.
+Check: `launch` says `launch: agents.conf ("<key>") -> <tool>, <model>` on stderr as it starts a session.
 
 ### 7. Give the fleet its `CLAUDE.md`
 
@@ -161,8 +157,8 @@ declares. Ignore the first and commit the second:
 
 `worktrees/` is where every implementer builds; `state/` holds the agents' state files and stop
 flags; `scratch/` holds the planners' drafts and rejected mockup variants. Everything else in
-`.cerebro/` is tracked — the declarations from steps 4 to 6, and `models.conf` if the fleet's
-models are the project's to share (add `.cerebro/models.conf` here to keep it personal instead).
+`.cerebro/` is tracked — the declarations from steps 4 to 6, and `agents.conf` if the fleet's
+settings are the project's to share (add `.cerebro/agents.conf` here to keep it personal instead).
 Then commit the submodule, the links, the declarations and `CLAUDE.md`.
 
 Check: `git check-ignore -v .cerebro/state/x` names the `.cerebro/state` line, and
@@ -286,7 +282,7 @@ Two columns are worth understanding before you trust a total:
   than looking free.
 
 It needs `sqlite3` and `jq` on `PATH`, and a project running on Copilot — cost is recorded per
-machine, and a project declaring `agent_cli claude` is told so and gets nothing rather than a
+machine, and a Claude-only fleet is told so and gets nothing rather than a
 misleading zero. It refuses out loud, on stderr with nothing on stdout, whenever it cannot answer:
 a number that means "the query broke" is worse than no number. If the window reaches further back
 than either record goes, it says on stderr what it could actually see, and stdout stays parseable.

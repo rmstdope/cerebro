@@ -66,7 +66,7 @@ ending, and stamping there would clear the very signal cb-ykz.2 is being built o
 (M6) holds nothing that corresponds to `Stop` — `sessionEnd` fires when the whole session finishes
 — so `hooks/copilot/cerebro-question-state.json` is untouched and keeps its name. A guessed event
 name would be a hook that silently never fires, which is the failure this README already warns
-about for matchers. The cost, plainly: a fleet declaring `agent_cli copilot` never gets
+about for matchers. The cost, plainly: a fleet declaring an agent whose `agents.conf` line names copilot never gets
 `turn_ended`, so when cb-ykz.2 lands no Copilot session will ever be marked stuck.
 
 What the hook deliberately does **not** do: invent a state file that does not exist yet (a question
@@ -93,7 +93,7 @@ repository**, so this file cannot be handed to it on the command line the way th
 settings file is: `scripts/sync-symlinks.sh` links it into the consumer's `.github/hooks/`, and
 `scripts/agent-cli --hooks` is the one place the source and destination paths are written down.
 
-The link is written in **every** consumer, whatever `agent_cli` declares — the rule cb-d59.4 took
+The link is written in **every** consumer, whatever any `agents.conf` line names — the rule cb-d59.4 took
 for agents and skills, so switching a fleet to Copilot stays one line in `.cerebro/project.conf`.
 The accepted cost: a Claude-Code-only project carries a `.github/hooks/` file it never uses, and
 the hook fires for *any* `copilot` run in that repository. That is harmless — `agent-asking` exits 0

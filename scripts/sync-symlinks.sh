@@ -12,7 +12,7 @@ shopt -s nullglob
 # `scripts/agent-cli --layouts' and `--hooks' are the one place a provider's discovery paths are
 # written down;
 # this script spells none of them and knows no provider's name. EVERY layout is written in EVERY
-# consumer, whatever `agent_cli' declares (cb-d59.4), so that switching a fleet between agent CLIs
+# consumer, whatever any `agents.conf' line names (cb-d59.4), so that switching a fleet between agent CLIs
 # is one line in .cerebro/project.conf and nothing else - the navigator's choice, taken over
 # writing only the declared CLI's layout.
 #

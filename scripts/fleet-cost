@@ -144,14 +144,6 @@ else
   window_words="since $since_arg"
 fi
 
-# --- the four refusals -------------------------------------------------------------------------------
-
-provider="$("$script_dir/agent-cli" 2>/dev/null || echo claude)"
-if [[ "$provider" != "copilot" ]]; then
-  echo "fleet-cost: this project declares \`agent_cli $provider', and only copilot sessions record their cost where this can read it. Nothing was reported." >&2
-  exit 1
-fi
-
 if ! command -v sqlite3 >/dev/null 2>&1; then
   echo "fleet-cost: sqlite3 is not on PATH - it is what reads the session store. Nothing was reported." >&2
   exit 1

@@ -1163,8 +1163,8 @@ eight it asks you to write. Write them at the top level of the `design` field, u
 ### Validation a worktree cannot run
 
 > **A worktree cannot validate a change through a reader that deliberately answers from the
-> shared root.** `project-conf` and `model-for` read `.cerebro/project.conf` and
-> `.cerebro/models.conf` through `consumer-root --shared`; inside an implementer's worktree that
+> shared root.** `project-conf` and `agents-conf` read `.cerebro/project.conf` and
+> `.cerebro/agents.conf` through `consumer-root --shared`; inside an implementer's worktree that
 > is the main checkout, not the branch being planned. A plan that changes either declaration
 > must identify every validation command that reads main and cannot prove the branch before
 > merge. Its *Validation* section must instead give the exact commands to commit the branch,

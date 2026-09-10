@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 #
-# Proves scripts/agent-cli is the ONE place "which agent CLI does this fleet run on" is answered
-# (cb-d59.2). The defect it ends: the answer was spelt `claude` in argv, in two scripts -
-# `scripts/launch` and `scripts/launch-preflight` - declared nowhere and askable of nothing, so
-# running the fleet on any other agent CLI meant rewriting both launchers.
+# Proves scripts/agent-cli is the one place a tool's executable, arguments and discovery paths are
+# answered. Fleet-wide declarations are deliberately not read here.
 #
 # The seam is what is asserted here: the verbs, the sentences, and the argv the claude arm emits,
 # token for token and in order. `tests/launchers.sh` proves the other half - that `launch` spells
@@ -29,23 +27,27 @@ agent_cli="$consumer/.claude/cerebro/scripts/agent-cli"
 # Every case declares what it needs; this one declares nothing at all.
 : > "$conf"
 
-# --- an absent declaration answers claude, and says so ------------------------------------------
-out="$("$agent_cli" 2>"$work_dir/err")"
-err="$(cat "$work_dir/err")"
-[[ "$out" == "claude" ]] || fail "absent agent_cli: expected stdout 'claude', got '$out'"
-grep -q 'agent-cli: no agent_cli declared; running on claude' <<<"$err" \
-  || fail "absent agent_cli: expected the fallback line on stderr, got: $err"
-grep -q 'project-conf:' <<<"$err" \
-  && fail "absent agent_cli: project-conf's own stderr must be swallowed, got: $err"
-pass "an absent agent_cli answers claude, and says so once on stderr"
+# --- the bare verb and old frontmatter lookup are retired ---------------------------------------
+set +e
+out="$("$agent_cli" 2>&1)"; status=$?
+set -e
+[[ $status -eq 2 ]] || fail "bare agent-cli: expected exit 2, got $status"
+grep -q '^usage: ' <<<"$out" || fail "bare agent-cli: expected usage, got: $out"
+pass "the bare verb is a usage error"
 
-# --- a declared claude answers claude, and says nothing ------------------------------------------
-printf 'agent_cli claude\n' > "$conf"
-out="$("$agent_cli" 2>"$work_dir/err")"
-err="$(cat "$work_dir/err")"
-[[ "$out" == "claude" ]] || fail "agent_cli claude: expected stdout 'claude', got '$out'"
-[[ -z "$err" ]] || fail "agent_cli claude: expected nothing on stderr, got: $err"
-pass "a declared agent_cli claude answers claude and says nothing"
+set +e
+out="$("$agent_cli" --agent-file-models 2>&1)"; status=$?
+set -e
+[[ $status -eq 2 ]] || fail "--agent-file-models: expected exit 2, got $status"
+grep -q '^usage: ' <<<"$out" || fail "--agent-file-models: expected usage, got: $out"
+pass "--agent-file-models is a usage error"
+
+# A retired project-wide declaration must not affect a told tool, or produce an advisory.
+printf 'agent_cli emacs-doctor\n' > "$conf"
+out="$("$agent_cli" --binary --tool claude 2>"$work_dir/err")"
+[[ "$out" == "claude" ]] || fail "unrunnable agent_cli: expected claude, got '$out'"
+[[ ! -s "$work_dir/err" ]] || fail "unrunnable agent_cli: expected no stderr, got $(cat "$work_dir/err")"
+pass "a project.conf declaring an unrunnable agent_cli changes nothing"
 
 # --- --binary, --known, and an unknown verb ------------------------------------------------------
 out="$("$agent_cli" --binary --tool claude 2>/dev/null)"
@@ -63,35 +65,15 @@ set -e
 [[ $status -eq 2 ]] || fail "--wat: expected exit 2, got $status"
 pass "an unknown verb exits 2"
 
-# --- a declared copilot runs, since cb-d59.6 moved it out of PLANNED --------------------------
+# --- told tools are independent of project.conf ------------------------------------------------
 #
 # PLANNED is empty now, and its `resolve' branch and `refusal_sentence' arm survive untested
 # BECAUSE it is empty: they are the only thing that tells a consumer on an older cerebro,
 # declaring a provider a newer cerebro has, to bump the submodule rather than fix a declaration
 # that is perfectly correct. Deleting them would give that consumer the opposite advice.
-printf 'agent_cli copilot\n' > "$conf"
-out="$("$agent_cli" 2>"$work_dir/err")"
-err="$(cat "$work_dir/err")"
-[[ "$out" == "copilot" ]] || fail "agent_cli copilot: expected stdout 'copilot', got '$out'"
-[[ -z "$err" ]] || fail "agent_cli copilot: expected nothing on stderr, got: $err"
-pass "a declared agent_cli copilot resolves and says nothing"
-
 out="$("$agent_cli" --binary --tool copilot 2>/dev/null)"
 [[ "$out" == "copilot" ]] || fail "--binary (copilot): expected 'copilot', got '$out'"
 pass "--binary is the executable the copilot arm execs"
-
-# --- an unknown declaration is still a refusal ---------------------------------------------------
-printf 'agent_cli emacs-doctor\n' > "$conf"
-set +e
-out="$("$agent_cli" 2>"$work_dir/err")"; status=$?
-set -e
-err="$(cat "$work_dir/err")"
-[[ $status -eq 3 ]] || fail "an unknown agent_cli: expected exit 3, got $status"
-grep -q 'is not an agent CLI cerebro knows' <<<"$err" \
-  || fail "an unknown agent_cli: expected the unknown-provider sentence, got: $err"
-grep -q 'emacs-doctor' <<<"$err" \
-  || fail "an unknown agent_cli: the sentence should name the declared value, got: $err"
-pass "an unknown agent_cli exits 3 saying it is not an agent CLI cerebro knows"
 
 # --- a told tool beats the declaration ------------------------------------------------------------
 #
@@ -272,23 +254,6 @@ set +e
 set -e
 [[ $status -eq 2 ]] || fail "--layouts with an argument: expected exit 2, got $status"
 pass "--layouts takes no arguments"
-
-# --- --agent-file-models: whose words are the agent files' model: and effort: ---------------------
-#
-# Unlike --layouts, this one answers about THIS fleet, so it belongs after `resolve'.
-printf 'agent_cli claude\n' > "$conf"
-out="$("$agent_cli" --agent-file-models 2>/dev/null)"
-[[ "$out" == "yes" ]] || fail "--agent-file-models (claude): expected 'yes', got '$out'"
-printf 'agent_cli copilot\n' > "$conf"
-out="$("$agent_cli" --agent-file-models 2>/dev/null)"
-[[ "$out" == "no" ]] || fail "--agent-file-models (copilot): expected 'no', got '$out'"
-pass "--agent-file-models says the agent files' words are claude's"
-
-set +e
-"$agent_cli" --agent-file-models x >/dev/null 2>&1; status=$?
-set -e
-[[ $status -eq 2 ]] || fail "--agent-file-models with an argument: expected exit 2, got $status"
-pass "--agent-file-models takes no arguments"
 
 # --- the copilot arm's argv, token for token and in order ----------------------------------------
 printf 'agent_cli copilot\n' > "$conf"

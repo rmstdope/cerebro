@@ -54,9 +54,8 @@ ago_ms() {
 new_fixture() {
   local tmp
   tmp="$(consumer_new "$(fixture_name)" \
-           --link consumer-root fleet-history fleet-cost project-conf agent-cli)"
+           --link consumer-root fleet-history fleet-cost)"
   mkdir -p "$tmp/.cerebro/state"
-  printf 'agent_cli copilot\n' > "$tmp/.cerebro/project.conf"
   printf '%s' "$tmp"
 }
 
@@ -666,14 +665,6 @@ refuses "$nolog" "a missing transition log" --by-bead
 grep -q 'no transition log' "$work_dir/err-refuse" \
   || fail "a missing transition log says cost cannot be attributed"
 pass "a missing transition log refuses rather than reporting cost it cannot attribute"
-
-notcopilot="$(new_fixture)"
-printf 'agent_cli claude\n' > "$notcopilot/.cerebro/project.conf"
-make_store "$notcopilot/store.db"
-refuses "$notcopilot" "a project that is not on copilot" --by-bead
-grep -q "agent_cli claude" "$work_dir/err-refuse" \
-  || fail "a non-copilot project is told which provider it declared"
-pass "a project declaring a provider other than copilot refuses loudly"
 
 set +e
 run "$base" >/dev/null 2>"$work_dir/err-usage"; status=$?

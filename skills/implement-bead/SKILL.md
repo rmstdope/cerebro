@@ -448,8 +448,8 @@ launch preflight refuses an implementer with no fast gate.
 
 ### A changed shared-root declaration is gated in a clone
 
-`project-conf` and `model-for` deliberately read `.cerebro/project.conf` and
-`.cerebro/models.conf` from the shared checkout. When the diff changes either file, a read from
+`project-conf` and `agents-conf` deliberately read `.cerebro/project.conf` and
+`.cerebro/agents.conf` from the shared checkout. When the diff changes either file, a read from
 this worktree still sees main; a failure or old value there is not evidence that the branch is
 wrong. Finish and commit the increments first, then follow the plan's exact clone, submodule,
 install or prewarm, and fast-gate commands. Run the gate in that throwaway clone of the
@@ -533,24 +533,17 @@ else. Everything below is how you satisfy it.
 
 ```bash
 .claude/cerebro/scripts/agent-state <name> working --bead <id> --phase review --pid $PPID
-.claude/cerebro/scripts/model-for --role reviewer
+.claude/cerebro/scripts/agents-conf --role reviewer
 ```
 
-**Ask for no provider, and let `model-for` resolve it.** A caller with no provider already in
-hand gets the right answer by asking for none — `scripts/launch` passes one only because it has
-already resolved one, and a second fork per launch is the cost that script exists not to
-multiply. It matters: a consumer declaring `agent_cli copilot` may carry a `reviewer@copilot`
-row, and a lookup that never learns the provider silently matches the plain key instead — one
-file with two answers, which is the defect `model-for` exists to prevent.
-
-`model-for` prints one tab-separated line — `<matched-key>\t<model>\t<effort>` — or **nothing at
-all** when no key matched, in which case the sub-agent runs on the CLI's own default. Two things its
-header is explicit about and this text will not repeat wrongly: a `default` or `default@<provider>`
-row matches too, so a miss means *no key matched* rather than *nothing about `reviewer`*; and
-`<model>` may be the literal `-`, which is a real answer meaning **pass no model at all** — spawn on
-the CLI's default, never on a model named `-`. Say out loud in the session which key matched and
-which model you are about to review on, the way `scripts/launch` does, so a review on an unexpected
-model is traceable to the file nobody remembers editing.
+**Ask for no provider, and let `agents-conf` resolve it.** The reviewer lookup has no agent name,
+so it probes the `reviewer` role and then `default`. Its `hit` line is
+`hit<TAB><key><TAB><tool><TAB><model><TAB><effort>`; either model or effort may be empty, meaning
+the selected CLI's own default. A `miss<TAB>no-file` or `miss<TAB>no-line` also means the CLI's
+default. A `refused<TAB><sentence>` is a broken declaration; say the sentence and spawn on the
+current CLI's default rather than silently using an unwritten setting. The tool column is read and
+ignored because the sub-agent runs inside this session's already-selected CLI. Say out loud which
+key matched and which model you are about to review on, so the choice is traceable.
 
 Before each invocation, read and retain `reviewed_head` from
 `gh pr view <n> --json headRefOid`. A tool failure, empty response, or response lacking both

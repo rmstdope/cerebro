@@ -132,7 +132,7 @@ aside first.
 Not prose — files, each tracked so that every clone has it.
 
 - `.cerebro/project.conf` — this project's name, default branch, audience, which paths are
-  the application, which agent CLI its sessions run on (`agent_cli`, answered by
+  the application,   which tool each session runs on (`agents.conf`, answered by
   `scripts/agent-cli` — `claude` or, since cb-d59.6, `copilot`, both runnable rather than one
   planned; absent means `claude`), and the gate. Both gates name `tests/gate`, which runs exactly what
   `.github/workflows/ci.yml` runs (cb-i3l.2). Since the `cb-vyp` family it also declares the Rust
@@ -221,14 +221,14 @@ CI (`.github/workflows/ci.yml`) runs all of it: every `tests/*.sh` on ubuntu-lat
 macOS is a red PR, and so is a Rust test that only passes on the developer's own `bd`.
 
 A pull request that touches only `docs/` (except `docs/agent-workflow.md`, which a suite reads),
-`README.md`, `LICENSE` or `models.conf.example` runs none of that: `scripts/ci-needed` is the one
+`README.md`, `LICENSE` or `agents.conf.example` runs none of that: `scripts/ci-needed` is the one
 place that list lives, with the reason beside each entry, and the required checks report
 *skipped*, which GitHub counts as green (cb-ypx). The predicate answers on stdout, in
 `$GITHUB_OUTPUT`'s own `run=true|false` shape, so the workflow appends it unread and a crashed
 predicate is a red step rather than a skipped one. Anything else runs the whole matrix, and a push
 to `main` always does. **Nothing checks that list against what the suites actually open** — a new
 suite that starts reading a path on it makes a green pull request that should have been red, so a
-suite that reads `docs/`, `README.md`, `LICENSE` or `models.conf.example` must edit
+suite that reads `docs/`, `README.md`, `LICENSE` or `agents.conf.example` must edit
 `scripts/ci-needed` in the same pull request. Every job is literal, not a matrix, because a skipped
 matrix job never expands into the check names branch protection requires.
 
@@ -371,7 +371,7 @@ These are load-bearing; changing them changes how the fleet behaves in every con
   readers parse the field and carry it on the row, and since cb-ykz.2 both **derive "stuck"** from
   it — a `working` row whose turn ended more than `cerebro-stuck-ceiling` /
   `STUCK_CEILING_SECONDS` (1800, a literal pair) ago. Acting on one is cb-ykz.3; today it is drawn
-  and recorded and no more. A fleet declaring `agent_cli copilot` gets no
+  and recorded and no more.   A fleet with an agent whose `agents.conf` line names copilot gets no
   `turn_ended` at all: no measured Copilot event corresponds to `Stop`, and a guessed one would be
   a hook that silently never fires.
 - **Nothing merges unreviewed, red, or stale.** The implementer's standing approval to merge without
@@ -833,14 +833,14 @@ and the key hint stays `g retry` until both panes are fresh.
   `roster.conf`, `traps.md`). So the consumer's `.gitignore` names the
   three things the fleet writes while it runs — `.cerebro/worktrees`, `.cerebro/state` and
   `.cerebro/scratch`, the planners' drafts (cb-27g) — and
-  tracks the rest: the declarations, and `models.conf`, which this project commits so every clone
+  tracks the rest: the declarations, and   `agents.conf`, which this project commits so every clone
   runs the same models (`eb6ffdb`; a project that wants it personal ignores it). A deny-list rather
   than everything-except: the price is that a new runtime artifact has to be added to it, and that
-  price was taken so models.conf could be tracked without a negation per tracked file. `.claude/` holds only what Claude
+  price was taken so agents.conf could be tracked without a negation per tracked file. `.claude/` holds only what Claude
   Code itself discovers (`agents/`, `skills/`, `settings.json`) plus this repository's own
   submodule mount. Since cb-d59.4 `.github/agents/<role>.agent.md` and `.github/skills/<name>` hold
   the same links under the names GitHub Copilot discovers, written by the same sync — **both
-  layouts, always, whatever `agent_cli` declares**, so switching provider is one line in
+  layouts, always, whatever   any `agents.conf` line names**, so switching provider is one line in
   `.cerebro/project.conf` and nothing else. They are tracked here, and produced by running the
   script rather than written by hand.
 - **This repository is a consumer of itself** (cb-i3l.1). `.claude/cerebro` is a committed symlink
@@ -905,7 +905,7 @@ and the key hint stays `g retry` until both panes are fresh.
   and a skill, agent or provider hook the mount ships that no layout has a tracked link for — with
   findings on stdout, exit 1, and `tests/tracked-links.sh` as its suite. It scans **only** those two
   directories, deliberately: a wider pathspec would make the suite read `docs/`, `README.md`,
-  `LICENSE` or `models.conf.example` and quietly break `scripts/ci-needed`'s skip list, which needs
+  `LICENSE` or `agents.conf.example` and quietly break `scripts/ci-needed`'s skip list, which needs
   no edit as it stands. It never checks **where** a link points — `.github/copilot-instructions.md`
   and `.claude/cerebro` are tracked links the sync does not write. It is a gate predicate and must
   never join `launch-preflight`'s hot path: a check that refuses there is a fleet that cannot start.
@@ -963,7 +963,7 @@ and the key hint stays `g retry` until both panes are fresh.
   and cb-akt's was a **zero**, which reads as a fleet that has never run rather than as a failure.
   This scans `scripts`, `tests`, `hooks`, `githooks` and `fleet-view` — those five and no others, for
   `scripts/tracked-links`'s reason: a wider pathspec would make the suite read `docs/`, `README.md`,
-  `LICENSE` or `models.conf.example` and quietly break `scripts/ci-needed`'s skip list, which needs
+  `LICENSE` or `agents.conf.example` and quietly break `scripts/ci-needed`'s skip list, which needs
   no edit as it stands. `--cached --others --exclude-standard`, so a new reader written but not yet
   `git add`ed is caught at exactly the moment the check exists for. Findings on stdout, exit 1,
   in `tracked-links`'s house format — `unsubscribed:`, `stale:`, `unpinned:` — with
@@ -982,7 +982,7 @@ and the key hint stays `g retry` until both panes are fresh.
   `unportable: <path>:<line>` — with `tests/portable-snippets.sh` as its suite. It scans `skills/`
   and `agents/` and nothing else, for `tracked-links`' reason: those are the two directories the
   sync links into a consumer's discovery paths, and a wider pathspec would make the suite read
-  `docs/`, `README.md`, `LICENSE` or `models.conf.example` and quietly break `scripts/ci-needed`'s
+  `docs/`, `README.md`, `LICENSE` or `agents.conf.example` and quietly break `scripts/ci-needed`'s
   skip list. Only the alternate-value form is matched, never the default-value one — `"${BD_TIMEOUT:-30}"`
   is portable and quoted, and flagging it would push authors toward uglier code for no defect. It is
   **not itself scanned**, living in `scripts/`, the way `marker-readers` is not itself a reader of
@@ -1089,14 +1089,14 @@ and the key hint stays `g retry` until both panes are fresh.
   nothing, which is by design — `agent-asking` exits 0 rather than failing a question.
   `hooks/copilot/` holds the same behaviour in GitHub Copilot's schema. Copilot has no `--settings`
   and discovers its hooks from the consumer's `.github/hooks/`, so `scripts/sync-symlinks.sh` links
-  it there — in every consumer, whatever `agent_cli` declares, the same rule the layouts follow —
+  it there — in every consumer, whatever any `agents.conf` line names, the same rule the layouts follow —
   and `scripts/agent-cli --hooks` is the one place those two paths are written down.
 - **The model an agent runs on is the agent definition's `model:`, unless the consumer overrides it —
   and on any CLI but Claude Code the definition does not answer at all.**
-  `scripts/launch` reads `<consumer>/.cerebro/models.conf` if it exists — `<name|role|default>[@provider]
+  `scripts/launch` reads `<consumer>/.cerebro/agents.conf` if it exists — `<name|role|default>[@provider]
   <model|-> [effort]`, most specific key wins, `-` meaning "pass no `--model`" — and says on stderr
   which key it matched, so an unexpected model is traceable to the file nobody remembers editing. A
-  `--model` on the command line still wins, since it is appended after. `models.conf.example` is the
+  `--model` on the command line still wins, since it is appended after. `agents.conf.example` is the
   documented copy; the live file is consumer-side and uncommitted, which is what makes switching the
   fleet between Opus and Fable a one-line edit rather than a submodule change every consumer shares.
   Since cb-d59.6 a key may carry `@<provider>`, and the six probed keys are most-specific-first with
@@ -1104,8 +1104,8 @@ and the key hint stays `g retry` until both panes are fresh.
   `<role>`, `default@<p>`, `default`. A key naming a CLI cerebro does not know is warned about
   **once** and ignored — which is why the file is read in one pass into parallel arrays and then
   probed, rather than re-read per key. The agent files' `model:` and `effort:` are **Claude Code's
-  words** (`scripts/agent-cli --agent-file-models`), so on any other provider they are dropped: a
-  Copilot fleet with no `models.conf` passes no `--model` and no `--effort` at all, runs on the
+  words** (agent definitions carry no model or effort frontmatter), so each agent's `agents.conf`
+  line controls those settings: a Copilot agent with neither passes no `--model` and no `--effort` at all, runs on the
   CLI's own defaults, and says so on stderr rather than looking deliberate.
 - `scripts/launch-preflight <role> <name>` runs before every launch. It refuses (exit 2, one line on
   stderr) if `claude` is not on `PATH`; the symlink sync it runs is consumer-only, same as

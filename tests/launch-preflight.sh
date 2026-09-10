@@ -369,10 +369,6 @@ pass "a branch that does not exist on origin is reported rather than skipped in 
 # STALENESS, so this must stay as silent as it has always been.
 c="$(make_consumer unreachable main)"
 git -C "$c" remote set-url origin "$work_dir/no-such-origin.git"
-# The one case here that asserts on the WHOLE of stderr, so it is also the one that has to declare
-# an agent_cli: without a declaration `agent-cli` says so on every call (cb-d59.2, Q4), which is a
-# line about the CLI rather than about staleness and would make this case assert the wrong thing.
-printf 'agent_cli claude\n' > "$c/.cerebro/project.conf"
 before="$(head_of "$c")"
 set +e
 out="$(run_preflight "$c" 2>&1)"
@@ -497,7 +493,6 @@ grep -q '^usage: launch-preflight <role> <name> <tool>$' <<<"$out" \
   || fail "no tool: expected the usage line naming <tool>, got: $out"
 pass "launch-preflight refuses without a tool, naming it in its usage line"
 
-printf 'agent_cli claude\n' > "$c/.cerebro/project.conf"
 # A PATH of its own, carrying `claude' and the ordinary tools but never `copilot' - the navigator's
 # own machine may well have copilot installed, and a case that depended on that would pass here and
 # fail on a runner, or the other way about.

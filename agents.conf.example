@@ -18,3 +18,7 @@ default      tool=claude  model=opus
 implementer  tool=claude  model=sonnet
 planner      tool=claude  model=opus     effort=high
 architect    tool=claude  model=opus     effort=high
+
+# external model: name, provider, URL, access-key reference, and model
+# external research openai https://api.openai.com/v1 ${OPENAI_API_KEY} gpt-5.4
+# Beast        tool=copilot model=research

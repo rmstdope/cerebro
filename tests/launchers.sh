@@ -1349,6 +1349,81 @@ grep -qF 'launch: agents.conf ("planner") -> copilot, gpt-5.5 at high effort' <<
   || fail "copilot launch with a model: expected the decision line, got: $err"
 pass "a copilot launch takes its tool, model and effort from one agents.conf line"
 
+# --- reusable OpenAI external models for Copilot (cb-2fs) ----------------------------------------
+#
+# This stub reports only whether the complete provider environment is present. It deliberately
+# never prints the API key: the launcher must pass it to Copilot without exposing it in session
+# output or diagnostics.
+cat > "$copilot_dir/copilot" <<'BYOK_STUB'
+#!/usr/bin/env bash
+if [[ "${COPILOT_PROVIDER_TYPE:-}" == openai \
+      && "${COPILOT_PROVIDER_BASE_URL:-}" == https://api.openai.com/v1 \
+      && "${COPILOT_PROVIDER_API_KEY:-}" == sentinel-openai-key \
+      && "${COPILOT_PROVIDER_WIRE_API:-}" == responses ]]; then
+  echo 'BYOK=present'
+elif [[ -z "${COPILOT_PROVIDER_TYPE:-}" \
+        && -z "${COPILOT_PROVIDER_BASE_URL:-}" \
+        && -z "${COPILOT_PROVIDER_API_KEY:-}" \
+        && -z "${COPILOT_PROVIDER_WIRE_API:-}" ]]; then
+  echo 'BYOK=absent'
+else
+  echo 'BYOK=invalid'
+fi
+for a in "$@"; do
+  printf 'ARG:%s\n' "$a"
+done
+BYOK_STUB
+chmod +x "$copilot_dir/copilot"
+
+printf 'external research openai https://api.openai.com/v1 ${OPENAI_API_KEY} gpt-5.4\nplanner tool=copilot model=research\n' \
+  > "$copilot_consumer/.cerebro/agents.conf"
+err="$(OPENAI_API_KEY=sentinel-openai-key copilot_launch Xavier 2>&1 >/dev/null)"
+out="$(OPENAI_API_KEY=sentinel-openai-key copilot_launch Xavier 2>/dev/null)"
+grep -qx 'BYOK=present' <<<"$out" \
+  || fail "copilot external model: expected the complete BYOK environment, got: $out"
+arg_follows "$out" '^ARG:--model$' '^ARG:gpt-5.4$' \
+  || fail "copilot external model: expected the underlying model, got: $out"
+grep -q '^ARG:research$' <<<"$out" \
+  && fail "copilot external model: passed the reusable name instead of its underlying model: $out"
+grep -qF 'launch: agents.conf ("planner") -> copilot, external model "research" (OpenAI gpt-5.4)' <<<"$err" \
+  || fail "copilot external model: expected the exact success sentence, got: $err"
+grep -qF sentinel-openai-key <<<"$out$err" \
+  && fail "copilot external model: leaked the API key into captured output"
+pass "a usable external model supplies Copilot's BYOK environment and underlying model without leaking its key"
+
+printf 'external research openai https://api.openai.com/v1 ${OPENAI_API_KEY} gpt-5.4\nplanner tool=copilot model=research\n' \
+  > "$copilot_consumer/.cerebro/agents.conf"
+err="$(COPILOT_PROVIDER_TYPE=stale COPILOT_PROVIDER_BASE_URL=https://stale.example \
+  COPILOT_PROVIDER_API_KEY=sentinel-openai-key COPILOT_PROVIDER_WIRE_API=chat \
+  copilot_launch Xavier 2>&1 >/dev/null)"
+out="$(COPILOT_PROVIDER_TYPE=stale COPILOT_PROVIDER_BASE_URL=https://stale.example \
+  COPILOT_PROVIDER_API_KEY=sentinel-openai-key COPILOT_PROVIDER_WIRE_API=chat \
+  copilot_launch Xavier 2>/dev/null)"
+grep -qx 'BYOK=absent' <<<"$out" \
+  || fail "copilot unavailable external model: expected no provider environment, got: $out"
+grep -q '^ARG:--model$' <<<"$out" \
+  && fail "copilot unavailable external model: passed a model flag, got: $out"
+grep -qF 'launch: external model "research" is unavailable; Xavier will use Copilot'\''s default model.' <<<"$err" \
+  || fail "copilot unavailable external model: expected the exact fallback sentence, got: $err"
+grep -qF sentinel-openai-key <<<"$out$err" \
+  && fail "copilot unavailable external model: leaked an inherited credential"
+pass "an empty credential reference falls back to Copilot defaults and clears inherited provider state"
+
+printf 'planner tool=copilot model=gpt-5.6\n' > "$copilot_consumer/.cerebro/agents.conf"
+err="$(COPILOT_PROVIDER_TYPE=stale COPILOT_PROVIDER_BASE_URL=https://stale.example \
+  COPILOT_PROVIDER_API_KEY=sentinel-openai-key COPILOT_PROVIDER_WIRE_API=chat \
+  copilot_launch Xavier 2>&1 >/dev/null)"
+out="$(COPILOT_PROVIDER_TYPE=stale COPILOT_PROVIDER_BASE_URL=https://stale.example \
+  COPILOT_PROVIDER_API_KEY=sentinel-openai-key COPILOT_PROVIDER_WIRE_API=chat \
+  copilot_launch Xavier 2>/dev/null)"
+grep -qx 'BYOK=absent' <<<"$out" \
+  || fail "ordinary copilot model: inherited provider state leaked, got: $out"
+arg_follows "$out" '^ARG:--model$' '^ARG:gpt-5.6$' \
+  || fail "ordinary copilot model: expected its ordinary model, got: $out"
+grep -qF 'launch: agents.conf ("planner") -> copilot, gpt-5.6' <<<"$err" \
+  || fail "ordinary copilot model: expected its existing message, got: $err"
+pass "an ordinary Copilot model keeps its argv and message while inherited provider state is cleared"
+
 # --- one launch resolves the consumer root once, and hands the answer down (cb-ue0) --------------
 #
 # The bead this case exists for: `launch' used to fork `consumer-root' eight times before it ever

@@ -5,7 +5,11 @@
 #     agents-conf --role <role>
 #
 #     stdout  EXACTLY ONE LINE, TAB separated, in one of four shapes:
-#               hit<TAB><key><TAB><tool><TAB><model><TAB><effort>
+#               hit<TAB><key><TAB><tool><TAB><model><TAB><effort><TAB><source><TAB><external-name><TAB><provider><TAB><url><TAB><env-name>
+#                     source=ordinary leaves the four external fields empty.
+#                     source=external carries the reusable definition's name, provider, URL and
+#                     normalized environment-variable name; an unavailable definition leaves all
+#                     metadata except its name empty and leaves model empty.
 #               miss<TAB>no-file
 #               miss<TAB>no-line
 #               refused<TAB><sentence>
@@ -38,11 +42,17 @@
 #     default   tool=claude
 #     planner   tool=claude   model=opus   effort=high
 #     Beast     tool=copilot                            # this agent, and nothing inherited
+#     external  research      openai https://api.openai.com/v1 ${OPENAI_API_KEY} gpt-5.4
 #
 # Most specific wins - the agent's own name, then its role, then `default' - and THE WINNING LINE
 # WINS OUTRIGHT: a setting it does not name is empty, never the less specific line's value. Two
 # lines carrying one key: the first in file order wins. Only the winning line is ever validated, so
 # a malformed line naming an agent this fleet does not run costs nothing.
+#
+# External definitions are reusable and first-wins by name. They are selected only when the
+# winning agent line names one and selects Copilot; the same model value on Claude, or a name that
+# merely resembles an external definition, remains ordinary. A selected missing or malformed
+# definition is an unavailable external source, not a refusal, so the launcher can fall back.
 #
 # WHAT IT DOES NOT DO. It answers only what the FILE says: it knows nothing about an agent
 # definition's frontmatter, and does not decide what is finally passed to any CLI. A refusal
@@ -104,6 +114,7 @@ fi
 # the old model lookup, nothing is validated here: only the WINNING line is ever looked at, which is what
 # makes a malformed line naming an agent this fleet does not run cost nothing at all.
 conf_keys=() conf_rest=()
+external_names=() external_providers=() external_urls=() external_envs=() external_models=() external_valid=()
 while IFS= read -r line || [[ -n "$line" ]]; do
   # Everything from a `#' on is a comment, wherever it starts - the same one-liner as
   # the old model lookup, and for the same reason: `Beast tool=copilot # why' must not read the
@@ -116,6 +127,43 @@ while IFS= read -r line || [[ -n "$line" ]]; do
   line="${line%%#*}"
   read -ra fields <<<"$line"
   [[ ${#fields[@]} -gt 0 ]] || continue
+  if [[ "${fields[0]}" == external ]]; then
+    external_name="${fields[1]:-}"
+    [[ -n "$external_name" ]] || continue
+
+    duplicate=""
+    for existing_name in "${external_names[@]}"; do
+      [[ "$existing_name" == "$external_name" ]] && duplicate=1
+    done
+    [[ -n "$duplicate" ]] && continue
+
+    external_names+=("$external_name")
+    external_providers+=("")
+    external_urls+=("")
+    external_envs+=("")
+    external_models+=("")
+    external_valid+=("")
+
+    if [[ ${#fields[@]} -eq 6 && "${fields[2]}" == openai && -n "${fields[3]}" \
+          && -n "${fields[4]}" && -n "${fields[5]}" ]]; then
+      external_ref="${fields[4]}"
+      external_env=""
+      case "$external_ref" in
+        '${'*'}')
+          external_env="${external_ref#\$\{}"
+          external_env="${external_env%\}}"
+          ;;
+      esac
+      if [[ "$external_env" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+        external_providers[${#external_names[@]}-1]="${fields[2]}"
+        external_urls[${#external_names[@]}-1]="${fields[3]}"
+        external_envs[${#external_names[@]}-1]="$external_env"
+        external_models[${#external_names[@]}-1]="${fields[5]}"
+        external_valid[${#external_names[@]}-1]=1
+      fi
+    fi
+    continue
+  fi
   conf_keys+=("${fields[0]}")
   conf_rest+=("${line#*"${fields[0]}"}")
 done < "$agents_conf"
@@ -211,5 +259,30 @@ for t in $known_tools; do [[ "$t" == "$tool" ]] && tool_known=1; done
 [[ -n "$tool_known" ]] \
   || refuse "tool=$tool is not a tool I know. Try: $(pretty_list "$known_tools")"
 
-printf 'hit\t%s\t%s\t%s\t%s\n' "$winning_key" "$tool" "$model" "$effort"
+source_kind=ordinary
+external_name=""
+external_provider=""
+external_url=""
+external_env=""
+if [[ "$tool" == copilot ]]; then
+  for ((i = 0; i < ${#external_names[@]}; i++)); do
+    if [[ "${external_names[$i]}" == "$model" ]]; then
+      source_kind=external
+      external_name="$model"
+      if [[ -n "${external_valid[$i]}" ]]; then
+        model="${external_models[$i]}"
+        external_provider="${external_providers[$i]}"
+        external_url="${external_urls[$i]}"
+        external_env="${external_envs[$i]}"
+      else
+        model=""
+      fi
+      break
+    fi
+  done
+fi
+
+printf 'hit\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  "$winning_key" "$tool" "$model" "$effort" "$source_kind" "$external_name" \
+  "$external_provider" "$external_url" "$external_env"
 exit 0

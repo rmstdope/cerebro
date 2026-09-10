@@ -89,7 +89,17 @@ expect_out() {  # expect_out <expected stdout> <expected status> <what>
 }
 
 expect_hit() {  # expect_hit <key> <tool> <model> <effort> <what>
-  expect_out "$(printf 'hit\t%s\t%s\t%s\t%s' "$1" "$2" "$3" "$4")" 0 "$5"
+  expect_out "$(printf 'hit\t%s\t%s\t%s\t%s\tordinary\t\t\t\t' "$1" "$2" "$3" "$4")" 0 "$5"
+}
+
+expect_external() {  # expect_external <key> <tool> <model> <effort> <name> <provider> <url> <env> <what>
+  expect_out "$(printf 'hit\t%s\t%s\t%s\t%s\texternal\t%s\t%s\t%s\t%s' \
+    "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8")" 0 "$9"
+}
+
+expect_unavailable_external() {  # expect_unavailable_external <key> <tool> <name> <effort> <what>
+  expect_out "$(printf 'hit\t%s\t%s\t\t%s\texternal\t%s\t\t\t' \
+    "$1" "$2" "$4" "$3")" 0 "$5"
 }
 
 # --- 1: usage -----------------------------------------------------------------------------------
@@ -176,7 +186,71 @@ run_in "$c" --name Beast --role planner
 expect_hit Beast copilot "" "" "a setting given twice"
 pass "a setting given twice on one line: the last one wins, silently"
 
-# --- 5: the three refusals ----------------------------------------------------------------------
+# --- 5: reusable external models ----------------------------------------------------------------
+
+c="$(new_consumer \
+  'external research openai https://api.openai.com/v1 ${OPENAI_API_KEY} gpt-5.4' \
+  'Beast tool=copilot model=research')"
+run_in "$c" --name Beast --role planner
+expect_external Beast copilot gpt-5.4 "" research openai https://api.openai.com/v1 OPENAI_API_KEY \
+  "a selected external model"
+pass "a Copilot row selecting an external definition returns its underlying model and metadata"
+
+c="$(new_consumer \
+  'external research openai https://api.openai.com/v1 ${OPENAI_API_KEY} gpt-5.4' \
+  'Beast tool=copilot model=research' \
+  'Xavier tool=copilot model=research')"
+run_in "$c" --name Beast --role planner
+expect_external Beast copilot gpt-5.4 "" research openai https://api.openai.com/v1 OPENAI_API_KEY \
+  "the first agent selecting an external model"
+run_in "$c" --name Xavier --role planner
+expect_external Xavier copilot gpt-5.4 "" research openai https://api.openai.com/v1 OPENAI_API_KEY \
+  "a second agent reusing an external model"
+pass "one external definition resolves independently for more than one Copilot agent"
+
+c="$(new_consumer \
+  'external research openai https://api.openai.com/v1 ${OPENAI_API_KEY} gpt-5.4' \
+  'external research openai https://api.openai.com/v1 ${OTHER_KEY} gpt-5.5' \
+  'Beast tool=copilot model=research')"
+run_in "$c" --name Beast --role planner
+expect_external Beast copilot gpt-5.4 "" research openai https://api.openai.com/v1 OPENAI_API_KEY \
+  "duplicate external definitions"
+pass "the first external definition wins when names are duplicated"
+
+c="$(new_consumer \
+  'external research openai https://api.openai.com/v1 ${OPENAI_API_KEY} gpt-5.4' \
+  'Beast tool=claude model=research')"
+run_in "$c" --name Beast --role planner
+expect_hit Beast claude research "" "an external name selected by Claude"
+pass "an external definition does not affect a non-Copilot model selection"
+
+c="$(new_consumer \
+  'external research openai https://api.openai.com/v1 ${OPENAI_API_KEY} gpt-5.4' \
+  'Beast tool=copilot model=researcher')"
+run_in "$c" --name Beast --role planner
+expect_hit Beast copilot researcher "" "a similarly named ordinary model"
+pass "a similarly named non-external model remains ordinary"
+
+c="$(new_consumer \
+  'external research openai https://api.openai.com/v1 ${not-a-variable} gpt-5.4' \
+  'Beast tool=copilot model=research')"
+run_in "$c" --name Beast --role planner
+expect_unavailable_external Beast copilot research "" "a malformed selected definition"
+pass "a malformed selected external definition is unavailable rather than a refusal"
+
+c="$(new_consumer 'external research' 'Beast tool=copilot model=research')"
+run_in "$c" --name Beast --role planner
+expect_unavailable_external Beast copilot research "" "a missing selected definition"
+pass "an external definition missing its fields is unavailable rather than a refusal"
+
+c="$(new_consumer \
+  'external research openai https://api.openai.com/v1 ${not-a-variable} gpt-5.4' \
+  'Beast tool=claude model=research')"
+run_in "$c" --name Beast --role planner
+expect_hit Beast claude research "" "an invalid unselected definition"
+pass "an invalid unselected external definition does not disrupt another selection"
+
+# --- 6: the three refusals ----------------------------------------------------------------------
 #
 # The sentences are the ones the navigator agreed at the design stage, asserted byte for byte. The
 # tool list inside them is derived below (case 6); here it is written out, so a change to either
@@ -221,7 +295,7 @@ run_in "$c" --name Beast --role planner
 expect_hit Beast copilot "" "" "another agent's malformed line"
 pass "a malformed line naming an agent this fleet does not run is never read at all"
 
-# --- 6: the Try: lists are real -----------------------------------------------------------------
+# --- 7: the Try: lists are real -----------------------------------------------------------------
 #
 # Built by running `agent-cli --known' rather than written down, so adding a tool cannot leave the
 # sentence above stale while this case stays green.
@@ -239,7 +313,7 @@ expect_refusal "agents.conf (\"Beast\"): tool=nonesuch is not a tool I know. Try
   "the derived tool list"
 pass "the tool list in a refusal is agent-cli --known's own answer, not a literal"
 
-# --- 7: it runs where the launcher runs ---------------------------------------------------------
+# --- 8: it runs where the launcher runs ---------------------------------------------------------
 #
 # The narrowed-PATH shape from tests/launchers.sh: `dirname' and `bash' and nothing else, which is
 # what pins the no-external-commands rule as behaviour rather than as a comment in the header.
@@ -265,7 +339,7 @@ err="$(cat "$work_dir/stderr")"
 expect_hit Beast copilot gpt-5.5 high "a narrowed PATH"
 pass "agents-conf answers on a PATH holding only dirname and bash, as the launch path has"
 
-# --- 8: a failing agent-cli --known aborts rather than emptying the tool list --------------------
+# --- 9: a failing agent-cli --known aborts rather than emptying the tool list --------------------
 #
 # The decision the plan records, and the one this case exists to pin as behaviour: the `--known'
 # read is NOT guarded, so a failure ends the script under errexit. Swallowing it would leave the
@@ -294,7 +368,7 @@ run_in "$c" --name Beast --role planner
   || fail "a half-written --known: a partial tool list must not be trusted, got '$out'"
 pass "a --known that prints and then fails is a failure, not a shorter list of tools"
 
-# --- 9: a file saved with CRLF line endings -----------------------------------------------------
+# --- 10: a file saved with CRLF line endings ----------------------------------------------------
 #
 # agents.conf is hand-written, so a stray carriage return is a navigator's editor rather than a
 # mistake in the file's content. Without stripping it, `tool=claude<CR>' refuses with the CR inside

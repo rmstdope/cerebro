@@ -1,0 +1,197 @@
+#!/usr/bin/env bash
+# The one place `.cerebro/agents.conf' is answered:
+#
+#     agents-conf --name <Name> --role <role>
+#
+#     stdout  EXACTLY ONE LINE, TAB separated, in one of four shapes:
+#               hit<TAB><key><TAB><tool><TAB><model><TAB><effort>
+#               miss<TAB>no-file
+#               miss<TAB>no-line
+#               refused<TAB><sentence>
+#     stderr  the `usage:' line on exit 2, and NOTHING AT ALL in every other case - a hit, either
+#             miss and a refusal are all silent on stderr.
+#     exit 0  hit or miss
+#     exit 2  usage - an unknown flag, a flag with no value, or either of --name/--role missing
+#     exit 3  refused
+#
+# A caller reads it with one unconditional
+#     IFS=$'\t' read -r kind a b c d <<<"$(agents-conf --name "$n" --role "$r")"
+# and branches on $kind. `<model>' and `<effort>' may be empty and the line still carries its tabs,
+# so that single `read' always fills five variables.
+#
+# The leading kind word is the one departure from `scripts/model-for', which this script is
+# otherwise modelled on: `model-for' tells a miss from an answer by printing nothing at all,
+# because its `<model>' may be the literal `-'. Here there are FOUR outcomes rather than two, and
+# two of them - `no-file' and `no-line' - need different sentences from the caller, so the
+# trichotomy is named on the line instead of inferred from its emptiness.
+#
+# The file:
+#
+#     # <agent-name | role | default>   tool=<tool>   [model=<m>]   [effort=<e>]
+#     default   tool=claude
+#     planner   tool=claude   model=opus   effort=high
+#     Beast     tool=copilot                            # this agent, and nothing inherited
+#
+# Most specific wins - the agent's own name, then its role, then `default' - and THE WINNING LINE
+# WINS OUTRIGHT: a setting it does not name is empty, never the less specific line's value. Two
+# lines carrying one key: the first in file order wins. Only the winning line is ever validated, so
+# a malformed line naming an agent this fleet does not run costs nothing.
+#
+# WHAT IT DOES NOT DO. It answers only what the FILE says: it knows nothing about an agent
+# definition's frontmatter, and does not decide what is finally passed to any CLI. A refusal
+# sentence is RETURNED on stdout rather than printed or recorded, so that a launcher can hand it to
+# `scripts/launch-refused' while a test - or any other reader - asks the same question without
+# writing to the navigator's errors.jsonl. That is the separation `scripts/agent-cli' keeps between
+# its plain verbs and `--check'.
+#
+# The root is the SHARED one, for `model-for's stated reason: a resolver taking the enclosing tree
+# would answer differently inside an implementer's worktree than the launcher does in the main
+# checkout - one rule with two answers.
+#
+# BASH ONLY, NO EXTERNAL COMMANDS: this runs on the launch path, which `tests/launchers.sh'
+# exercises with a PATH holding `dirname' and `bash' alone. So no `grep', `sed', `tr', `awk' or
+# `cut' anywhere in it - parameter expansion, `[[' and `read' are the whole toolbox, the constraint
+# `scripts/agent-cli' records for itself. Forking the sibling scripts is fine: they carry their own
+# `#!/usr/bin/env bash'.
+set -euo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+
+# The settings a line may name, in `scripts/agent-cli's KNOWN/LAYOUTS shape. The TOOL list is
+# deliberately not a constant here - it is `agent-cli --known's answer - so the `Try:' clause of a
+# refusal grows when a tool is added.
+SETTINGS="tool model effort"
+
+usage() {
+  echo "usage: agents-conf --name <Name> --role <role>" >&2
+  exit 2
+}
+
+name="" role=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --name) [[ $# -ge 2 ]] || usage; name="$2"; shift 2 ;;
+    --role) [[ $# -ge 2 ]] || usage; role="$2"; shift 2 ;;
+    *)      usage ;;
+  esac
+done
+# Both, and that is a departure from `model-for', which accepts either: the only caller always has
+# both, and requiring them removes a shape in which only `default' could ever match.
+[[ -n "$name" && -n "$role" ]] || usage
+
+# The hint first (cb-ue0), never trusted: `cerebro_hinted_root' checks it physically resolves to
+# THIS checkout before believing it, so the fallback fork is mandatory rather than decorative. No
+# root, or no file at that root, is `no-file' - a miss, not an error.
+source "$here/root-hints.sh"
+root="$(cerebro_hinted_root "$here/.." shared)" \
+  || root="$("$here/consumer-root" --shared 2>/dev/null)" \
+  || root=""
+agents_conf="${root:+$root/.cerebro/agents.conf}"
+
+if [[ -z "$agents_conf" || ! -f "$agents_conf" ]]; then
+  printf 'miss\tno-file\n'
+  exit 0
+fi
+
+# ONE pass over the file into two parallel arrays (bash 3.2, so no associative array): the key, and
+# the rest of that line as written after comment-stripping. Not a lookup per key - and, unlike
+# `model-for', nothing is validated here: only the WINNING line is ever looked at, which is what
+# makes a malformed line naming an agent this fleet does not run cost nothing at all.
+conf_keys=() conf_rest=()
+while IFS= read -r line || [[ -n "$line" ]]; do
+  # Everything from a `#' on is a comment, wherever it starts - the same one-liner as
+  # `scripts/model-for', and for the same reason: `Beast tool=copilot # why' must not read the
+  # comment as a fourth field.
+  line="${line%%#*}"
+  read -ra fields <<<"$line"
+  [[ ${#fields[@]} -gt 0 ]] || continue
+  conf_keys+=("${fields[0]}")
+  conf_rest+=("${line#*"${fields[0]}"}")
+done < "$agents_conf"
+
+# Three probe keys, most specific first. The FIRST line whose key equals a probe key wins, and the
+# probes stop there outright - no less specific line is consulted, and a refusal below is the
+# answer rather than a reason to keep looking. "Nothing ever runs on a setting nobody wrote."
+probe_keys=("$name" "$role" default)
+
+winning_key="" winning_rest="" found=""
+for key in "${probe_keys[@]}"; do
+  for ((i = 0; i < ${#conf_keys[@]}; i++)); do
+    if [[ "${conf_keys[$i]}" == "$key" ]]; then
+      winning_key="$key" winning_rest="${conf_rest[$i]}" found=1
+      break
+    fi
+  done
+  [[ -n "$found" ]] && break
+done
+
+if [[ -z "$found" ]]; then
+  printf 'miss\tno-line\n'
+  exit 0
+fi
+
+# The winning line, and only it. Settings are NAMED, so their order on the line does not matter; a
+# setting given twice is the last one, silently - there is no agreed sentence for it, and inventing
+# a fourth refusal would invent a state the designer did not agree.
+read -ra settings <<<"$winning_rest"
+tool="" model="" effort="" unknown_setting=""
+for field in ${settings+"${settings[@]}"}; do
+  # The name is everything before the FIRST `='; a field with no `=' at all is entirely a name, so
+  # `claude' on its own is reported as a setting nobody knows rather than silently ignored. An
+  # empty name (`=claude') is reported as the whole field, so the sentence names something the
+  # navigator can find in the file.
+  setting_name="${field%%=*}"
+  setting_value=""
+  [[ "$field" == *"="* ]] && setting_value="${field#*=}"
+  case "$setting_name" in
+    tool)   tool="$setting_value" ;;
+    model)  model="$setting_value" ;;
+    effort) effort="$setting_value" ;;
+    *)      [[ -n "$unknown_setting" ]] || unknown_setting="${setting_name:-$field}" ;;
+  esac
+done
+
+# The tool list is `agent-cli --known's answer and is never written down here, so there is exactly
+# one place a tool is declared and the `Try:' clause below cannot go stale. It is answered before
+# `resolve', so it needs no project.conf and says nothing on stderr. It is DELIBERATELY UNGUARDED:
+# it cannot fail short of the script being missing, which is a broken checkout rather than a
+# configuration a sentence could help with, and swallowing it would empty the list and refuse every
+# line in the fleet.
+known_tools=""
+while IFS= read -r kt || [[ -n "$kt" ]]; do
+  [[ -n "$kt" ]] || continue
+  if [[ -z "$known_tools" ]]; then known_tools="$kt"; else known_tools="$known_tools $kt"; fi
+done < <("$here/agent-cli" --known)
+
+pretty_list() {  # pretty_list <space-separated words> -> "a, b."
+  local out="" w
+  for w in $1; do
+    if [[ -z "$out" ]]; then out="$w"; else out="$out, $w"; fi
+  done
+  printf '%s.' "$out"
+}
+
+# The refusal is the answer: printed on stdout, exit 3, and NO FALLBACK to a less specific line.
+#
+# The `{ ... } || true' is .cerebro/traps.md's "an advisory step can eat the exit status that
+# follows it": a `printf' that failed under errexit would end this script before its own `exit 3'
+# and hand the caller a status that means something else entirely. Nothing inside the group is an
+# assignment whose failure matters - that is the trap's other half, and it must stay that way.
+refuse() {  # refuse <sentence>
+  { printf 'refused\tagents.conf ("%s"): %s\n' "$winning_key" "$1"; } || true
+  exit 3
+}
+
+# The three checks, in this order: a misspelt name is usually the CAUSE of the missing tool
+# (`tol=claude'), so naming the misspelling is the more useful of the two sentences.
+[[ -z "$unknown_setting" ]] \
+  || refuse "$unknown_setting is not a setting I know. Try: $(pretty_list "$SETTINGS")"
+[[ -n "$tool" ]] \
+  || refuse "no tool. Every line must say one. Try: $(pretty_list "$known_tools")"
+tool_known=""
+for t in $known_tools; do [[ "$t" == "$tool" ]] && tool_known=1; done
+[[ -n "$tool_known" ]] \
+  || refuse "tool=$tool is not a tool I know. Try: $(pretty_list "$known_tools")"
+
+printf 'hit\t%s\t%s\t%s\t%s\n' "$winning_key" "$tool" "$model" "$effort"
+exit 0

@@ -9,7 +9,9 @@
 #               miss<TAB>no-line
 #               refused<TAB><sentence>
 #     stderr  the `usage:' line on exit 2, and NOTHING AT ALL in every other case - a hit, either
-#             miss and a refusal are all silent on stderr.
+#             miss and a refusal are all silent on stderr. That promise rests on `agent-cli
+#             --known', which this script forks on the winning-line path and does not redirect: a
+#             `--known' that ever grew an advisory would break it for every caller.
 #     exit 0  hit or miss
 #     exit 2  usage - an unknown flag, a flag with no value, or either of --name/--role missing
 #     exit 3  refused
@@ -102,6 +104,11 @@ while IFS= read -r line || [[ -n "$line" ]]; do
   # Everything from a `#' on is a comment, wherever it starts - the same one-liner as
   # `scripts/model-for', and for the same reason: `Beast tool=copilot # why' must not read the
   # comment as a fourth field.
+  # A carriage return first: agents.conf is hand-written, so a file saved with CRLF endings is an
+  # editor rather than a mistake in the file's content, and an unstripped CR would end up inside a
+  # refusal sentence as an invisible character - a refusal that reads as though a correct value is
+  # wrong.
+  line="${line%$'\r'}"
   line="${line%%#*}"
   read -ra fields <<<"$line"
   [[ ${#fields[@]} -gt 0 ]] || continue
@@ -157,11 +164,16 @@ done
 # it cannot fail short of the script being missing, which is a broken checkout rather than a
 # configuration a sentence could help with, and swallowing it would empty the list and refuse every
 # line in the fleet.
+# The status is CAPTURED, which is the whole point of the command substitution: a process
+# substitution (`done < <(...)') never observes one, so errexit could not fire and the failure
+# would be swallowed into an empty list - refusing every line in the fleet with `Try: .', a launch
+# refusal naming the navigator's own correct config as the fault.
+known_raw="$("$here/agent-cli" --known)"
 known_tools=""
 while IFS= read -r kt || [[ -n "$kt" ]]; do
   [[ -n "$kt" ]] || continue
   if [[ -z "$known_tools" ]]; then known_tools="$kt"; else known_tools="$known_tools $kt"; fi
-done < <("$here/agent-cli" --known)
+done <<<"$known_raw"
 
 pretty_list() {  # pretty_list <space-separated words> -> "a, b."
   local out="" w

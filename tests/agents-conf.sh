@@ -261,4 +261,45 @@ err="$(cat "$work_dir/stderr")"
 expect_hit Beast copilot gpt-5.5 high "a narrowed PATH"
 pass "agents-conf answers on a PATH holding only dirname and bash, as the launch path has"
 
+# --- 8: a failing agent-cli --known aborts rather than emptying the tool list --------------------
+#
+# The decision the plan records, and the one this case exists to pin as behaviour: the `--known'
+# read is NOT guarded, so a failure ends the script under errexit. Swallowing it would leave the
+# list empty and refuse every line in the fleet with `Try: .' - a launch refusal naming the
+# navigator's own correct config as the fault. `--known' cannot fail short of a broken checkout,
+# which is why aborting is the right answer and a sentence would not help.
+
+stub_agent_cli() {  # stub_agent_cli <consumer> <body>
+  rm -f "$1/.claude/cerebro/scripts/agent-cli"
+  printf '#!/usr/bin/env bash\n%s\n' "$2" > "$1/.claude/cerebro/scripts/agent-cli"
+  chmod +x "$1/.claude/cerebro/scripts/agent-cli"
+}
+
+c="$(new_consumer "Beast tool=claude")"
+stub_agent_cli "$c" 'exit 1'
+run_in "$c" --name Beast --role planner
+[[ "$status" -ne 0 && "$status" -ne 3 ]] \
+  || fail "a failing --known: expected an abort, got exit $status and '$out'"
+[[ -z "$out" ]] || fail "a failing --known: expected no answer at all, got $(printf '%q' "$out")"
+pass "a failing agent-cli --known aborts: no line in the fleet is refused for a broken checkout"
+
+c="$(new_consumer "Beast tool=claude")"
+stub_agent_cli "$c" 'echo claude; exit 1'
+run_in "$c" --name Beast --role planner
+[[ "$status" -ne 0 ]] \
+  || fail "a half-written --known: a partial tool list must not be trusted, got '$out'"
+pass "a --known that prints and then fails is a failure, not a shorter list of tools"
+
+# --- 9: a file saved with CRLF line endings -----------------------------------------------------
+#
+# agents.conf is hand-written, so a stray carriage return is a navigator's editor rather than a
+# mistake in the file's content. Without stripping it, `tool=claude<CR>' refuses with the CR inside
+# the sentence - a refusal that reads as though a correct value is wrong.
+
+c="$(new_consumer)"
+printf 'default tool=claude\r\nBeast tool=copilot model=gpt-5.5\r\n' > "$c/.cerebro/agents.conf"
+run_in "$c" --name Beast --role planner
+expect_hit Beast copilot gpt-5.5 "" "a CRLF file"
+pass "a file saved with CRLF endings answers as written, with no carriage return in the answer"
+
 suite_passed

@@ -970,6 +970,52 @@ refusal_case "Beast tool=claude modle=fable" Beast \
   'agents.conf ("Beast"): modle is not a setting I know. Try: tool, model, effort.'
 pass "a misspelt setting name refuses in its own words"
 
+# A line naming an effort but no model: the sentence and the argv must agree. It says the tool picks
+# the model and names the effort it was given, and `--effort' is passed - honouring a setting
+# somebody wrote is the whole rule, and a sentence contradicting the argv is the mystery the line
+# exists to prevent. It is also where a collapsing `read' shows up: `hit<TAB>key<TAB>tool<TAB><TAB>
+# high' has an EMPTY model field, and tab is IFS whitespace, so a plain `IFS=$'\t' read -r' folds
+# the two tabs into one and puts the effort in the model's variable.
+agents_conf "Psylocke tool=claude effort=high"
+[[ -z "$(launched_flag Psylocke --model)" ]] \
+  || fail "agents.conf effort only: expected no --model, got '$(launched_flag Psylocke --model)'"
+[[ "$(launched_flag Psylocke --effort)" == "high" ]] \
+  || fail "agents.conf effort only: expected --effort high, got '$(launched_flag Psylocke --effort)'"
+grep -qF "launch: agents.conf (\"Psylocke\") -> claude, claude's own model at high effort" \
+  <<<"$(launch_stderr Psylocke)" \
+  || fail "agents.conf effort only: the sentence must name the effort it passed, got: $(launch_stderr Psylocke)"
+pass "agents.conf: a line with an effort and no model says so, and passes the effort it named"
+
+# --- an unusable answer refuses, and never starts a session on settings nobody wrote ---
+#
+# Any answer that is not a well-formed hit, miss or refusal - a fork failure, a crash, a future
+# usage error - must stop the launch. Read as a miss it would start the session on the default tool
+# with no model while claiming the file names no line for this agent, which is a sentence about a
+# file nobody managed to read.
+broken_conf_consumer="$(consumer_new broken-agents-conf --copy)"
+printf 'gate_fast make check\n' > "$broken_conf_consumer/.cerebro/project.conf"
+printf 'default tool=copilot\n' > "$broken_conf_consumer/.cerebro/agents.conf"
+cat > "$broken_conf_consumer/.claude/cerebro/scripts/agents-conf" <<'BROKEN'
+#!/usr/bin/env bash
+echo "agents-conf: something went wrong" >&2
+exit 1
+BROKEN
+chmod +x "$broken_conf_consumer/.claude/cerebro/scripts/agents-conf"
+set +e
+out="$(run_launcher_at "$broken_conf_consumer/.claude/cerebro/scripts" launch Xavier 2>&1)"
+status=$?
+set -e
+[[ $status -eq 2 ]] || fail "unusable agents-conf: expected exit 2, got $status: $out"
+grep -q '^ARG:--agent$' <<<"$out" \
+  && fail "unusable agents-conf: the stub must never be reached: $out"
+grep -q 'agents.conf could not be read' <<<"$out" \
+  || fail "unusable agents-conf: expected a refusal naming the file, got: $out"
+grep -q 'names no line for' <<<"$out" \
+  && fail "unusable agents-conf: must not claim the file names no line, got: $out"
+[[ -f "$broken_conf_consumer/.cerebro/state/errors.jsonl" ]] \
+  || fail "unusable agents-conf: expected the refusal in the fixture's errors.jsonl"
+pass "an unusable agents-conf answer refuses the launch rather than starting on a default"
+
 # --- the old file is inert ---
 #
 # `.cerebro/models.conf' and `project.conf's `agent_cli' decide nothing on this path any more, and

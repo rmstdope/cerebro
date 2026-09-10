@@ -59,7 +59,7 @@
 #
 # `--argv` deliberately stops short of the prompt: `launch` puts the caller's own extra arguments
 # between the flags and the prompt, which is what makes a `--model` typed on the command line beat
-# models.conf. Two verbs preserve that ordering exactly:
+# the one agents.conf named. Two verbs preserve that ordering exactly:
 #
 #     exec "$binary" "${argv[@]}" "$@" "${prompt_argv[@]}"
 #
@@ -111,7 +111,7 @@ HOOKS="copilot	hooks/copilot	.github/hooks"
 # The fifth table: the providers whose model and effort ids the agent files' frontmatter is written
 # in. Claude Code's, and nobody else's - cb-d59 rejected growing a `model_copilot:' key in every
 # agent file (decision 5), so on any other provider the frontmatter is ignored and
-# .cerebro/models.conf is the only place that provider's models are chosen.
+# .cerebro/agents.conf is the only place any tool's models are chosen (cb-94y.2).
 FRONTMATTER_MODELS="claude"
 
 LAYOUTS="claude	.claude/agents	.claude/skills	.md

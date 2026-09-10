@@ -62,7 +62,7 @@ fi
 # the values were always supposed to come from.
 #
 # HERE, and not lower down, so everything this launcher itself spawns - `roster', `launch-preflight'
-# and through it `project-conf', `agent-cli', `model-for' and `sync-symlinks.sh' - is already running
+# and through it `project-conf', `agent-cli', `agents-conf' and `sync-symlinks.sh' - is already running
 # in the cleaned environment, not only the agent CLI. `scripts/cargo-env.sh' is the whole of the rule
 # (which names, and which are protected); this is its only caller.
 source "$here/cargo-env.sh"
@@ -73,7 +73,7 @@ source "$here/cargo-env.sh"
 cerebro_strip_cargo_env "${CEREBRO_CONSUMER_SHARED_ROOT:-}" >/dev/null
 
 # One line on stderr, only when something went - this file's own habit, for the reason it gives
-# about models.conf: a session behaving oddly three days later is otherwise a mystery. The CARGO_*
+# about agents.conf: a session behaving oddly three days later is otherwise a mystery. The CARGO_*
 # family is counted rather than spelled out (eighteen lines of noise on every launch); the config
 # names are listed, because that is the half a navigator cannot guess.
 _cleared_cargo=${#cerebro_cargo_stripped_injected[@]}
@@ -219,7 +219,43 @@ source "$here/session-marker.sh"
 conf_out=""
 conf_status=0
 conf_out="$("$here/agents-conf" --name "$name" --role "$role")" || conf_status=$?
-IFS=$'\t' read -r conf_kind conf_a conf_b conf_c conf_d <<<"$conf_out"
+
+# Split on TAB by hand, and not with `IFS=$'\t' read -r a b c d e'. Tab is IFS *whitespace*, so a
+# `read' folds a run of them into one delimiter: a hit whose model is empty and whose effort is not
+# - `hit<TAB>key<TAB>tool<TAB><TAB>high' - arrives with the effort sitting in the model's variable,
+# and the session then starts on a model called `high'. Five fields, every one of them possibly
+# empty, is what this loop guarantees; builtins only, for the narrowed PATH.
+conf_kind="" conf_a="" conf_b="" conf_c="" conf_d=""
+_conf_rest="$conf_out"
+for _conf_i in 1 2 3 4 5; do
+  if [[ "$_conf_rest" == *$'\t'* ]]; then
+    _conf_field="${_conf_rest%%$'\t'*}"
+    _conf_rest="${_conf_rest#*$'\t'}"
+  else
+    _conf_field="$_conf_rest"
+    _conf_rest=""
+  fi
+  case "$_conf_i" in
+    1) conf_kind="$_conf_field" ;;
+    2) conf_a="$_conf_field" ;;
+    3) conf_b="$_conf_field" ;;
+    4) conf_c="$_conf_field" ;;
+    5) conf_d="$_conf_field" ;;
+  esac
+done
+
+# An answer that is neither a hit, a miss nor a refusal is a REFUSAL of its own, never a miss: a
+# fork that failed, a crash inside `agents-conf', a usage error a future caller introduces. Read as
+# a miss, the session would start on the default tool with no model at all while saying the file
+# names no line for this agent - a sentence about a file nobody managed to read, and a session
+# running on settings nobody wrote, which is the one thing the agreed record forbids outright.
+case "$conf_kind" in
+  hit|miss|refused) ;;
+  *)
+    "$here/launch-refused" "$name" "agents.conf could not be read (agents-conf exited $conf_status) - fix it, or run .claude/cerebro/scripts/agents-conf --name $name --role $role to see why"
+    exit 2
+    ;;
+esac
 
 # Read BEFORE `launch-preflight', reversing the order `model-for' had: nothing downstream can be
 # checked without the tool - `--check' has no binary to look for and the layouts match has no row to
@@ -233,7 +269,13 @@ if [[ "$conf_kind" == "hit" ]]; then
   # mystery three days later, and this is the file nobody remembers editing. Plain double-quoted
   # strings and an `if' chain rather than `${x:+...}': the apostrophe in "$tool's own model and
   # effort" is a syntax error inside a ${x:-word} expansion under bash 3.2.
-  if [[ -z "$model" ]]; then
+  if [[ -z "$model" && -n "$effort" ]]; then
+    # The line named an effort and no model, so the effort IS passed - honouring what somebody wrote
+    # is the rule - and the sentence says both halves. Saying "its own model and effort" here while
+    # handing `--effort' to the CLI would be a sentence contradicting the argv, which is exactly the
+    # mystery three days later this line exists to prevent.
+    echo "launch: agents.conf (\"$conf_a\") -> $tool, $tool's own model at $effort effort" >&2
+  elif [[ -z "$model" ]]; then
     echo "launch: agents.conf (\"$conf_a\") -> $tool, $tool's own model and effort" >&2
   elif [[ -n "$effort" ]]; then
     echo "launch: agents.conf (\"$conf_a\") -> $tool, $model at $effort effort" >&2

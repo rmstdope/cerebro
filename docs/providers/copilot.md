@@ -783,13 +783,15 @@ Copilot's own `Question` panel — the tool `hooks/copilot/cerebro-question-stat
 
 ## Running a fleet on Copilot
 
-Declare it once, in `.cerebro/project.conf`:
+Set the tool per agent in `.cerebro/agents.conf`:
 
 ```
-
+default      tool=copilot
+implementer  tool=copilot  model=gpt-5-mini  effort=medium
 ```
 
-Absent, the key means `claude`. Nothing else has to change: the symlink sync writes both CLIs'
+Every line must name its tool. An omitted `model` or `effort` lets Copilot choose its own value.
+Nothing else has to change: the symlink sync writes both CLIs'
 discovery paths in every project whatever is declared, so the agents, the skills and the hook file
 are already where Copilot looks for them.
 
@@ -811,19 +813,18 @@ launch: no agents.conf model or effort - copilot picks its own model and effort.
         The orchestrator declares model opus, which is Claude Code's name for it.
 ```
 
-To choose, write `.cerebro/agents.conf`. Each line names the agent, role or `default`, plus its
-CLI-scoped row beats the plain one:
+To choose models and effort explicitly, add those settings to the same file. The most specific line
+that matches an agent wins outright:
 
 ```
-#  <agent-name | role | default>[@provider]   <model | ->   [effort]
-default@copilot      claude-opus-4.8
-implementer@copilot  gpt-5-mini   medium
-architect@copilot    gpt-5.5      high
+#  <agent-name | role | default>   tool=...  [model=...] [effort=...]
+default      tool=copilot  model=gpt-5.5
+implementer  tool=copilot  model=gpt-5-mini  effort=medium
+architect    tool=copilot  model=gpt-5.5  effort=high
 ```
 
-The lookup is most-specific-first: `<Name>@copilot`, `<Name>`, `<role>@copilot`, `<role>`,
-`default@copilot`, `default`. A key naming a CLI that is not known is warned about once and ignored,
-and the session still starts.
+The lookup is most-specific-first: `<Name>`, `<role>`, `default`. A line that names an unknown tool
+or setting is refused before the session starts.
 
 **A reasoning effort is optional, and only sometimes accepted.** Copilot takes `--effort` for some
 models and refuses the launch outright for the rest, so it is passed only when a matching row

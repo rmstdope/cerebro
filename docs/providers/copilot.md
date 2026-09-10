@@ -21,8 +21,8 @@ file. The `## Summary` table below is therefore built row-for-row from the flags
 | `--agent <role>` | `--agent <role>` | yes (M4) | reads `.github/agents/<role>.agent.md`; relative symlink followed |
 | `--name <Name>` | `-n, --name <name>` | yes (M3) | same spelling; a real argv token; also sets the terminal title and is a `--resume` key |
 | `--remote-control <Name>` | **none** | yes (M12) | `--remote`/`--remote-export` is GitHub web/mobile control of a session, a different thing. Decision 7 already accepts this loss |
-| `--model <id>` | `--model <id>` | yes (M8) | ids are Copilot's; an unknown id is a hard error, not a fallback. **Decided (cb-d59.6):** passed only from `.cerebro/models.conf`; the agent files' `model:` is Claude Code's word and is dropped |
-| `--effort <level>` | `--effort, --reasoning-effort <level>` | yes (M7) | choices are `none,minimal,low,medium,high,xhigh,max` — but acceptance is **per model**, and the non-interactive default model rejects every level. **Decided (cb-d59.6):** passed only when a `.cerebro/models.conf` row names one, and then verbatim |
+| `--model <id>` | `--model <id>` | yes (M8) | ids are Copilot's; an unknown id is a hard error, not a fallback. **Decided (cb-d59.6):** passed only from `.cerebro/agents.conf`; the agent files' `model:` is Claude Code's word and is dropped |
+| `--effort <level>` | `--effort, --reasoning-effort <level>` | yes (M7) | choices are `none,minimal,low,medium,high,xhigh,max` — but acceptance is **per model**, and the non-interactive default model rejects every level. **Decided (cb-d59.6):** passed only when a `.cerebro/agents.conf` row names one, and then verbatim |
 | `--append-system-prompt <marker>` | **none** | yes (M12) | no equivalent flag. The marker rides inside `-i`, and is measured reaching argv verbatim through `scripts/launch` (M13) |
 | `--settings <path>` | `.github/hooks/*.json` (no flag) | yes (M6, M6b) | hooks are discovered from the repository, not passed on the command line. A relative symlink is followed; an untrusted folder is not read at all |
 | `--permission-mode auto` | `--allow-all` | yes (M9) | documented as required for non-interactive mode. **Decided (cb-d59.6), revised (cb-s8b):** `--allow-all`, last in the arm. `--allow-all-tools` covers tools alone, so every session prompted on paths outside the repository; `--allow-all` is the union of tools, paths and URLs, which is the ground `--permission-mode auto` covers |
@@ -428,12 +428,12 @@ and a further group listing `claude-sonnet-5`, `claude-fable-5`, `claude-opus-5`
 ### Conclusion
 
 - **An unknown id is a hard refusal, never a silent fallback** — `Error: Model "…" from --model
-  flag is not available.`, exit non-zero, no session. Good: a mistyped `models.conf` entry fails
+  flag is not available.`, exit non-zero, no session. Good: a mistyped   `agents.conf` entry fails
   loudly, the way `scripts/launch`'s stderr line intends.
 - **`--model auto` works** and is the documented way to let Copilot choose.
 - **Ids in the picker's second group are not necessarily usable.** `gpt-5.6-sol` and
   `claude-sonnet-5` are both listed and both refused by `--model` on this subscription. A Copilot
-  consumer's `.cerebro/models.conf` must be validated against `--model` itself, not against the
+  consumer's `.cerebro/agents.conf` must be validated against `--model` itself, not against the
   picker.
 - The picker's own ids for the recommended group were **not captured** — it renders display names
   (`GPT-5 mini`) and the flag wants ids (`gpt-5-mini` works). The mapping was measured for one
@@ -658,17 +658,22 @@ hook machinery itself was running throughout, and only the repository's own file
   it, since every matcher run here was confounded by trust. What `hooks/copilot/` ships
   (`"matcher":"ask_user"`) is untouched by this bead.
 
+> **Historical transcript note (2026-09-10).** The command and output transcripts in this section
+> were recorded before `cb-94y.3`; their `agent_cli` and `models.conf` lines describe the launch
+> path at that time. Current launches read `.cerebro/agents.conf` instead.
+
 ## M13 A session started by the fleet's own launcher
 
 The proof the epic closes on: one real session of each **role kind** — interactive and implementer —
-started by `scripts/launch` itself, on a consumer declaring `agent_cli copilot`.
+started by `scripts/launch` itself, on a an agent whose `agents.conf` line names copilot.
 
 ### Command
 
 A throwaway consumer, never this checkout: a `mktemp -d`, `git init`, a **copy** of this checkout at
 `.claude/cerebro` (a symlink there makes `consumer-root` climb into the cerebro repository instead —
-the self-mount, and it syncs the wrong tree), `printf 'gate_fast true\nagent_cli copilot\n' >
-.cerebro/project.conf`, then `sync-symlinks.sh`. Each session started under a **real pty** with an
+the self-mount, and it syncs the wrong tree), `printf 'gate_fast true\n' >
+.cerebro/project.conf`, `printf 'default tool=copilot\n' > .cerebro/agents.conf`, then
+`sync-symlinks.sh`. Each session started under a **real pty** with an
 explicit window size, since without one Copilot degrades to a single-shot run and exits (M11):
 
 ```python
@@ -687,7 +692,7 @@ and, twelve seconds in, `ps -o args= -p <pid>`, a state file written naming that
 argv, then liveness:
 
 ```
-launch: no models.conf entry for copilot - copilot picks its own model and effort.
+launch: no agents.conf model or effort - copilot picks its own model and effort.
         The orchestrator declares model opus, which is Claude Code's name for it.
 
 node /opt/homebrew/bin/copilot --agent orchestrator --name Cerebro --allow-all-tools -i This session is Cerebro of the cerebro fleet rooted at /private/var/…/probe/. This sentence is how the fleet view proves the session belongs to this checkout; do not remove it.
@@ -699,7 +704,7 @@ agent-alive Rogue (same pid, wrong name) exit=1
 `Cyclops` (implementer, role `implementer`):
 
 ```
-launch: no models.conf entry for copilot - copilot picks its own model and effort.
+launch: no agents.conf model or effort - copilot picks its own model and effort.
         The implementer declares model sonnet, which is Claude Code's name for it.
 
 node /opt/homebrew/bin/copilot --agent implementer --name Cyclops --allow-all-tools -i This session is Cyclops of the cerebro fleet rooted at /private/var/…/probe/. This sentence is how the fleet view proves the session belongs to this checkout; do not remove it.
@@ -779,13 +784,15 @@ Copilot's own `Question` panel — the tool `hooks/copilot/cerebro-question-stat
 
 ## Running a fleet on Copilot
 
-Declare it once, in `.cerebro/project.conf`:
+Set the tool per agent in `.cerebro/agents.conf`:
 
 ```
-agent_cli copilot
+default      tool=copilot
+implementer  tool=copilot  model=gpt-5-mini  effort=medium
 ```
 
-Absent, the key means `claude`. Nothing else has to change: the symlink sync writes both CLIs'
+Every line must name its tool. An omitted `model` or `effort` lets Copilot choose its own value.
+Nothing else has to change: the symlink sync writes both CLIs'
 discovery paths in every project whatever is declared, so the agents, the skills and the hook file
 are already where Copilot looks for them.
 
@@ -799,27 +806,26 @@ from claude.ai or from a phone. It runs where it was started, and the fleet view
 it.
 
 **Models are yours to declare.** Copilot's model ids are Copilot's own, and the agent definitions
-name Claude Code's — so on Copilot they are ignored and no `--model` and no `--effort` are passed at
-all. The fleet then runs on whatever Copilot picks, and every launch says so:
+name Claude Code's. If the selected `agents.conf` line omits `model` and `effort`, no such flags are
+passed and Copilot picks its own values; every launch says so:
 
 ```
-launch: no models.conf entry for copilot - copilot picks its own model and effort.
+launch: no agents.conf model or effort - copilot picks its own model and effort.
         The orchestrator declares model opus, which is Claude Code's name for it.
 ```
 
-To choose, write `.cerebro/models.conf`. A key may name the CLI it is about, and within one key the
-CLI-scoped row beats the plain one:
+To choose models and effort explicitly, add those settings to the same file. The most specific line
+that matches an agent wins outright:
 
 ```
-#  <agent-name | role | default>[@provider]   <model | ->   [effort]
-default@copilot      claude-opus-4.8
-implementer@copilot  gpt-5-mini   medium
-architect@copilot    gpt-5.5      high
+#  <agent-name | role | default>   tool=...  [model=...] [effort=...]
+default      tool=copilot  model=gpt-5.5
+implementer  tool=copilot  model=gpt-5-mini  effort=medium
+architect    tool=copilot  model=gpt-5.5  effort=high
 ```
 
-The lookup is most-specific-first: `<Name>@copilot`, `<Name>`, `<role>@copilot`, `<role>`,
-`default@copilot`, `default`. A key naming a CLI that is not known is warned about once and ignored,
-and the session still starts.
+The lookup is most-specific-first: `<Name>`, `<role>`, `default`. A line that names an unknown tool
+or setting is refused before the session starts.
 
 **A reasoning effort is optional, and only sometimes accepted.** Copilot takes `--effort` for some
 models and refuses the launch outright for the rest, so it is passed only when a matching row
@@ -827,7 +833,7 @@ carries a third column — and then verbatim, so a bad pairing fails in the line
 
 **A wrong id is a dead row, not a downgrade.** An unknown model, or an effort the model will not
 take, is a hard refusal with no session at all. In the fleet view that name shows as `dead` with
-Copilot's own `Error:` line beside it, and the fix is the `models.conf` line that caused it.
+Copilot's own `Error:` line beside it, and the fix is the `agents.conf` line that caused it.
 
 **Hooks are read only in a folder you have trusted.** Copilot keeps a list of trusted folders in
 `~/.copilot/config.json`, and in a folder that is not on it the project's hook file is never loaded

@@ -96,7 +96,7 @@ a bead is planned in one session and implemented in another.
 > ```
 >
 > *`worktrees/` is where implementers build; `state/` holds the agents' state files and stop
-> flags; `scratch/` holds the planners' drafts and rejected mockup variants. `.cerebro/models.conf`
+> flags; `scratch/` holds the planners' drafts and rejected mockup variants. `.cerebro/agents.conf`
 > is the project's choice — commit it to share the fleet's models, or add it here to keep it
 > personal. These declarations lived under `.claude/` with a `cerebro-` prefix until cb-epr; a file
 > left at the old path makes `project-conf`, `roster` and `launch-preflight` refuse, naming the

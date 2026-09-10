@@ -209,7 +209,7 @@ source "$here/session-marker.sh"
 # Which tool this agent runs on, and on which model at which effort, is `.cerebro/agents.conf's
 # answer alone since cb-94y.2 - `scripts/agents-conf' is the one place that file is parsed and its
 # precedence decided, and its header is where the shape and the four answer lines are written down.
-# The agent definitions' frontmatter and `.cerebro/models.conf' are both gone from this path: the
+# The agent definitions' frontmatter and `.cerebro/agents.conf' are both gone from this path: the
 # first had carried no `model:' for some time, and the second is retired with `scripts/model-for'.
 #
 # `|| conf_status=$?' and not a bare capture: a refusal is exit 3, and `x="$(cmd)"' under `set -e'

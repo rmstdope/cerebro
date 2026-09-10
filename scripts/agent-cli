@@ -1,16 +1,12 @@
 #!/usr/bin/env bash
 #
-# `agent-cli` - the one place "which agent CLI does this fleet's sessions run on" is answered
-# (cb-d59.2), the shape `consumer-root`, `app-paths`, `roster`, `project-conf` and `planner-buffer`
-# already have: the answer on stdout, whichever branch it took on stderr, and a non-zero exit only
-# where the caller must stop.
+# `agent-cli` - the one place a tool's executable, arguments and discovery paths are answered.
 #
 # The defect it ends: the answer was spelt `claude` in argv, in two scripts - `exec claude` with
 # nine flag spellings after it in `scripts/launch`, and `command -v claude` in
 # `scripts/launch-preflight` - declared nowhere and askable of nothing. Adding a second provider
 # meant rewriting both launchers; now it is a second arm in this file.
 #
-#     agent-cli                       the provider this fleet runs on          -> claude
 #     agent-cli --default-tool        the tool a fleet that declares nothing runs on -> claude
 #     agent-cli --binary --tool <t>   the executable to exec and to find
 #     agent-cli --argv --tool <t> --role <role> --name <Name> [--model <m>] [--effort <e>]
@@ -24,9 +20,6 @@
 #                                     launch-refused and exit 3
 #
 #     agent-cli --known               the providers this cerebro can run, one per line
-#     agent-cli --agent-file-models   `yes' if the `model:'/`effort:' words in agents/<role>.md are
-#                                     this fleet's provider's ids, `no' if they are another
-#                                     provider's and must be ignored
 #     agent-cli --hooks               where each provider whose hooks are discovered FROM THE
 #                                     REPOSITORY keeps them, one tab-separated row per provider:
 #                                     provider, the source directory relative to this checkout's
@@ -38,8 +31,8 @@
 #                                     the agent-file suffix. A skill keeps its directory name in
 #                                     both, so there is no skill suffix column.
 #
-# Those four verbs are TOLD which tool they are answering about (cb-94y.2) and no longer ask
-# `resolve': `.cerebro/agents.conf' decides that, per agent, and `scripts/agents-conf' is where it
+# The four launch verbs are TOLD which tool they are answering about (cb-94y.2). `.cerebro/agents.conf'
+# decides that, per agent, and `scripts/agents-conf' is where it
 # is read. `--tool' is REQUIRED on each of them, and a value outside KNOWN is a USAGE error rather
 # than a refusal - by the time `launch' calls these the word has already come out of `agents-conf',
 # which validated it against `--known' itself, so a bad value here is a caller's bug and not a
@@ -73,34 +66,25 @@
 # containing nothing but `dirname` and `bash`, and this script now runs inside that. So no `grep`,
 # `sed`, `tr`, `awk` or `cut` anywhere in it - parameter expansion and `[[` are the whole toolbox,
 # the same constraint `scripts/roster` records for the same reason. `project-conf` is safe to call
-# (its `grep` lives only in branches `agent_cli` never reaches) and `launch-refused` is on the
+# (its `grep` lives only in branches no longer reached) and `launch-refused` is on the
 # refusal path only.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
-# The two tables, and nothing else provider-shaped anywhere in the repository. Adding an arm is:
-# move its word from PLANNED to KNOWN, and add its branch to --binary, --argv, --prompt-argv and
+# The provider table, and nothing else provider-shaped anywhere in the repository. Adding an arm is:
+# add its word to KNOWN and add its branch to --binary, --argv, --prompt-argv and
 # the PATH check. That is the seam. A provider whose hooks come from the repository emits no
 # `--settings' token from --argv, and gets a `--hooks' row instead: `scripts/launch' passes
 # `--settings' unconditionally and keeps doing so; it is the provider arm that decides whether to
 # spell it.
 KNOWN="claude copilot"
-# What a fleet that declares nothing runs on, answered by `--default-tool' BEFORE `resolve' - a
-# fleet with no agents.conf is precisely the one whose project.conf may say nothing, and one
-# advisory line above every session is the defect that guard exists to avoid.
 DEFAULT_TOOL="claude"
-# PLANNED is empty, and stays declared. Do NOT delete it, nor `resolve''s planned branch, nor
-# `refusal_sentence''s planned arm: they are the only thing that tells a consumer sitting on an
-# older cerebro, which declares a provider a newer cerebro has, to BUMP THE SUBMODULE rather than
-# fix a declaration that is perfectly correct. The unknown-provider sentence gives the opposite
-# advice, and it is the wrong one.
-PLANNED=""
 
 # The third table: where a provider LOOKS for agents and skills, which is a different question from
 # whether this fleet can start a session on it - so `copilot' has a row here while it is still in
-# PLANNED. `sync-symlinks.sh' writes every layout in every consumer whatever `agent_cli' says
-# (cb-d59.4), so that switching provider is one line in .cerebro/project.conf and nothing else.
+# PLANNED. `sync-symlinks.sh' writes every layout in every consumer whatever `agents.conf' says
+# (cb-d59.4).
 # The FIRST row is the canonical layout, and the sync's mirror pass reads it as such.
 # The fourth table: where a provider whose hooks are DISCOVERED FROM THE REPOSITORY keeps them, and
 # where they must be installed for it to find them. `claude' has no row - its hook settings file is
@@ -112,8 +96,6 @@ HOOKS="copilot	hooks/copilot	.github/hooks"
 # in. Claude Code's, and nobody else's - cb-d59 rejected growing a `model_copilot:' key in every
 # agent file (decision 5), so on any other provider the frontmatter is ignored and
 # .cerebro/agents.conf is the only place any tool's models are chosen (cb-94y.2).
-FRONTMATTER_MODELS="claude"
-
 LAYOUTS="claude	.claude/agents	.claude/skills	.md
 copilot	.github/agents	.github/skills	.agent.md"
 
@@ -133,56 +115,8 @@ in_list() {
   return 1
 }
 
-# Resolve the provider, or set $refusal to the sentence saying why not. The sentence carries no
-# prefix: `--check` hands it to launch-refused (which says `cerebro: `), and the plain verbs put
-# `agent-cli: ` in front of it themselves.
-provider=""
-refusal_kind=""
-refusal_value=""
-
-# The sentence, with or without its ` before starting <Name>' clause: `--check' has a name to name
-# and the plain verbs do not.
-refusal_sentence() {
-  local name="${1:-}"
-  case "$refusal_kind" in
-    planned)
-      printf '%s' ".cerebro/project.conf declares agent_cli $refusal_value, which this version of cerebro cannot run yet - bump the submodule, or declare $(known_list)"
-      [[ -n "$name" ]] && printf '%s' ", before starting $name"
-      ;;
-    unknown)
-      printf '%s' ".cerebro/project.conf declares agent_cli $refusal_value, which is not an agent CLI cerebro knows - this cerebro runs $(known_list). Fix the declaration"
-      [[ -n "$name" ]] && printf '%s' " before starting $name"
-      ;;
-  esac
-  return 0
-}
-resolve() {
-  local value
-  # 2>/dev/null is REQUIRED, not incidental: project-conf prints a line to stderr on every call by
-  # its own rule, and two callers per launch would otherwise put four lines of
-  # `project-conf: agent_cli unset -> the default' in front of the navigator for a key nobody set.
-  value="$("$here/project-conf" agent_cli 2>/dev/null)" || value=""
-  if [[ -z "$value" ]]; then
-    provider="claude"
-    echo "agent-cli: no agent_cli declared; running on claude" >&2
-    return 0
-  fi
-  if in_list "$value" "$KNOWN"; then
-    provider="$value"
-    return 0
-  fi
-  if in_list "$value" "$PLANNED"; then
-    refusal_kind="planned"
-    refusal_value="$value"
-    return 0
-  fi
-  refusal_kind="unknown"
-  refusal_value="$value"
-  return 0
-}
-
 usage() {
-  echo "usage: agent-cli [--known | --layouts | --hooks | --default-tool | --agent-file-models | --binary --tool <t> | --check --tool <t> <Name> | --argv --tool <t> ... | --prompt-argv --tool <t> <text>]" >&2
+  echo "usage: agent-cli [--known | --layouts | --hooks | --default-tool | --binary --tool <t> | --check --tool <t> <Name> | --argv --tool <t> ... | --prompt-argv --tool <t> <text>]" >&2
   exit 2
 }
 
@@ -219,13 +153,14 @@ case "$verb" in
     printf '%b\n' "$LAYOUTS"
     exit 0
     ;;
-  ""|--binary|--check|--argv|--prompt-argv|--agent-file-models) ;;
+  --binary|--check|--argv|--prompt-argv) ;;
   *) usage ;;
 esac
 
 # The told verbs: `--tool <t>' comes first and is consumed here, so each arm below sees exactly the
 # arguments it saw before. `--argv' reads its own `--tool' inside its flag loop, having no fixed
 # argument order at all.
+provider=""
 told=""
 case "$verb" in
   --binary|--check|--prompt-argv)
@@ -239,25 +174,7 @@ case "$verb" in
   --argv) told=1 ;;
 esac
 
-if [[ -z "$told" ]]; then
-  resolve
-  # The plain verbs' backstop: a declaration this cerebro cannot run.
-  if [[ -n "$refusal_kind" ]]; then
-    echo "agent-cli: $(refusal_sentence)" >&2
-    exit 3
-  fi
-fi
-
 case "$verb" in
-  "")
-    printf '%s\n' "$provider"
-    ;;
-  --agent-file-models)
-    # AFTER `resolve', unlike --layouts and --hooks: this one answers about the provider THIS fleet
-    # runs on, not about every provider there is.
-    [[ $# -eq 1 ]] || usage
-    if in_list "$provider" "$FRONTMATTER_MODELS"; then printf '%s\n' "yes"; else printf '%s\n' "no"; fi
-    ;;
   --binary)
     [[ $# -eq 1 ]] || usage
     case "$provider" in
@@ -268,10 +185,6 @@ case "$verb" in
   --check)
     name="${2:-}"
     [[ -n "$name" && $# -eq 2 ]] || usage
-    if [[ -n "$refusal_kind" ]]; then
-      "$here/launch-refused" "$name" "$(refusal_sentence "$name")"
-      exit 3
-    fi
     case "$provider" in
       claude)
         if ! command -v claude >/dev/null 2>&1; then

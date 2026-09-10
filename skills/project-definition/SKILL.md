@@ -131,9 +131,9 @@ Then one more, asked plainly:
 
 > And which agent CLI should the fleet's sessions run on — Claude Code or GitHub Copilot?
 
-Both are supported, and the answer becomes `agent_cli`; an absent key means Claude Code. A
-project on GitHub Copilot also wants a `.cerebro/models.conf`, because Copilot's model ids are
-its own and the agent definitions declare Claude Code's.
+Both are supported, and each agent's tool is written in `.cerebro/agents.conf` beside its model and
+effort. Copy `.claude/cerebro/agents.conf.example` when the project wants settings shared with every
+clone; absent means Claude Code with its own model and effort.
 
 ### 4. What is using it like, and what does it look and feel like?
 
@@ -167,7 +167,6 @@ which key rather than auditing a file:
 | `app_paths` | topic 3 — a regex over the paths the audience could see, proposed from the layout the stack implies |
 | `gate_fast`, `gate_full` | topic 3; the same command when the project has one |
 | `install` | topic 3; omitted with a comment when there is nothing to install |
-| `agent_cli` | topic 3 — Claude Code or GitHub Copilot; omitted with a comment when the answer is Claude Code |
 | `verification none` | when topic 1 said library, harness or build tool — nothing in it can be verified by looking |
 
 **Write every absent key as a comment saying why it is absent.** An accident and a decision read
@@ -225,7 +224,7 @@ The facts this project has already paid for, read by planners and implementers b
 One entry per trap: what happened, what it cost, and what to do about it. Empty until the first one.
 ```
 
-No `models.conf`. Absent means every agent runs the model its own agent file declares, which is the
+No `agents.conf`. Absent means every agent runs on Claude Code's own model and effort, which is the
 right default; the README says how to add one.
 
 **5. `.gitignore`** — append these, with the comment, unless all three lines are already there:
@@ -351,7 +350,8 @@ and a third copy is the one that goes stale.
 - **Never pushes git.** The commit is yours; the push is theirs, and the command is printed.
 - **Never runs `git add -A`.** It would sweep up whatever the navigator had in flight.
 - **Never deletes or overwrites a file it found.** `CLAUDE.md` is merged, `.gitignore` is appended.
-- **Never writes `.cerebro/models.conf`.** Absent means each agent's own declared model.
+- **Never writes `.cerebro/agents.conf`.** It is optional; absent means Claude Code chooses each
+  agent's own model and effort.
 
 ## Known traps
 

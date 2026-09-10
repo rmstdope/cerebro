@@ -99,9 +99,9 @@ run_in "$c" --name Beast
 [[ "$status" -eq 2 ]] || fail "usage: --name without --role is exit 2, got $status"
 [[ -z "$out" ]] || fail "usage: --name without --role must print no answer, got '$out'"
 [[ "$err" == usage:* ]] || fail "usage: expected a usage: line on stderr, got '$err'"
-run_in "$c" --role planner
-[[ "$status" -eq 2 ]] || fail "usage: --role without --name is exit 2, got $status"
-[[ -z "$out" ]] || fail "usage: --role without --name must print no answer, got '$out'"
+run_in "$c"
+[[ "$status" -eq 2 ]] || fail "usage: missing --role is exit 2, got $status"
+[[ -z "$out" ]] || fail "usage: missing --role must print no answer, got '$out'"
 run_in "$c" --nonsense x --name Beast --role planner
 [[ "$status" -eq 2 ]] || fail "usage: an unknown flag is exit 2, got $status"
 [[ -z "$out" ]] || fail "usage: an unknown flag must print no answer, got '$out'"
@@ -126,11 +126,15 @@ pass "a file naming nobody: miss<TAB>no-line, told apart from no-file so a calle
 c="$(new_consumer "default tool=claude model=opus")"
 run_in "$c" --name Beast --role planner
 expect_hit default claude opus "" "default line"
+run_in "$c" --role planner
+expect_hit default claude opus "" "role-only default line"
 pass "default: answers for an agent named by neither its name nor its role, effort empty"
 
 c="$(new_consumer "default tool=claude" "planner tool=copilot model=gpt-5.5")"
 run_in "$c" --name Beast --role planner
 expect_hit planner copilot gpt-5.5 "" "role beats default"
+run_in "$c" --role planner
+expect_hit planner copilot gpt-5.5 "" "role-only role line"
 run_in "$c" --name Forge --role architect
 expect_hit default claude "" "" "another role falls to default"
 pass "a role line beats default, and a role not named falls through to it"

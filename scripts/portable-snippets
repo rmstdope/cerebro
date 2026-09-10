@@ -8,7 +8,7 @@
 # is the one construct in ordinary use that means two different things across those shells: bash
 # splits an unquoted one into several arguments, and zsh does not word-split a parameter expansion
 # at all, so the whole thing arrives as a single argument and the command receives a flag glued to
-# its value. `scripts/model-for' answers that with its usage line and exit 2.
+# its value. `scripts/agents-conf' answers that with its usage line and exit 2.
 #
 # Two implementers hit exactly that, at the same line of the same file, diagnosed it identically and
 # wrote the same prevention (cb-i1w 2026-09-02, cb-hz4 2026-09-03); the snippet was byte-identical

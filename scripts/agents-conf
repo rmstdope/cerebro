@@ -2,6 +2,7 @@
 # The one place `.cerebro/agents.conf' is answered:
 #
 #     agents-conf --name <Name> --role <role>
+#     agents-conf --role <role>
 #
 #     stdout  EXACTLY ONE LINE, TAB separated, in one of four shapes:
 #               hit<TAB><key><TAB><tool><TAB><model><TAB><effort>
@@ -13,7 +14,7 @@
 #             --known', which this script forks on the winning-line path and does not redirect: a
 #             `--known' that ever grew an advisory would break it for every caller.
 #     exit 0  hit or miss
-#     exit 2  usage - an unknown flag, a flag with no value, or either of --name/--role missing
+#     exit 2  usage - an unknown flag, a flag with no value, or --role missing
 #     exit 3  refused
 #
 # A caller branches on $kind, and SPLITS THE LINE BY HAND rather than with
@@ -25,8 +26,8 @@
 # carries the five-field split that does work; copy it. A caller that also reads the STATUS must
 # capture it (`out="$(...)" || status=$?'), a refusal being exit 3 under the caller's own errexit.
 #
-# The leading kind word is the one departure from `scripts/model-for', which this script is
-# otherwise modelled on: `model-for' tells a miss from an answer by printing nothing at all,
+# The leading kind word is the one departure from the retired model lookup, which this script is
+# otherwise modelled on: the old lookup told a miss from an answer by printing nothing at all,
 # because its `<model>' may be the literal `-'. Here there are FOUR outcomes rather than two, and
 # two of them - `no-file' and `no-line' - need different sentences from the caller, so the
 # trichotomy is named on the line instead of inferred from its emptiness.
@@ -50,7 +51,7 @@
 # writing to the navigator's errors.jsonl. That is the separation `scripts/agent-cli' keeps between
 # its plain verbs and `--check'.
 #
-# The root is the SHARED one, for `model-for's stated reason: a resolver taking the enclosing tree
+# The root is the SHARED one: a resolver taking the enclosing tree
 # would answer differently inside an implementer's worktree than the launcher does in the main
 # checkout - one rule with two answers.
 #
@@ -69,7 +70,7 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 SETTINGS="tool model effort"
 
 usage() {
-  echo "usage: agents-conf --name <Name> --role <role>" >&2
+  echo "usage: agents-conf [--name <Name>] --role <role>" >&2
   exit 2
 }
 
@@ -81,9 +82,8 @@ while [[ $# -gt 0 ]]; do
     *)      usage ;;
   esac
 done
-# Both, and that is a departure from `model-for', which accepts either: the only caller always has
-# both, and requiring them removes a shape in which only `default' could ever match.
-[[ -n "$name" && -n "$role" ]] || usage
+# The reviewer lookup has no agent name, so role-only probes intentionally skip the name line.
+[[ -n "$role" ]] || usage
 
 # The hint first (cb-ue0), never trusted: `cerebro_hinted_root' checks it physically resolves to
 # THIS checkout before believing it, so the fallback fork is mandatory rather than decorative. No
@@ -101,12 +101,12 @@ fi
 
 # ONE pass over the file into two parallel arrays (bash 3.2, so no associative array): the key, and
 # the rest of that line as written after comment-stripping. Not a lookup per key - and, unlike
-# `model-for', nothing is validated here: only the WINNING line is ever looked at, which is what
+# the old model lookup, nothing is validated here: only the WINNING line is ever looked at, which is what
 # makes a malformed line naming an agent this fleet does not run cost nothing at all.
 conf_keys=() conf_rest=()
 while IFS= read -r line || [[ -n "$line" ]]; do
   # Everything from a `#' on is a comment, wherever it starts - the same one-liner as
-  # `scripts/model-for', and for the same reason: `Beast tool=copilot # why' must not read the
+  # the old model lookup, and for the same reason: `Beast tool=copilot # why' must not read the
   # comment as a fourth field.
   # A carriage return first: agents.conf is hand-written, so a file saved with CRLF endings is an
   # editor rather than a mistake in the file's content, and an unstripped CR would end up inside a
@@ -123,7 +123,9 @@ done < "$agents_conf"
 # Three probe keys, most specific first. The FIRST line whose key equals a probe key wins, and the
 # probes stop there outright - no less specific line is consulted, and a refusal below is the
 # answer rather than a reason to keep looking. "Nothing ever runs on a setting nobody wrote."
-probe_keys=("$name" "$role" default)
+probe_keys=()
+[[ -n "$name" ]] && probe_keys+=("$name")
+probe_keys+=("$role" default)
 
 winning_key="" winning_rest="" found=""
 for key in "${probe_keys[@]}"; do

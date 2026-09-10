@@ -171,11 +171,12 @@ session is already running in this fleet; end that one first.
 
 **Changing what the fleet runs on** is one file, and it lives in *your project* rather than inside
 the `.claude/cerebro` submodule — so no other consumer of the harness inherits it — commit it
-to give every clone the same fleet, or ignore it to keep it yours. Copy `.claude/cerebro/models.conf.example` to `.cerebro/models.conf` and uncomment a
-line. Keys are an agent's name, a role, or `default`, most specific first, so `default fable` moves
-everybody and `Beast sonnet` moves one planner — which is the cheap way to compare two models on the
-same queue. It takes effect at the next launch; a session already running keeps the model it started
-with, and the launcher says which key it matched when it starts one.
+to give every clone the same fleet, or ignore it to keep it yours. Copy `.claude/cerebro/agents.conf.example` to `.cerebro/agents.conf` and edit a
+line. Keys are an agent's name, a role, or `default`, most specific first, so
+`default tool=copilot model=gpt-5.5` moves everybody and
+`Beast tool=claude model=opus` moves one planner — which is the cheap way to compare two tools or
+models on the same queue. It takes effect at the next launch; a session already running keeps the
+tool and model it started with, and the launcher says which key it matched when it starts one.
 
 ## Starting a planner — there are two of them
 

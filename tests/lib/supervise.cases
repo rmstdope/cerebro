@@ -156,12 +156,12 @@ interactive   working   yes  yes  no   5000   none   no   none
 interactive   dead      yes  no   no   5000   none   no   none
 interactive   up        yes  yes  no   5000   none   no   none
 
-# Standby: no session hosted anywhere, so `ours' is `no' - and a flagged implementer is still
-# disarmed rather than retried, because a stop flag written before its session died still says
-# *no further bead* (cb-hzs). An interactive standby row's flag belongs to the start path.
+# Standby: no session hosted anywhere, so `ours' is `no' - and a flagged row is disarmed rather
+# than retried whatever its kind, because a stop flag written before its session died still says
+# *no further bead* (cb-hzs).
 implementer   standby   no   yes  no   none   none   no   retire
 implementer   standby   no   no   no   none   none   no   none
-interactive   standby   no   yes  no   none   none   no   none
+interactive   standby   no   yes  no   none   none   no   retire
 interactive   standby   no   no   no   none   none   no   none
 
 # A stuck row: `working', the turn has ended, and it has stood past the 30-minute ceiling.

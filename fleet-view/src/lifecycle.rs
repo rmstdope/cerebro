@@ -188,12 +188,11 @@ pub fn supervise_action(agent: Supervised<'_>) -> Option<Supervision> {
     // Emacs has the same shape for the same reason: its guard is `external`, which is "up
     // somewhere else", and a standby row is up nowhere.
     //
-    // A stop flag written before its session died still says *no further bead*, so a standby
-    // implementer under one is disarmed rather than retried (cb-hzs). A standby role's flag is
-    // enforced in the start path instead.
+    // A stop flag written before its session died still says *no further bead*, so a standby row
+    // under one is disarmed rather than retried (cb-hzs) - whatever its kind, since a standby
+    // builder, planner, orchestrator, verifier or design agent alike holds no session to retry.
     if agent.state == &RowState::Standby {
-        return (agent.kind == AgentKind::Implementer && agent.stop_flag)
-            .then_some(Supervision::Retire);
+        return agent.stop_flag.then_some(Supervision::Retire);
     }
     // The guard that wraps everything else: a session this view did not start is somebody else's
     // to end, and a dead one stays dead.

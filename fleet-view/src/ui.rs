@@ -281,17 +281,20 @@ pub fn copy_snapshot_for_event(
         MouseTarget::Pane(pane) => pane,
         MouseTarget::Divider(_, _) | MouseTarget::Nothing => return None,
     };
-    let current_fleet = current_fleet_document(app, now, fleet_width(area));
     let (outer, document, pane_scroll) = match pane {
-        PaneFocus::Fleet => (facts.fleet, current_fleet, app.fleet.scroll),
+        PaneFocus::Fleet => (
+            facts.fleet,
+            displayed_fleet_document(app, now, fleet_width(area)).into_owned(),
+            app.fleet.scroll,
+        ),
         PaneFocus::Work => (
             facts.work,
-            work_document(app, now, inner_width(facts.work)),
+            displayed_work_document(app, now, inner_width(facts.work)).into_owned(),
             app.work.scroll,
         ),
         PaneFocus::Session => (
             facts.session,
-            session_document(app, inner_width(facts.session)).into_owned(),
+            displayed_session_document(app, inner_width(facts.session)).into_owned(),
             app.session.scroll,
         ),
     };
@@ -2339,7 +2342,7 @@ mod tests {
     }
 
     #[test]
-    fn replacement_copy_starts_at_the_retained_source_scroll() {
+    fn replacement_copy_starts_at_the_retained_source_content_and_scroll() {
         let mut app = populated();
         app.finish_refresh(
             Ok((0..30)
@@ -2356,6 +2359,12 @@ mod tests {
             copy_snapshot_for_event(&app, now(), area, press).expect("first copy starts");
         app.on_mouse(press, metrics, Some(snapshot), now());
         app.copy.as_mut().expect("copy is retained").snapshot.scroll = 1;
+        app.finish_refresh(
+            Ok((0..30)
+                .map(|index| row(&format!("Refreshed-{index}"), "implementer", RowState::Idle))
+                .collect()),
+            at(86_401),
+        );
 
         let replacement =
             copy_snapshot_for_event(&app, now(), area, press).expect("replacement starts");
@@ -2363,6 +2372,10 @@ mod tests {
         assert_eq!(
             replacement.scroll, 1,
             "a replacement uses the row currently shown by the retained source"
+        );
+        assert!(
+            replacement.document.iter().any(|line| line.to_string().contains("Agent-")),
+            "a replacement snapshots the retained source content"
         );
         app.on_mouse(press, metrics, Some(replacement), now());
         assert_eq!(app.copy.expect("replacement is retained").anchor.line, 1);

@@ -29,6 +29,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
+use crossterm::clipboard::CopyToClipboard;
 use crossterm::event::{
     DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture, Event,
     KeyCode, KeyEvent, KeyEventKind,
@@ -1663,8 +1664,13 @@ where
                 // at all, which is why this arm sits outside `route_key` and its live-session
                 // branch entirely.
                 Event::Mouse(mouse) => {
-                    let action = app.on_mouse(mouse, metrics, clock());
-                    dispatch(action, app, workers, &clock);
+                    let event_now = clock();
+                    let snapshot = ui::copy_snapshot_for_event(app, event_now, area, mouse);
+                    let action = app.on_mouse(mouse, metrics, snapshot, event_now);
+                    match action {
+                        AppAction::Copy(text) => write_copy(&mut io::stdout(), &text)?,
+                        action => dispatch(action, app, workers, &clock),
+                    }
                 }
                 // A resize needs nothing but the redraw at the top of the loop.
                 _ => {}
@@ -1672,6 +1678,11 @@ where
         }
     }
     Ok(())
+}
+
+fn write_copy(writer: &mut impl Write, text: &str) -> io::Result<()> {
+    writer.execute(CopyToClipboard::to_clipboard_from(text.to_string()))?;
+    writer.flush()
 }
 
 /// The keystroke path, in this order, each branch returning:
@@ -2252,6 +2263,15 @@ impl<M: TerminalModes> Drop for TerminalGuard<M> {
 #[cfg(test)]
 mod main_tests {
     use super::*;
+
+    #[test]
+    fn copy_writer_emits_one_osc52_clipboard_sequence() {
+        let mut output = Vec::new();
+        write_copy(&mut output, "alpha\nbeta").expect("clipboard command serializes");
+        let output = String::from_utf8(output).expect("clipboard sequence is UTF-8");
+        assert_eq!(output.matches("\u{1b}]52;c;").count(), 1);
+        assert!(output.contains("YWxwaGEKYmV0YQ=="), "payload is base64 encoded: {output:?}");
+    }
 
     /// Every board-backed role is asked what spacing the project declares for it, or the two
     /// cb-lz5 roles silently fall back to no spacing at all while their peers have one.

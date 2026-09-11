@@ -21,6 +21,7 @@ use crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use ratatui::layout::Rect;
+use ratatui::text::Line;
 use unicode_width::UnicodeWidthStr;
 
 use crate::supervisor::{ReadOnlyReason, SupervisionMode};
@@ -367,6 +368,231 @@ pub const DOUBLE_CLICK_MS: i64 = 400;
 /// The Fleet selection and the Work cursor move ONE per notch instead: a selection that jumps
 /// three rows at a time is disorienting in a way a transcript scrolling three lines is not.
 pub const WHEEL_LINES: usize = 3;
+
+/// How often an out-of-bounds copy pointer advances the source pane.
+pub const COPY_AUTOSCROLL_INTERVAL: Duration = Duration::from_millis(200);
+
+/// The visual content and body geometry captured when a copy starts.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CopySnapshot {
+    pub pane: PaneFocus,
+    pub body: Rect,
+    pub document: Vec<Line<'static>>,
+    pub scroll: usize,
+    pub viewport_lines: usize,
+}
+
+/// The terminal-cell endpoint of a copy gesture.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct CopyEndpoint {
+    pub line: usize,
+    pub column: usize,
+}
+
+/// A retained or active pane copy. Its document and scroll are independent of later refreshes.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CopySelection {
+    pub snapshot: CopySnapshot,
+    pub anchor: CopyEndpoint,
+    pub current: CopyEndpoint,
+    pub pointer: (u16, u16),
+    pub active: bool,
+    next_autoscroll: Instant,
+}
+
+impl CopySelection {
+    fn new(snapshot: CopySnapshot, pointer: (u16, u16), now: Instant) -> Option<Self> {
+        let endpoint = endpoint_for_pointer(&snapshot, pointer);
+        Some(Self {
+            snapshot,
+            anchor: endpoint,
+            current: endpoint,
+            pointer,
+            active: true,
+            next_autoscroll: now + COPY_AUTOSCROLL_INTERVAL,
+        })
+    }
+
+    pub fn source(&self) -> PaneFocus {
+        self.snapshot.pane
+    }
+
+    pub fn update_pointer(&mut self, pointer: (u16, u16)) {
+        self.pointer = pointer;
+        self.current = endpoint_for_pointer(&self.snapshot, pointer);
+    }
+
+    pub fn complete(&mut self) -> String {
+        self.active = false;
+        self.text()
+    }
+
+    pub fn text(&self) -> String {
+        let (start, end) = ordered_endpoints(self.anchor, self.current);
+        let Some(first) = self.snapshot.document.get(start.line..) else {
+            return String::new();
+        };
+        let count = end.line.saturating_sub(start.line) + 1;
+        first
+            .iter()
+            .take(count)
+            .enumerate()
+            .map(|(offset, line)| {
+                let line_number = start.line + offset;
+                let line_width = copy_width(line);
+                let from = if line_number == start.line {
+                    start.column
+                } else {
+                    0
+                };
+                let to = if line_number == end.line {
+                    end.column
+                } else {
+                    line_width.saturating_sub(1)
+                };
+                text_in_cells(line, from, to)
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    pub fn cell_selected(&self, line: usize, column: usize) -> bool {
+        let (start, end) = ordered_endpoints(self.anchor, self.current);
+        if line < start.line || line > end.line {
+            return false;
+        }
+        let first = if line == start.line { start.column } else { 0 };
+        let last = if line == end.line {
+            end.column
+        } else {
+            self.snapshot
+                .document
+                .get(line)
+                .map(copy_width)
+                .unwrap_or(0)
+                .saturating_sub(1)
+        };
+        first <= last && (first..=last).contains(&column)
+    }
+
+    fn advance(&mut self, now: Instant) {
+        if !self.active || now < self.next_autoscroll {
+            return;
+        }
+        let above = self.pointer.1 < self.snapshot.body.y;
+        let below = self.pointer.1 >= self.snapshot.body.bottom();
+        if above && self.snapshot.scroll > 0 {
+            self.snapshot.scroll -= 1;
+            self.current = endpoint_for_pointer(&self.snapshot, self.pointer);
+        } else if below {
+            let max_scroll = self
+                .snapshot
+                .document
+                .len()
+                .saturating_sub(self.snapshot.viewport_lines);
+            if self.snapshot.scroll < max_scroll {
+                self.snapshot.scroll += 1;
+                self.current = endpoint_for_pointer(&self.snapshot, self.pointer);
+            }
+        }
+        self.next_autoscroll = now + COPY_AUTOSCROLL_INTERVAL;
+    }
+}
+
+fn ordered_endpoints(
+    first: CopyEndpoint,
+    second: CopyEndpoint,
+) -> (CopyEndpoint, CopyEndpoint) {
+    if first <= second {
+        (first, second)
+    } else {
+        (second, first)
+    }
+}
+
+fn endpoint_for_pointer(snapshot: &CopySnapshot, pointer: (u16, u16)) -> CopyEndpoint {
+    let body = snapshot.body;
+    let row = pointer
+        .1
+        .saturating_sub(body.y)
+        .min(body.height.saturating_sub(1)) as usize;
+    let column = pointer
+        .0
+        .saturating_sub(body.x)
+        .min(body.width.saturating_sub(1)) as usize;
+    let line = snapshot
+        .scroll
+        .saturating_add(row)
+        .min(snapshot.document.len().saturating_sub(1));
+    let column = snapshot
+        .document
+        .get(line)
+        .map(|line| snap_column(line, column))
+        .unwrap_or(0);
+    CopyEndpoint { line, column }
+}
+
+pub(crate) fn copy_width(line: &Line<'_>) -> usize {
+    let mut column: usize = 0;
+    let mut content_width: usize = 0;
+    for span in &line.spans {
+        for character in span.content.chars() {
+            let width = character.to_string().width();
+            if character != ' ' && width > 0 {
+                content_width = column.saturating_add(width);
+            }
+            column = column.saturating_add(width);
+        }
+    }
+    content_width
+}
+
+fn text_in_cells(line: &Line<'_>, start: usize, end: usize) -> String {
+    if start > end {
+        return String::new();
+    }
+    let mut column = 0;
+    let mut selected = String::new();
+    let mut previous_selected = false;
+    for span in &line.spans {
+        for character in span.content.chars() {
+            let width = character.to_string().width();
+            let character_selected = if width == 0 {
+                previous_selected
+            } else {
+                column <= end && column.saturating_add(width) > start
+            };
+            if character_selected {
+                selected.push(character);
+            }
+            previous_selected = character_selected;
+            column = column.saturating_add(width);
+        }
+    }
+    selected
+}
+
+fn snap_column(line: &Line<'_>, column: usize) -> usize {
+    let width = copy_width(line);
+    if width == 0 {
+        return 0;
+    }
+    let target = column.min(width - 1);
+    let mut offset: usize = 0;
+    for span in &line.spans {
+        for character in span.content.chars() {
+            let width = character.to_string().width();
+            if width == 0 {
+                continue;
+            }
+            if target < offset.saturating_add(width) {
+                return offset;
+            }
+            offset = offset.saturating_add(width);
+        }
+    }
+    width.saturating_sub(1)
+}
 
 /// The gold line a divider's new size gets, from the mockup's §5 and nowhere else.
 ///
@@ -1540,6 +1766,8 @@ pub enum AppAction {
     /// Send this board write to the write worker (cb-21g). `App` still starts no process: it says
     /// what is wanted and `dispatch` does it, off the drawing thread.
     Write(WriteRequest),
+    /// Copy the completed pane selection to the terminal clipboard.
+    Copy(String),
     Quit,
 }
 
@@ -1657,6 +1885,8 @@ pub struct App {
     layout: LayoutFacts,
     /// The divider the pointer is currently dragging, if any. See `Drag`.
     pub drag: Option<Drag>,
+    /// The pane copy being drawn or retained, if any.
+    pub copy: Option<CopySelection>,
     /// The last left-button press that landed on a divider, for the double-click test: which
     /// divider, and when. Cleared by a press that is not on a divider, and by the double-click it
     /// completes — so three presses in a row are a double-click and then a fresh single one, never
@@ -1832,6 +2062,7 @@ impl App {
             panes: PaneSizes::default(),
             layout: LayoutFacts::default(),
             drag: None,
+            copy: None,
             last_divider_press: None,
             focus: PaneFocus::default(),
             supervision,
@@ -2013,6 +2244,9 @@ impl App {
     /// so a request this returns and the caller cannot start is asked for again on the next tick
     /// rather than silently postponed by a whole interval.
     pub fn on_tick(&mut self, now: Instant) -> AppAction {
+        if let Some(copy) = self.copy.as_mut() {
+            copy.advance(now);
+        }
         let due = |last: Option<Instant>, interval: Duration| match last {
             None => true,
             Some(last) => now.duration_since(last) >= interval,
@@ -2032,19 +2266,41 @@ impl App {
     /// takes a viewport: the wheel acts on the pane under the POINTER, not on the focused one, so
     /// one viewport number would not do.
     ///
-    /// Returns `AppAction` for `on_key`'s reason and nothing more: today every arm returns
-    /// `AppAction::None`, and the type is what lets a later arm ask for a read without changing
-    /// every caller.
+    /// Returns `AppAction` for `on_key`'s reason and to deliver a completed copy payload without
+    /// making the mouse path write to the terminal.
     pub fn on_mouse(
         &mut self,
         event: MouseEvent,
         metrics: Metrics,
+        snapshot: Option<CopySnapshot>,
         now: DateTime<Utc>,
     ) -> AppAction {
         // A modal owns the screen: a prompt consumes every key by construction, and a stray click
         // must not act behind one or clear its gold text.
         if self.quit_refusal.is_some() || self.confirm.is_some() {
             return AppAction::None;
+        }
+        if event.kind == MouseEventKind::Down(MouseButton::Left)
+            && event.modifiers.contains(KeyModifiers::SHIFT)
+        {
+            self.drag = None;
+            self.last_divider_press = None;
+            if let Some(snapshot) = snapshot {
+                self.copy = CopySelection::new(snapshot, (event.column, event.row), Instant::now());
+            }
+            return AppAction::None;
+        }
+        if event.kind == MouseEventKind::Drag(MouseButton::Left) {
+            if let Some(copy) = self.copy.as_mut().filter(|copy| copy.active) {
+                copy.update_pointer((event.column, event.row));
+                return AppAction::None;
+            }
+        }
+        if event.kind == MouseEventKind::Up(MouseButton::Left) {
+            if let Some(copy) = self.copy.as_mut().filter(|copy| copy.active) {
+                copy.update_pointer((event.column, event.row));
+                return AppAction::Copy(copy.complete());
+            }
         }
         // Dropped BEFORE `clear_notice`: `EnableMouseCapture` turns on any-event tracking, so a
         // pointer merely crossing the window would otherwise wipe the line the last keystroke put
@@ -4418,6 +4674,23 @@ mod tests {
         MouseEvent { kind: MouseEventKind::Up(MouseButton::Left), column, row, ..mouse_press(0, 0) }
     }
 
+    fn shift_mouse_press(column: u16, row: u16) -> MouseEvent {
+        MouseEvent {
+            modifiers: KeyModifiers::SHIFT,
+            ..mouse_press(column, row)
+        }
+    }
+
+    fn copy_snapshot(pane: PaneFocus, lines: &[&str], scroll: usize) -> CopySnapshot {
+        CopySnapshot {
+            pane,
+            body: Rect::new(1, 1, 20, 2),
+            document: lines.iter().map(|line| Line::from((*line).to_string())).collect(),
+            scroll,
+            viewport_lines: 2,
+        }
+    }
+
     fn wheel(up: bool, column: u16, row: u16) -> MouseEvent {
         MouseEvent {
             kind: if up { MouseEventKind::ScrollUp } else { MouseEventKind::ScrollDown },
@@ -4440,14 +4713,130 @@ mod tests {
     }
 
     #[test]
+    fn copy_extracts_reversed_multiline_ranges_on_terminal_cells() {
+        let snapshot = copy_snapshot(PaneFocus::Work, &["alpha", "beta", "gamma"], 0);
+        let mut selection =
+            CopySelection::new(snapshot, (5, 2), Instant::now()).expect("copy starts on text");
+        selection.update_pointer((2, 1));
+        assert_eq!(selection.text(), "lpha\nbeta");
+    }
+
+    #[test]
+    fn copy_snaps_wide_character_endpoints_as_one_cell_range() {
+        let snapshot = copy_snapshot(PaneFocus::Session, &["A界Z"], 0);
+        let mut selection =
+            CopySelection::new(snapshot, (2, 1), Instant::now()).expect("copy starts on text");
+        selection.update_pointer((3, 1));
+        assert_eq!(selection.text(), "界");
+
+        selection.update_pointer((4, 1));
+        assert_eq!(selection.text(), "界Z");
+    }
+
+    #[test]
+    fn copy_drops_trailing_structural_spaces_from_displayed_rows() {
+        let snapshot = copy_snapshot(PaneFocus::Work, &["word   "], 0);
+        let mut selection =
+            CopySelection::new(snapshot, (1, 1), Instant::now()).expect("copy starts on text");
+        selection.update_pointer((19, 1));
+        assert_eq!(selection.text(), "word");
+    }
+
+    #[test]
+    fn active_copy_scrolls_only_the_captured_source_and_retains_its_text() {
+        let base = Instant::now();
+        let mut selection = CopySelection::new(
+            copy_snapshot(PaneFocus::Fleet, &["zero", "one", "two", "three", "four"], 1),
+            (1, 1),
+            base,
+        )
+        .expect("copy starts on text");
+        selection.update_pointer((5, 3));
+        selection.advance(base + COPY_AUTOSCROLL_INTERVAL);
+        assert_eq!(selection.snapshot.scroll, 2);
+        assert_eq!(selection.current.line, 3);
+        assert_eq!(selection.text(), "one\ntwo\nthree");
+
+        let mut app = App::new();
+        app.copy = Some(selection);
+        app.finish_refresh(Ok(vec![row("replacement")]), at(10));
+        assert_eq!(
+            app.copy.as_ref().expect("copy survives refresh").text(),
+            "one\ntwo\nthree"
+        );
+    }
+
+    #[test]
+    fn shift_drag_returns_copy_without_changing_focus_or_regular_selection_state() {
+        let mut app = mouse_app();
+        app.focus = PaneFocus::Session;
+        let snapshot = copy_snapshot(PaneFocus::Fleet, &["first", "second"], 0);
+
+        assert_eq!(
+            app.on_mouse(
+                shift_mouse_press(1, 1),
+                no_metrics(),
+                Some(snapshot),
+                at(0),
+            ),
+            AppAction::None
+        );
+        app.on_mouse(
+            MouseEvent {
+                kind: MouseEventKind::Drag(MouseButton::Left),
+                column: 5,
+                row: 2,
+                modifiers: KeyModifiers::SHIFT,
+            },
+            no_metrics(),
+            None,
+            at(0),
+        );
+        assert_eq!(
+            app.on_mouse(
+                MouseEvent {
+                    kind: MouseEventKind::Up(MouseButton::Left),
+                    column: 5,
+                    row: 2,
+                    modifiers: KeyModifiers::SHIFT,
+                },
+                no_metrics(),
+                None,
+                at(0),
+            ),
+            AppAction::Copy("first\nsecon".into())
+        );
+        assert_eq!(app.focus, PaneFocus::Session);
+        assert!(app.drag.is_none());
+    }
+
+    #[test]
+    fn shift_click_without_a_snapshot_does_not_start_or_clear_copy() {
+        let mut app = mouse_app();
+        let mut retained = CopySelection::new(
+            copy_snapshot(PaneFocus::Fleet, &["retained"], 0),
+            (1, 1),
+            Instant::now(),
+        )
+        .expect("copy starts on text");
+        retained.update_pointer((8, 1));
+        app.copy = Some(retained);
+        app.on_mouse(shift_mouse_press(1, 1), no_metrics(), None, at(0));
+        assert_eq!(
+            app.copy.as_ref().map(CopySelection::text),
+            Some("retained".to_string())
+        );
+    }
+
+    #[test]
     fn pressing_a_divider_and_dragging_moves_it_and_says_so() {
         let mut app = mouse_app();
         let facts = split_facts();
-        app.on_mouse(mouse_press(facts.left_column - 1, 5), no_metrics(), at(0));
+        app.on_mouse(mouse_press(facts.left_column - 1, 5), no_metrics(), None, at(0));
         assert!(app.drag.is_some(), "the press started a drag");
         assert_eq!(app.notice, None, "a press that has moved nothing says nothing");
 
-        app.on_mouse(dragged(55, 5), no_metrics(), at(0));
+        app.on_mouse(dragged(55, 5), no_metrics(), None, at(0));
         assert_eq!(app.panes.left_column, Some(56));
         assert_eq!(app.notice.as_deref(), Some("left column 56 cells"));
     }
@@ -4456,18 +4845,18 @@ mod tests {
     fn a_press_that_is_not_on_a_divider_cancels_any_drag() {
         let mut app = mouse_app();
         let facts = split_facts();
-        app.on_mouse(mouse_press(facts.left_column - 1, 5), no_metrics(), at(0));
-        app.on_mouse(mouse_press(5, facts.fleet.y + 1), no_metrics(), at(0));
+        app.on_mouse(mouse_press(facts.left_column - 1, 5), no_metrics(), None, at(0));
+        app.on_mouse(mouse_press(5, facts.fleet.y + 1), no_metrics(), None, at(0));
         assert!(app.drag.is_none());
 
-        app.on_mouse(dragged(55, 5), no_metrics(), at(0));
+        app.on_mouse(dragged(55, 5), no_metrics(), None, at(0));
         assert_eq!(app.panes.left_column, None, "a drag with no press behind it moves nothing");
     }
 
     #[test]
     fn a_drag_with_no_press_behind_it_moves_nothing() {
         let mut app = mouse_app();
-        app.on_mouse(dragged(55, 5), no_metrics(), at(0));
+        app.on_mouse(dragged(55, 5), no_metrics(), None, at(0));
         assert_eq!(app.panes, PaneSizes::default());
         assert_eq!(app.notice, None);
     }
@@ -4476,9 +4865,9 @@ mod tests {
     fn letting_go_of_a_divider_leaves_the_size_on_the_screen() {
         let mut app = mouse_app();
         let facts = split_facts();
-        app.on_mouse(mouse_press(facts.left_column - 1, 5), no_metrics(), at(0));
-        app.on_mouse(dragged(55, 5), no_metrics(), at(0));
-        app.on_mouse(released(55, 5), no_metrics(), at(0));
+        app.on_mouse(mouse_press(facts.left_column - 1, 5), no_metrics(), None, at(0));
+        app.on_mouse(dragged(55, 5), no_metrics(), None, at(0));
+        app.on_mouse(released(55, 5), no_metrics(), None, at(0));
         assert_eq!(
             app.notice.as_deref(),
             Some("left column 56 cells"),
@@ -4491,8 +4880,8 @@ mod tests {
         let mut app = mouse_app();
         let facts = split_facts();
         let at = at(0);
-        app.on_mouse(mouse_press(facts.left_column - 1, 5), no_metrics(), at);
-        app.on_mouse(released(facts.left_column - 1, 5), no_metrics(), at);
+        app.on_mouse(mouse_press(facts.left_column - 1, 5), no_metrics(), None, at);
+        app.on_mouse(released(facts.left_column - 1, 5), no_metrics(), None, at);
         assert!(app.drag.is_none());
 
         // The next press inside the window is still the second half of a double-click.
@@ -4500,6 +4889,7 @@ mod tests {
         app.on_mouse(
             mouse_press(facts.left_column - 1, 5),
             no_metrics(),
+            None,
             at + chrono::Duration::milliseconds(100),
         );
         assert_eq!(app.panes.left_column, None);
@@ -4510,12 +4900,13 @@ mod tests {
         let mut app = mouse_app();
         let facts = split_facts();
         let at = at(0);
-        app.on_mouse(mouse_press(facts.left_column - 1, 5), no_metrics(), at);
-        app.on_mouse(dragged(55, 5), no_metrics(), at);
-        app.on_mouse(released(55, 5), no_metrics(), at);
+        app.on_mouse(mouse_press(facts.left_column - 1, 5), no_metrics(), None, at);
+        app.on_mouse(dragged(55, 5), no_metrics(), None, at);
+        app.on_mouse(released(55, 5), no_metrics(), None, at);
         app.on_mouse(
             mouse_press(facts.left_column - 1, 5),
             no_metrics(),
+            None,
             at + chrono::Duration::milliseconds(200),
         );
         assert_eq!(app.panes.left_column, None);
@@ -4531,11 +4922,12 @@ mod tests {
         let mut app = mouse_app();
         let facts = split_facts();
         let at = at(0);
-        app.on_mouse(mouse_press(facts.left_column - 1, 5), no_metrics(), at);
+        app.on_mouse(mouse_press(facts.left_column - 1, 5), no_metrics(), None, at);
         app.panes = PaneSizes { left_column: Some(56), ..PaneSizes::default() };
         app.on_mouse(
             mouse_press(facts.left_column - 1, 5),
             no_metrics(),
+            None,
             at + chrono::Duration::milliseconds(DOUBLE_CLICK_MS + 1),
         );
         assert_eq!(app.panes.left_column, Some(56), "nothing was reset");
@@ -4547,10 +4939,11 @@ mod tests {
         let mut app = mouse_app();
         let facts = split_facts();
         let at = at(0);
-        app.on_mouse(mouse_press(facts.left_column - 1, 5), no_metrics(), at);
+        app.on_mouse(mouse_press(facts.left_column - 1, 5), no_metrics(), None, at);
         app.on_mouse(
             mouse_press(facts.left_column - 1, 5),
             no_metrics(),
+            None,
             at + chrono::Duration::milliseconds(100),
         );
         assert_eq!(app.notice.as_deref(), Some("panes are already at their default sizes"));
@@ -4562,10 +4955,10 @@ mod tests {
         let facts = split_facts();
         let at = at(0);
         let column = facts.left_column - 1;
-        app.on_mouse(mouse_press(column, 5), no_metrics(), at);
-        app.on_mouse(mouse_press(column, 5), no_metrics(), at + chrono::Duration::milliseconds(100));
+        app.on_mouse(mouse_press(column, 5), no_metrics(), None, at);
+        app.on_mouse(mouse_press(column, 5), no_metrics(), None, at + chrono::Duration::milliseconds(100));
         app.panes = PaneSizes { left_column: Some(56), ..PaneSizes::default() };
-        app.on_mouse(mouse_press(column, 5), no_metrics(), at + chrono::Duration::milliseconds(200));
+        app.on_mouse(mouse_press(column, 5), no_metrics(), None, at + chrono::Duration::milliseconds(200));
         assert_eq!(app.panes.left_column, Some(56), "the third press is a fresh single one");
         assert!(app.drag.is_some());
     }
@@ -4576,7 +4969,7 @@ mod tests {
         let facts = split_facts();
         app.set_notice("something gold".to_string());
         app.quit_refusal = Some(vec!["Storm".to_string()]);
-        app.on_mouse(mouse_press(facts.left_column - 1, 5), no_metrics(), at(0));
+        app.on_mouse(mouse_press(facts.left_column - 1, 5), no_metrics(), None, at(0));
         assert!(app.drag.is_none());
         assert_eq!(app.notice.as_deref(), Some("something gold"), "a modal's own text survives");
     }
@@ -4591,11 +4984,11 @@ mod tests {
         let mut app = mouse_app();
         let facts = split_facts();
         app.set_focus(PaneFocus::Fleet);
-        app.on_mouse(wheel(false, facts.session.x + 5, facts.session.y + 2), some_metrics(), at(0));
+        app.on_mouse(wheel(false, facts.session.x + 5, facts.session.y + 2), some_metrics(), None, at(0));
         assert_eq!(app.session.scroll, WHEEL_LINES);
         assert_eq!(app.focus, PaneFocus::Fleet, "the wheel never moves focus");
 
-        app.on_mouse(wheel(true, facts.session.x + 5, facts.session.y + 2), some_metrics(), at(0));
+        app.on_mouse(wheel(true, facts.session.x + 5, facts.session.y + 2), some_metrics(), None, at(0));
         assert_eq!(app.session.scroll, 0);
     }
 
@@ -4605,11 +4998,11 @@ mod tests {
         let facts = split_facts();
         app.finish_refresh(Ok(vec![row("Xavier"), row("Beast"), row("Storm")]), at(0));
         app.set_focus(PaneFocus::Session);
-        app.on_mouse(wheel(false, 5, facts.fleet.y + 2), some_metrics(), at(0));
+        app.on_mouse(wheel(false, 5, facts.fleet.y + 2), some_metrics(), None, at(0));
         assert_eq!(app.selected.as_deref(), Some("Beast"), "one row per notch, not three");
         assert_eq!(app.focus, PaneFocus::Session);
 
-        app.on_mouse(wheel(true, 5, facts.fleet.y + 2), some_metrics(), at(0));
+        app.on_mouse(wheel(true, 5, facts.fleet.y + 2), some_metrics(), None, at(0));
         assert_eq!(app.selected.as_deref(), Some("Xavier"));
     }
 
@@ -4623,10 +5016,10 @@ mod tests {
             at(0),
         );
         assert_eq!(app.work_cursor, Some(WorkCursor::Finding("unclaim:cb-a".into())));
-        app.on_mouse(wheel(false, 5, facts.work.y + 2), some_metrics(), at(0));
+        app.on_mouse(wheel(false, 5, facts.work.y + 2), some_metrics(), None, at(0));
         assert_eq!(app.work_cursor, Some(WorkCursor::Finding("reclaim:cb-b".into())));
         assert_eq!(app.focus, PaneFocus::Fleet, "still no focus change");
-        app.on_mouse(wheel(true, 5, facts.work.y + 2), some_metrics(), at(0));
+        app.on_mouse(wheel(true, 5, facts.work.y + 2), some_metrics(), None, at(0));
         assert_eq!(app.work_cursor, Some(WorkCursor::Finding("unclaim:cb-a".into())));
     }
 
@@ -4634,9 +5027,9 @@ mod tests {
     fn the_wheel_over_work_scrolls_the_pane_when_there_is_no_cursor_to_move() {
         let mut app = mouse_app();
         let facts = split_facts();
-        app.on_mouse(wheel(false, 5, facts.work.y + 2), some_metrics(), at(0));
+        app.on_mouse(wheel(false, 5, facts.work.y + 2), some_metrics(), None, at(0));
         assert_eq!(app.work.scroll, 1, "the fallback the Work arms of `on_key` have");
-        app.on_mouse(wheel(true, 5, facts.work.y + 2), some_metrics(), at(0));
+        app.on_mouse(wheel(true, 5, facts.work.y + 2), some_metrics(), None, at(0));
         assert_eq!(app.work.scroll, 0);
     }
 
@@ -4644,7 +5037,7 @@ mod tests {
     fn the_wheel_over_a_divider_does_nothing() {
         let mut app = mouse_app();
         let facts = split_facts();
-        app.on_mouse(wheel(false, facts.left_column - 1, 5), some_metrics(), at(0));
+        app.on_mouse(wheel(false, facts.left_column - 1, 5), some_metrics(), None, at(0));
         assert_eq!(app.work.scroll, 0);
         assert_eq!(app.session.scroll, 0);
         assert_eq!(app.panes, PaneSizes::default());
@@ -4655,7 +5048,7 @@ mod tests {
         let mut app = mouse_app();
         app.set_notice("left column 56 cells".to_string());
         let moved = MouseEvent { kind: MouseEventKind::Moved, ..mouse_press(5, 5) };
-        app.on_mouse(moved, some_metrics(), at(0));
+        app.on_mouse(moved, some_metrics(), None, at(0));
         assert_eq!(app.notice.as_deref(), Some("left column 56 cells"));
 
         // And neither does a button this view does not act on.
@@ -4663,7 +5056,7 @@ mod tests {
             kind: MouseEventKind::Down(MouseButton::Right),
             ..mouse_press(5, 5)
         };
-        app.on_mouse(right, some_metrics(), at(0));
+        app.on_mouse(right, some_metrics(), None, at(0));
         assert_eq!(app.notice.as_deref(), Some("left column 56 cells"));
     }
 

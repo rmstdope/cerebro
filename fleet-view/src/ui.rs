@@ -20,9 +20,11 @@
 //! where the two views deliberately differ, as they do on a flagged `standby` row, the rule and
 //! its reason live in `flag_shows_for`.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, Utc};
+use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::{Constraint, Layout, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -33,7 +35,8 @@ use unicode_width::UnicodeWidthStr;
 use crate::lifecycle::LastExit;
 use crate::supervisor::{ReadOnlyReason, SupervisionMode};
 use crate::app::{
-    self, App, FleetBodyLine, LayoutFacts, Metrics, Pane, PaneContent, PaneFocus, PaneMetrics, PaneSizes,
+    self, App, CopySelection, CopySnapshot, FleetBodyLine, LayoutFacts, Metrics, Pane, PaneContent,
+    PaneFocus, PaneMetrics, PaneSizes,
 };
 use crate::lifecycle;
 use crate::model::{Bead, FleetRow, HealthTone, RowState};
@@ -200,13 +203,13 @@ pub fn metrics(app: &App, now: DateTime<Utc>, area: Rect) -> Metrics {
             session: PaneMetrics { content_lines: 0, viewport_lines: 0, inner_width: 0 },
         };
     }
-    let fleet_lines = fleet_document(app, now, fleet_width(area), app.selected_index());
+    let fleet_lines = displayed_fleet_document(app, now, fleet_width(area));
     let (_, fleet_rect, work_rect, session_rect) =
         split(area, fleet_lines.len(), work_content_lines(app, now, area), app.panes);
     let work_inner_width = (work_rect.width as usize).saturating_sub(2);
-    let work_lines = work_document(app, now, work_inner_width);
+    let work_lines = displayed_work_document(app, now, work_inner_width);
     let session_lines =
-        session_document(app, (session_rect.width as usize).saturating_sub(2));
+        displayed_session_document(app, (session_rect.width as usize).saturating_sub(2));
     let (fleet_viewport, _) = pane_geometry(fleet_rect, fleet_lines.len());
     let (work_viewport, _) = pane_geometry(work_rect, work_lines.len());
     let (session_viewport, _) = pane_geometry(session_rect, session_lines.len());
@@ -241,7 +244,7 @@ pub fn layout_facts(app: &App, now: DateTime<Utc>, area: Rect) -> LayoutFacts {
         // layout to move a divider in, and a stale one would be worse than none.
         return LayoutFacts::default();
     }
-    let fleet_lines = fleet_document(app, now, fleet_width(area), app.selected_index());
+    let fleet_lines = displayed_fleet_document(app, now, fleet_width(area));
     let (_, fleet, work, session) =
         split(area, fleet_lines.len(), work_content_lines(app, now, area), app.panes);
     LayoutFacts {
@@ -256,6 +259,70 @@ pub fn layout_facts(app: &App, now: DateTime<Utc>, area: Rect) -> LayoutFacts {
         work,
         session,
     }
+}
+
+/// Build the copy snapshot for a Shift-left press over a pane's visible text body.
+pub fn copy_snapshot_for_event(
+    app: &App,
+    now: DateTime<Utc>,
+    area: Rect,
+    event: MouseEvent,
+) -> Option<CopySnapshot> {
+    if event.kind != MouseEventKind::Down(MouseButton::Left)
+        || !event.modifiers.contains(KeyModifiers::SHIFT)
+        || app.quit_refusal.is_some()
+        || app.confirm.is_some()
+        || too_small(area)
+    {
+        return None;
+    }
+    let facts = layout_facts(app, now, area);
+    let pane = match mouse_target(event.column, event.row, facts) {
+        MouseTarget::Pane(pane) => pane,
+        MouseTarget::Divider(_, _) | MouseTarget::Nothing => return None,
+    };
+    let (outer, document, pane_scroll) = match pane {
+        PaneFocus::Fleet => (
+            facts.fleet,
+            displayed_fleet_document(app, now, fleet_width(area)).into_owned(),
+            app.fleet.scroll,
+        ),
+        PaneFocus::Work => (
+            facts.work,
+            displayed_work_document(app, now, inner_width(facts.work)).into_owned(),
+            app.work.scroll,
+        ),
+        PaneFocus::Session => (
+            facts.session,
+            displayed_session_document(app, inner_width(facts.session)).into_owned(),
+            app.session.scroll,
+        ),
+    };
+    let retained_scroll = app
+        .copy
+        .as_ref()
+        .filter(|copy| copy.source() == pane)
+        .map(|copy| copy.snapshot.scroll);
+    let (viewport_lines, _) = pane_geometry(outer, document.len());
+    let inner = Block::default().borders(Borders::ALL).inner(outer);
+    let body = Rect { height: viewport_lines as u16, ..inner };
+    if body.width == 0
+        || body.height == 0
+        || !body.contains(Position { x: event.column, y: event.row })
+    {
+        return None;
+    }
+    let scroll = retained_scroll
+        .unwrap_or(pane_scroll)
+        .min(document.len().saturating_sub(viewport_lines));
+    let line = scroll + usize::from(event.row.saturating_sub(body.y));
+    let Some(line) = document.get(line) else {
+        return None;
+    };
+    if app::copy_width(line) == 0 {
+        return None;
+    }
+    Some(CopySnapshot { pane, body, document, scroll, viewport_lines })
 }
 
 /// Which divider a drag moves. One variant per `PaneSizes` field, so a divider maps to exactly
@@ -429,7 +496,51 @@ fn work_content_lines(app: &App, now: DateTime<Utc>, area: Rect) -> usize {
     if area.width >= SPLIT_COLUMNS {
         return 0;
     }
-    work_document(app, now, (area.width as usize).saturating_sub(2)).len()
+    displayed_work_document(app, now, (area.width as usize).saturating_sub(2)).len()
+}
+
+fn current_fleet_document(app: &App, now: DateTime<Utc>, width: u16) -> Vec<Line<'static>> {
+    fleet_document(app, now, width, app.selected_index())
+}
+
+fn displayed_fleet_document(
+    app: &App,
+    now: DateTime<Utc>,
+    width: u16,
+) -> Cow<'_, [Line<'static>]> {
+    app.copy
+        .as_ref()
+        .filter(|copy| copy.source() == PaneFocus::Fleet)
+        .map(|copy| Cow::Borrowed(copy.snapshot.document.as_slice()))
+        .unwrap_or_else(|| Cow::Owned(current_fleet_document(app, now, width)))
+}
+
+fn current_work_document(app: &App, now: DateTime<Utc>, width: usize) -> Vec<Line<'static>> {
+    work_document(app, now, width)
+}
+
+fn displayed_work_document(
+    app: &App,
+    now: DateTime<Utc>,
+    width: usize,
+) -> Cow<'_, [Line<'static>]> {
+    app.copy
+        .as_ref()
+        .filter(|copy| copy.source() == PaneFocus::Work)
+        .map(|copy| Cow::Borrowed(copy.snapshot.document.as_slice()))
+        .unwrap_or_else(|| Cow::Owned(current_work_document(app, now, width)))
+}
+
+fn current_session_document(app: &App, width: usize) -> Vec<Line<'static>> {
+    session_document(app, width).into_owned()
+}
+
+fn displayed_session_document(app: &App, width: usize) -> Cow<'_, [Line<'static>]> {
+    app.copy
+        .as_ref()
+        .filter(|copy| copy.source() == PaneFocus::Session)
+        .map(|copy| Cow::Borrowed(copy.snapshot.document.as_slice()))
+        .unwrap_or_else(|| Cow::Owned(current_session_document(app, width)))
 }
 
 /// How wide the Fleet pane will be, before `split` runs - `default_left_column` when AREA is at
@@ -491,11 +602,21 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, now: DateTime<Utc>) {
         );
         return;
     }
-    let fleet_lines = fleet_document(app, now, fleet_width(area), app.selected_index());
+    let current_fleet_lines = displayed_fleet_document(app, now, fleet_width(area));
     let (header, fleet_rect, work_rect, session_rect) =
-        split(area, fleet_lines.len(), work_content_lines(app, now, area), app.panes);
+        split(area, current_fleet_lines.len(), work_content_lines(app, now, area), app.panes);
     frame.render_widget(Paragraph::new(header_line(app, header.width)), header);
 
+    let fleet_selection = app
+        .copy
+        .as_ref()
+        .filter(|copy| copy.source() == PaneFocus::Fleet);
+    let fleet_lines = fleet_selection
+        .map(|copy| copy.snapshot.document.as_slice())
+        .unwrap_or(current_fleet_lines.as_ref());
+    let fleet_scroll = fleet_selection
+        .map(|copy| copy.snapshot.scroll)
+        .unwrap_or(app.fleet.scroll);
     let fleet_count = app.fleet.content.value().map(|rows| rows.len());
     let fleet_title = pane_title(&app.fleet, "Fleet", failed(&app.work), fleet_count);
     render_pane(
@@ -507,11 +628,22 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, now: DateTime<Utc>) {
         )),
         app.focus == PaneFocus::Fleet,
         &fleet_lines,
-        app.fleet.scroll,
+        fleet_scroll,
+        fleet_selection,
     );
 
     let work_inner_width = (work_rect.width as usize).saturating_sub(2);
-    let work_lines = work_document(app, now, work_inner_width);
+    let current_work_lines = displayed_work_document(app, now, work_inner_width);
+    let work_selection = app
+        .copy
+        .as_ref()
+        .filter(|copy| copy.source() == PaneFocus::Work);
+    let work_lines = work_selection
+        .map(|copy| copy.snapshot.document.as_slice())
+        .unwrap_or(current_work_lines.as_ref());
+    let work_scroll = work_selection
+        .map(|copy| copy.snapshot.scroll)
+        .unwrap_or(app.work.scroll);
     let work_title = pane_title(&app.work, "Work", failed(&app.fleet), None);
     render_pane(
         frame,
@@ -519,12 +651,23 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, now: DateTime<Utc>) {
         Line::from(Span::styled(work_title, title_style(&app.work, app.focus == PaneFocus::Work))),
         app.focus == PaneFocus::Work,
         &work_lines,
-        app.work.scroll,
+        work_scroll,
+        work_selection,
     );
 
     let session_focused = app.focus == PaneFocus::Session;
-    let session_lines =
-        session_document(app, (session_rect.width as usize).saturating_sub(2));
+    let current_session_lines =
+        displayed_session_document(app, (session_rect.width as usize).saturating_sub(2));
+    let session_selection = app
+        .copy
+        .as_ref()
+        .filter(|copy| copy.source() == PaneFocus::Session);
+    let session_lines = session_selection
+        .map(|copy| copy.snapshot.document.as_slice())
+        .unwrap_or(current_session_lines.as_ref());
+    let session_scroll = session_selection
+        .map(|copy| copy.snapshot.scroll)
+        .unwrap_or(app.session.scroll);
     // RED is this screen's spelling for a thing that went wrong, and a refused launch is the one
     // Session state that is one.
     let session_border =
@@ -536,7 +679,8 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, now: DateTime<Utc>) {
         session_focused,
         session_border,
         &session_lines,
-        app.session.scroll,
+        session_scroll,
+        session_selection,
     );
 
     // The child's cursor, and only while the pane has the keyboard - the navigator's choice (Q2)
@@ -568,7 +712,7 @@ fn render_alert_pane(
     title: Line<'static>,
     lines: &[Line<'static>],
 ) {
-    render_bordered_pane(frame, outer, title, false, Some(RED), lines, 0);
+    render_bordered_pane(frame, outer, title, false, Some(RED), lines, 0, None);
 }
 
 /// One widget: its border (focus only), its title (status colour, bold only while focused), its
@@ -589,8 +733,50 @@ fn render_pane(
     focused: bool,
     lines: &[Line<'static>],
     scroll: usize,
+    selection: Option<&CopySelection>,
 ) {
-    render_bordered_pane(frame, outer, title, focused, None, lines, scroll);
+    render_bordered_pane(frame, outer, title, focused, None, lines, scroll, selection);
+}
+
+fn copy_highlight_line(
+    line: &Line<'static>,
+    line_number: usize,
+    selection: &CopySelection,
+) -> Line<'static> {
+    let mut spans = Vec::new();
+    let mut pending_text = String::new();
+    let mut pending_style = None;
+    let mut column = 0;
+    let flush = |spans: &mut Vec<Span<'static>>,
+                 text: &mut String,
+                 style: &mut Option<Style>| {
+        if !text.is_empty() {
+            spans.push(Span::styled(std::mem::take(text), style.unwrap_or_default()));
+        }
+        *style = None;
+    };
+    for span in &line.spans {
+        for character in span.content.chars() {
+            let selected = selection.cell_selected(line_number, column);
+            let style = if selected {
+                span.style.bg(Color::DarkGray)
+            } else {
+                span.style
+            };
+            if pending_style != Some(style) {
+                flush(&mut spans, &mut pending_text, &mut pending_style);
+                pending_style = Some(style);
+            }
+            pending_text.push(character);
+            column = column.saturating_add(character.to_string().width());
+        }
+    }
+    flush(&mut spans, &mut pending_text, &mut pending_style);
+    let mut output = Line::from(spans).style(line.style);
+    if let Some(alignment) = line.alignment {
+        output = output.alignment(alignment);
+    }
+    output
 }
 
 /// `render_pane`, with the border colour given rather than derived from focus. RED is this
@@ -605,6 +791,7 @@ fn render_bordered_pane(
     border: Option<Color>,
     lines: &[Line<'static>],
     scroll: usize,
+    selection: Option<&CopySelection>,
 ) {
     let (border_type, border_style) = match border {
         Some(color) => (BorderType::Plain, Style::default().fg(color)),
@@ -632,7 +819,16 @@ fn render_bordered_pane(
     // identical - but a pane now pays for its viewport rather than for its document, which is what
     // makes a ten-thousand-line retained transcript free to draw.
     let last = (clamped_scroll + viewport_lines).min(total);
-    frame.render_widget(Paragraph::new(lines[clamped_scroll..last].to_vec()), body_rect);
+    let visible = lines[clamped_scroll..last]
+        .iter()
+        .enumerate()
+        .map(|(offset, line)| {
+            selection
+                .map(|selection| copy_highlight_line(line, clamped_scroll + offset, selection))
+                .unwrap_or_else(|| line.clone())
+        })
+        .collect::<Vec<_>>();
+    frame.render_widget(Paragraph::new(visible), body_rect);
     if clipped {
         let first = clamped_scroll + 1;
         let last = (clamped_scroll + viewport_lines).min(total);
@@ -2081,6 +2277,15 @@ mod tests {
         terminal.backend().buffer().clone()
     }
 
+    fn shift_press(column: u16, row: u16) -> MouseEvent {
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column,
+            row,
+            modifiers: KeyModifiers::SHIFT,
+        }
+    }
+
     fn lines(buffer: &Buffer) -> Vec<String> {
         let area = buffer.area;
         (0..area.height)
@@ -2098,6 +2303,114 @@ mod tests {
                     .to_string()
             })
             .collect()
+    }
+
+    #[test]
+    fn copy_snapshot_matches_the_fleet_body_and_excludes_its_border() {
+        let app = populated();
+        let area = Rect::new(0, 0, 120, 30);
+        let facts = layout_facts(&app, now(), area);
+        let body = Block::default().borders(Borders::ALL).inner(facts.fleet);
+        let event = shift_press(body.x, body.y);
+        let snapshot =
+            copy_snapshot_for_event(&app, now(), area, event).expect("body text starts a copy");
+
+        assert_eq!(snapshot.pane, PaneFocus::Fleet);
+        assert_eq!(snapshot.body.x, body.x);
+        assert_eq!(snapshot.body.y, body.y);
+        assert!(snapshot.document.iter().any(|line| line.width() > 0));
+        assert!(
+            copy_snapshot_for_event(
+                &app,
+                now(),
+                area,
+                shift_press(facts.fleet.x, facts.fleet.y),
+            )
+            .is_none(),
+            "the pane border is chrome"
+        );
+        assert!(
+            copy_snapshot_for_event(
+                &app,
+                now(),
+                area,
+                shift_press(facts.left_column - 1, facts.fleet.y + 1),
+            )
+            .is_none(),
+            "the split divider is not pane text"
+        );
+    }
+
+    #[test]
+    fn replacement_copy_starts_at_the_retained_source_content_and_scroll() {
+        let mut app = populated();
+        app.finish_refresh(
+            Ok((0..30)
+                .map(|index| row(&format!("Agent-{index}"), "implementer", RowState::Idle))
+                .collect()),
+            at(86_400),
+        );
+        let area = Rect::new(0, 0, 120, 30);
+        let first = layout_facts(&app, now(), area);
+        let body = Block::default().borders(Borders::ALL).inner(first.fleet);
+        let press = shift_press(body.x, body.y);
+        let metrics = metrics(&app, now(), area);
+        let snapshot =
+            copy_snapshot_for_event(&app, now(), area, press).expect("first copy starts");
+        app.on_mouse(press, metrics, Some(snapshot), now());
+        app.copy.as_mut().expect("copy is retained").snapshot.scroll = 1;
+        app.finish_refresh(
+            Ok((0..30)
+                .map(|index| row(&format!("Refreshed-{index}"), "implementer", RowState::Idle))
+                .collect()),
+            at(86_401),
+        );
+
+        let replacement =
+            copy_snapshot_for_event(&app, now(), area, press).expect("replacement starts");
+
+        assert_eq!(
+            replacement.scroll, 1,
+            "a replacement uses the row currently shown by the retained source"
+        );
+        assert!(
+            replacement.document.iter().any(|line| line.to_string().contains("Agent-")),
+            "a replacement snapshots the retained source content"
+        );
+        app.on_mouse(press, metrics, Some(replacement), now());
+        assert_eq!(app.copy.expect("replacement is retained").anchor.line, 1);
+    }
+
+    #[test]
+    fn copy_highlight_is_limited_to_the_source_body_and_preserves_the_snapshot() {
+        let mut app = populated();
+        let area = Rect::new(0, 0, 120, 30);
+        let facts = layout_facts(&app, now(), area);
+        let body = Block::default().borders(Borders::ALL).inner(facts.fleet);
+        let press = shift_press(body.x, body.y);
+        let snapshot =
+            copy_snapshot_for_event(&app, now(), area, press).expect("body text starts a copy");
+        let metrics = metrics(&app, now(), area);
+        app.on_mouse(press, metrics, Some(snapshot), now());
+        app.on_mouse(
+            MouseEvent {
+                kind: MouseEventKind::Drag(MouseButton::Left),
+                column: body.x + 2,
+                row: body.y,
+                modifiers: KeyModifiers::SHIFT,
+            },
+            metrics,
+            None,
+            now(),
+        );
+
+        let buffer = render(&app, 120, 30);
+        let selected = buffer.cell((body.x + 1, body.y)).expect("selected cell");
+        assert_eq!(selected.bg, Color::DarkGray);
+        let border = buffer.cell((facts.fleet.x, body.y)).expect("border cell");
+        assert_ne!(border.bg, Color::DarkGray);
+        let retained = app.copy.as_ref().expect("copy remains visible");
+        assert!(retained.snapshot.document.iter().any(|line| line.width() > 0));
     }
 
     /// Each pane's own border stripped off: a top border row becomes exactly the title text it
@@ -3887,7 +4200,7 @@ mod tests {
             modifiers: crossterm::event::KeyModifiers::NONE,
         };
         let m = metrics(app, now(), Rect::new(0, 0, 120, 30));
-        app.on_mouse(event, m, now());
+        app.on_mouse(event, m, None, now());
     }
 
     #[test]

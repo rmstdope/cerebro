@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 chrono = { version = "0.4", features = ["serde"] }
-crossterm = "0.29.0"
+crossterm = { version = "0.29.0", features = ["osc52"] }
 # One child per agent, in a real pty, on macOS and Linux alike. The versions the S1/S2/S4
 # prototype was measured with (docs/fleet-view-alternatives.md).
 portable-pty = "0.9.0"

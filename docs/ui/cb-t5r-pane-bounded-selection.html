@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pane-bounded copying in Cerebro</title>
+<style>
+  :root {
+    color-scheme: dark;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    --bg: #0d1117; --pane: #161b22; --line: #30363d; --text: #e6edf3;
+    --dim: #8b949e; --blue: #58a6ff; --selection: #1f6feb55;
+  }
+  body { background: var(--bg); color: var(--text); margin: 0; padding: 32px; }
+  main { margin: auto; max-width: 1040px; }
+  h1, h2, p { font-family: system-ui, sans-serif; }
+  h1 { font-size: 24px; margin-bottom: 4px; }
+  h2 { font-size: 18px; margin-top: 34px; }
+  p { color: var(--dim); line-height: 1.5; }
+  .screen { border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+  .bar { color: var(--dim); margin-bottom: 10px; }
+  .grid { display: grid; grid-template-columns: 38% 1fr; gap: 8px; }
+  .left { display: grid; gap: 8px; }
+  .pane { background: var(--pane); border: 1px solid var(--line); min-height: 125px; }
+  .title { border-bottom: 1px solid var(--line); color: var(--dim); padding: 5px 8px; }
+  pre { line-height: 1.45; margin: 0; padding: 8px; white-space: pre-wrap; }
+  .selection { background: var(--selection); }
+  .edge { color: #f2cc60; }
+  .quiet { color: var(--dim); }
+  .copy { background: var(--pane); border-left: 3px solid #3fb950; margin-top: 16px; padding: 10px 14px; }
+  .narrow { max-width: 520px; }
+</style>
+</head>
+<body>
+<main>
+<h1>Copying stays inside one pane</h1>
+<p>Hold Shift and drag across displayed text to copy it. The copy follows the pane where the drag began: it preserves the visible wrapping and never takes text from another pane.</p>
+
+<h2>Across a pane border</h2>
+<div class="screen">
+  <div class="bar">Cerebro - supervising</div>
+  <div class="grid">
+    <div class="left">
+      <div class="pane"><div class="title">Fleet</div><pre><span class="selection">● Xavier    working  ux</span>
+<span class="selection">● Cyclops   working  build</span>
+<span class="selection">● Psylocke  asking   verify</span>
+<span class="edge">Pointer is over Session; Fleet remains selected.</span></pre></div>
+      <div class="pane"><div class="title">Work</div><pre>Planned 2
+  cb-t5r  Pane-bounded text...</pre></div>
+    </div>
+    <div class="pane"><div class="title">Session - Cyclops</div><pre>$ cargo test --workspace
+   Compiling cerebro-tui
+<span class="quiet">This text is not selected.</span></pre></div>
+  </div>
+</div>
+<div class="copy"><strong>Copied text</strong><pre>● Xavier    working  ux
+● Cyclops   working  build
+● Psylocke  asking   verify</pre></div>
+
+<h2>A long range</h2>
+<p>Holding the pointer beyond the top or bottom edge scrolls only the pane where copying began. The copied range grows through that pane's newly displayed rows; the other panes do not move or join the copy.</p>
+<div class="screen">
+  <div class="pane"><div class="title">Session - Cyclops</div><pre><span class="selection">   Finished test profile</span>
+<span class="selection">   Running 214 tests</span>
+<span class="selection">   test result: ok</span>
+<span class="edge">Scrolling Session while the drag continues.</span></pre></div>
+</div>
+
+<h2>When content changes</h2>
+<p>If new content arrives while a copy is underway, the selected range remains the originally displayed text. New or replaced rows do not change the range or join the copied text.</p>
+<div class="screen">
+  <div class="pane"><div class="title">Work</div><pre><span class="selection">Planned 2</span>
+<span class="selection">  cb-t5r  Pane-bounded text selection...</span>
+<span class="quiet">New work arrived: cb-xyz is visible below but not selected.</span></pre></div>
+</div>
+
+<h2>Quiet and non-invasive</h2>
+<p>The visible selection is the only copy feedback: there is no new message while copying or afterward. Releasing the mouse leaves that selection visible; another Shift-drag replaces it. A Shift-drag neither selects a row nor changes keyboard focus, so keys continue to control the same pane or session as before.</p>
+<div class="screen narrow">
+  <div class="grid">
+    <div class="pane"><div class="title">Fleet</div><pre><span class="selection">● Cyclops   working  build</span>
+<span class="selection">● Psylocke  asking   verify</span></pre></div>
+    <div class="pane"><div class="title">Session - Cyclops</div><pre>❯ cargo test
+Keyboard remains here.</pre></div>
+  </div>
+</div>
+
+<h2>Empty, loading, error, and narrow panes</h2>
+<p>A drag copies only text that is visibly present. In an empty pane it selects nothing. In a loading or error pane, its visible text can be copied like any other displayed text. The boundary follows the pane's border at every width, including the stacked narrow layout, and preserves every displayed wrapped line as shown.</p>
+</main>
+</body>
+</html>

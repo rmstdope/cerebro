@@ -347,6 +347,12 @@ Follow *Interview, don't ask* in `skills/plan-bead/SKILL.md` as written — the 
 `file://` links inside the question tool, the batching, and the check that they actually opened the
 drawing.
 
+Once the drawing links are presented, continue directly: if an unresolved question remains, ask that
+question immediately, keeping the check that the designer opened the drawings before accepting their
+answer; if none remains, proceed to `## Recording it` and its existing filing message. Do not add a
+confirmation-only question about whether the drawings were viewed or a progress notice between the
+links and the next question or filing.
+
 Once a variant is chosen, walk the surface deliberately. This list is not a step in your work, it
 **is** your work:
 

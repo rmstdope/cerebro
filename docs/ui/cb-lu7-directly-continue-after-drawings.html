@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Continue directly after presenting drawings</title>
+<style>
+  :root { color-scheme: dark; font-family: system-ui, sans-serif; }
+  body { background: #111827; color: #e5e7eb; margin: 0; padding: 32px; }
+  main { margin: auto; max-width: 900px; }
+  h1 { font-size: 24px; }
+  .states { display: flex; flex-wrap: wrap; gap: 20px; }
+  section { background: #1f2937; border: 1px solid #374151; border-radius: 10px; flex: 1 1 360px; padding: 22px; }
+  h2 { font-size: 18px; margin-top: 0; }
+  p { line-height: 1.5; }
+  .drawing { border-left: 3px solid #60a5fa; color: #dbeafe; padding-left: 12px; }
+  .question, .filed { background: #0f172a; border-radius: 8px; margin-top: 20px; padding: 16px; }
+  .filed { border-left: 3px solid #34d399; }
+  button { background: #2563eb; border: 0; border-radius: 5px; color: #fff; font: inherit; margin: 8px 8px 0 0; padding: 8px 12px; }
+  small { color: #9ca3af; }
+</style>
+<main>
+  <h1>After presenting drawings</h1>
+  <div class="states">
+    <section>
+      <h2>Another question remains</h2>
+      <p class="drawing">Here are the two drawings for the panel. Open both before choosing; the difference is in how the panel closes.</p>
+      <p><small>Option A — file:///…/panel-a.html &nbsp; Option B — file:///…/panel-b.html</small></p>
+      <div class="question">
+        <strong>When the panel closes, should the previous selection remain visible?</strong>
+        <p><button>Yes, keep it visible</button><button>No, clear it</button></p>
+      </div>
+    </section>
+    <section>
+      <h2>No question remains</h2>
+      <p class="drawing">Here are the two drawings for the panel. Open both before choosing; the difference is in how the panel closes.</p>
+      <p><small>Option A — file:///…/panel-a.html &nbsp; Option B — file:///…/panel-b.html</small></p>
+      <div class="filed">
+        <strong>Filed — the panel that opens beneath a row is written down and waiting for whoever builds it: the shape, the states, your words and the drawing you chose. Thank you.</strong>
+      </div>
+    </section>
+  </div>
+</main>

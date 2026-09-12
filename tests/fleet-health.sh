@@ -272,7 +272,7 @@ out="$(FLEET_HEALTH_LONG_MINUTES=60 run "$tmp" --json)"
 [ "$(jq -r '[.running[].agent] | join(",")' <<<"$out")" = "Cyclops" ] \
   || fail "an open asking interval was measured: $(jq -c '.running' <<<"$out")"
 report="$(FLEET_HEALTH_LONG_MINUTES=60 run "$tmp")"
-grep -q 'Psylocke' <<<"$report" && fail "the report names a session that is waiting for an answer"
+! grep -q 'Psylocke' <<<"$report" || fail "the report names a session that is waiting for an answer"
 grep -q 'Cyclops' <<<"$report" || fail "the report dropped the working interval beside the waiting one"
 pass "a session waiting for an answer is in neither .running nor the report"
 

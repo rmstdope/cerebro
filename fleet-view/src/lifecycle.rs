@@ -339,8 +339,8 @@ pub const RESUME_MESSAGE: &str =
 /// What the view types into an interactive role whose turn ended while it was still working.
 ///
 /// Byte-identical to `cerebro--interactive-resume-message`. Its own line rather than the
-/// implementer's for `INTERACTIVE_NUDGE_MESSAGE`'s reason: an interactive role has no bead to
-/// hand back, so it defers to the role's own instructions.
+/// implementer's because an interactive role has no bead to hand back, so it defers to the role's
+/// own instructions.
 pub const INTERACTIVE_RESUME_MESSAGE: &str =
     "[cerebro] Your turn ended while your state file still said you were working. Do not stop \
      here: write your state file, carry on from where you left off, or record where you got to \
@@ -446,7 +446,7 @@ pub fn triage_action(agent: Triaged<'_>) -> Option<Triage> {
 
 /// The gold header notice for a triage line that went into a session.
 ///
-/// Beside `supervision_notice`, whose nudge line this one sits next to. The name comes from the
+/// Beside `supervision_notice`, in the same header slot its lines use. The name comes from the
 /// roster and is not always the word `Cerebro`; the ids are deliberately not in it, since the
 /// line's width would then depend on the board (the navigator's choice, round two).
 pub fn triage_notice(name: &str, count: usize) -> String {

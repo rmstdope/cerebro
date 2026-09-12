@@ -3699,10 +3699,16 @@ mod main_tests {
             let at = Instant::now();
             supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &paths, now, at);
             assert_eq!(app.notice, None, "{name} was acted on while waiting for an answer");
+            // The positive control first: a line typed by hand reaches the echoing shell and is
+            // drawn. Without it the absence below would pass just as well against a session that
+            // never spawned or whose shell had died, which is the one way a negative assertion
+            // rots into no assertion at all.
+            host.type_line(name, "[control] this one was typed by hand", at);
             host.flush_returns(at + cerebro_tui::session::RETURN_DELAY);
-            // The echoing shell prints back whatever it is given, so a `[cerebro]` line on its
-            // screen is the only evidence needed - and its absence, after the return is flushed,
-            // is the assertion.
+            saw_line(&mut host, name, 24, 400, "got:[control] this one was typed by hand");
+
+            // And the assertion itself: the supervision pass above typed nothing, so no
+            // `[cerebro]` line is on that same screen.
             let screen = probe::view_text(&host.sync(Some(name), 24, 400, Utc::now()));
             assert!(
                 !screen.iter().any(|line| line.contains("[cerebro]")),

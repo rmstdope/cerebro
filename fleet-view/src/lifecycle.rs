@@ -98,9 +98,9 @@ pub const STUCK_CEILING_SECONDS: i64 = 1800;
 
 /// How long this row has been stuck, or `None` if it is not.
 ///
-/// `Working` alone: an `asking` row is already bold with a gold `?` and is a question for the
-/// navigator rather than a failure, and an implementer's unanswered question is already nudged at
-/// `ANSWER_TIMEOUT_SECONDS`. Every other state has no turn to have ended.
+/// `Working` alone: an `asking` row is a question for the navigator and waits for one, not a
+/// failure — nothing acts on it, at any elapsed time (cb-0q1). Every other state has no turn to
+/// have ended.
 ///
 /// Pure, and deliberately not a renderer detail: cb-ykz.3's supervision arm reads this same
 /// function.
@@ -116,17 +116,6 @@ pub fn stuck_for(
     let stood = (now - ended).num_seconds();
     (stood >= STUCK_CEILING_SECONDS).then_some(stood)
 }
-
-/// Seconds an `asking` implementer may wait before it is nudged. `cerebro-answer-timeout`'s
-/// default (`emacs/cerebro.el:1509`), same reasoning.
-pub const ANSWER_TIMEOUT_SECONDS: i64 = 900;
-
-/// Seconds an `asking` interactive role may wait before it is nudged.
-/// `cerebro-interactive-answer-timeout`'s default, a constant here for `END_GRACE_SECONDS`'
-/// reason: this crate has no place to declare a customisation and must not invent one. Twice the
-/// implementer's, because an interactive role's questions are ones the navigator thinks about
-/// rather than answers yes/no.
-pub const INTERACTIVE_ANSWER_TIMEOUT_SECONDS: i64 = 1800;
 
 /// Everything the supervision decision reads, and nothing else.
 ///
@@ -168,11 +157,9 @@ pub enum Supervision {
     Retire,
     /// The pass is over and the grace has passed. End the session; leave the flag alone.
     End,
-    /// A question has gone unanswered too long. Type one line into the session.
-    Nudge,
     /// The turn ended while the state file still said `working`. Type one line into the session:
-    /// it is sitting at a prompt, so a line is all it takes to start it again. Unlike `Nudge`
-    /// there is no question outstanding - this row stopped without saying anything at all.
+    /// it is sitting at a prompt, so a line is all it takes to start it again. There is no
+    /// question outstanding - this row stopped without saying anything at all.
     Resume,
 }
 
@@ -213,17 +200,6 @@ pub fn supervise_action(agent: Supervised<'_>) -> Option<Supervision> {
         // No kind guard: an implementer between beads has ended its pass in exactly this sense
         // (cb-1or.1).
         RowState::Waiting => end_decision(&agent),
-        // The stop flag makes no difference here: the bead is still in flight, so the question
-        // still needs an answer or a hand-back.
-        RowState::Asking => {
-            let timeout = match agent.kind {
-                AgentKind::Implementer => ANSWER_TIMEOUT_SECONDS,
-                AgentKind::Interactive => INTERACTIVE_ANSWER_TIMEOUT_SECONDS,
-            };
-            // `Option<i64>` is what keeps a torn state file safe: `matches!(None, Some(_))` is
-            // false, so a missing or unparseable `since` never reads as an expired timeout.
-            matches!(agent.stood, Some(stood) if stood >= timeout).then_some(Supervision::Nudge)
-        }
         // The turn ended and the row never said so. `stuck` is `None` for every other `working`
         // row, which is what keeps this arm from touching the ordinary case.
         RowState::Working => match agent.stuck {
@@ -248,6 +224,9 @@ pub fn supervise_action(agent: Supervised<'_>) -> Option<Supervision> {
             Some(_) => Some(Supervision::Resume),
         },
         RowState::Up
+        // A question waits until it is answered (cb-0q1): no elapsed time acts on an `asking`
+        // row, for either kind and whatever the flag, so it answers nothing exactly as these do.
+        | RowState::Asking
         // Answered above, ahead of the `ours` guard.
         | RowState::Standby
         | RowState::Dead
@@ -342,37 +321,7 @@ pub fn supervision_notice(action: Supervision, name: &str, stuck: bool) -> Strin
         (Supervision::End, true) => {
             format!("{name} was stuck and did not answer; its session was ended.")
         }
-        (Supervision::Nudge, _) => format!("{name} was asked to hand its question back."),
         (Supervision::Resume, _) => format!("{name}'s turn had ended; it was asked to carry on."),
-    }
-}
-
-/// What the view types into a session whose question nobody answered.
-///
-/// Byte-identical to `cerebro--nudge-message` (`emacs/cerebro.el:3956-3960`), and it names neither
-/// a tracker label nor a skill for that constant's own reason: the words go into a live session,
-/// and how a work item is handed back is the agent's own instructions to state.
-pub const NUDGE_MESSAGE: &str =
-    "[cerebro] Nobody answered within the timeout. Do not keep waiting: put the question and \
-     everything you have found into the work item, hand it back for a person to decide, exactly \
-     as your own instructions describe, and finish the run.";
-
-/// What the view types into an interactive role's session whose question nobody answered.
-///
-/// Byte-identical to `cerebro--interactive-nudge-message`. It is its own line rather than the
-/// implementer's because an interactive role has no bead to hand back - `agents/verifier.md` in
-/// particular forbids adding a `human` label - so it defers entirely to the role's own
-/// instructions, for `NUDGE_MESSAGE`'s reason.
-pub const INTERACTIVE_NUDGE_MESSAGE: &str =
-    "[cerebro] Nobody answered within the timeout. Do not keep waiting: record the question and \
-     everything you have found where your own instructions say an unanswered question goes, then \
-     finish the run.";
-
-/// The line typed into a session of KIND whose question nobody answered.
-pub fn nudge_message(kind: AgentKind) -> &'static str {
-    match kind {
-        AgentKind::Implementer => NUDGE_MESSAGE,
-        AgentKind::Interactive => INTERACTIVE_NUDGE_MESSAGE,
     }
 }
 
@@ -1118,8 +1067,6 @@ mod tests {
     }
 
     /// The three sentences the header says, and the one the view types into a live session.
-    /// The nudge is pinned against a literal on purpose: a test that rebuilt it from the constant
-    /// would prove nothing, and this one is byte-identical to `cerebro--nudge-message`.
     #[test]
     fn the_view_says_what_it_did_and_types_one_line() {
         assert_eq!(
@@ -1129,33 +1076,6 @@ mod tests {
         assert_eq!(
             supervision_notice(Supervision::End, "Cyclops", false),
             "Cyclops finished its pass and was ended."
-        );
-        assert_eq!(
-            supervision_notice(Supervision::Nudge, "Cyclops", false),
-            "Cyclops was asked to hand its question back."
-        );
-        assert_eq!(
-            NUDGE_MESSAGE,
-            "[cerebro] Nobody answered within the timeout. Do not keep waiting: put the question \
-             and everything you have found into the work item, hand it back for a person to \
-             decide, exactly as your own instructions describe, and finish the run."
-        );
-    }
-
-    /// The interactive roles are nudged in their own words, and the implementer's line is
-    /// untouched. Both pinned against literals, for the reason above.
-    #[test]
-    fn the_interactive_nudge_is_the_words_emacs_types() {
-        assert_eq!(
-            nudge_message(AgentKind::Interactive),
-            "[cerebro] Nobody answered within the timeout. Do not keep waiting: record the \
-             question and everything you have found where your own instructions say an \
-             unanswered question goes, then finish the run."
-        );
-        assert_eq!(nudge_message(AgentKind::Implementer), NUDGE_MESSAGE);
-        assert_ne!(
-            nudge_message(AgentKind::Interactive),
-            nudge_message(AgentKind::Implementer)
         );
     }
 
@@ -1195,7 +1115,6 @@ mod tests {
         match word {
             "retire" => Some(Supervision::Retire),
             "end" => Some(Supervision::End),
-            "nudge" => Some(Supervision::Nudge),
             "resume" => Some(Supervision::Resume),
             "none" => None,
             other => panic!("supervise.cases: unknown action {other}"),
@@ -1387,10 +1306,6 @@ mod tests {
         assert_eq!(
             supervision_notice(Supervision::End, "Storm", false),
             "Storm finished its pass and was ended."
-        );
-        assert_eq!(
-            supervision_notice(Supervision::Nudge, "Storm", true),
-            "Storm was asked to hand its question back."
         );
         assert_eq!(
             supervision_notice(Supervision::Resume, "Storm", true),

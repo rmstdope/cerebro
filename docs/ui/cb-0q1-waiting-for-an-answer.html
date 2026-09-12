@@ -1,0 +1,103 @@
+<style>
+body{font-family:Menlo,Monaco,monospace;font-size:13px;margin:24px;background:#8a8a8a;color:#111}
+h1{font-size:16px;color:#fff;margin:0 0 2px}h2{font-size:14px;margin:26px 0 8px;color:#fff}
+h3{font-size:13px;margin:14px 0 6px;color:#eee;font-weight:normal}
+pre{margin:0;line-height:1.45;white-space:pre-wrap}
+.screen{background:#1e1e1e;color:#d4d4d4;padding:10px 12px;border:1px solid #333;display:block;margin:0 0 10px 0;max-width:112ch}
+.note{color:#eee;max-width:108ch;background:#333;padding:9px 13px;margin-top:12px;line-height:1.5}
+.lede{color:#fff;max-width:108ch;margin:0 0 14px;line-height:1.5}
+.g{color:#6a9955}.d{color:#777}.b{color:#569cd6}.y{color:gold}.e{color:#f14c4c}
+.hd{font-weight:bold;color:#ddd}.dim{color:#888}
+.chosen{background:#2d4a2d;color:#cfe8cf;padding:2px 8px;display:inline-block;margin-left:8px;font-size:12px}
+.rejected{background:#4a2d2d;color:#e8cfcf;padding:2px 8px;display:inline-block;margin-left:8px;font-size:12px}
+code{color:#ffd479}
+</style>
+<meta charset="utf-8"><title>cb-0q1 — a question waits until it is answered</title>
+
+<h1>cb-0q1 — a question waits until it is answered</h1>
+<p class="lede">Two interview rounds, 2026-09-12. This file is the specification for <b>what the
+navigator sees once a question from a session no longer expires</b>. Where this file and the bead's
+plan disagree, this file is right.</p>
+
+<p class="lede">Today a session that asks the navigator something gives up: after fifteen minutes
+(implementer) or thirty (interactive role) a <code>[cerebro]</code> line is typed into it, and the
+role instructions turn that into "write down where you got to, park the work for a person, end the
+pass". That whole path goes. A question now waits, and the session waits with it.</p>
+
+<h2>1. A long-unanswered question looks exactly as it does now <span class="chosen">chosen — nothing changes</span></h2>
+<p class="lede">The row stays bold, with a gold <code>?</code> and its clock counting up, for as long
+as it takes. Two hours and two minutes look alike except for the number, and that was accepted: the
+row is already the only bold one on the screen, and nothing new is worth a new thing to learn.</p>
+<div class="screen"><pre><span class="hd">AGENT        ROLE         STATE     BEAD        FOR</span>
+<span class="g">●</span> Rogue        implementer  working   cb-9k2      41m  12m
+<span class="y">?</span> <b>Xavier       ux           asking    cb-0q1      2h14 2h14</b>
+<span class="g">●</span> Beast        ux           working   cb-4tt      18m  18m
+<span class="y">?</span> <b>Moira        user-feedbk  asking     —          8m   8m</b>
+<span class="g">●</span> Gambit       build-desgn  working   cb-7h1      6m   6m</pre></div>
+<p class="note"><b>Rejected:</b> a gold <code>waiting 2h14</code> phrase replacing the clock past an
+hour — one more thing a row can say, and an hour is a number somebody has to pick. <b>Rejected:</b> a
+standing <code>2 questions waiting for you — longest 2h14</code> count in the header — the top line is
+where every passing message appears, and a standing count competes with them.</p>
+<p class="note">Nothing is typed into an <code>asking</code> session by the clock, at any elapsed
+time, for any role. No message, no nudge, no hand-back, no end of pass, no retirement. When the
+navigator answers — a minute later or four hours later — the session carries on from the answer.</p>
+
+<h2>2. The two self-reports stop measuring waiting <span class="chosen">chosen</span></h2>
+<p class="lede">Health and History both point at things taking unusually long. A session waiting on
+the navigator is not the fleet running slowly, so neither counts it.</p>
+<div class="screen"><pre><span class="dim">Xavier has been asking for 134m. What the lower half of the screen shows:</span>
+
+<span class="hd">History 2</span>
+  <span class="d">Rogue working 41m, median 35m</span>
+  <span class="d">Gambit working 6m, median 9m</span>
+
+<span class="dim">— Health reports nothing at all; there is nothing wrong.</span>
+
+<span class="dim">What it must NOT show:</span>
+<span class="hd">Health 1</span>
+  <span class="y">Xavier has been asking for 134m — much longer than usual</span>
+<span class="hd">History 3</span>
+  <span class="y">Xavier asking 134m — long, median 2m</span></pre></div>
+<p class="note">A waiting session leaves Health silent and is absent from History entirely, rather
+than present-but-not-gold: the time it spent waiting is the navigator's, and averaging it into what
+the fleet takes makes every later reading wrong too.</p>
+
+<h2>3. Nothing is parked by a clock <span class="chosen">chosen</span></h2>
+<p class="lede">The "needs a person" list no longer fills up with work a session gave up on. The
+sessions stay open instead, each holding its work and its question.</p>
+<div class="screen"><pre><span class="dim">an afternoon away from the desk — after:</span>
+<span class="hd">Needs a person  0</span>
+
+<span class="y">?</span> <b>Xavier       ux           asking    cb-0q1      4h02 4h02</b>
+<span class="y">?</span> <b>Beast        ux           asking    cb-4tt      2h11 2h11</b>
+
+<span class="dim">— and not, as today:</span>
+<span class="hd">Needs a person  2</span>
+  <span class="y">cb-0q1  … — parked 4h ago</span>
+  <span class="y">cb-4tt  … — parked 2h ago</span>
+<span class="b">◌</span> Xavier       ux           <span class="b">standby</span>
+<span class="b">◌</span> Beast        ux           <span class="b">standby</span></pre></div>
+<p class="note">The cost was named and accepted: several sessions can sit occupied all afternoon
+rather than freeing themselves for other work. What is bought is that answering one resumes the
+conversation exactly where it stopped, instead of a written summary somebody starts again from.</p>
+<p class="note">A session may still park work for a person for its own reasons — because the question
+is genuinely one nobody present can answer. What is gone is parking <b>because time passed</b>.</p>
+
+<h2>4. The other clock stays, and its gap is closed <span class="chosen">chosen — close the gap</span></h2>
+<p class="lede">A separate clock ends a session that has gone <i>quiet mid-work</i> — a wedged or
+crashed one. That stays: without it such a session sits there for ever.</p>
+<p class="lede">But a session that asks its question as ordinary text, rather than through the
+question box, looks exactly like a wedged one — its row says <code>working</code> and it has stopped.
+Today it is woken, then ended, and the question dies with it.</p>
+<div class="screen"><pre><span class="dim">what must NOT happen:</span>
+<span class="e">✗</span> Beast        ux           working   cb-4tt      <span class="e">stuck 30m</span>
+<span class="y">[cerebro] Your turn ended while your state file still said you were working…</span>
+<span class="b">◌</span> Beast        ux           <span class="b">standby</span>
+<span class="dim">header:</span> <span class="y">Beast was stuck and did not answer; its session was ended.</span>
+
+<span class="dim">what happens instead — it marked itself as waiting when it asked, however it asked:</span>
+<span class="y">?</span> <b>Beast        ux           asking    cb-4tt      2h11 2h11</b></pre></div>
+<p class="note">Every session marks itself as waiting whenever it puts a question to the navigator —
+through the question box or in plain text. Invisible to the navigator; it is a rule the sessions
+follow. The visible promise is the one it buys: <b>no question put to the navigator is ever ended by
+a clock, however it was asked.</b></p>

@@ -24,7 +24,7 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, Utc};
-use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::{Constraint, Layout, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -261,15 +261,16 @@ pub fn layout_facts(app: &App, now: DateTime<Utc>, area: Rect) -> LayoutFacts {
     }
 }
 
-/// Build the copy snapshot for a Shift-left press over a pane's visible text body.
+/// Build the copy snapshot for a plain left press over a pane's visible text body in copy mode.
 pub fn copy_snapshot_for_event(
     app: &App,
     now: DateTime<Utc>,
     area: Rect,
     event: MouseEvent,
 ) -> Option<CopySnapshot> {
-    if event.kind != MouseEventKind::Down(MouseButton::Left)
-        || !event.modifiers.contains(KeyModifiers::SHIFT)
+    if !app.copy_mode
+        || event.kind != MouseEventKind::Down(MouseButton::Left)
+        || !event.modifiers.is_empty()
         || app.quit_refusal.is_some()
         || app.confirm.is_some()
         || too_small(area)
@@ -2277,12 +2278,12 @@ mod tests {
         terminal.backend().buffer().clone()
     }
 
-    fn shift_press(column: u16, row: u16) -> MouseEvent {
+    fn mouse_press(column: u16, row: u16) -> MouseEvent {
         MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column,
             row,
-            modifiers: KeyModifiers::SHIFT,
+            modifiers: KeyModifiers::NONE,
         }
     }
 
@@ -2307,11 +2308,12 @@ mod tests {
 
     #[test]
     fn copy_snapshot_matches_the_fleet_body_and_excludes_its_border() {
-        let app = populated();
+        let mut app = populated();
+        app.copy_mode = true;
         let area = Rect::new(0, 0, 120, 30);
         let facts = layout_facts(&app, now(), area);
         let body = Block::default().borders(Borders::ALL).inner(facts.fleet);
-        let event = shift_press(body.x, body.y);
+        let event = mouse_press(body.x, body.y);
         let snapshot =
             copy_snapshot_for_event(&app, now(), area, event).expect("body text starts a copy");
 
@@ -2324,7 +2326,7 @@ mod tests {
                 &app,
                 now(),
                 area,
-                shift_press(facts.fleet.x, facts.fleet.y),
+                mouse_press(facts.fleet.x, facts.fleet.y),
             )
             .is_none(),
             "the pane border is chrome"
@@ -2334,7 +2336,7 @@ mod tests {
                 &app,
                 now(),
                 area,
-                shift_press(facts.left_column - 1, facts.fleet.y + 1),
+                mouse_press(facts.left_column - 1, facts.fleet.y + 1),
             )
             .is_none(),
             "the split divider is not pane text"
@@ -2344,6 +2346,7 @@ mod tests {
     #[test]
     fn replacement_copy_starts_at_the_retained_source_content_and_scroll() {
         let mut app = populated();
+        app.copy_mode = true;
         app.finish_refresh(
             Ok((0..30)
                 .map(|index| row(&format!("Agent-{index}"), "implementer", RowState::Idle))
@@ -2353,7 +2356,7 @@ mod tests {
         let area = Rect::new(0, 0, 120, 30);
         let first = layout_facts(&app, now(), area);
         let body = Block::default().borders(Borders::ALL).inner(first.fleet);
-        let press = shift_press(body.x, body.y);
+        let press = mouse_press(body.x, body.y);
         let metrics = metrics(&app, now(), area);
         let snapshot =
             copy_snapshot_for_event(&app, now(), area, press).expect("first copy starts");
@@ -2384,10 +2387,11 @@ mod tests {
     #[test]
     fn copy_highlight_is_limited_to_the_source_body_and_preserves_the_snapshot() {
         let mut app = populated();
+        app.copy_mode = true;
         let area = Rect::new(0, 0, 120, 30);
         let facts = layout_facts(&app, now(), area);
         let body = Block::default().borders(Borders::ALL).inner(facts.fleet);
-        let press = shift_press(body.x, body.y);
+        let press = mouse_press(body.x, body.y);
         let snapshot =
             copy_snapshot_for_event(&app, now(), area, press).expect("body text starts a copy");
         let metrics = metrics(&app, now(), area);
@@ -2397,7 +2401,7 @@ mod tests {
                 kind: MouseEventKind::Drag(MouseButton::Left),
                 column: body.x + 2,
                 row: body.y,
-                modifiers: KeyModifiers::SHIFT,
+                modifiers: KeyModifiers::NONE,
             },
             metrics,
             None,
@@ -5647,7 +5651,10 @@ mod tests {
     fn a_pinned_bead_keeps_the_header_line() {
         let mut app = pinned_app();
         app.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), 10, at(86_400));
-        app.set_session_view(SessionView::Live { lines: Vec::new(), cursor: (0, 0) });
+        app.set_session_view(SessionView::Live {
+            lines: Vec::new(),
+            cursor: (0, 0),
+        });
 
         let rendered = lines(&render(&app, 140, 30));
         assert!(
@@ -6133,7 +6140,10 @@ mod tests {
 
         let mut fleet_focus = populated();
         fleet_focus.selected = Some("Xavier".to_string());
-        fleet_focus.set_session_view(SessionView::Live { lines: Vec::new(), cursor: (0, 0) });
+        fleet_focus.set_session_view(SessionView::Live {
+            lines: Vec::new(),
+            cursor: (0, 0),
+        });
         fleet_focus.focus = PaneFocus::Fleet;
         assert_eq!(
             hint_clauses(&fleet_focus),

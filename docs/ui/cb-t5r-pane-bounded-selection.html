@@ -34,7 +34,7 @@
 <body>
 <main>
 <h1>Copying stays inside one pane</h1>
-<p>Hold Shift and drag across displayed text to copy it. The copy follows the pane where the drag began: it preserves the visible wrapping and never takes text from another pane.</p>
+<p>Press <code>c</code> to enter copy mode, then drag across displayed text to copy it. The copy follows the pane where the drag began: it preserves the visible wrapping and never takes text from another pane.</p>
 
 <h2>Across a pane border</h2>
 <div class="screen">
@@ -67,7 +67,7 @@
 </div>
 
 <h2>When content changes</h2>
-<p>If new content arrives while a copy is underway, the selected range remains the originally displayed text. New or replaced rows do not change the range or join the copied text.</p>
+<p>If new content arrives while a copy is underway, the selected range remains the originally displayed text. New or replaced rows do not change the range or join the copied text. After release, the next update of that pane clears the retained selection so live content continues to refresh.</p>
 <div class="screen">
   <div class="pane"><div class="title">Work</div><pre><span class="selection">Planned 2</span>
 <span class="selection">  cb-t5r  Pane-bounded text selection...</span>
@@ -75,7 +75,7 @@
 </div>
 
 <h2>Quiet and non-invasive</h2>
-<p>The visible selection is the only copy feedback: there is no new message while copying or afterward. Releasing the mouse leaves that selection visible; another Shift-drag replaces it. A Shift-drag neither selects a row nor changes keyboard focus, so keys continue to control the same pane or session as before.</p>
+<p>Entering copy mode says <code>Copy mode: drag to select</code> in the header. The visible selection is the only feedback while copying or afterward. Releasing the mouse copies the selection, leaves it visible until the pane next updates, and exits copy mode; another copy-mode drag replaces it. A copy-mode drag neither selects a row nor changes keyboard focus, so keys continue to control the same pane or session as before.</p>
 <div class="screen narrow">
   <div class="grid">
     <div class="pane"><div class="title">Fleet</div><pre><span class="selection">● Cyclops   working  build</span>

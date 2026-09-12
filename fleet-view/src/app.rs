@@ -438,22 +438,18 @@ impl CopySelection {
             .take(count)
             .enumerate()
             .map(|(offset, line)| {
-                let line_number = start.line + offset;
-                let line_width = copy_width(line);
-                let from = if line_number == start.line {
-                    start.column
-                } else {
-                    0
-                };
-                let to = if line_number == end.line {
-                    end.column
-                } else {
-                    line_width.saturating_sub(1)
-                };
-                text_in_cells(line, from, to)
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
+            let line_number = start.line + offset;
+            let line_width = copy_width(line);
+            let from = if line_number == start.line { start.column } else { 0 };
+            let to = if line_number == end.line {
+                end.column
+            } else {
+                line_width.saturating_sub(1)
+            };
+            text_in_cells(line, from, to)
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
     }
 
     pub fn cell_selected(&self, line: usize, column: usize) -> bool {
@@ -1878,6 +1874,11 @@ pub struct App {
     layout: LayoutFacts,
     /// The divider the pointer is currently dragging, if any. See `Drag`.
     pub drag: Option<Drag>,
+    /// Whether plain left drags begin a pane-bounded copy rather than their usual mouse action.
+    ///
+    /// This is a mode rather than a modified mouse gesture because terminals reserve modified
+    /// drags for their own whole-window text selection before the TUI can receive them.
+    pub copy_mode: bool,
     /// The pane copy being drawn or retained, if any.
     pub copy: Option<CopySelection>,
     /// The last left-button press that landed on a divider, for the double-click test: which
@@ -2025,6 +2026,20 @@ impl Default for App {
 }
 
 impl App {
+    /// Drop a completed copy before its source pane accepts newer content.
+    ///
+    /// The copy snapshot must survive an active drag so its endpoints cannot move under the
+    /// pointer. Once copied, however, continuing to render it would freeze a live Session pane.
+    fn clear_completed_copy_from(&mut self, pane: PaneFocus) {
+        if self
+            .copy
+            .as_ref()
+            .is_some_and(|copy| copy.source() == pane && !copy.active)
+        {
+            self.copy = None;
+        }
+    }
+
     pub fn new() -> Self {
         Self::with_supervision(SupervisionMode::ReadOnly(ReadOnlyReason::NotOwned))
     }
@@ -2054,6 +2069,7 @@ impl App {
             panes: PaneSizes::default(),
             layout: LayoutFacts::default(),
             drag: None,
+            copy_mode: false,
             copy: None,
             last_divider_press: None,
             focus: PaneFocus::default(),
@@ -2272,8 +2288,9 @@ impl App {
         if self.quit_refusal.is_some() || self.confirm.is_some() {
             return AppAction::None;
         }
-        if event.kind == MouseEventKind::Down(MouseButton::Left)
-            && event.modifiers.contains(KeyModifiers::SHIFT)
+        if self.copy_mode
+            && event.kind == MouseEventKind::Down(MouseButton::Left)
+            && event.modifiers.is_empty()
         {
             self.drag = None;
             self.last_divider_press = None;
@@ -2291,7 +2308,9 @@ impl App {
         if event.kind == MouseEventKind::Up(MouseButton::Left) {
             if let Some(copy) = self.copy.as_mut().filter(|copy| copy.active) {
                 copy.update_pointer((event.column, event.row));
-                return AppAction::Copy(copy.complete());
+                let text = copy.complete();
+                self.copy_mode = false;
+                return AppAction::Copy(text);
             }
         }
         // Dropped BEFORE `clear_notice`: `EnableMouseCapture` turns on any-event tracking, so a
@@ -2493,6 +2512,15 @@ impl App {
             return AppAction::None;
         }
         match key.code {
+            KeyCode::Char('c') if key.modifiers.is_empty() => {
+                self.copy_mode = !self.copy_mode;
+                self.set_notice(if self.copy_mode {
+                    "Copy mode: drag to select".to_string()
+                } else {
+                    "Copy mode off".to_string()
+                });
+                AppAction::None
+            }
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.quit = true;
                 AppAction::Quit
@@ -2831,6 +2859,7 @@ impl App {
     /// nothing above the top row to reach - so this forces the offset to 0 while a session is
     /// live and leaves it alone otherwise.
     pub fn set_session_view(&mut self, view: SessionView) {
+        self.clear_completed_copy_from(PaneFocus::Session);
         // ...and never while a bead is pinned, or the bead would be unscrollable for exactly as
         // long as the selected agent has a live child.
         if self.pin.is_none() && matches!(view, SessionView::Live { .. }) {
@@ -2907,6 +2936,7 @@ impl App {
         let succeeded = result.is_ok();
         self.sweeps.finish(result, at);
         if succeeded {
+            self.clear_completed_copy_from(PaneFocus::Work);
             self.reconcile_work_cursor(previous_index, at);
         }
     }
@@ -2941,6 +2971,7 @@ impl App {
         let succeeded = result.is_ok();
         self.history.finish(result, at);
         if succeeded {
+            self.clear_completed_copy_from(PaneFocus::Work);
             self.reconcile_work_cursor(previous_index, at);
         }
     }
@@ -2975,6 +3006,7 @@ impl App {
         let succeeded = result.is_ok();
         self.health.finish(result, at);
         if succeeded {
+            self.clear_completed_copy_from(PaneFocus::Work);
             self.reconcile_work_cursor(previous_index, at);
         }
     }
@@ -3266,6 +3298,7 @@ impl App {
         });
         self.fleet.finish(result, at);
         if succeeded {
+            self.clear_completed_copy_from(PaneFocus::Fleet);
             self.reconcile_selection(previous_index);
             // A refresh can move the selected row's document line with nothing pressed: the stale
             // prefix appearing or going, and a reconciled selection landing on another row. Both
@@ -3427,6 +3460,7 @@ impl App {
         // Every refresh that changes the document reconciles the cursor, not the sweeps alone:
         // the beads are replaced every thirty seconds and the cursor now walks them.
         if succeeded {
+            self.clear_completed_copy_from(PaneFocus::Work);
             self.reconcile_work_cursor(previous_index, at);
         }
     }
@@ -4666,13 +4700,6 @@ mod tests {
         MouseEvent { kind: MouseEventKind::Up(MouseButton::Left), column, row, ..mouse_press(0, 0) }
     }
 
-    fn shift_mouse_press(column: u16, row: u16) -> MouseEvent {
-        MouseEvent {
-            modifiers: KeyModifiers::SHIFT,
-            ..mouse_press(column, row)
-        }
-    }
-
     fn copy_snapshot(pane: PaneFocus, lines: &[&str], scroll: usize) -> CopySnapshot {
         CopySnapshot {
             pane,
@@ -4759,14 +4786,15 @@ mod tests {
     }
 
     #[test]
-    fn shift_drag_returns_copy_without_changing_focus_or_regular_selection_state() {
+    fn copy_mode_drag_returns_copy_without_changing_focus_or_regular_selection_state() {
         let mut app = mouse_app();
         app.focus = PaneFocus::Session;
         let snapshot = copy_snapshot(PaneFocus::Fleet, &["first", "second"], 0);
+        app.on_key(key(KeyCode::Char('c')), 10, at(0));
 
         assert_eq!(
             app.on_mouse(
-                shift_mouse_press(1, 1),
+                mouse_press(1, 1),
                 no_metrics(),
                 Some(snapshot),
                 at(0),
@@ -4778,7 +4806,7 @@ mod tests {
                 kind: MouseEventKind::Drag(MouseButton::Left),
                 column: 5,
                 row: 2,
-                modifiers: KeyModifiers::SHIFT,
+                modifiers: KeyModifiers::NONE,
             },
             no_metrics(),
             None,
@@ -4790,7 +4818,7 @@ mod tests {
                     kind: MouseEventKind::Up(MouseButton::Left),
                     column: 5,
                     row: 2,
-                    modifiers: KeyModifiers::SHIFT,
+                    modifiers: KeyModifiers::NONE,
                 },
                 no_metrics(),
                 None,
@@ -4800,10 +4828,34 @@ mod tests {
         );
         assert_eq!(app.focus, PaneFocus::Session);
         assert!(app.drag.is_none());
+        assert!(!app.copy_mode, "copy mode ends once the selection is copied");
     }
 
     #[test]
-    fn shift_click_without_a_snapshot_does_not_start_or_clear_copy() {
+    fn a_completed_session_copy_is_released_for_the_next_session_view() {
+        let mut app = App::new();
+        let mut copy = CopySelection::new(
+            copy_snapshot(PaneFocus::Session, &["copied"], 0),
+            (1, 1),
+            Instant::now(),
+        )
+        .expect("copy starts on text");
+        copy.complete();
+        app.copy = Some(copy);
+
+        app.set_session_view(SessionView::Live {
+            lines: vec![Line::from("new session output")],
+            cursor: (0, 0),
+        });
+
+        assert!(app.copy.is_none(), "a completed snapshot cannot freeze Session");
+        assert!(
+            matches!(&app.session.view, SessionView::Live { lines, .. } if lines[0].to_string() == "new session output")
+        );
+    }
+
+    #[test]
+    fn copy_mode_click_without_a_snapshot_does_not_start_or_clear_copy() {
         let mut app = mouse_app();
         let mut retained = CopySelection::new(
             copy_snapshot(PaneFocus::Fleet, &["retained"], 0),
@@ -4813,11 +4865,25 @@ mod tests {
         .expect("copy starts on text");
         retained.update_pointer((8, 1));
         app.copy = Some(retained);
-        app.on_mouse(shift_mouse_press(1, 1), no_metrics(), None, at(0));
+        app.on_key(key(KeyCode::Char('c')), 10, at(0));
+        app.on_mouse(mouse_press(1, 1), no_metrics(), None, at(0));
         assert_eq!(
             app.copy.as_ref().map(CopySelection::text),
             Some("retained".to_string())
         );
+    }
+
+    #[test]
+    fn a_plain_drag_only_starts_a_copy_after_entering_copy_mode() {
+        let mut app = mouse_app();
+        let snapshot = copy_snapshot(PaneFocus::Fleet, &["first"], 0);
+
+        app.on_mouse(mouse_press(1, 1), no_metrics(), Some(snapshot.clone()), at(0));
+        assert!(app.copy.is_none(), "ordinary clicks retain their existing behavior");
+
+        app.on_key(key(KeyCode::Char('c')), 10, at(0));
+        app.on_mouse(mouse_press(1, 1), no_metrics(), Some(snapshot), at(0));
+        assert!(app.copy.is_some(), "copy mode owns the next plain drag");
     }
 
     #[test]
@@ -7037,7 +7103,10 @@ mod tests {
         let mut app = document_app();
         app.selected = Some("Rogue".into());
         app.focus = PaneFocus::Session;
-        app.set_session_view(SessionView::Live { lines: Vec::new(), cursor: (0, 0) });
+        app.set_session_view(SessionView::Live {
+            lines: Vec::new(),
+            cursor: (0, 0),
+        });
         assert!(app.session_has_keyboard());
 
         app.pin = Some(SessionPin::Bead(BeadDetail {
@@ -7055,11 +7124,17 @@ mod tests {
             body: DetailBody::Reading,
         }));
         app.session.scroll = 7;
-        app.set_session_view(SessionView::Live { lines: Vec::new(), cursor: (0, 0) });
+        app.set_session_view(SessionView::Live {
+            lines: Vec::new(),
+            cursor: (0, 0),
+        });
         assert_eq!(app.session.scroll, 7, "the bead can be scrolled while an agent is live");
 
         app.pin = None;
-        app.set_session_view(SessionView::Live { lines: Vec::new(), cursor: (0, 0) });
+        app.set_session_view(SessionView::Live {
+            lines: Vec::new(),
+            cursor: (0, 0),
+        });
         assert_eq!(app.session.scroll, 0);
     }
 
@@ -7068,7 +7143,10 @@ mod tests {
         let mut app = document_app();
         app.focus = PaneFocus::Fleet;
         app.selected = Some("Rogue".into());
-        app.set_session_view(SessionView::Live { lines: Vec::new(), cursor: (0, 0) });
+        app.set_session_view(SessionView::Live {
+            lines: Vec::new(),
+            cursor: (0, 0),
+        });
         app.pin = Some(SessionPin::Bead(BeadDetail {
             bead: detail_bead(),
             body: DetailBody::Reading,
@@ -7626,7 +7704,10 @@ mod tests {
         let mut app = document_app();
         app.selected = Some("Rogue".into());
         app.focus = PaneFocus::Session;
-        app.set_session_view(SessionView::Live { lines: Vec::new(), cursor: (0, 0) });
+        app.set_session_view(SessionView::Live {
+            lines: Vec::new(),
+            cursor: (0, 0),
+        });
         assert!(app.session_has_keyboard());
 
         app.pin = Some(SessionPin::Health);

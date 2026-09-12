@@ -814,11 +814,11 @@ pub fn resize_action(
 
 /// Does this key move focus between panes, whoever currently holds the keyboard?
 ///
-/// `main.rs` asks this to decide what a focused live session does NOT receive; the answer must be
-/// exactly the keys `App::on_key` acts on.
+/// `main.rs` asks this to decide what a focused live session does NOT receive. `Tab` is not in
+/// it: inside a session `Tab` belongs to the agent (cb-lmk), and `App::on_key` acts on it only
+/// when no session holds the keyboard, which is when `route_key` never asks this.
 pub fn is_pane_key(code: KeyCode) -> bool {
-    matches!(code, KeyCode::Tab | KeyCode::BackTab)
-        || matches!(code, KeyCode::F(n) if PaneFocus::from_function_key(n).is_some())
+    matches!(code, KeyCode::F(n) if PaneFocus::from_function_key(n).is_some())
 }
 
 /// Which resize a key asks for, if any. The ONE place the five keys are spelled.
@@ -5275,9 +5275,11 @@ mod tests {
                 "Alt-{code:?} still reaches a hosted agent"
             );
         }
-        for code in [KeyCode::Tab, KeyCode::BackTab, KeyCode::F(1), KeyCode::F(2), KeyCode::F(3)] {
+        for code in [KeyCode::F(1), KeyCode::F(2), KeyCode::F(3)] {
             assert!(is_view_key(key(code)), "{code:?} moves focus");
         }
+        assert!(!is_view_key(key(KeyCode::Tab)), "`Tab` is the agent's");
+        assert!(!is_view_key(key(KeyCode::BackTab)), "`Shift-Tab` is the agent's");
         for code in [KeyCode::F(4), KeyCode::Char('x')] {
             assert!(!is_view_key(key(code)), "{code:?} is the agent's");
             assert!(!is_view_key(chord(code)), "and so is Shift-{code:?}");
@@ -5330,10 +5332,12 @@ mod tests {
 
     /// The set held back from a hosted agent is exactly the set that moves focus.
     #[test]
-    fn pane_keys_are_the_two_tabs_and_f1_to_f3() {
-        for code in [KeyCode::Tab, KeyCode::BackTab, KeyCode::F(1), KeyCode::F(2), KeyCode::F(3)] {
+    fn pane_keys_are_f1_to_f3() {
+        for code in [KeyCode::F(1), KeyCode::F(2), KeyCode::F(3)] {
             assert!(is_pane_key(code), "{code:?} moves focus");
         }
+        assert!(!is_pane_key(KeyCode::Tab), "`Tab` is the agent's");
+        assert!(!is_pane_key(KeyCode::BackTab), "`Shift-Tab` is the agent's");
         for code in [KeyCode::F(4), KeyCode::Char('x'), KeyCode::Enter, KeyCode::Up] {
             assert!(!is_pane_key(code), "{code:?} does not move focus");
         }

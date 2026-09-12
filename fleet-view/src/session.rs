@@ -33,10 +33,9 @@ pub const INITIAL_COLS: u16 = 80;
 /// `None` is dropped in silence - the navigator's choice, taken over naming the key in the
 /// header. The table is incomplete by construction (S2): `F(5)`-`F(12)`, keypad keys and most
 /// modifier combinations beyond a plain Ctrl or Alt have no entry, and each of those is a bug
-/// report this crate now owns. `Tab` and `Shift-Tab` never reach here at all - they are how a
-/// navigator leaves the session, `Tab` to Fleet and `Shift-Tab` to Work, so `main` takes both
-/// before this is called. `Ctrl-I` remains available as `0x09` through the CONTROL arm, which is
-/// how a literal tab still reaches a child.
+/// report this crate now owns. `Tab` is `0x09` and `Shift-Tab` is `ESC [ Z` (cb-lmk): both are the
+/// agent's, and `F1`-`F3` are the way out of a session. A terminal on the kitty protocol reports
+/// Shift-Tab as `Tab` with `SHIFT`, which is the same key and gets the same bytes.
 ///
 /// `Backspace` is `0x7f`, not `0x08`: that is what every terminal the fleet runs under sends by
 /// default and what an agent CLI's line editor expects. `Ctrl-H` remains available as `0x08`
@@ -74,6 +73,10 @@ pub fn key_bytes(key: KeyEvent) -> Option<Vec<u8>> {
         KeyCode::F(2) => Some(b"\x1bOQ".to_vec()),
         KeyCode::F(3) => Some(b"\x1bOR".to_vec()),
         KeyCode::F(4) => Some(b"\x1bOS".to_vec()),
+        // Guarded before plain `Tab`: the first matching arm wins.
+        KeyCode::Tab if key.modifiers.contains(KeyModifiers::SHIFT) => Some(b"\x1b[Z".to_vec()),
+        KeyCode::Tab => Some(vec![b'\t']),
+        KeyCode::BackTab => Some(b"\x1b[Z".to_vec()),
         _ => None,
     }
 }
@@ -965,8 +968,6 @@ mod tests {
     #[test]
     fn an_unmapped_key_produces_no_bytes() {
         assert_eq!(key_bytes(key(KeyCode::F(9))), None);
-        assert_eq!(key_bytes(key(KeyCode::BackTab)), None);
-        assert_eq!(key_bytes(key(KeyCode::Tab)), None);
         assert_eq!(
             key_bytes(with(KeyCode::Char('1'), KeyModifiers::CONTROL)),
             None
@@ -976,7 +977,22 @@ mod tests {
         assert_eq!(key_bytes(release), None);
     }
 
-    /// The hatch that pays for `Tab` being held back: `Ctrl-I` IS `0x09`, and always was.
+    /// cb-lmk: both tabs are the agent's, in every encoding a terminal reports Shift-Tab by.
+    #[test]
+    fn tab_and_back_tab_become_their_terminal_bytes() {
+        assert_eq!(key_bytes(key(KeyCode::Tab)), Some(vec![9]));
+        assert_eq!(key_bytes(key(KeyCode::BackTab)), Some(b"\x1b[Z".to_vec()));
+        assert_eq!(
+            key_bytes(with(KeyCode::BackTab, KeyModifiers::SHIFT)),
+            Some(b"\x1b[Z".to_vec())
+        );
+        assert_eq!(
+            key_bytes(with(KeyCode::Tab, KeyModifiers::SHIFT)),
+            Some(b"\x1b[Z".to_vec())
+        );
+    }
+
+    /// `Ctrl-I` IS `0x09`, and always was - the same byte `Tab` itself sends since cb-lmk.
     #[test]
     fn ctrl_i_still_sends_a_literal_tab() {
         assert_eq!(

@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>cb-lmk — the agreed surface</title>
+<style>
+  :root { --ink:#1b1f23; --dim:#6a737d; --line:#e1e4e8; }
+  body { font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+         color: var(--ink); margin: 0; padding: 2.5rem 2rem 5rem; max-width: 78rem; }
+  h1 { font-size: 1.5rem; margin: 0 0 .3rem; }
+  h2 { font-size: 1.15rem; margin: 2.4rem 0 .4rem; padding-top: 1.1rem; border-top: 1px solid var(--line); }
+  h3 { font-size: 1rem; margin: 1.4rem 0 .3rem; }
+  p.lede { color: var(--dim); margin: 0 0 1.6rem; }
+  p.note { color: var(--dim); font-size: 13.5px; margin: .3rem 0 .5rem; }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  pre { background:#0d1117; color:#d6dae1; border-radius:6px; padding:.8rem 1rem; overflow-x:auto;
+        margin:.4rem 0; line-height:1.4; }
+  .r { color:#f0776c; } .g { color:#7ee787; } .y { color:#e3b341; } .d { color:#8b949e; }
+  .b { color:#79c0ff; font-weight:bold; }
+  table { border-collapse: collapse; font-size: 13.5px; margin: .6rem 0; }
+  td, th { border: 1px solid var(--line); padding: .35rem .6rem; text-align: left; vertical-align: top; }
+</style>
+</head>
+<body>
+<h1>cb-lmk — the surface the navigator approved, 2026-09-12</h1>
+<p class="lede">Two rounds. This file is the specification for <b>giving <code>Tab</code> and
+<code>Shift-Tab</code> back to a hosted agent in <code>cerebro-tui</code></b>. Where this file and
+the bead's plan disagree, this file is right.</p>
+
+<h2>1. The arrangement</h2>
+<table>
+<tr><th>Key</th><th>A live session has the keyboard</th><th>No session has the keyboard</th></tr>
+<tr><td><code>Tab</code></td><td>reaches the agent</td><td>walks the panes forward: Fleet → Work → Session</td></tr>
+<tr><td><code>Shift-Tab</code></td><td>reaches the agent</td><td><b>does nothing at all</b></td></tr>
+<tr><td><code>F1</code> / <code>F2</code> / <code>F3</code></td><td>the only way out — Fleet, Work, Session</td><td>jump to Fleet, Work, Session</td></tr>
+</table>
+<p class="note">Every other key is unchanged: <code>g</code>, <code>h</code>, <code>x</code>,
+<code>q</code>, the arrows, the priority digits and the <code>Shift</code>-arrow sizing chords all
+behave exactly as they do today, and all of them are still held back from a focused live session.</p>
+
+<h2>2. What is on screen, before and after</h2>
+<h3>Today — the line offers two keys that are about to belong to the agent</h3>
+<pre><span class="d">┌ Fleet ───────────────────────────────┐┌</span> <span class="b">Session — Cyclops — build cb-2e9</span> <span class="d">[Tab/Shift-Tab leave] ─────┐</span>
+<span class="d">│</span> <span class="g">●</span> Xavier    working  ux     cb-lmk   <span class="d">││</span> ● Cyclops — implementer                                    <span class="d">│</span>
+<span class="d">│</span> <span class="g">●</span> Cyclops   working  build  cb-2e9   <span class="d">││</span> Running the gate before opening the pull request.          <span class="d">│</span>
+<span class="d">└──────────────────────────────────────┘└────────────────────────────────────────────────────────────┘</span>
+ <span class="r">Cyclops has the keyboard | Tab to Fleet, Shift-Tab to Work, F1/F2/F3 to a pane</span></pre>
+<h3>After — the agent has both, and the F-keys are the way out</h3>
+<pre><span class="d">┌ Fleet ───────────────────────────────┐┌</span> <span class="b">Session — Cyclops — build cb-2e9</span> <span class="d">[F1/F2/F3 leave] ──────────┐</span>
+<span class="d">│</span> <span class="g">●</span> Xavier    working  ux     cb-lmk   <span class="d">││</span> ● Cyclops — implementer                                    <span class="d">│</span>
+<span class="d">│</span> <span class="g">●</span> Cyclops   working  build  cb-2e9   <span class="d">││</span> Running the gate before opening the pull request.          <span class="d">│</span>
+<span class="d">└──────────────────────────────────────┘└────────────────────────────────────────────────────────────┘</span>
+ <span class="g">Cyclops has the keyboard | F1 Fleet, F2 Work, F3 Session</span></pre>
+
+<h3>The ordinary hint line, when nothing has the keyboard</h3>
+<pre> g refresh   h health   <span class="y">Tab/F1-F3 pane</span>   ↑/↓/PgUp/PgDn move   x act   q/Esc/Ctrl-C quit</pre>
+<pre class="d"><span class="d">— the same window, narrowed: the clause survives as one piece, or not at all —</span>
+ g refresh   <span class="y">Tab/F1-F3 pane</span>   q/Esc/Ctrl-C quit</pre>
+<p class="note">One clause, not two: the F-keys stay visible for exactly as long as <code>Tab</code>
+does and disappear with it, so a narrow window never advertises the pane walk while hiding the only
+way out of a focused session.</p>
+
+<h3>A pinned bead, or the health report</h3>
+<pre><span class="d">┌ Fleet ───────────────────────────────┐┌</span> <span class="b">cb-2e9 — A rebase that…</span> <span class="d">[Tab leaves] ───────────────────────┐</span>
+<span class="d">│</span>   Xavier    working  ux     cb-lmk   <span class="d">││</span> cb-2e9  P2  open                                           <span class="d">│</span>
+<span class="d">└──────────────────────────────────────┘└────────────────────────────────────────────────────────────┘</span>
+ <span class="d">— press Tab: focus arrives at Fleet, which closes the bead. Nothing is said. —</span>
+<span class="d">┌ Fleet ───────────────────────────────┐┌</span> <span class="d">Session — Cyclops — build cb-2e9 [Tab to focus] ────────────┐</span>
+<span class="d">│</span> <span class="b">●</span> <span class="b">Xavier    working  ux     cb-lmk</span>   <span class="d">││</span> ● Cyclops — implementer                                    <span class="d">│</span>
+<span class="d">└──────────────────────────────────────┘└────────────────────────────────────────────────────────────┘</span>
+ <span class="d">Cerebro — supervising | g refresh   h health   Tab/F1-F3 pane   ↑/↓ move   q quit</span></pre>
+<p class="note">The frame said <code>[Tab leaves]</code>, and <code>Enter</code> on the row opens the
+bead again, so nothing shouts at the navigator for using the key they were told to use. This is a
+change in behaviour as well as wording: the advertised way out used to be
+<code>Shift-Tab</code>, which left the bead open. <b>The same rule covers the health report and a
+pinned bead alike</b>, which is what keeps one pin pattern rather than two.</p>
+
+<h3>Shift-Tab outside a session</h3>
+<pre> <span class="d">— Shift-Tab pressed: the screen does not move, and nothing is said. —</span></pre>
+<p class="note">The view has a standing habit that a silently dead key is what its whole key
+vocabulary exists to prevent. This is the deliberate exception, and the reason is the point of the
+change: the key is not the view's any more. Anyone with the old backwards-walking habit presses it
+once, sees nothing, reads <code>Tab/F1-F3 pane</code> on the hint line, and has the replacement.</p>
+
+<h2>3. The words, exactly</h2>
+<table>
+<tr><th>Where</th><th>What it says</th></tr>
+<tr><td>Bottom line, a session has the keyboard</td><td><code>&lt;Name&gt; has the keyboard | F1 Fleet, F2 Work, F3 Session</code></td></tr>
+<tr><td>Bottom hint clause, otherwise</td><td><code>Tab/F1-F3 pane</code></td></tr>
+<tr><td>Session frame, live and focused</td><td><code>[F1/F2/F3 leave]</code></td></tr>
+<tr><td>Session frame, live and not focused</td><td><code>[Tab to focus]</code> — unchanged</td></tr>
+<tr><td>Frame of a pinned bead or the health report, focused</td><td><code>[Tab leaves]</code></td></tr>
+<tr><td>Frame of a pinned bead or the health report, not focused</td><td><code>[Tab to focus]</code> — unchanged</td></tr>
+<tr><td>Ended or standby session frame</td><td><code>[retained until next start]</code> — unchanged</td></tr>
+<tr><td>A refused launch</td><td>red title, no hint — unchanged</td></tr>
+</table>
+
+<h2>4. Considered and rejected</h2>
+<table>
+<tr><th>Instead of</th><th>Rejected because</th></tr>
+<tr><td><code>&lt;Name&gt; has the keyboard | F1/F2/F3 to leave</code></td><td>shorter, but leaves the navigator guessing which of the three gets them back to the list of agents</td></tr>
+<tr><td><code>&lt;Name&gt; has every key except F1 Fleet, F2 Work, F3 Session</code></td><td>states the whole rule in one breath, and is the longest of the three</td></tr>
+<tr><td><code>Tab pane</code> and <code>F1-F3 jump</code> as two clauses</td><td>buys room on a wide window and gives the jumps up first on a narrow one — so a small terminal would advertise the pane walk while hiding the only way out of a focused session</td></tr>
+<tr><td><code>[F1-F3 leave]</code> on a focused session frame</td><td>four cells narrower; the spelled-out form was preferred where there is room for it</td></tr>
+<tr><td><code>[F2 leaves]</code> on a pinned bead</td><td>preserves exactly what <code>Shift-Tab</code> did — the bead stays open behind you — but advertises a key that lands in a pane the navigator may not have wanted</td></tr>
+<tr><td><code>[F1-F3 leave]</code> on a pinned bead</td><td>one rule for everything the box can hold, but the line cannot say that F1 closes the bead while F2 and F3 leave it open</td></tr>
+<tr><td>A gold notice when Tab closes a pinned bead</td><td>would say what happened and how to undo it, at the cost of one line of noise every single time the navigator steps out of a bead — and the frame already said <code>[Tab leaves]</code></td></tr>
+<tr><td>A gold notice on a dead <code>Shift-Tab</code>, always or once per run</td><td>honours the dead-key rule and teaches the replacement in the moment the habit fires; rejected because the key is deliberately the agent's now, and a once-per-run notice would be the only thing in this view that behaves differently the second time it is done</td></tr>
+</table>
+</body>
+</html>

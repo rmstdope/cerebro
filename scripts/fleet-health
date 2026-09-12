@@ -189,7 +189,7 @@ if ! out="$(jq -n \
                                else true end)})
         | sort_by(-.noop, .agent)) as $passes
 
-  | ($history | map(select(.open))
+  | ($history | map(select(.open and .state != "asking"))
               | map({agent, state, phase, minutes, bead, long: (.minutes > $long_minutes)})
               | sort_by(-.minutes, .agent)) as $running
 

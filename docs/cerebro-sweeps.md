@@ -317,8 +317,9 @@ Three guards, each of which is a case the sweep must stay out of:
 
 - **Nobody live holds it.** That is the claims sweep's bead, not this one's; offering it here as
   well would put two lines in front of the navigator for one bead.
-- **The session is `asking`.** It is blocked and it said so, and `cerebro--supervise-action` already
-  nudges it after fifteen minutes. Two mechanisms firing on one session is noise.
+- **The session is `asking`.** It is blocked and it said so, and a question waits until it is
+  answered (cb-0q1) — nothing acts on one, so offering the unclaim would be putting a clock back on
+  a wait the fleet deliberately does not hold one on.
 - **No age to judge, or an age inside the hour.** Including every bead sitting in CI.
 
 `bd unclaim`, not `bd reclaim --older-than`: reclaim's window is about a session that is *gone*, and

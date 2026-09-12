@@ -265,8 +265,14 @@ fn epic_finding(candidate: &Candidate) -> Option<Finding> {
 }
 
 /// `cerebro--stalled-finding`. Nobody live holds it (the claims sweep's case), the session is
-/// `asking` (already nudged), there is no age to judge, or the age is inside the threshold -
-/// which includes every bead sitting in CI.
+/// `asking`, there is no age to judge, or the age is inside the threshold - which includes every
+/// bead sitting in CI.
+///
+/// The `asking` skip is unchanged by cb-0q1 and is now the only thing standing between the
+/// navigator and a claim held by a waiting session: a question waits until it is answered, so a
+/// waiting session is occupied rather than stalled, and offering its unclaim would be putting
+/// back the clock that bead removed. The row itself stays `asking` in the fleet view with its
+/// elapsed time climbing, which is where a wait that has gone on too long is seen.
 ///
 /// MEMBERSHIP decides liveness, not the state's truthiness: a live session whose state file
 /// carries no `state` key reaches here with `None` and must still count as live, or a

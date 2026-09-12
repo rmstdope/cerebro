@@ -152,17 +152,9 @@ for the lifetime of a question tool call and back again on the answer or a cance
 writing the states anyway: the hook knows about the question tool and nothing else, so a question
 put in prose, a wait on a port or a "say when" is invisible to it, and it cannot tell `idle` from
 `working`. Two writes that agree cost nothing; a missing one costs the navigator an hour of not
-knowing you were waiting.
-
-**A `[cerebro]` line means nobody answered, and it is not optional.** A question nobody answers
-holds your whole role: nothing else you would have done this pass happens while you sit in
-`asking`. So the fleet view holds a clock on that state, and when it expires it types one line
-into your session beginning `[cerebro]`. You do not enforce that timeout and cannot see it.
-Treat the line as the navigator speaking: stop waiting, record the question and everything you
-found where your own instructions say an unanswered question goes, write `working` again, and
-end the pass. Do not ask again, and do not wait a second time. Where your own instructions say
-nothing about an unanswered question, say in one line what you asked and that nobody answered,
-and end the pass.
+knowing you were waiting. Write `asking` whenever you put a question to the navigator, however you
+ask it — through the question tool or in plain prose — because a session that asks in prose under
+`working` looks exactly like a wedged one, and the stuck clock ends those.
 
 **You cannot see your own state file**, so read it rather than trusting your memory of it — once at
 the start of a pass and once before you end it. If it does not describe what you are doing at that
@@ -513,15 +505,13 @@ You are interactive, so the navigator can answer you. For a question that genuin
 you may ask rather than hand back — write `asking` to your state file first, with the bead still in
 `bead` and the current phase passed again, then ask plainly and wait.
 
-Nobody waits for ever. You do not enforce the timeout and cannot see it: the fleet view holds the
-clock (`cerebro-answer-timeout`, fifteen minutes by default), and when it expires a line starting
-`[cerebro]` arrives in your session telling you to give up. Treat it as the navigator speaking —
-stop waiting, hand the bead back by the hand-back block in *Picking up*, and end the pass.
+The question waits until it is answered. No clock ends it, hands the bead back or ends your pass,
+so ask only what genuinely blocks the bead — and know what asking costs: this session, its claim
+and its worktree sit there until somebody answers.
 
-So a question worth asking is one somebody could answer inside that quarter of an hour. Prefer
-handing back outright when the answer plainly needs somebody awake, or when the bead can wait for
-the planner rather than the navigator: handing back is always available and always correct, and
-asking is only the faster path when somebody is there.
+So prefer handing back outright when the answer plainly needs somebody awake, or when the bead can
+wait for the planner rather than the navigator. Handing back is always available and always
+correct; asking is the faster path only when somebody is there.
 
 ## The review loop
 

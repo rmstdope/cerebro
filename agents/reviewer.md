@@ -121,17 +121,9 @@ for the lifetime of a question tool call and back again on the answer or a cance
 writing the states anyway: the hook knows about the question tool and nothing else, so a question
 put in prose, a wait on a port or a "say when" is invisible to it, and it cannot tell `idle` from
 `working`. Two writes that agree cost nothing; a missing one costs the navigator an hour of not
-knowing you were waiting.
-
-**A `[cerebro]` line means nobody answered, and it is not optional.** A question nobody answers
-holds your whole role: nothing else you would have done this pass happens while you sit in
-`asking`. So the fleet view holds a clock on that state, and when it expires it types one line
-into your session beginning `[cerebro]`. You do not enforce that timeout and cannot see it.
-Treat the line as the navigator speaking: stop waiting, record the question and everything you
-found where your own instructions say an unanswered question goes, write `working` again, and
-end the pass. Do not ask again, and do not wait a second time. Where your own instructions say
-nothing about an unanswered question, say in one line what you asked and that nobody answered,
-and end the pass.
+knowing you were waiting. Write `asking` whenever you put a question to the navigator, however you
+ask it — through the question tool or in plain prose — because a session that asks in prose under
+`working` looks exactly like a wedged one, and the stuck clock ends those.
 
 **You cannot see your own state file**, so read it rather than trusting your memory of it — once at
 the start of a pass and once before you end it. If it does not describe what you are doing at that

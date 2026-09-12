@@ -244,7 +244,7 @@ tmp="$(new_fixture)"
 roster_conf "$tmp" "Cyclops implementer" "Psylocke verifier"
 : > "$tmp/.cerebro/state/decisions.jsonl"
 {
-  tline "$(ago 120)" Psylocke asking verify cb-5kk 111 ""
+  tline "$(ago 120)" Psylocke working verify cb-5kk 111 ""
   tline "$(ago 30)"  Cyclops working "" "" 222 ""
   tline "$(ago 90)"  Storm working build cb-zzz 333 ""
   tline "$(ago 85)"  Storm waiting "" "" 333 working
@@ -258,6 +258,23 @@ out="$(FLEET_HEALTH_LONG_MINUTES=60 run "$tmp" --json)"
 [ "$(jq -r '.running[1].phase' <<<"$out")" = null ] || fail "a missing phase did not come through null"
 [ "$(jq -r '.running[1].bead' <<<"$out")" = null ]  || fail "a missing bead did not come through null"
 pass "running now is fleet-history's open intervals, longest first"
+
+# --- a waiting session is not measured ------------------------------------------------------------
+tmp="$(new_fixture)"
+roster_conf "$tmp" "Cyclops implementer" "Psylocke verifier"
+: > "$tmp/.cerebro/state/decisions.jsonl"
+{
+  tline "$(ago 120)" Psylocke asking verify cb-5kk 111 ""
+  tline "$(ago 90)"  Cyclops working build cb-zzz 222 ""
+} > "$tmp/.cerebro/state/transitions.jsonl"
+
+out="$(FLEET_HEALTH_LONG_MINUTES=60 run "$tmp" --json)"
+[ "$(jq -r '[.running[].agent] | join(",")' <<<"$out")" = "Cyclops" ] \
+  || fail "an open asking interval was measured: $(jq -c '.running' <<<"$out")"
+report="$(FLEET_HEALTH_LONG_MINUTES=60 run "$tmp")"
+! grep -q 'Psylocke' <<<"$report" || fail "the report names a session that is waiting for an answer"
+grep -q 'Cyclops' <<<"$report" || fail "the report dropped the working interval beside the waiting one"
+pass "a session waiting for an answer is in neither .running nor the report"
 
 # --- disarmed or given up on --------------------------------------------------------------------
 tmp="$(new_fixture)"

@@ -54,7 +54,6 @@ pub enum Event {
     Start,
     End,
     Retire,
-    Nudge,
     Arm,
     Exit,
     GiveUp,
@@ -80,7 +79,7 @@ pub enum Event {
     /// not per tick (cb-ykz.2). The observation alone: what was DONE about it is the `resume`,
     /// `end` or `retire` line beside it (cb-ykz.3).
     Stuck,
-    /// One stuck row asked to carry on (cb-ykz.3). Its own event rather than `nudge`'s, for
+    /// One stuck row asked to carry on (cb-ykz.3). Its own event rather than `stuck`'s, for
     /// `SweepTell`'s reason: two decisions sharing one value makes the log unreadable for the
     /// diagnosis it exists for. A stuck row this view hosts writes two lines per occurrence -
     /// `stuck`, the observation, and `resume`, what was done about it. Written only when the line
@@ -107,7 +106,6 @@ impl Event {
             Self::Start => "start",
             Self::End => "end",
             Self::Retire => "retire",
-            Self::Nudge => "nudge",
             Self::Arm => "arm",
             Self::Exit => "exit",
             Self::GiveUp => "give-up",
@@ -466,7 +464,7 @@ impl Logger {
 mod tests {
     use super::*;
 
-    /// The ninth event (cb-kcs.5.2). A decision the view took, like `Nudge`, so it goes in the
+    /// The ninth event (cb-kcs.5.2). A decision the view took, like `Retire`, so it goes in the
     /// decisions log and is written at every verbosity.
     #[test]
     fn triage_is_a_decision_not_an_error() {
@@ -527,12 +525,11 @@ mod tests {
         assert_eq!(lines(root, "evaluations").len(), 1, "the two do not bleed");
     }
 
-    const EVERY: [Event; 10] = [
+    const EVERY: [Event; 9] = [
         Event::DisarmAll,
         Event::Start,
         Event::End,
         Event::Retire,
-        Event::Nudge,
         Event::Arm,
         Event::Exit,
         Event::GiveUp,

@@ -948,6 +948,13 @@ pub const HISTORY_LONG_MULTIPLE: f64 = 2.0;
 /// The text and the flag rather than a styled line, because `ui.rs` owns colour and `model.rs`
 /// owns words.
 pub fn history_line(row: &HistoryRow) -> Option<(String, bool)> {
+    // A question waits until it is answered (cb-0q1), so History does not measure the wait: an
+    // `asking` row is absent from the section entirely rather than present-but-not-gold. The one
+    // place that judgement is made, ahead of the open-interval test, because a waiting session is
+    // not a slow one however long it has waited.
+    if row.state == "asking" {
+        return None;
+    }
     let open = row.open_min?;
     let median = row.median_min.filter(|m| *m > 0.0);
     let long = median.is_some_and(|m| open >= HISTORY_LONG_MULTIPLE * m);
@@ -1991,15 +1998,30 @@ mod tests {
         let long = HistoryRow {
             median_min: Some(2.2),
             open_min: Some(536.6),
-            ..history_row("Psylocke", "asking")
+            ..history_row("Psylocke", "working")
         };
         assert_eq!(
             history_line(&long),
             Some((
-                "  Psylocke asking 537m - long, median 2m".to_string(),
+                "  Psylocke working 537m - long, median 2m".to_string(),
                 true
             ))
         );
+
+        // A session waiting for an answer is absent entirely, however long it has waited: a
+        // question waits until it is answered, and History does not measure the wait (cb-0q1).
+        let asking = HistoryRow {
+            median_min: Some(2.2),
+            open_min: Some(536.6),
+            ..history_row("Xavier", "asking")
+        };
+        assert_eq!(history_line(&asking), None);
+        let asking_short = HistoryRow {
+            median_min: Some(2.2),
+            open_min: Some(1.0),
+            ..history_row("Xavier", "asking")
+        };
+        assert_eq!(history_line(&asking_short), None);
 
         // Exactly twice the median is long: the boundary is inclusive, as elisp's `>=` is.
         let boundary = HistoryRow {

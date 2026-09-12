@@ -145,8 +145,10 @@ fn real_fleet_history_output_feeds_the_history_line() {
                 assert!(text.contains(&row.state), "{text:?}");
                 assert!(!long || text.contains("- long, median"), "{text:?}");
             }
-            // `open_min` is null: this agent is not in this state at the moment, and has no line.
-            None => assert!(row.open_min.is_none(), "{row:?}"),
+            // Two reasons for no line: `open_min` is null, so this agent is not in this state at
+            // the moment, or the state is `asking` — a question waits until it is answered and
+            // History does not measure the wait (cb-0q1).
+            None => assert!(row.open_min.is_none() || row.state == "asking", "{row:?}"),
         }
     }
 }

@@ -475,7 +475,7 @@ fn supervise(
     // because `hands_over` is a different question (cb-nc8) - "somebody else has this checkout"
     // rather than "may I act now" - and only the first may empty the armed set.
     //
-    // The stuck, resume and nudge branches below therefore ask it again NOWHERE: while a drain
+    // The stuck and resume branches below therefore ask it again NOWHERE: while a drain
     // existed they had to, because a draining view reached them with `may_supervise()` false, and
     // with the drain gone (cb-abs.2) a second guard would be a dead condition that reads as a live
     // one - the shape that grows a second, wrong gate the day somebody adds a mode.
@@ -516,13 +516,8 @@ fn supervise(
             stood,
             stuck,
         } = row;
-        // Before any action is decided, and for every row: a name that asked, was nudged, was
-        // answered and asks again is nudgeable again.
-        if state != RowState::Asking {
-            app.nudged.remove(&name);
-        }
         // The same shape for a stuck row, and it decides nothing: this bead makes a stopped
-        // session visible and no more (cb-ykz.2). Gated on `may_supervise` like the nudge - a
+        // session visible and no more (cb-ykz.2). Gated on `may_supervise` - a
         // view that decides nothing records nothing - where the DRAWING is gated on nothing,
         // because looking at a fleet is not supervising it.
         match stuck {
@@ -595,7 +590,6 @@ fn supervise(
             match action {
                 lifecycle::Supervision::Retire => log::Event::Retire,
                 lifecycle::Supervision::End => log::Event::End,
-                lifecycle::Supervision::Nudge => log::Event::Nudge,
                 lifecycle::Supervision::Resume => log::Event::Resume,
             },
             now,
@@ -644,14 +638,6 @@ fn supervise(
                 app.resumed.remove(&name);
                 app.resumed_this_stretch.remove(&name);
                 app.set_notice(lifecycle::supervision_notice(action, &name, stuck.is_some()));
-            }
-            lifecycle::Supervision::Nudge => {
-                if app.nudged.contains(&name) {
-                    continue;
-                }
-                app.nudged.insert(name.clone());
-                host.type_line(&name, lifecycle::nudge_message(kind), at);
-                app.set_notice(lifecycle::supervision_notice(action, &name, false));
             }
             // Gated by `supervise`'s own top-level return, together with the once-per-stretch
             // guard decided above, so that neither writes a line saying it happened.
@@ -728,7 +714,7 @@ fn prune(
 /// a Cerebro started on this very tick has no session to type into until the next read restates
 /// its row.
 ///
-/// Gated on `may_supervise()`, like the nudge: a triage line is a NEW instruction, and a view
+/// Gated on `may_supervise()`: a triage line is a NEW instruction, and a view
 /// handing supervision over issues none.
 fn triage_tell(
     app: &mut App,
@@ -3690,85 +3676,45 @@ mod main_tests {
     }
 
 
-    #[test]
-    fn a_question_nobody_answered_is_nudged_once() {
-        let dir = tempfile::tempdir().unwrap();
-        let paths = scratch(dir.path(), "sleep 5");
-        let now = Utc::now();
-        let mut host = SessionHost::default();
-        // A shell that echoes each line it is given, so the nudge is observable as output.
-        let mut command = portable_pty::CommandBuilder::new("/bin/sh");
-        command.arg("-c");
-        command.arg("while read line; do printf 'got:%s\r\n' \"$line\"; done");
-        host.insert(
-            "Cyclops",
-            cerebro_tui::session::Session::spawn_command("Cyclops", command, 24, 200)
-                .expect("the session spawns"),
-        );
-
-        let asking = |stood| {
-            vec![stood_row("Cyclops", cerebro_tui::model::AgentKind::Implementer,
-                cerebro_tui::model::RowState::Asking, stood, now)]
-        };
-        let mut app = lifecycle_app(supervising(), asking(16 * 60));
-        let at = Instant::now();
-        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &paths, now, at);
-        assert!(app.nudged.contains("Cyclops"));
-        assert_eq!(app.notice.as_deref(), Some("Cyclops was asked to hand its question back."));
-
-        // The return is sent separately, and only once it is due.
-        host.flush_returns(at);
-        app.notice = None;
-        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &paths, now, at);
-        assert_eq!(app.notice, None, "one nudge per question, not one per tick");
-        host.flush_returns(at + cerebro_tui::session::RETURN_DELAY);
-
-        saw_line(&mut host, "Cyclops", 24, 200, "got:[cerebro] Nobody answered");
-
-        // Answered, and asking again: nudgeable again.
-        app.finish_refresh(
-            Ok(vec![stood_row("Cyclops", cerebro_tui::model::AgentKind::Implementer,
-                cerebro_tui::model::RowState::Working, 1, now)]),
-            now,
-        );
-        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &paths, now, at);
-        assert!(app.nudged.is_empty(), "a name leaves the set as soon as it stops asking");
-
-        app.finish_refresh(Ok(asking(16 * 60)), now);
-        app.notice = None;
-        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &paths, now, at);
-        assert_eq!(app.notice.as_deref(), Some("Cyclops was asked to hand its question back."));
-    }
-
-    /// The line that reaches an interactive role is its own, not the implementer's.
+    /// A question waits until it is answered (cb-0q1): however long an `asking` row has stood,
+    /// for either kind, nothing is typed into it and nothing is said about it.
     ///
-    /// The needle is a substring only `INTERACTIVE_NUDGE_MESSAGE` has: both messages open with
-    /// `[cerebro] Nobody answered within the timeout. Do not keep waiting:`, so a prefix match
-    /// cannot tell them apart - and typing the implementer's line into Psylocke would tell her to
-    /// hand the bead back, which `agents/verifier.md` forbids her doing.
+    /// The two cases this replaces pinned the nudge's own words against literals, and there is no
+    /// string left to pin - so what is asserted here is the silence itself, at an elapsed time
+    /// well past both of the clocks that used to act.
     #[test]
-    fn an_interactive_role_is_nudged_in_its_own_words() {
-        let dir = tempfile::tempdir().unwrap();
-        let paths = scratch(dir.path(), "sleep 5");
-        let now = Utc::now();
-        let mut host = SessionHost::default();
-        hosted_echo(&mut host, "Psylocke");
+    fn a_question_is_never_typed_into_however_long_it_waits() {
+        for (name, kind) in [
+            ("Cyclops", cerebro_tui::model::AgentKind::Implementer),
+            ("Psylocke", cerebro_tui::model::AgentKind::Interactive),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let paths = scratch(dir.path(), "sleep 5");
+            let now = Utc::now();
+            let mut host = SessionHost::default();
+            hosted_echo(&mut host, name);
 
-        let asking = vec![stood_row(
-            "Psylocke",
-            cerebro_tui::model::AgentKind::Interactive,
-            cerebro_tui::model::RowState::Asking,
-            31 * 60,
-            now,
-        )];
-        let mut app = lifecycle_app(supervising(), asking);
-        let at = Instant::now();
-        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &paths, now, at);
-        assert!(app.nudged.contains("Psylocke"));
-        assert_eq!(app.notice.as_deref(), Some("Psylocke was asked to hand its question back."));
+            let asking = vec![stood_row(name, kind, cerebro_tui::model::RowState::Asking, 5 * 3600, now)];
+            let mut app = lifecycle_app(supervising(), asking);
+            let at = Instant::now();
+            supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &paths, now, at);
+            assert_eq!(app.notice, None, "{name} was acted on while waiting for an answer");
+            // The positive control first: a line typed by hand reaches the echoing shell and is
+            // drawn. Without it the absence below would pass just as well against a session that
+            // never spawned or whose shell had died, which is the one way a negative assertion
+            // rots into no assertion at all.
+            host.type_line(name, "[control] this one was typed by hand", at);
+            host.flush_returns(at + cerebro_tui::session::RETURN_DELAY);
+            saw_line(&mut host, name, 24, 400, "got:[control] this one was typed by hand");
 
-        host.flush_returns(at + cerebro_tui::session::RETURN_DELAY);
-        saw_line(&mut host, "Psylocke", 24, 400, "waiting: record the question");
+            // And the assertion itself: the supervision pass above typed nothing, so no
+            // `[cerebro]` line is on that same screen.
+            let screen = probe::view_text(&host.sync(Some(name), 24, 400, Utc::now()));
+            assert!(
+                !screen.iter().any(|line| line.contains("[cerebro]")),
+                "{name} was typed into while waiting for an answer: {screen:?}"
+            );
+        }
     }
 
     // --- the stuck arm's caller (cb-ykz.3) -----------------------------------------------------

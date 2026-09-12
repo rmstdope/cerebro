@@ -1840,19 +1840,12 @@ pub struct App {
     /// iteration — and unconditionally, because a flag is true whoever set it and this view draws
     /// it whether or not it may supervise.
     pub flagged: BTreeSet<String>,
-    /// Names already nudged for the question they are asking now.
-    ///
-    /// The poll runs every five seconds; without this the line would be typed on every tick,
-    /// burying the agent's own output and resetting what it was told. A name leaves the set as
-    /// soon as it is no longer `asking`, so its NEXT question is nudgeable again
-    /// (`cerebro--nudged`, `emacs/cerebro.el:3879`).
-    pub nudged: BTreeSet<String>,
 
     /// Names already logged for the stuck stretch they are in now (cb-ykz.2).
     ///
-    /// Cleared for a name the moment its row stops being stuck, exactly as `nudged` is cleared
-    /// when a row stops asking: a set never cleared logs a stopped session once and then never
-    /// again, even after it recovers and stops a second time (`cerebro--stuck-logged`).
+    /// Cleared for a name the moment its row stops being stuck: a set never cleared logs a
+    /// stopped session once and then never again, even after it recovers and stops a second time
+    /// (`cerebro--stuck-logged`).
     pub stuck_logged: BTreeSet<String>,
 
     /// Names resumed while stuck, and what their state file said when the line was typed:
@@ -1874,8 +1867,8 @@ pub struct App {
     /// `resumed` cannot do this job: a row whose `since` is absent is never recorded there (a
     /// missing timestamp is not evidence), so without this set such a row would be told again on
     /// every five-second tick for ever - and it is exactly the row least able to answer. Cleared
-    /// the moment the row stops being stuck, the shape `stuck_logged` and `nudged` have, which is
-    /// why it is a second set rather than a field of the first.
+    /// the moment the row stops being stuck, the shape `stuck_logged` has, which is why it is a
+    /// second set rather than a field of the first.
     pub resumed_this_stretch: BTreeSet<String>,
     /// The navigator's divider overrides. Memory only; see `PaneSizes`.
     pub panes: PaneSizes,
@@ -2055,7 +2048,6 @@ impl App {
             standby_labels: BTreeMap::new(),
             armed: BTreeSet::new(),
             flagged: BTreeSet::new(),
-            nudged: BTreeSet::new(),
             stuck_logged: BTreeSet::new(),
             resumed: BTreeMap::new(),
             resumed_this_stretch: BTreeSet::new(),

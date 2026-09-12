@@ -276,21 +276,23 @@ runs, and nothing can clear that from the inside — so instead of clearing it, 
 away and a clean one takes the next bead.
 
 They are interactive sessions, so you can watch one work and type to it. If it hits a question only
-you can answer it will ask, and show as `asking` in the fleet view. Answer it and it carries on. If
-you are away, it is told to give up after fifteen minutes (`cerebro-answer-timeout`, 900 seconds) and
-hand the bead to your queue instead — so a fleet left alone overnight drains the queue rather than
-sitting blocked on you.
+you can answer it will ask, and show as `asking` in the fleet view. Answer it and it carries on —
+however long that takes. **A question waits until it is answered** (cb-0q1): no clock types a line
+into a waiting session, hands its bead to your queue, ends its pass or retires it, and Health and
+History say nothing about it either, so a waiting session never reads as a fleet running slowly.
 
-**The interactive roles have the same clock, set longer.** Since cb-2e9 Xavier, Beast, Cerebro,
-Moira, Psylocke, Cypher and Forge are told to give up after thirty minutes
-(`cerebro-interactive-answer-timeout`, 1800 seconds) — twice a builder's, because their questions
-are ones you think about rather than answer yes/no. Each records its question where its own
-instructions say an unanswered one goes and ends the pass, and is started again on its own trigger.
-That is a deliberate trade you should know about before stepping away mid-interview: it is what
-keeps one unanswered question from holding a whole role overnight (Psylocke once sat in `asking` for
-1306 minutes while sixteen merged beads went unverified), and the price is that a walkthrough you
-are more than half an hour into is abandoned. They are never *retired* on that clock — only asked to
-finish.
+**The same is true of every interactive role** — Xavier, Beast, Cerebro, Moira, Psylocke, Cypher and
+Forge. Come back to a half-finished interview and you resume the conversation rather than restart
+from a written summary.
+
+That is a trade worth knowing before you step away: a session can sit occupied all afternoon, and a
+role only one agent holds is then held with it. The clock that used to prevent that (fifteen minutes
+for a builder, thirty for an interactive role) existed because Psylocke once sat in `asking` for
+1306 minutes while sixteen merged beads went unverified — and it was removed because what it
+actually bought, most of the time, was an abandoned walkthrough and a bead parked on you. A session
+may still park work for a person for its own reasons, when the question is genuinely one nobody
+present can answer; what is gone is parking because time passed. Your own hands still end a
+session — `k`, a stop flag, `s`.
 
 **Two or three is a sensible number on one machine.** More is not faster: every merge makes every
 other open PR stale, and where the branch protection sets `strict` each of them pays for a `BEHIND`
@@ -595,7 +597,7 @@ looking free.
 
 **`decisions.jsonl`** is the fleet view's, and it answers the other half: not what the agents did but
 what the fleet view decided about them. One line per start (with the trigger that fired and whether it was a
-trigger or you), per end, retire and nudge, per sweep finding run, per triage line typed, per
+trigger or you), per end, retire and resume, per sweep finding run, per triage line typed, per
 two-hourly sweep line typed (`sweep-tell`, which is not the `sweep` a finding run writes), and per
 abnormal exit. It is the **small, long-lived** one: since cb-xhu.2 the evaluation lines live
 elsewhere, so at a couple of hundred lines a day it keeps months of starts and exits rather than the

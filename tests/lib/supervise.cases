@@ -8,7 +8,7 @@
 #
 # WHY IT IS ONE FILE. The rule it encodes - "given what an agent wrote in its state file and how
 # long ago, what does this view do about the session?" - is a table rather than prose because a
-# wrong answer is invisible until a session is ended or nudged that should not have been.
+# wrong answer is invisible until a session is ended that should not have been.
 #
 # THIS HEADER IS THE REFERENCE COPY for the `tests/lib/*.cases` conventions, which is what its
 # siblings mean when they say they copy them (cb-abs.2 - it was `supervisor.cases`' header until
@@ -18,11 +18,10 @@
 # those numbers rather than whatever the running fleet is customised to; THE COLUMNS, in order,
 # tab- or space-separated, one word per cell; and the rows themselves in commented groups.
 #
-# WHAT BOTH READERS MUST BIND. The rows assume `cerebro-end-grace' 30 and
-# `cerebro-answer-timeout' 900, and `cerebro-interactive-answer-timeout' 1800, so a reader binds or
-# passes exactly those numbers rather than whatever the running fleet is customised to. The two
-# answer timeouts are per kind: an implementer's questions are ones the navigator answers, an
-# interactive role's are ones they think about, so the second clock is twice the first.
+# WHAT BOTH READERS MUST BIND. The rows assume `cerebro-end-grace' 30, so a reader binds or passes
+# exactly that number rather than whatever the running fleet is customised to. There is no answer
+# timeout to bind: a question waits until it is answered (cb-0q1), so the `asking' rows carry
+# elapsed times well past the two clocks that used to act on them and still answer `none'.
 #
 # THE COLUMNS, tab- or space-separated, in order:
 #
@@ -56,7 +55,7 @@
 #                   `stood''s `none' is not.
 #   resume_stale    `yes' when this name was resumed while stuck and its state file has recorded
 #                   nothing since. `no' otherwise, and `no' on every row that was never resumed.
-#   action          `retire' `end' `nudge' `resume' or `none' - the answer.
+#   action          `retire' `end' `resume' or `none' - the answer.
 #
 # THE RULE THE ROWS ENCODE, stated once so a new row can be checked against intent:
 #
@@ -69,10 +68,8 @@
 #     ended its pass in exactly this sense (cb-1or.1).
 #   * THE END DECISION: a flag retires at once and whatever the grace - nothing is in flight, so
 #     there is nothing for a grace to protect. Otherwise `stood >= 30' ends it; otherwise nothing.
-#   * `asking', implementer -> nudge once `stood >= 900'. The stop flag makes NO difference: the
-#     bead is still in flight, so the question still needs an answer or a hand-back.
-#   * `asking', interactive -> nudge once `stood >= 1800'. The stop flag makes no difference, for
-#     the implementer arm's reason.
+#   * `asking', either kind -> nothing, whatever the flag and whatever the elapsed time. A question
+#     waits until it is answered.
 #   * `working', turn ended, stood past the ceiling -> the row is STUCK. Every other `working' row
 #     answers nothing, as before.
 #   * STUCK, not resumed yet -> `resume', both kinds. The stop flag makes NO difference, for the
@@ -133,19 +130,19 @@ interactive   waiting   yes  no   no   29     none   no   none
 interactive   waiting   yes  no   yes  30     none   no   end
 interactive   waiting   yes  no   no   none   none   no   none
 
-# Asking: both kinds, on their own clocks, and the flag makes no difference to either.
-implementer   asking    yes  no   no   900    none   no   nudge
-implementer   asking    yes  no   no   901    none   no   nudge
-implementer   asking    yes  yes  no   900    none   no   nudge
+# Asking: no clock acts on either kind, at any elapsed time, whatever the flag.
+implementer   asking    yes  no   no   900    none   no   none
+implementer   asking    yes  no   no   901    none   no   none
+implementer   asking    yes  yes  no   900    none   no   none
 implementer   asking    yes  no   no   899    none   no   none
 implementer   asking    yes  no   no   none   none   no   none
-interactive   asking    yes  no   no   1800   none   no   nudge
-interactive   asking    yes  no   no   1801   none   no   nudge
-interactive   asking    yes  yes  no   1800   none   no   nudge
+interactive   asking    yes  no   no   1800   none   no   none
+interactive   asking    yes  no   no   1801   none   no   none
+interactive   asking    yes  yes  no   1800   none   no   none
 interactive   asking    yes  no   no   1799   none   no   none
 interactive   asking    yes  no   no   none   none   no   none
-interactive   asking    yes  no   no   3000   none   no   nudge
-interactive   asking    yes  yes  no   3000   none   no   nudge
+interactive   asking    yes  no   no   3000   none   no   none
+interactive   asking    yes  yes  no   3000   none   no   none
 
 # Every other state, whatever the flag.
 implementer   working   yes  yes  no   5000   none   no   none

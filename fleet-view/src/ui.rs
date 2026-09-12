@@ -5420,11 +5420,13 @@ mod tests {
     fn history_is_the_last_section_of_the_work_pane() {
         let app = with_history(vec![
             history_row("Cyclops", "working", Some(2.4), Some(21.9)),
-            history_row("Psylocke", "asking", Some(536.6), Some(2.2)),
+            history_row("Psylocke", "verify", Some(536.6), Some(2.2)),
             history_row("Beast", "plan", Some(9.0), None),
             history_row("Xavier", "plan", Some(4.0), Some(3.0)),
             // Not running: no line, and not counted.
             history_row("Forge", "sweep", None, Some(3.0)),
+            // Waiting for an answer: no line, and not counted (cb-0q1).
+            history_row("Moira", "asking", Some(600.0), Some(2.0)),
         ]);
         let rendered = body(&render(&app, 90, 60));
 
@@ -5435,14 +5437,18 @@ mod tests {
         );
         assert!(rendered.iter().any(|l| l.contains("Cyclops working 2m")), "{rendered:#?}");
         assert!(
-            rendered.iter().any(|l| l.contains("Psylocke asking 537m - long, median 2m")),
+            rendered.iter().any(|l| l.contains("Psylocke verify 537m - long, median 2m")),
             "{rendered:#?}"
         );
         assert!(!rendered.iter().any(|l| l.contains("Forge")), "nothing is running there");
+        assert!(
+            !rendered.iter().any(|l| l.contains("Moira")),
+            "a session waiting for an answer is absent from History entirely"
+        );
 
         // The long one is gold, and the ordinary one is not.
         let buffer = render(&app, 90, 60);
-        assert_eq!(style_where(&buffer, "Psylocke asking").fg, Some(GOLD));
+        assert_eq!(style_where(&buffer, "Psylocke verify").fg, Some(GOLD));
         assert_ne!(style_where(&buffer, "Cyclops working").fg, Some(GOLD));
     }
 

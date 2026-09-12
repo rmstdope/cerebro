@@ -428,13 +428,16 @@ two buckets and is unaffected. **Since cb-kcs.1 what it may do at all is
 a consequence of what the project declares rather than of what the program can do.** Since cb-kcs.3 it acts unattended on
 the sessions it hosts where a project declares it the supervisor: it ends one whose pass is over
 after `END_GRACE_SECONDS`, retires one under a stop flag and clears the flag with it, deletes the
-state file of every session it ends, and types one line into a session whose question nobody
-answered — an implementer past `ANSWER_TIMEOUT_SECONDS`, and since cb-2e9 an interactive role past
-`INTERACTIVE_ANSWER_TIMEOUT_SECONDS` (`cerebro-interactive-answer-timeout`, twice the
-implementer's), each in its own words. Held to `tests/lib/supervise.cases`, which
-`cerebro--supervise-action` answers too. On that clock an interactive role is nudged and never
-retired: a nudge asks the agent to finish, where a retire ends its session under it. (A stop flag on
-an idle one still retires it — that is the flag's arm, not the clock's.)
+state file of every session it ends, and types one line into a session that has gone quiet mid-work
+(`stuck_for`, and the resume beside it). **Never into one that is waiting for an answer**: since
+cb-0q1 a question waits until it is answered, so no elapsed time acts on an `asking` row for either
+kind and whatever the flag — the two answer timeouts, `Supervision::Nudge` and both nudge messages
+are gone, and `tests/lib/supervise.cases` keeps its twelve `asking` rows answering `none` so the
+table asserts that promise rather than merely not contradicting it. `scripts/fleet-health` drops an
+`asking` interval from `$running` and `model::history_line` answers `None` for one, so neither
+self-report counts a waiting session as the fleet running slowly. A stop flag on an idle session
+still retires it — that is the flag's arm, and the navigator's hand is what still ends a waiting
+one.
 Since cb-kcs.4.1 it also **starts** sessions on its own: the roster's `autostart`/`standby`
 declaration is honoured as the view comes up, and the board-backed triggers for the planner,
 implementer, verifier and orchestrator roles bring a blue `standby` row back — held back by a
@@ -457,7 +460,7 @@ refusal is parked from the first failure, where a silent crash is retried. Since
 three roles whose work arrives from outside the fleet start too, off a `gh` reader on its own
 cadence and an hourly floor each. Since cb-kcs.4.4 all of it is written down, in the same three
 append-only files under `.cerebro/state/`: `decisions.jsonl` — a line per start (with the trigger that
-fired), end, retire, nudge, resume, stuck, arm, disarm, exit and give-up, and since cb-xhu.2 nothing else, which is why it
+fired), end, retire, resume, stuck, arm, disarm, exit and give-up, and since cb-xhu.2 nothing else, which is why it
 keeps months; `evaluations.jsonl` — at the verbosity this view compiles in, a
 line per trigger evaluation per armed row per tick carrying what the trigger read and which guard
 held it; and `errors.jsonl`, one line per outage rather than per failed read, naming the pane or
@@ -487,7 +490,7 @@ ordinary split layout, where the Fleet pane is 40 cells — or 52 on a window at
 instead, standing aside as it already does for a standby label and a dead row's verdict, with
 `columns` sizing that column from the same `bead_cell` so the text is never cut. The STATE cell is
 untouched in both. One `stuck` line per occurrence goes into `decisions.jsonl`, gated on
-supervision like the nudge. Since cb-ykz.3 it also **acts**, off the same rule and the same
+supervision like the resume beside it. Since cb-ykz.3 it also **acts**, off the same rule and the same
 memory it keeps: one `resume` line typed into the session, then — if it is stuck again
 with its `(since, phase_since)` pair unmoved — the interactive role's session ended, or retired
 under a stop flag, and an implementer's left to `sweep-stalled`. A stuck row this view hosts
@@ -524,7 +527,7 @@ start or has died, once and then again every ten minutes while it stays broken (
 swallowing it is worktrees quietly not being pruned). And it types the triage line into an
 idle orchestrator this view hosts when unranked beads are waiting for a ranking — the same bytes
 Cerebro already reads — saying `Cerebro was asked to rank 3 unranked beads.` in gold beside the
-nudge's own line, and repeating the same set every ten minutes while Cerebro stays idle. The line
+resume's own line, and repeating the same set every ten minutes while Cerebro stays idle. The line
 is typed, recorded and throttled **only when it went into a session this view hosts**, which is a
 deliberate divergence from `cerebro--triage-tell`: that one records and logs even when no buffer
 took the string, so its throttle then holds for a line that never left the building.
@@ -625,7 +628,7 @@ lock error, never permission to take over. The rule it gates is one boolean, ass
 `reconcile_supervision` itself: `tests/lib/supervisor.cases` is gone with the second
 implementation it existed to hold to the same table (cb-abs.2).
 
-A view that does not own the checkout starts, nudges, arms, triages and prunes nothing — the
+A view that does not own the checkout starts, resumes, arms, triages and prunes nothing — the
 **session lifecycle** is what the lease gates. The bead panel's own keys are deliberately outside
 it: `x` on a sweep finding and the priority keys write to the shared board rather than to this
 checkout's sessions, they are the navigator's own act and each asks first, and a board `bd` runs

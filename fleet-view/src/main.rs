@@ -1719,10 +1719,10 @@ fn write_priority(
     AppAction::Write(request)
 }
 
-/// In branch 3, `Tab`, `Shift-Tab`, `F1`-`F3` and the five `Shift` resize keys are held back and handed to `App::on_key`, which runs
-/// the plain focus cycle: from Session that is `Tab` -> Fleet and `Shift-Tab` -> Work (cb-3v5 for the
-/// first of them, Q8 for the second), which is the reason the child can never receive either;
-/// everything else goes to
+/// In branch 3, `F1`-`F3` and the five `Shift` resize keys are held back and handed to
+/// `App::on_key`, which jumps to the named pane or moves a divider; `Tab` and `Shift-Tab` reach
+/// the child since cb-lmk, which narrowed cb-3v5 once `F1`-`F3` existed as the way out.
+/// Everything else goes to
 /// `session::key_bytes`, and a `None` is dropped without a word (Q1), because the pane is a window
 /// onto the child rather than a commentary on it. So `q`, `Esc`, `Ctrl-C` and `g` do NOT quit or
 /// refresh while a live session is focused - they are the child's, which is exactly what the
@@ -1800,11 +1800,10 @@ fn route_key(
             }
         };
     }
-    // Both tabs are held back: the navigator asked for one key back to the roster (cb-3v5) and
-    // accepted the cost, which is that no hosted agent ever receives a plain tab again. `Ctrl-I`
-    // still sends one - it IS 0x09, through `control_byte` - so an agent that needs a real tab
-    // gets one in two keys. Since cb-5kk `F1`, `F2` and `F3` join them, at the same accepted
-    // cost and with no escape hatch; `F4` and every other function key still reach the agent.
+    // Both tabs reach the agent (cb-lmk): some providers bind `Shift-Tab` themselves, and since
+    // cb-5kk `F1`, `F2` and `F3` are the way out of a session, so cb-3v5's reason for holding the
+    // tabs back is served by other keys. Those three are held back with no escape hatch; `F4` and
+    // every other function key still reach the agent.
     // Since cb-bch.1 the five resize keys join them, at the same accepted cost: `Shift-←/→/↑/↓`
     // and `Shift-Home` move a divider rather than reaching the agent, so the navigator can resize
     // the pane they are reading an agent in. `app::is_view_key` is the one place that whole set
@@ -2567,7 +2566,7 @@ mod main_tests {
     }
 
     #[test]
-    fn a_focused_live_session_receives_every_key_but_the_two_tabs() {
+    fn a_focused_live_session_receives_both_tabs() {
         let mut host = SessionHost::default();
         let mut app = hosting(&mut host);
         let mut terminal = Terminal::new(TestBackend::new(120, 20)).unwrap();
@@ -2576,6 +2575,7 @@ mod main_tests {
             key(KeyCode::Esc),
             ctrl(KeyCode::Char('c')),
             key(KeyCode::BackTab),
+            key(KeyCode::F(2)),
             // Focus is Work by then, so this key reaches `App::on_key` rather than the child -
             // and since cb-kcs.2.3 the live session it just left is what REFUSES the quit.
             key(KeyCode::Char('q')),
@@ -2592,16 +2592,17 @@ mod main_tests {
         assert_eq!(
             app.focus,
             cerebro_tui::app::PaneFocus::Work,
-            "Shift-Tab is the way out, and it is the plain cycle"
+            "F2 is the way out"
         );
-        let text = echoed(&mut state.host, &app, "^C");
+        let text = echoed(&mut state.host, &app, "^[[Z");
+        assert!(text.contains("^[[Z"), "Shift-Tab reached the child: {text:?}");
         assert!(text.contains('x'), "the plain char reached the child: {text:?}");
         assert!(text.contains("^["), "and Escape did too: {text:?}");
         assert!(text.contains("^C"), "and so did Ctrl-C: {text:?}");
     }
 
     #[test]
-    fn tab_leaves_a_focused_live_session_for_fleet() {
+    fn tabs_stay_in_a_focused_live_session() {
         let mut host = SessionHost::default();
         let mut app = hosting(&mut host);
         assert!(app.session_has_keyboard(), "the fixture hands the keyboard to the child");
@@ -2610,11 +2611,11 @@ mod main_tests {
             crossterm::event::KeyModifiers::NONE,
         );
         drive(&mut app, &mut host, &nowhere().0, vec![tab]);
-        assert_eq!(app.focus, cerebro_tui::app::PaneFocus::Fleet, "Tab is the plain cycle");
-        assert_eq!(app.selected, Some("Storm".to_string()), "and the selection does not move");
-        assert!(app.notice.is_none(), "a focus key says nothing");
+        assert_eq!(app.focus, cerebro_tui::app::PaneFocus::Session, "Tab is the agent's");
+        assert!(app.session_has_keyboard(), "and the child keeps the keyboard");
+        assert!(app.notice.is_none(), "and nothing is said");
 
-        // And `Shift-Tab` is unchanged: still the reverse of the cycle, still landing on Work.
+        // And `Shift-Tab` is the agent's too (cb-lmk).
         let mut host = SessionHost::default();
         let mut app = hosting(&mut host);
         let back = crossterm::event::KeyEvent::new(
@@ -2622,7 +2623,9 @@ mod main_tests {
             crossterm::event::KeyModifiers::NONE,
         );
         drive(&mut app, &mut host, &nowhere().0, vec![back]);
-        assert_eq!(app.focus, cerebro_tui::app::PaneFocus::Work);
+        assert_eq!(app.focus, cerebro_tui::app::PaneFocus::Session, "Shift-Tab is the agent's");
+        assert!(app.session_has_keyboard());
+        assert!(app.notice.is_none());
     }
 
     /// cb-lor: with a bead pinned the child never has the keyboard, so `Tab` reaches `App` and
@@ -2761,7 +2764,7 @@ mod main_tests {
         // cb-kcs.2.3: the event source is then the only thing that ends the loop.
         let mut events = ReplayedEvents::stopping(vec![
             Event::Paste("one\ntwo".to_string()),
-            key(KeyCode::BackTab),
+            key(KeyCode::F(2)),
             key(KeyCode::Char('q')),
         ]);
         let workers = test_workers();

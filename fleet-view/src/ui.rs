@@ -1072,7 +1072,7 @@ fn fit_hints(clauses: &[HintClause], used: usize, width: usize) -> String {
 /// fits, naming the clause and the overspend if it does not.
 fn hint_clauses(app: &App) -> Vec<HintClause> {
     let mut clauses = vec![
-        HintClause { text: "Tab/Shift-Tab/F1-F3 pane", rank: HintRank::Movement },
+        HintClause { text: "Tab/F1-F3 pane", rank: HintRank::Movement },
         HintClause { text: "↑/↓/PgUp/PgDn move", rank: HintRank::Movement },
     ];
     if let Some(text) = lifecycle_hint(&app.supervision) {
@@ -1146,7 +1146,7 @@ fn header_line(app: &App, width: u16) -> Line<'static> {
     if app.session_has_keyboard() {
         let name = app.selected.clone().unwrap_or_else(|| "The session".to_string());
         return Line::from(Span::raw(format!(
-            "{name} has the keyboard | Tab to Fleet, Shift-Tab to Work, F1/F2/F3 to a pane"
+            "{name} has the keyboard | F1 Fleet, F2 Work, F3 Session"
         )));
     }
     let mut spans = header_state_spans(app);
@@ -1223,7 +1223,7 @@ fn plain_title_style(focused: bool) -> Style {
 /// | View                     | Title                     | Hint                          |
 /// |--------------------------|---------------------------|-------------------------------|
 /// | Live/Starting, unfocused | `<Name> — <phase> <bead>` | `[Tab to focus]`              |
-/// | Live/Starting, focused   | `<Name> — <phase> <bead>` | `[Tab/Shift-Tab leave]`       |
+/// | Live/Starting, focused   | `<Name> — <phase> <bead>` | `[F1/F2/F3 leave]`            |
 /// | Ended                    | `<Name> — ended HH:MM`    | `[retained until next start]` |
 /// | None                     | `<Name>`, or `Session`    | none                          |
 ///
@@ -1240,7 +1240,7 @@ fn session_title(app: &App, focused: bool) -> Line<'static> {
         return Line::from(vec![
             Span::styled("Fleet health".to_string(), style),
             Span::styled(
-                format!(" {}", if focused { "[Shift-Tab leaves]" } else { "[Tab to focus]" }),
+                format!(" {}", if focused { "[Tab leaves]" } else { "[Tab to focus]" }),
                 dim(),
             ),
         ]);
@@ -1252,7 +1252,7 @@ fn session_title(app: &App, focused: bool) -> Line<'static> {
                 style,
             ),
             Span::styled(
-                format!(" {}", if focused { "[Shift-Tab leaves]" } else { "[Tab to focus]" }),
+                format!(" {}", if focused { "[Tab leaves]" } else { "[Tab to focus]" }),
                 dim(),
             ),
         ]);
@@ -1261,7 +1261,7 @@ fn session_title(app: &App, focused: bool) -> Line<'static> {
         SessionView::None => (name, None),
         SessionView::Live { .. } | SessionView::Starting => (
             live_title(app, &name),
-            Some(if focused { "[Tab/Shift-Tab leave]" } else { "[Tab to focus]" }),
+            Some(if focused { "[F1/F2/F3 leave]" } else { "[Tab to focus]" }),
         ),
         SessionView::Ended { at, .. } => (
             // A standby row and its pane use one word for one agent (Q1 of cb-kcs.4.1).
@@ -2482,16 +2482,16 @@ mod tests {
         app.focus = PaneFocus::Fleet;
         live(&mut app, &["a line"]);
         let rendered = lines(&render(&app, 160, 30));
-        assert!(line_with(&rendered, "Tab/Shift-Tab/F1-F3 pane").contains("Enter session"));
+        assert!(line_with(&rendered, "Tab/F1-F3 pane").contains("Enter session"));
 
         app.set_session_view(SessionView::None);
         let rendered = lines(&render(&app, 160, 30));
-        assert!(!line_with(&rendered, "Tab/Shift-Tab/F1-F3 pane").contains("Enter session"));
+        assert!(!line_with(&rendered, "Tab/F1-F3 pane").contains("Enter session"));
 
         live(&mut app, &["a line"]);
         app.focus = PaneFocus::Work;
         let rendered = lines(&render(&app, 160, 30));
-        let header = line_with(&rendered, "Tab/Shift-Tab/F1-F3 pane");
+        let header = line_with(&rendered, "Tab/F1-F3 pane");
         assert!(!header.contains("Enter session"), "Work focus has its own Enter");
 
         // Moving focus is not a supervised act, so a read-only view offers it too.
@@ -2499,7 +2499,7 @@ mod tests {
         app.focus = PaneFocus::Fleet;
         live(&mut app, &["a line"]);
         let rendered = lines(&render(&app, 160, 30));
-        assert!(line_with(&rendered, "Tab/Shift-Tab/F1-F3 pane").contains("Enter session"));
+        assert!(line_with(&rendered, "Tab/F1-F3 pane").contains("Enter session"));
     }
 
     /// A row that is not running carries WHY in the BEAD column, in red - the navigator's choice
@@ -2700,7 +2700,7 @@ mod tests {
         let buffer = render(&app, 120, 20);
         assert!(lines(&buffer).iter().any(|line| line.contains("Starting Xavier…")), "{:?}", lines(&buffer));
         // `style_where`, not `style_of`: the latter takes the first `S` anywhere on the buffer,
-        // which was the header's `Shift-Tab` until the supervising header's lifecycle keys pushed
+        // which was the header's hints until the supervising header's lifecycle keys pushed
         // that hint off a 120-column screen. The assertion always meant this line.
         assert!(style_where(&buffer, "Starting Xavier…").add_modifier.contains(Modifier::DIM));
     }
@@ -2773,7 +2773,7 @@ mod tests {
         let rendered = lines(&render(&app, 120, 20));
         assert_eq!(
             rendered[0],
-            "Xavier has the keyboard | Tab to Fleet, Shift-Tab to Work, F1/F2/F3 to a pane"
+            "Xavier has the keyboard | F1 Fleet, F2 Work, F3 Session"
         );
 
         // Unfocused, the ordinary header is back untouched - ownership span, hints and all.
@@ -2784,7 +2784,7 @@ mod tests {
     }
 
     #[test]
-    fn a_focused_session_title_names_both_exit_keys() {
+    fn a_focused_session_title_names_the_function_keys() {
         let mut app = supervising();
         app.selected = Some("Xavier".to_string());
         live(&mut app, &["building"]);
@@ -2792,11 +2792,15 @@ mod tests {
         app.focus = PaneFocus::Session;
         let rendered = lines(&render(&app, 120, 20));
         assert!(
-            rendered.iter().any(|line| line.contains("[Tab/Shift-Tab leave]")),
+            rendered.iter().any(|line| line.contains("[F1/F2/F3 leave]")),
             "{rendered:?}"
         );
         assert!(
-            !rendered.iter().any(|line| line.contains("[Shift-Tab leaves]")),
+            !rendered.iter().any(|line| line.contains("[Tab/Shift-Tab leave]")),
+            "the old hint is gone"
+        );
+        assert!(
+            !rendered.iter().any(|line| line.contains("[Tab leaves]")),
             "{rendered:?}"
         );
 
@@ -3521,7 +3525,7 @@ mod tests {
         assert!(hints.contains("s/f/k start·finish·kill"), "{hints:?}");
         assert!(hints.contains("g refresh"), "{hints:?}");
         assert!(hints.contains("q/Esc/Ctrl-C quit"), "{hints:?}");
-        assert!(!hints.contains("Tab/Shift-Tab"), "the pane hint gave way: {hints:?}");
+        assert!(!hints.contains("Tab/F1-F3"), "the pane hint gave way: {hints:?}");
     }
 
     /// The read-only screen is exactly what it was: this is what proves the increment stayed put.
@@ -3550,7 +3554,7 @@ mod tests {
         let app = populated(); // App::new(): the frame before the lease is asked for
         let rendered = lines(&render(&app, 100, 20));
         assert!(rendered[0].starts_with("Cerebro — starting |"), "{:?}", rendered[0]);
-        for hint in ["Tab/Shift-Tab/F1-F3 pane", "↑/↓/PgUp/PgDn move", "g refresh", "q/Esc/Ctrl-C quit"] {
+        for hint in ["Tab/F1-F3 pane", "↑/↓/PgUp/PgDn move", "g refresh", "q/Esc/Ctrl-C quit"] {
             assert!(rendered[0].contains(hint), "the default screen keeps {hint}: {:?}", rendered[0]);
         }
 
@@ -3567,7 +3571,7 @@ mod tests {
         // title rather than passing a `used` of its own invention (cb-51u). The pure `fit_hints`
         // cases cannot see that: they compute `used` themselves.
         assert!(
-            !supervising[0].contains("Tab/Shift-Tab"),
+            !supervising[0].contains("Tab/F1-F3"),
             "the fitter is applied against the drawn title's width: {:?}",
             supervising[0]
         );
@@ -3579,6 +3583,19 @@ mod tests {
     /// hundred-column screen. A hint the terminal has cut in half is worse than a shorter hint
     /// that fits, so the scroll and pane hints go first and the two keys a navigator cannot guess
     /// from the screen stay.
+    /// cb-lmk: the pane walk and the way out of a session are one clause, so a narrowing window
+    /// never shows `Tab` without `F1-F3`, or the other way round.
+    #[test]
+    fn the_pane_clause_is_one_piece_or_nothing() {
+        let app = supervising();
+        let used = supervision_title(&SupervisionMode::Supervising).width();
+        let narrow = fit_hints(&hint_clauses(&app), used, 60);
+        assert!(!narrow.contains("Tab"), "{narrow:?}");
+        assert!(!narrow.contains("F1-F3"), "{narrow:?}");
+        let wide = fit_hints(&hint_clauses(&app), used, 200);
+        assert!(wide.contains("Tab/F1-F3 pane"), "{wide:?}");
+    }
+
     #[test]
     fn a_long_ownership_title_shortens_the_hints_rather_than_losing_them() {
         let owned = SupervisionMode::ReadOnly(ReadOnlyReason::OwnedBy);
@@ -3593,11 +3610,11 @@ mod tests {
         let narrow = fit_hints(&hint_clauses(&app), used, 100);
         assert!(narrow.contains("g refresh"), "the refresh key survives: {narrow:?}");
         assert!(narrow.contains("q/Esc/Ctrl-C quit"), "the quit key survives: {narrow:?}");
-        assert!(!narrow.contains("Tab/Shift-Tab"), "the pane hint gave way: {narrow:?}");
+        assert!(!narrow.contains("Tab/F1-F3"), "the pane hint gave way: {narrow:?}");
 
         // With room for everything, everything is shown.
         let wide = fit_hints(&hint_clauses(&app), used, 160);
-        assert!(wide.contains("Tab/Shift-Tab/F1-F3 pane"), "{wide:?}");
+        assert!(wide.contains("Tab/F1-F3 pane"), "{wide:?}");
         assert!(wide.contains("↑/↓/PgUp/PgDn move"), "{wide:?}");
 
         // A supervising sibling at two widths: the lifecycle keys survive both, and the movement
@@ -3606,9 +3623,9 @@ mod tests {
         let used = supervision_title(&SupervisionMode::Supervising).width();
         let narrow = fit_hints(&hint_clauses(&supervising), used, 60);
         assert!(narrow.contains("s/f/k start·finish·kill"), "{narrow:?}");
-        assert!(!narrow.contains("Tab/Shift-Tab"), "{narrow:?}");
+        assert!(!narrow.contains("Tab/F1-F3"), "{narrow:?}");
         let wide = fit_hints(&hint_clauses(&supervising), used, 200);
-        assert!(wide.contains("Tab/Shift-Tab/F1-F3 pane"), "{wide:?}");
+        assert!(wide.contains("Tab/F1-F3 pane"), "{wide:?}");
         assert!(wide.contains("s/f/k start·finish·kill"), "{wide:?}");
     }
 
@@ -5604,7 +5621,7 @@ mod tests {
             "{rendered:?}"
         );
         assert!(
-            rendered.iter().any(|l| l.contains("[Shift-Tab leaves]")),
+            rendered.iter().any(|l| l.contains("[Tab leaves]")),
             "{rendered:?}"
         );
         assert!(
@@ -5638,7 +5655,7 @@ mod tests {
             "the bead's title is gone: {rendered:?}"
         );
         assert!(
-            !rendered.iter().any(|l| l.contains("[Shift-Tab leaves]")),
+            !rendered.iter().any(|l| l.contains("[Tab leaves]")),
             "{rendered:?}"
         );
         assert!(
@@ -5662,7 +5679,7 @@ mod tests {
             "the child is invisible, so it does not hold the keyboard: {:?}",
             rendered[0]
         );
-        assert!(rendered[0].contains("Tab/Shift-Tab/F1-F3 pane"), "{:?}", rendered[0]);
+        assert!(rendered[0].contains("Tab/F1-F3 pane"), "{:?}", rendered[0]);
     }
 
     #[test]
@@ -5716,7 +5733,7 @@ mod tests {
         // Wide: everything, the cursor clauses included.
         let wide = fit_hints(&hint_clauses(&app), used, 200);
         assert!(wide.contains("Enter bead"), "{wide:?}");
-        assert!(wide.contains("Tab/Shift-Tab/F1-F3 pane"), "{wide:?}");
+        assert!(wide.contains("Tab/F1-F3 pane"), "{wide:?}");
 
         // Narrow enough that even the shortened form will not fit: the clauses go, and the two
         // keys a navigator cannot guess from the screen stay.
@@ -5728,7 +5745,7 @@ mod tests {
     }
 
     const MOVE_PANE: HintClause =
-        HintClause { text: "Tab/Shift-Tab/F1-F3 pane", rank: HintRank::Movement };
+        HintClause { text: "Tab/F1-F3 pane", rank: HintRank::Movement };
     const MOVE_SCROLL: HintClause =
         HintClause { text: "↑/↓/PgUp/PgDn move", rank: HintRank::Movement };
     const KEEP_LIFECYCLE: HintClause =
@@ -5958,7 +5975,7 @@ mod tests {
     /// changes, the report in the failure message carries the new one - putting it here and in
     /// the test's name is fine, as long as the change was deliberate.
     #[test]
-    fn the_ordinary_screen_has_two_cells_of_slack_at_a_hundred_columns() {
+    fn the_ordinary_screen_has_twelve_cells_of_slack_at_a_hundred_columns() {
         let app = populated();
         let budget = HintBudget::measure(
             "starting",
@@ -5967,8 +5984,9 @@ mod tests {
             HINT_BUDGET_COLUMNS,
         );
         // Two rather than cb-41r's one: `Cerebro — starting` is a cell shorter than the
-        // `Cerebro — read-only` this screen said before cb-abs.2 collapsed the spellings.
-        assert_eq!(budget.slack(), 2, "{}", budget.report(HintRank::Movement));
+        // `Cerebro — read-only` this screen said before cb-abs.2 collapsed the spellings. Twelve
+        // since cb-lmk: `Tab/F1-F3 pane` is ten cells shorter than `Tab/Shift-Tab/F1-F3 pane`.
+        assert_eq!(budget.slack(), 12, "{}", budget.report(HintRank::Movement));
     }
 
     /// An overspent budget says which clause, what it costs, and by how many cells the line is
@@ -6056,7 +6074,7 @@ mod tests {
         let refresh = HintClause { text: "g refresh", rank: HintRank::Kept };
         let retry = HintClause { text: "g retry", rank: HintRank::Kept };
         let quit = HintClause { text: "q/Esc/Ctrl-C quit", rank: HintRank::Kept };
-        let pane = HintClause { text: "Tab/Shift-Tab/F1-F3 pane", rank: HintRank::Movement };
+        let pane = HintClause { text: "Tab/F1-F3 pane", rank: HintRank::Movement };
         let scroll = HintClause { text: "↑/↓/PgUp/PgDn move", rank: HintRank::Movement };
         // Unconditional (cb-xhu.4.2): the Health section is hidden on a healthy fleet, so the
         // header hint alone would leave `h` undiscoverable exactly when the fleet is fine. Its
@@ -6198,14 +6216,14 @@ mod tests {
         // (cb-xhu.4.2), so both the movement hints and the new clause are still there.
         let no_optional = fit_hints(&clauses, used, used + full.width() - 1);
         assert!(no_optional.contains("Ctrl-r reload"), "{no_optional:?}");
-        assert!(no_optional.contains("Tab/Shift-Tab/F1-F3 pane"), "{no_optional:?}");
+        assert!(no_optional.contains("Tab/F1-F3 pane"), "{no_optional:?}");
         assert!(!no_optional.contains("h health"), "{no_optional:?}");
 
         // One cell narrower again: the movement rank gives way, and the new clause is still
         // there.
         let no_movement = fit_hints(&clauses, used, used + no_optional.width() - 1);
         assert!(no_movement.contains("Ctrl-r reload"), "{no_movement:?}");
-        assert!(!no_movement.contains("Tab/Shift-Tab/F1-F3 pane"), "{no_movement:?}");
+        assert!(!no_movement.contains("Tab/F1-F3 pane"), "{no_movement:?}");
 
         // One cell narrower again: the cursor rank gives way, the new clause with it, and every
         // kept clause is there character for character.
@@ -6376,7 +6394,7 @@ mod tests {
 
         let rendered = lines(&render(&app, 140, 40));
         assert!(
-            rendered.iter().any(|l| l.contains("Fleet health") && l.contains("[Shift-Tab leaves]")),
+            rendered.iter().any(|l| l.contains("Fleet health") && l.contains("[Tab leaves]")),
             "the pane's own title: {rendered:?}"
         );
         for text in [
@@ -6419,7 +6437,7 @@ mod tests {
         // And it costs the ordinary hundred-column screen nothing, which is the whole reason it
         // is `Optional` rather than the `Cursor` rank the plan named.
         let rendered = lines(&render(&populated(), 100, 20));
-        for hint in ["Tab/Shift-Tab/F1-F3 pane", "↑/↓/PgUp/PgDn move", "g refresh"] {
+        for hint in ["Tab/F1-F3 pane", "↑/↓/PgUp/PgDn move", "g refresh"] {
             assert!(rendered[0].contains(hint), "{hint} survives it: {:?}", rendered[0]);
         }
     }

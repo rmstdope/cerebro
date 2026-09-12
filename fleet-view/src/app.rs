@@ -201,8 +201,8 @@ impl<T> Default for Pane<T> {
     }
 }
 
-/// Which of the three widgets the keyboard acts on. Fleet is focused on startup; `Tab` and
-/// `Shift-Tab` cycle it in opposite directions, and arrow/page keys act on the focused pane
+/// Which of the three widgets the keyboard acts on. Fleet is focused on startup; `Tab` cycles it
+/// forward and `F1`/`F2`/`F3` jump to a pane, and arrow/page keys act on the focused pane
 /// alone - moving the selection under Fleet, and that pane's own scroll under Work and Session.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PaneFocus {
@@ -219,15 +219,6 @@ impl PaneFocus {
             Self::Fleet => Self::Work,
             Self::Work => Self::Session,
             Self::Session => Self::Fleet,
-        }
-    }
-
-    /// Shift-Tab: the reverse of `next`.
-    pub fn previous(self) -> Self {
-        match self {
-            Self::Fleet => Self::Session,
-            Self::Session => Self::Work,
-            Self::Work => Self::Fleet,
         }
     }
 
@@ -814,11 +805,11 @@ pub fn resize_action(
 
 /// Does this key move focus between panes, whoever currently holds the keyboard?
 ///
-/// `main.rs` asks this to decide what a focused live session does NOT receive; the answer must be
-/// exactly the keys `App::on_key` acts on.
+/// `main.rs` asks this to decide what a focused live session does NOT receive. `Tab` is not in
+/// it: inside a session `Tab` belongs to the agent (cb-lmk), and `App::on_key` acts on it only
+/// when no session holds the keyboard, which is when `route_key` never asks this.
 pub fn is_pane_key(code: KeyCode) -> bool {
-    matches!(code, KeyCode::Tab | KeyCode::BackTab)
-        || matches!(code, KeyCode::F(n) if PaneFocus::from_function_key(n).is_some())
+    matches!(code, KeyCode::F(n) if PaneFocus::from_function_key(n).is_some())
 }
 
 /// Which resize a key asks for, if any. The ONE place the five keys are spelled.
@@ -2530,15 +2521,12 @@ impl App {
                 AppAction::Quit
             }
             KeyCode::Char('g') => AppAction::RefreshAll,
-            // Three panes, so the two bindings are opposite directions round one cycle rather
-            // than the same toggle. A boundary clamps within the focused pane; it never
-            // transfers focus on its own.
-            KeyCode::Tab => {
+            // `Tab` walks the panes forward; `F1`-`F3` jump. `Shift-Tab` is not the view's
+            // (cb-lmk) - it belongs to the hosted agent - so it falls through to nothing, in
+            // either encoding. A boundary clamps within the focused pane; it never transfers
+            // focus on its own.
+            KeyCode::Tab if !key.modifiers.contains(KeyModifiers::SHIFT) => {
                 self.set_focus(self.focus.next());
-                AppAction::None
-            }
-            KeyCode::BackTab => {
-                self.set_focus(self.focus.previous());
                 AppAction::None
             }
             // cb-5kk: three keys straight to the three panes, from any focus. Deliberately
@@ -2613,7 +2601,7 @@ impl App {
             // agent's Session pane, and only when that pane is holding something. Refusing on an
             // empty pane is the navigator's own choice (cb-d31, round one) over always moving:
             // walking the roster with `Down` and pressing `Enter` on each row must not throw them
-            // into an empty pane and make them `Shift-Tab` back on every standby agent.
+            // into an empty pane and make them `F1` back on every standby agent.
             KeyCode::Enter if self.focus == PaneFocus::Fleet => {
                 if self.session_reachable() {
                     self.set_focus(PaneFocus::Session);
@@ -2792,7 +2780,7 @@ impl App {
     /// Arriving at Fleet drops a bead pinned in the Session pane (cb-lor), so that pane goes back
     /// to drawing the selected agent - its live session, one starting, its retained pass, its
     /// refused launch, or its ordinary empty body. Every other arrival leaves a pinned bead
-    /// alone. The ONE place focus changes, so `Tab`, `Shift-Tab` and `F1` cannot answer this
+    /// alone. The ONE place focus changes, so `Tab` and `F1` cannot answer this
     /// differently.
     pub fn set_focus(&mut self, pane: PaneFocus) {
         self.focus = pane;
@@ -4489,7 +4477,7 @@ mod tests {
     }
 
     #[test]
-    fn tab_cycles_fleet_work_session_and_backtab_reverses() {
+    fn tab_cycles_fleet_work_session_and_backtab_does_nothing() {
         let mut app = App::new();
         assert_eq!(app.focus, PaneFocus::Fleet, "Fleet is focused on startup");
 
@@ -4498,11 +4486,16 @@ mod tests {
             assert_eq!(app.focus, expected);
         }
 
-        // Shift-Tab is the reverse of that cycle, not the same toggle.
-        let mut app = App::new();
-        for expected in [PaneFocus::Session, PaneFocus::Work, PaneFocus::Fleet, PaneFocus::Session] {
-            assert_eq!(app.on_key(key(KeyCode::BackTab), 10, at(0)), AppAction::None);
-            assert_eq!(app.focus, expected);
+        // Shift-Tab is the hosted agent's (cb-lmk): in either encoding it moves nothing and
+        // says nothing, at every focus.
+        for focus in [PaneFocus::Fleet, PaneFocus::Work, PaneFocus::Session] {
+            for shift_tab in [key(KeyCode::BackTab), KeyEvent::new(KeyCode::Tab, KeyModifiers::SHIFT)] {
+                let mut app = App::new();
+                app.focus = focus;
+                assert_eq!(app.on_key(shift_tab, 10, at(0)), AppAction::None);
+                assert_eq!(app.focus, focus, "{shift_tab:?} from {focus:?}");
+                assert!(app.notice.is_none(), "{shift_tab:?} says nothing");
+            }
         }
     }
 
@@ -5275,9 +5268,11 @@ mod tests {
                 "Alt-{code:?} still reaches a hosted agent"
             );
         }
-        for code in [KeyCode::Tab, KeyCode::BackTab, KeyCode::F(1), KeyCode::F(2), KeyCode::F(3)] {
+        for code in [KeyCode::F(1), KeyCode::F(2), KeyCode::F(3)] {
             assert!(is_view_key(key(code)), "{code:?} moves focus");
         }
+        assert!(!is_view_key(key(KeyCode::Tab)), "`Tab` is the agent's");
+        assert!(!is_view_key(key(KeyCode::BackTab)), "`Shift-Tab` is the agent's");
         for code in [KeyCode::F(4), KeyCode::Char('x')] {
             assert!(!is_view_key(key(code)), "{code:?} is the agent's");
             assert!(!is_view_key(chord(code)), "and so is Shift-{code:?}");
@@ -5330,10 +5325,12 @@ mod tests {
 
     /// The set held back from a hosted agent is exactly the set that moves focus.
     #[test]
-    fn pane_keys_are_the_two_tabs_and_f1_to_f3() {
-        for code in [KeyCode::Tab, KeyCode::BackTab, KeyCode::F(1), KeyCode::F(2), KeyCode::F(3)] {
+    fn pane_keys_are_f1_to_f3() {
+        for code in [KeyCode::F(1), KeyCode::F(2), KeyCode::F(3)] {
             assert!(is_pane_key(code), "{code:?} moves focus");
         }
+        assert!(!is_pane_key(KeyCode::Tab), "`Tab` is the agent's");
+        assert!(!is_pane_key(KeyCode::BackTab), "`Shift-Tab` is the agent's");
         for code in [KeyCode::F(4), KeyCode::Char('x'), KeyCode::Enter, KeyCode::Up] {
             assert!(!is_pane_key(code), "{code:?} does not move focus");
         }
@@ -7315,14 +7312,13 @@ mod tests {
     }
 
     #[test]
-    fn shift_tab_to_fleet_drops_the_pinned_bead() {
+    fn shift_tab_leaves_a_pinned_bead_where_it_is() {
         let mut app = pinned_and_scrolled();
-        app.focus = PaneFocus::Work;
+        assert_eq!(app.focus, PaneFocus::Session);
         app.on_key(key(KeyCode::BackTab), 10, at(0));
-        assert_eq!(app.focus, PaneFocus::Fleet);
-        assert!(app.bead_detail().is_none());
-        assert_eq!(app.session.scroll, 0);
-        assert!(app.notice.is_none());
+        assert_eq!(app.focus, PaneFocus::Session);
+        assert!(app.bead_detail().is_some());
+        assert_eq!(app.session.scroll, 7);
     }
 
     #[test]
@@ -7779,7 +7775,6 @@ mod tests {
     fn arriving_at_fleet_drops_the_pinned_health_report() {
         for (label, keys) in [
             ("Tab", vec![KeyCode::Tab]),
-            ("Shift-Tab", vec![KeyCode::BackTab, KeyCode::BackTab]),
             ("F1", vec![KeyCode::F(1)]),
         ] {
             let mut app = health_app();

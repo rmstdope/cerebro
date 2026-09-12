@@ -587,7 +587,7 @@ selectable — no key acts on one — so the cursor walks past them exactly as i
 rows. **`h`** pins the whole four-section report in the Session pane, titled `Fleet health`, from
 any focus; `h` again unpins and leaves focus where it is; a pinned bead replaces it and it replaces
 a pinned bead, `App::pin` holding exactly one tenant by construction; and arriving at Fleet by
-`Tab`, `Shift-Tab` or `F1` drops it exactly as a pinned bead is dropped (cb-lor), while `F2` and
+`Tab` or `F1` drops it exactly as a pinned bead is dropped (cb-lor), while `F2` and
 `F3` leave it alone; `s` drops it too, by the same rule that already drops a pinned bead — the pane
 is the agent's again — where `f` and `k` leave either alone. `h` starts no read: the report is
 whatever the five-minute reader last got, so it can never fail and never blocks, and `g` is what
@@ -649,13 +649,13 @@ Fleet, Work and Session, each with its own title, focus and scroll offset rather
 document. At `SPLIT_COLUMNS` (100) or wider the screen is a `LEFT_COLUMN` (40) holding Fleet
 over Work, with Session taking every remaining cell beside them; below that width all three stack.
 Neither divider is fixed any more - see the resize chords below.
-`Tab` cycles Fleet → Work → Session and `Shift-Tab` reverses it, and since cb-5kk `F1`/`F2`/`F3`
-jump straight to those three panes from any focus (held back from a focused live session like the
-tabs; `F4` and above still reach the agent) — the focused one draws a
-bright-blue thick-line border and a bold title. From a focused **live** session both are held back
-from the child and run that same cycle (cb-3v5), so `Tab` is the one key back to Fleet and
-`Shift-Tab` the one key to Work. Since cb-lor **arriving at the Fleet pane by any of those keys —
-`Tab`, `Shift-Tab` or `F1` — drops a bead pinned in the Session pane** by `Enter` on a Work row
+`Tab` cycles Fleet → Work → Session, and since cb-5kk `F1`/`F2`/`F3`
+jump straight to those three panes from any focus (held back from a focused live session; `F4` and
+above still reach the agent) — the focused one draws a
+bright-blue thick-line border and a bold title. `Shift-Tab` is the hosted agent's and does nothing
+in the view at any focus. From a focused **live** session `Tab` and `Shift-Tab` both reach the
+agent, and `F1`/`F2`/`F3` are the only way out (cb-lmk, narrowing cb-3v5). Since cb-lor **arriving
+at the Fleet pane by `Tab` or `F1` drops a bead pinned in the Session pane** by `Enter` on a Work row
 (cb-41r), so that pane goes back to drawing the selected agent, at its top; `F2` and `F3` leave a
 pinned bead alone, and `Enter` on the same Work row re-opens it. `↑`/`↓`/`PgUp`/`PgDn` move only the focused widget:
 under Work and Session that is its own scroll offset, and **under Fleet it is the selection**, which
@@ -725,9 +725,8 @@ second copy.
 
 Session can hold a real child since cb-kcs.2.2: `scripts/launch <Name>` in a pty (`portable-pty`),
 its screen drawn from a `vt100::Parser` this crate owns — which is why a killed child's screen is
-still drawable — and every key of a focused live session forwarded to it, with `Tab` and
-`Shift-Tab` both held back as the two ways out — `Tab` to Fleet, `Shift-Tab` to
-Work. A pass that ends is kept as a scrollable transcript of at most ten thousand
+still drawable — and every key of a focused live session forwarded to it, `Tab` and `Shift-Tab`
+included, with `F1`/`F2`/`F3` held back as the way out (cb-lmk). A pass that ends is kept as a scrollable transcript of at most ten thousand
 lines, until that agent starts again. **Nothing a navigator can press starts one**: `SessionHost::spawn`
 is reached by test code alone, and `s`/`f`/`k` are cb-kcs.2.3's, so the pane still says why there is
 no session in it and the header hint still names no key that does not exist. The rule that pays for

@@ -481,6 +481,11 @@ pub struct AgentFacts<'a> {
 /// `None` for a role with no condition rules, and that is load-bearing rather than incidental.
 /// cb-kcs.4.3's roles start on a clock, and what they watch moves outside this fleet, so the
 /// fleet looking unchanged is evidence of nothing about them and they must never be held here.
+///
+/// The verifier is `None` for a different reason: an unchanged count is not evidence that its
+/// work cannot be done. A pass ends with beads unverified because the sitting ended or the
+/// navigator said "later", and either way those beads are reason enough to start again. Its
+/// wake interval, not this guard, is what keeps it from starting too often.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Fingerprint {
     Planner {
@@ -488,10 +493,6 @@ pub enum Fingerprint {
         planned: usize,
         implementers: usize,
         actionable_ids: Vec<String>,
-    },
-    Verifier {
-        stale_verdicts: usize,
-        merged_unverified: usize,
     },
     Implementer {
         planned_ids: Vec<String>,
@@ -521,10 +522,6 @@ pub fn fingerprint(role: &str, facts: &TriggerFacts) -> Option<Fingerprint> {
             planned: facts.planned,
             implementers: facts.implementers,
             actionable_ids: facts.actionable_ids.clone(),
-        }),
-        "verifier" => Some(Fingerprint::Verifier {
-            stale_verdicts: facts.stale_verdicts,
-            merged_unverified: facts.merged_unverified,
         }),
         "implementer" => Some(Fingerprint::Implementer {
             planned_ids: facts.planned_ids.clone(),
@@ -1922,8 +1919,53 @@ mod tests {
             assert_eq!(fingerprint(role, &facts), None, "{role}");
         }
         assert!(fingerprint("planner", &facts).is_some());
-        assert!(fingerprint("verifier", &facts).is_some());
+        // Not a cadence role: its unverified beads are reason enough on their own (cb-6ey's reason, in the doc on Fingerprint).
+        assert_eq!(fingerprint("verifier", &facts), None);
         assert!(fingerprint("orchestrator", &facts).is_some());
+    }
+
+    fn verifier_after_pass<'a>(ledger: &'a StartLedger) -> AgentFacts<'a> {
+        AgentFacts {
+            role: "verifier",
+            started_at: ledger.started_at("Psylocke"),
+            ended_at: ledger.ended_at("Psylocke"),
+            last_fingerprint: ledger.fingerprint("Psylocke"),
+        }
+    }
+
+    #[test]
+    fn a_verifier_pass_that_left_beads_unverified_starts_another() {
+        let mut facts = empty_facts();
+        facts.merged_unverified = 24;
+        let mut ledger = StartLedger::default();
+        ledger.note_started("Psylocke", at(0), fingerprint("verifier", &facts));
+        ledger.note_ended("Psylocke", at(2_280));
+        let after = verifier_after_pass(&ledger);
+        assert_eq!(trigger(&facts, after, at(2_310)), Some("24 merged, unverified".to_string()));
+        assert!(!held_by_unchanged_work(&facts, after));
+    }
+
+    #[test]
+    fn a_verifier_pass_that_left_stale_verdicts_starts_another() {
+        let mut facts = empty_facts();
+        facts.stale_verdicts = 1;
+        let mut ledger = StartLedger::default();
+        ledger.note_started("Psylocke", at(0), fingerprint("verifier", &facts));
+        ledger.note_ended("Psylocke", at(2_280));
+        let after = verifier_after_pass(&ledger);
+        assert_eq!(trigger(&facts, after, at(2_310)), Some("1 stale verdict".to_string()));
+    }
+
+    #[test]
+    fn the_verifier_still_waits_out_its_wake_interval_after_a_short_pass() {
+        let mut facts = empty_facts();
+        facts.merged_unverified = 3;
+        let mut ledger = StartLedger::default();
+        ledger.note_started("Psylocke", at(0), fingerprint("verifier", &facts));
+        ledger.note_ended("Psylocke", at(60));
+        let after = verifier_after_pass(&ledger);
+        assert_eq!(trigger(&facts, after, at(299)), None);
+        assert_eq!(trigger(&facts, after, at(300)), Some("3 merged, unverified".to_string()));
     }
 
     #[test]

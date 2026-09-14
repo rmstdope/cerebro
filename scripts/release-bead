@@ -8,9 +8,11 @@
 #
 #   running    `agent-alive <Name>` succeeds - the session is up. Nothing is touched, not even the
 #              handover file, so a session a navigator launched by hand is never unclaimed under it.
-#   released   the bead was in_progress and NAME's, and `bd unclaim --if-assignee NAME` took it back
+#   released   the bead was in_progress and NAME's, and `bd unclaim --if-assignee NAME` took it back;
+#              or it was open and assigned to NAME - a planning role's assignment (cb-10d.2.1) - and
+#              `bd update --assignee "" --if-assignee NAME` cleared the assignee without touching status
 #   free       the bead is open with no assignee: nothing to unclaim, it is with the planned work
-#   elsewhere  anything else - another agent holds it, it is closed, or the unclaim's
+#   elsewhere  anything else - another agent holds it, it is closed, or the unclaim's or unassign's
 #              compare-and-swap lost to somebody who took it meanwhile
 #
 #   exit 1  `bd` failed (including an unclaim that failed with the bead still NAME's)
@@ -84,6 +86,20 @@ if [[ "$status" == "in_progress" && "$assignee" == "$name" ]]; then
       echo "release-bead: could not unclaim $id from $name" >&2
       exit 1
     fi
+  fi
+elif [[ "$status" == "open" && "$assignee" == "$name" ]]; then
+  # A planning role's assignment (cb-10d.2.1): clear the assignee and leave the status alone.
+  # `--if-assignee` on `update` reports a lost compare-and-swap as exit 13, so unlike `unclaim`
+  # there is nothing to re-read. Captured, not bare, so `set -e` cannot turn 13 into exit 1.
+  update_status=0
+  bd --actor "$name" -C "$root" update "$id" --assignee "" --if-assignee "$name" >&2 || update_status=$?
+  if [[ $update_status -eq 0 ]]; then
+    word=released
+    bd -C "$root" dolt push >&2 \
+      || echo "release-bead: $id was given back from $name, but bd dolt push failed" >&2
+  elif [[ $update_status -ne 13 ]]; then
+    echo "release-bead: could not clear $name as the assignee of $id" >&2
+    exit 1
   fi
 elif [[ "$status" == "open" && -z "$assignee" ]]; then
   word=free

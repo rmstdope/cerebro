@@ -119,8 +119,9 @@ pass "refuses no argument, two arguments and an unknown stage"
 
 # --- the label rules, one fixture ----------------------------------------------------------------
 #
-# Five of the six rules are lifted from `scripts/plan-candidates` and mean what they mean there; the
-# sixth - the stage label - is the whole difference between the two agents.
+# Every label rule but the stage label is lifted from `scripts/plan-candidates` and means what it
+# means there; the stage label is the whole difference between the two agents. The hold, parent and
+# blocker rules have cases of their own below.
 labelled='[{"id":"tt-plain","issue_type":"task","priority":2,"labels":[]},
            {"id":"tt-agreed","issue_type":"task","priority":2,"labels":["ux:agreed"]},
            {"id":"tt-planned","issue_type":"task","priority":2,"labels":["planned"]},
@@ -209,6 +210,71 @@ set -e
 [ -s "$stub_dir/err" ] || fail "a non-JSON list produced nothing on stderr"
 [ -z "$out" ] || fail "a non-JSON list still printed '$out' on stdout"
 pass "a list that is not JSON is loud too"
+
+# --- cb-10d.2.1: an assignee holds, an assigned parent holds, an unsatisfied blocker holds --------
+#
+# The same eight cases as tests/plan-candidates.sh, at each stage: at build-design every fixture
+# bead carries the stage label so the stage sees it, at ux none does.
+holds_at() {
+  local stage="$1" base="$2"
+  t() {
+    local labels="${2:-}"
+    if [ -n "$base" ]; then labels="\"$base\"${labels:+,$labels}"; fi
+    printf '{"id":"%s","issue_type":"task","priority":2,"labels":[%s]%s}' "$1" "$labels" "${3:-}"
+  }
+  blocks() { printf ',"dependencies":[{"issue_id":"x","depends_on_id":"%s","type":"%s"}]' "$1" "${2:-blocks}"; }
+  check() { set_stub_for children '[]'; ids="$(run "$stage" | ids_of)"; [ "$ids" = "$1" ] || fail "$stage: $2: got '$ids', wanted '$1'"; }
+
+  set_stub "[$(t tt-mine '' ',"assignee":"Xavier"'),$(t tt-free '' ',"assignee":null'),$(t tt-empty '' ',"assignee":""')]"
+  check "tt-empty tt-free " "an assigned bead is still a candidate"
+  pass "drops a bead with an assignee at $stage"
+
+  set_stub "[$(t tt-p '' ',"assignee":"Xavier"'),$(t tt-p.1 '' ',"parent":"tt-p"'),$(t tt-q),$(t tt-q.1 '' ',"parent":"tt-q"'),$(t tt-orphan.1 '' ',"parent":"tt-gone"')]"
+  check "tt-orphan.1 tt-q tt-q.1 " "a child of an assigned parent"
+  pass "drops a child whose parent is assigned at $stage"
+
+  set_stub "[$(t tt-a '' "$(blocks tt-b)"),$(t tt-b)]"
+  check "tt-b " "a bead behind an open unplanned blocker"
+  pass "drops a bead whose blocker is open and unplanned at $stage"
+
+  set_stub "[$(t tt-a '' "$(blocks tt-b)"),$(t tt-b '"planned"')]"
+  check "tt-a " "a bead behind a planned blocker"
+  pass "keeps a bead whose blocker is planned at $stage"
+
+  set_stub "[$(t tt-a '' "$(blocks tt-closed)")]"
+  check "tt-a " "a bead behind a blocker not in the list"
+  pass "keeps a bead whose blocker is not in the list at $stage"
+
+  set_stub "[$(t tt-a '' "$(blocks tt-ep)"),$(t tt-ep.1 '' ',"parent":"tt-ep"')]"
+  check "tt-ep.1 " "a split blocker with an unplanned child"
+  set_stub "[$(t tt-a '' "$(blocks tt-ep)"),$(t tt-ep.1 '"planned"' ',"parent":"tt-ep"')]"
+  check "tt-a " "a split blocker whose children are planned"
+  pass "a split blocker with an unplanned child hides its dependant at $stage"
+
+  set_stub "[$(t tt-a),$(t tt-a.1 '' "$(blocks tt-a parent-child)")]"
+  check "tt-a tt-a.1 " "a parent-child edge was read as a blocker"
+  pass "a parent-child edge is not a blocker at $stage"
+
+  set_stub "[$(t tt-a '' "$(blocks tt-b)"),$(t tt-b '"human"')]"
+  check "" "a bead behind a parked blocker"
+  pass "a parked blocker hides its dependant at $stage"
+}
+holds_at build-design ux:agreed
+holds_at ux ""
+
+set_stub '[{"id":"tt-a","issue_type":"task","priority":2,"labels":[],"dependencies":[{"issue_id":"tt-a","depends_on_id":"tt-b","type":"blocks"}]},
+           {"id":"tt-b","issue_type":"task","priority":2,"labels":["ux:agreed"]}]'
+set_stub_for children '[]'
+ids="$(run ux | ids_of)"
+[ "$ids" = "tt-a " ] || fail "the ux stage did not accept an agreed blocker: got '$ids'"
+pass "the ux stage accepts an agreed blocker"
+
+set_stub '[{"id":"tt-a","issue_type":"task","priority":2,"labels":["ux:agreed"],"dependencies":[{"issue_id":"tt-a","depends_on_id":"tt-b","type":"blocks"}]},
+           {"id":"tt-b","issue_type":"task","priority":2,"labels":["ux:agreed"]}]'
+set_stub_for children '[]'
+ids="$(run build-design | ids_of)"
+[ "$ids" = "tt-b " ] || fail "the build-design stage accepted an agreed blocker: got '$ids'"
+pass "the build-design stage does not accept an agreed blocker"
 
 # --- stage-candidates spells no epic rule of its own ---------------------------------------------
 #

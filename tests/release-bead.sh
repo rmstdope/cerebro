@@ -12,7 +12,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$repo_root/tests/lib/consumer.sh"
 
 consumer="$(consumer_new repo --link release-bead roster consumer-root)"
-printf 'Rogue implementer\nXavier planner\n' > "$consumer/.cerebro/roster.conf"
+printf 'Rogue implementer\nXavier planner\nIceman build-design\n' > "$consumer/.cerebro/roster.conf"
 scripts="$consumer/.claude/cerebro/scripts"
 state="$consumer/.cerebro/state"
 mkdir -p "$state"
@@ -40,6 +40,7 @@ case "$sub" in
     if [ -f "$STUB_DIR/unclaimed" ] && [ -f "$STUB_DIR/show2.json" ]; then cat "$STUB_DIR/show2.json"
     else cat "$STUB_DIR/show.json"; fi ;;
   unclaim) touch "$STUB_DIR/unclaimed"; exit "${BD_UNCLAIM_EXIT:-0}" ;;
+  update) exit "${BD_UPDATE_EXIT:-0}" ;;
   dolt) exit "${BD_PUSH_EXIT:-0}" ;;
 esac
 exit 0
@@ -100,6 +101,32 @@ reset "$mine"
 status=0; out="$(BD_UNCLAIM_EXIT=1 run Rogue cb-x 2>/dev/null)" || status=$?
 [[ $status -eq 1 ]] || fail "an unclaim that failed with the bead still Rogue's is exit 1, got $status"
 pass "a failed unclaim on a bead still Rogue's is exit 1"
+
+# --- cb-10d.2.1: a planning role's assignment is cleared, not unclaimed ---------------------------
+
+assigned='[{"id":"cb-x","status":"open","assignee":"Iceman"}]'
+
+reset "$assigned"
+printf 'cb-x\n' > "$state/Iceman.handover"
+out="$(run Iceman cb-x 2>/dev/null)" || fail "a released assignment is exit 0"
+[[ "$out" == "released" ]] || fail "stdout is exactly released, got: $out"
+grep -qxF -- "--actor Iceman -C $consumer update cb-x --assignee  --if-assignee Iceman" "$stub/bd.log" \
+  || fail "the assignee is cleared compare-and-swapped on Iceman, got: $(cat "$stub/bd.log")"
+! grep -q unclaim "$stub/bd.log" || fail "an assignment is not unclaimed"
+grep -q "dolt push" "$stub/bd.log" || fail "a released assignment is pushed"
+[[ ! -e "$state/Iceman.handover" ]] || fail "a released assignment's handover is removed"
+pass "releases an open bead assigned to the agent and says released"
+
+reset "$assigned"
+out="$(BD_UPDATE_EXIT=13 run Iceman cb-x 2>/dev/null)" || fail "a lost assignment is exit 0"
+[[ "$out" == "elsewhere" ]] || fail "a lost assignment says elsewhere, got: $out"
+pass "an assignment somebody else took says elsewhere"
+
+reset "$assigned"
+status=0; out="$(BD_UPDATE_EXIT=1 run Iceman cb-x 2>/dev/null)" || status=$?
+[[ $status -eq 1 ]] || fail "a failed unassign is exit 1, got $status"
+[[ -z "$out" ]] || fail "a failed unassign prints nothing, got: $out"
+pass "a failed unassign is exit 1"
 
 # --- a live agent says running and touches nothing ----------------------------------------------
 

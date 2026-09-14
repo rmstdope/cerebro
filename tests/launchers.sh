@@ -1548,6 +1548,17 @@ grep -qF "Your bead is cb-x; it is already claimed for you." <<<"$out" \
 grep -q '^ARG:--bead$' <<<"$out" && fail "launch --bead: --bead is not passed to the agent CLI"
 pass "launch with --bead claims before exec and names the bead in the prompt"
 
+# cb-10d.2.1: a planning role's bead is assigned, not claimed, and its prompt says so.
+planning_name="$("$fixture_scripts/roster" --role planner | sed -n 1p)"
+[[ -n "$planning_name" ]] || fail "launch --bead: the fixture roster has no planner"
+rm -f "$assign_log"
+out="$(run_launcher launch "$planning_name" --bead cb-x 2>/dev/null)" \
+  || fail "launch --bead: an assigned planning bead starts the session"
+grep -qF "Your bead is cb-x; it is already assigned to you." <<<"$out" \
+  || fail "launch --bead: a planning role is told its bead is assigned, got: $out"
+grep -qF "already claimed" <<<"$out" && fail "launch --bead: a planning role is not told its bead is claimed"
+pass "a planning role launched with --bead is told the bead is assigned"
+
 rm -f "$assign_log"
 status=0
 out="$(ASSIGN_EXIT=3 run_launcher launch "$bead_name" --bead cb-x 2>/dev/null)" || status=$?

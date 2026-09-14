@@ -394,10 +394,16 @@ fi
 # carries newlines and a full stop.
 instruction="You are $name. Your agent definition ($role) is the whole of your instructions: follow it from
 the top, and start now rather than waiting to be spoken to."
+# cb-10d.2.1: an implementer's bead is claimed; a planning role's is assigned, never claimed.
 if [[ -n "$bead" ]]; then
+  if [[ "$role" == implementer ]]; then
+    taken="claimed for"
+  else
+    taken="assigned to"
+  fi
   instruction="$instruction
 
-Your bead is $bead; it is already claimed for you."
+Your bead is $bead; it is already $taken you."
 fi
 
 prompt="$instruction"

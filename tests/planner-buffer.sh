@@ -204,6 +204,20 @@ agreed="$(run_count --ux-agreed)"
 [ "$agreed" = "0" ] || fail "--ux-agreed counted '$agreed' beads that a build-design agent is already holding"
 pass "a bead held by either spelling of the planning label is not counted as waiting"
 
+# cb-10d.2.1: an ASSIGNEE is the other spelling of the same hold - the fleet view hands a
+# build-design agent its bead by assignee - so the count shares it with `stage-candidates
+# build-design`. It deliberately does not share that script's blocker and parent rules: this
+# measures a buffer, not a pick, and a blocked agreed bead is still buffer.
+set_stub '[{"id":"aa","issue_type":"task","labels":["ux:agreed"],"assignee":"Iceman"},{"id":"ab","issue_type":"task","labels":["ux:agreed"],"assignee":null}]'
+agreed="$(run_count --ux-agreed)"
+[ "$agreed" = "1" ] || fail "--ux-agreed counted '$agreed', counting an assigned agreed bead as waiting"
+pass "an assigned agreed bead is not counted as waiting"
+
+set_stub '[{"id":"ba","issue_type":"task","labels":["ux:agreed"],"dependencies":[{"issue_id":"ba","depends_on_id":"bb","type":"blocks"}]},{"id":"bb","issue_type":"task","labels":["ux:agreed"]}]'
+agreed="$(run_count --ux-agreed)"
+[ "$agreed" = "2" ] || fail "--ux-agreed counted '$agreed'; a blocked agreed bead is still buffer"
+pass "a blocked agreed bead still counts"
+
 set_stub "$ux_beads"
 
 # The wanted number is the existing one, shared with `--count`: a second declaration would be a

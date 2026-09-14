@@ -120,7 +120,7 @@ grep -q 'usage:' "$stub_dir/err" || fail "an argument: stderr does not carry a u
 [ ! -f "$argv_file" ] || fail "an argument still reached bd"
 pass "refuses any argument"
 
-# --- the five label rules ------------------------------------------------------------------------
+# --- the label rules (the hold, parent and blocker rules are below) ------------------------------------------------------------------------
 #
 # One fixture, one case per rule. Every one of these is lifted verbatim from the two `jq` blocks in
 # `skills/plan-bead/SKILL.md` that plan-candidates replaces; none is new and none is dropped.
@@ -170,6 +170,66 @@ set_stub_for children '[]'
 ids="$(run | ids_of)"
 [ "$ids" = "tt-keep " ] || fail "a label at position 0 was not seen: got '$ids'"
 pass "handles a label at position 0"
+
+# --- cb-10d.2.1: an assignee holds, an assigned parent holds, an unsatisfied blocker holds --------
+#
+# The fleet view hands a planning role its bead by assignee, and an agent handed a bead can no
+# longer walk to its blocker - so the queue itself must not offer either.
+t() { printf '{"id":"%s","issue_type":"task","priority":2,"labels":%s%s}' "$1" "${2:-[]}" "${3:-}"; }
+
+set_stub "[$(t tt-mine '[]' ',"assignee":"Xavier"'),$(t tt-free '[]' ',"assignee":null'),$(t tt-empty '[]' ',"assignee":""')]"
+set_stub_for children '[]'
+ids="$(run | ids_of)"
+[ "$ids" = "tt-empty tt-free " ] || fail "an assigned bead is still a candidate: got '$ids'"
+pass "drops a bead with an assignee"
+
+set_stub "[$(t tt-p '[]' ',"assignee":"Xavier"'),$(t tt-p.1 '[]' ',"parent":"tt-p"'),$(t tt-q),$(t tt-q.1 '[]' ',"parent":"tt-q"'),$(t tt-orphan.1 '[]' ',"parent":"tt-gone"')]"
+set_stub_for children '[]'
+ids="$(run | ids_of)"
+[ "$ids" = "tt-orphan.1 tt-q tt-q.1 " ] || fail "a child of an assigned parent: got '$ids'"
+pass "drops a child whose parent is assigned"
+
+blocks() { printf ',"dependencies":[{"issue_id":"x","depends_on_id":"%s","type":"%s"}]' "$1" "${2:-blocks}"; }
+
+set_stub "[$(t tt-a '[]' "$(blocks tt-b)"),$(t tt-b)]"
+set_stub_for children '[]'
+ids="$(run | ids_of)"
+[ "$ids" = "tt-b " ] || fail "a bead behind an open unplanned blocker: got '$ids'"
+pass "drops a bead whose blocker is open and unplanned"
+
+set_stub "[$(t tt-a '[]' "$(blocks tt-b)"),$(t tt-b '["planned"]')]"
+set_stub_for children '[]'
+ids="$(run | ids_of)"
+[ "$ids" = "tt-a " ] || fail "a bead behind a planned blocker: got '$ids'"
+pass "keeps a bead whose blocker is planned"
+
+set_stub "[$(t tt-a '[]' "$(blocks tt-closed)")]"
+set_stub_for children '[]'
+ids="$(run | ids_of)"
+[ "$ids" = "tt-a " ] || fail "a bead behind a blocker not in the list: got '$ids'"
+pass "keeps a bead whose blocker is not in the list"
+
+set_stub "[$(t tt-a '[]' "$(blocks tt-ep)"),$(t tt-ep.1 '[]' ',"parent":"tt-ep"')]"
+set_stub_for children '[]'
+ids="$(run | ids_of)"
+[ "$ids" = "tt-ep.1 " ] || fail "a split blocker with an unplanned child: got '$ids'"
+set_stub "[$(t tt-a '[]' "$(blocks tt-ep)"),$(t tt-ep.1 '["planned"]' ',"parent":"tt-ep"')]"
+set_stub_for children '[]'
+ids="$(run | ids_of)"
+[ "$ids" = "tt-a " ] || fail "a split blocker whose children are planned: got '$ids'"
+pass "a split blocker with an unplanned child hides its dependant"
+
+set_stub "[$(t tt-a),$(t tt-a.1 '[]' "$(blocks tt-a parent-child)")]"
+set_stub_for children '[]'
+ids="$(run | ids_of)"
+[ "$ids" = "tt-a tt-a.1 " ] || fail "a parent-child edge was read as a blocker: got '$ids'"
+pass "a parent-child edge is not a blocker"
+
+set_stub "[$(t tt-a '[]' "$(blocks tt-b)"),$(t tt-b '["human"]')]"
+set_stub_for children '[]'
+ids="$(run | ids_of)"
+[ "$ids" = "" ] || fail "a bead behind a parked blocker: got '$ids'"
+pass "a parked blocker hides its dependant"
 
 # --- the epic rule comes from work-beads, not from here (cb-hzl) --------------------------------
 epics='[{"id":"tt-lone","issue_type":"epic","priority":2,"labels":[]},

@@ -1,14 +1,25 @@
 #!/usr/bin/env bash
 #
-# Hand a bead to an implementer before its session starts (cb-10d.1):
+# Hand a bead to an implementer or a planning role before its session starts (cb-10d.1, cb-10d.2.1):
 #
 #     .claude/cerebro/scripts/assign-bead <Name> <id>
 #
-#   exit 0  the bead is claimed for NAME (newly, or it already was)
+#   exit 0  the bead is claimed for / assigned to NAME (newly, or it already was)
 #   exit 1  `bd` failed (its stderr passed through)
-#   exit 2  usage, NAME not on the roster, or NAME's kind is not `implementer`
-#   exit 3  the bead is not available to NAME: not in `scripts/assignable-beads`, and not already
-#           NAME's
+#   exit 2  usage, NAME not on the roster, or NAME's role is none of the four below
+#   exit 3  the bead is not available to NAME: not in the role's queue and not already NAME's, or
+#           a planning role lost the assignment race (`bd update --if-assignee ""` exited 13)
+#
+# Which queue, and how the bead is taken, is decided by ROLE:
+#
+#   implementer   `assignable-beads`               claimed (`--claim`); NAME's when in_progress
+#   planner       `plan-candidates`                assigned; NAME's when open with assignee NAME
+#   ux            `stage-candidates ux`            assigned, likewise
+#   build-design  `stage-candidates build-design`  assigned, likewise
+#
+# A planning role's bead is NEVER claimed: `in_progress` means "being built" to Moira, Psylocke and
+# `work-beads`, and a bead being designed is not being built. `scripts/release-bead` clears that
+# assignee again.
 #
 # `scripts/launch <Name> --bead <id>` is its caller, after `launch-preflight` and before the agent
 # CLI is exec'd; so the fleet view and a hand-typed launch take the same path. The claim is made
@@ -41,9 +52,21 @@ if ! entry="$("$script_dir/roster" --entry "$name" 2>/dev/null)"; then
   exit 2
 fi
 IFS=$'\t' read -r _ role kind <<<"$entry"
-if [[ "$kind" != "implementer" ]]; then
-  echo "assign-bead: $name is a $role; only implementers are handed a bead" >&2
-  exit 2
+# By ROLE, not kind: `planner', `ux', `build-design' and `orchestrator' all share the kind
+# `interactive'. `candidates' is the role's own queue; `mode' is how the bead is taken.
+case "$role" in
+  implementer)  candidates=("$script_dir/assignable-beads");              mode=claim ;;
+  planner)      candidates=("$script_dir/plan-candidates");               mode=assign ;;
+  ux)           candidates=("$script_dir/stage-candidates" ux);           mode=assign ;;
+  build-design) candidates=("$script_dir/stage-candidates" build-design); mode=assign ;;
+  *)
+    echo "assign-bead: $name is a $role; only implementers and the planning roles are handed a bead" >&2
+    exit 2 ;;
+esac
+if [[ "$mode" == claim ]]; then
+  mine_status=in_progress; verb="claimed for"
+else
+  mine_status=open; verb="assigned to"
 fi
 
 root="$("$script_dir/consumer-root" --shared)"
@@ -60,7 +83,7 @@ if ! fields="$(printf '%s' "$shown" \
 fi
 IFS=$'\t' read -r status assignee <<<"$fields"
 
-if [[ "$status" == "in_progress" && "$assignee" == "$name" ]]; then
+if [[ "$status" == "$mine_status" && "$assignee" == "$name" ]]; then
   # Already NAME's. An agent that has already reported this bead must not acquire a handover a later
   # give-back would act on.
   reported=""
@@ -70,11 +93,11 @@ if [[ "$status" == "in_progress" && "$assignee" == "$name" ]]; then
   if [[ "$reported" != "$id" ]]; then
     cerebro_state_write_atomic "$state/$name.handover" printf '%s\n' "$id" || exit 1
   fi
-  echo "assign-bead: $id is already claimed for $name" >&2
+  echo "assign-bead: $id is already $verb $name" >&2
   exit 0
 fi
 
-if ! assignable="$("$script_dir/assignable-beads")"; then
+if ! assignable="$("${candidates[@]}")"; then
   exit 1
 fi
 if ! printf '%s' "$assignable" | jq -e --arg id "$id" 'any(.[]; .id == $id)' >/dev/null; then
@@ -82,14 +105,28 @@ if ! printf '%s' "$assignable" | jq -e --arg id "$id" 'any(.[]; .id == $id)' >/d
   exit 3
 fi
 
-if ! bd --actor "$name" -C "$root" update "$id" --claim; then
-  exit 1
+if [[ "$mode" == claim ]]; then
+  if ! bd --actor "$name" -C "$root" update "$id" --claim; then
+    exit 1
+  fi
+else
+  # `--if-assignee' cannot be combined with `--claim', which is why the implementer keeps its own
+  # write. Captured, not bare: under `set -e' a bare call would end the script with 1 before 13
+  # could be mapped to 3 (.cerebro/traps.md, first entry).
+  update_status=0
+  bd --actor "$name" -C "$root" update "$id" --assignee "$name" --if-assignee "" || update_status=$?
+  if [[ $update_status -eq 13 ]]; then
+    echo "assign-bead: $id was taken by somebody else before $name could have it" >&2
+    exit 3
+  elif [[ $update_status -ne 0 ]]; then
+    exit 1
+  fi
 fi
 
 cerebro_state_write_atomic "$state/$name.handover" printf '%s\n' "$id" || exit 1
 
 bd -C "$root" dolt push \
-  || echo "assign-bead: $id is claimed for $name, but bd dolt push failed - other machines will not see it yet" >&2
+  || echo "assign-bead: $id is $verb $name, but bd dolt push failed - other machines will not see it yet" >&2
 
-echo "assign-bead: $id is claimed for $name" >&2
+echo "assign-bead: $id is $verb $name" >&2
 exit 0

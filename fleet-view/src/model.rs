@@ -864,6 +864,43 @@ pub struct WorkBuckets {
     /// The ids an implementer may be handed, in `scripts/assignable-beads`' order (priority, then
     /// id). `partition_beads` leaves it empty; `readers::read_work` fills it (cb-10d.1).
     pub assignable: Vec<String>,
+    /// Each planning role's candidates, keyed by role, in its script's order (cb-10d.2.2).
+    /// `partition_beads` leaves it empty; `readers::read_work` fills it for exactly the roles it
+    /// was asked for, so a role absent from the map was not asked for - which is not the same as
+    /// one with nothing to take.
+    pub candidates: BTreeMap<String, Vec<Candidate>>,
+}
+
+/// One row of a planning role's candidate script (`plan-candidates`, `stage-candidates <stage>`),
+/// in the script's own order: priority, then id. The scripts print whole bead rows; only these two
+/// fields are read.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize)]
+pub struct Candidate {
+    pub id: String,
+    pub priority: Option<u8>,
+}
+
+/// The three roles the view hands a bead from a candidate script, in roster-independent order.
+pub const PLANNING_ROLES: [&str; 3] = ["planner", "ux", "build-design"];
+
+/// The script (relative to `scripts_dir`) and argv that list ROLE's candidates, or `None` for a
+/// role that is not a planning role.
+pub fn candidate_command(role: &str) -> Option<(&'static str, &'static [&'static str])> {
+    match role {
+        "planner" => Some(("plan-candidates", &[])),
+        "ux" => Some(("stage-candidates", &["ux"])),
+        "build-design" => Some(("stage-candidates", &["build-design"])),
+        _ => None,
+    }
+}
+
+/// The planning roles that appear on at least one of ROWS - the roster the view is actually
+/// showing, so a project with no `ux` row runs no `stage-candidates ux`.
+pub fn planning_roles_of(rows: &[FleetRow]) -> BTreeSet<String> {
+    rows.iter()
+        .filter(|row| PLANNING_ROLES.contains(&row.role.as_str()))
+        .map(|row| row.role.clone())
+        .collect()
 }
 
 /// A give-back this view has asked for (cb-10d.1): the bead, and when its write failed if it did.
@@ -886,7 +923,6 @@ const SKIPPED_ISSUE_TYPES: [&str; 2] = ["epic", "event"];
 const CONDITIONAL_ISSUE_TYPE: &str = "epic";
 const PAUSED_LABEL: &str = "human";
 const PLANNED_LABEL: &str = "planned";
-const PLANNING_LABEL: &str = "planning";
 /// The stage label the UX agent adds when a bead's experience has been agreed (cb-lz5.1).
 /// The shell owner is `scripts/stage-candidates --print-stage-label`, and
 /// `fleet-view/tests/reader_contracts.rs` holds this copy to it.
@@ -899,14 +935,11 @@ pub fn ux_agreed_label() -> &'static str {
 }
 const SETTLED_LABELS: [&str; 2] = ["verification:passed", "verification:not-needed"];
 
-fn is_holding_label(labels: &[String]) -> bool {
-    let held_prefix = format!("{PLANNING_LABEL}:");
-    labels.iter().any(|label| {
-        label == PLANNING_LABEL
-            || label
-                .strip_prefix(&held_prefix)
-                .is_some_and(|name| !name.is_empty() && !name.contains(':'))
-    })
+/// Whether BEAD has been handed to somebody: a non-empty `assignee`. On an `open` bead that is a
+/// planning role's assignment (cb-10d.2.2); an implementer's is `in_progress` and never reaches
+/// this test.
+fn is_assigned(bead: &Bead) -> bool {
+    bead.assignee.as_deref().is_some_and(|name| !name.is_empty())
 }
 
 /// The id of every bead in BEADS that another bead names as its direct parent.
@@ -946,7 +979,7 @@ fn is_bookkeeping(bead: &Bead, parents: &BTreeSet<String>) -> bool {
 /// Exact precedence, matching `emacs/cerebro.el:4652-4764`: an `event`, and an `epic` that has at
 /// least one direct child, are skipped outright (`is_bookkeeping`), while a CHILDLESS epic
 /// partitions like any other bead; `in_progress` is always claimed; for `open`, `human` wins over exact `planned`,
-/// exact `planned` wins over a hold (`planning` or `planning:<name>`), a hold wins over the
+/// exact `planned` wins over an assignee (cb-10d.2.2), an assignee wins over the
 /// `ux:agreed` stage label, and anything else open is unplanned; `closed` is merged unless it carries a settled verification label; every other
 /// status (blocked, deferred, an unknown future status) appears in no bucket.
 pub fn partition_beads(beads: Vec<Bead>) -> WorkBuckets {
@@ -964,7 +997,7 @@ pub fn partition_beads(beads: Vec<Bead>) -> WorkBuckets {
                     buckets.paused.push(bead);
                 } else if bead.labels.iter().any(|l| l == PLANNED_LABEL) {
                     buckets.planned.push(bead);
-                } else if is_holding_label(&bead.labels) {
+                } else if is_assigned(&bead) {
                     buckets.being_planned.push(bead);
                 } else if bead.labels.iter().any(|l| l == UX_AGREED_LABEL) {
                     buckets.ux_agreed.push(bead);
@@ -1635,20 +1668,46 @@ mod tests {
         }
     }
 
+    /// A test-only spelling of "this bead, handed to NAME".
+    struct Bean;
+    impl Bean {
+        fn assigned(bead: Bead, name: &str) -> Bead {
+            Bead { assignee: Some(name.to_string()), ..bead }
+        }
+    }
+
+    /// cb-10d.2.2: the fleet view hands a planning session its bead by assignee, so an assignee
+    /// on an open bead - and no label - is what puts it in `Being planned`.
+    #[test]
+    fn an_open_bead_with_an_assignee_is_being_planned() {
+        let beads = vec![
+            Bean::assigned(bead("plain", "open", "feature", &[]), "Iceman"),
+            Bean::assigned(bead("agreed", "open", "feature", &["ux:agreed"]), "Beast"),
+            Bean::assigned(bead("planned", "open", "feature", &["planned"]), "Xavier"),
+            Bean::assigned(bead("parked", "open", "feature", &["human"]), "Xavier"),
+            Bean::assigned(bead("empty", "open", "feature", &[]), ""),
+            bead("labelled", "open", "feature", &["planning:Xavier"]),
+        ];
+        let buckets = partition_beads(beads);
+        let ids = |v: &Vec<Bead>| v.iter().map(|b| b.id.clone()).collect::<Vec<_>>();
+        assert_eq!(ids(&buckets.being_planned), vec!["plain", "agreed"]);
+        assert_eq!(ids(&buckets.planned), vec!["planned"]);
+        assert_eq!(ids(&buckets.paused), vec!["parked"]);
+        assert_eq!(ids(&buckets.unplanned), vec!["empty", "labelled"]);
+    }
+
     #[test]
     fn partition_beads_matches_every_existing_bucket_shape() {
         let beads = vec![
             bead("claimed-1", "in_progress", "feature", &["planned"]),
             bead("planned-1", "open", "feature", &["planned"]),
-            bead("planning-bare", "open", "feature", &["planning"]),
-            bead("planning-named", "open", "feature", &["planning:Xavier"]),
-            bead("planning-empty", "open", "feature", &["planning:"]),
-            bead("planning-double", "open", "feature", &["planning::Xavier"]),
-            bead("near-miss-planner", "open", "feature", &["planner:Xavier"]),
+            Bean::assigned(bead("assigned-1", "open", "feature", &[]), "Xavier"),
+            Bean::assigned(bead("assigned-empty", "open", "feature", &[]), ""),
+            bead("label-no-longer-holds", "open", "feature", &["planning:Xavier"]),
             bead("unplanned-1", "open", "feature", &[]),
             bead("paused-over-planned", "open", "feature", &["human", "planned"]),
-            bead("paused-over-planning", "open", "feature", &["human", "planning"]),
-            bead("planned-over-planning", "open", "feature", &["planned", "planning"]),
+            Bean::assigned(bead("paused-over-assigned", "open", "feature", &["human"]), "Xavier"),
+            Bean::assigned(bead("planned-over-assigned", "open", "feature", &["planned"]), "Xavier"),
             bead("merged-1", "closed", "feature", &[]),
             bead("settled-passed", "closed", "feature", &["verification:passed"]),
             bead("settled-not-needed", "closed", "feature", &["verification:not-needed"]),
@@ -1667,24 +1726,19 @@ mod tests {
         );
         assert_eq!(
             buckets.planned.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(),
-            vec!["planned-1", "planned-over-planning"]
+            vec!["planned-1", "planned-over-assigned"]
         );
         assert_eq!(
             buckets.being_planned.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(),
-            vec!["planning-bare", "planning-named"]
+            vec!["assigned-1"]
         );
         assert_eq!(
             buckets.unplanned.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(),
-            vec![
-                "planning-empty",
-                "planning-double",
-                "near-miss-planner",
-                "unplanned-1",
-            ]
+            vec!["assigned-empty", "label-no-longer-holds", "unplanned-1"]
         );
         assert_eq!(
             buckets.paused.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(),
-            vec!["paused-over-planned", "paused-over-planning"]
+            vec!["paused-over-planned", "paused-over-assigned"]
         );
         assert_eq!(
             buckets.merged.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(),
@@ -1745,15 +1799,15 @@ mod tests {
     }
 
     /// The `ux:agreed` stage label gets a bucket of its own, and it loses to every bucket that
-    /// already exists: `human`, exact `planned` and a `planning:<name>` hold all win over it,
-    /// because both cb-lz5 agents take a bead with the SAME hold and must show under
-    /// `Being planned` while they have one open.
+    /// already exists: `human`, exact `planned` and an assignee all win over it, because the
+    /// fleet view hands both cb-lz5 agents their bead by assignee and a bead must show under
+    /// `Being planned` while one of them has it (cb-10d.2.2).
     #[test]
     fn partition_beads_puts_an_agreed_bead_in_its_own_bucket() {
         let beads = vec![
             bead("agreed", "open", "feature", &["ux:agreed"]),
             bead("agreed-planned", "open", "feature", &["ux:agreed", "planned"]),
-            bead("agreed-held", "open", "feature", &["ux:agreed", "planning:Beast"]),
+            Bean::assigned(bead("agreed-held", "open", "feature", &["ux:agreed"]), "Beast"),
             bead("agreed-paused", "open", "feature", &["ux:agreed", "human"]),
             bead("plain", "open", "feature", &[]),
         ];
@@ -1764,6 +1818,48 @@ mod tests {
         assert_eq!(ids(&buckets.being_planned), vec!["agreed-held"]);
         assert_eq!(ids(&buckets.paused), vec!["agreed-paused"]);
         assert_eq!(ids(&buckets.unplanned), vec!["plain"]);
+    }
+
+    #[test]
+    fn candidate_command_names_each_planning_roles_script() {
+        assert_eq!(candidate_command("planner"), Some(("plan-candidates", &[][..])));
+        assert_eq!(candidate_command("ux"), Some(("stage-candidates", &["ux"][..])));
+        assert_eq!(
+            candidate_command("build-design"),
+            Some(("stage-candidates", &["build-design"][..]))
+        );
+        assert_eq!(candidate_command("verifier"), None);
+        assert_eq!(candidate_command("implementer"), None);
+        for role in PLANNING_ROLES {
+            assert!(candidate_command(role).is_some(), "{role} has a candidate script");
+        }
+    }
+
+    #[test]
+    fn planning_roles_are_the_ones_the_fleet_shows() {
+        let row = |name: &str, role: &str| FleetRow {
+            name: name.into(),
+            role: role.into(),
+            kind: AgentKind::Interactive,
+            state: RowState::Idle,
+            phase: None,
+            bead: None,
+            since: None,
+            phase_since: None,
+            pid: None,
+            turn_ended: None,
+            sessions: 0,
+            diagnostic: None,
+        };
+        let rows = vec![
+            row("Xavier", "ux"),
+            row("Iceman", "build-design"),
+            row("Rogue", "implementer"),
+            row("Beast", "ux"),
+        ];
+        let want: BTreeSet<String> = ["build-design", "ux"].iter().map(|r| r.to_string()).collect();
+        assert_eq!(planning_roles_of(&rows), want);
+        assert!(planning_roles_of(&[]).is_empty());
     }
 
     #[test]

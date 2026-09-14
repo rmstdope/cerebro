@@ -610,10 +610,39 @@ pub fn read_work(
     paths: &ReaderPaths,
     programs: &Programs,
     commands: &dyn CommandRunner,
+    planning_roles: &BTreeSet<String>,
 ) -> Result<WorkBuckets, ReadError> {
     let mut buckets = model::partition_beads(read_beads(paths, programs, commands)?);
     buckets.assignable = read_assignable(paths, commands)?;
+    // Sequential, on this one thread, in `BTreeSet` order: a pool would reorder which error is
+    // reported. A failure fails the whole read, this module's standing rule (cb-10d.2.2).
+    for role in planning_roles {
+        buckets.candidates.insert(role.clone(), read_candidates(paths, commands, role)?);
+    }
     Ok(buckets)
+}
+
+/// ROLE's candidates, via its script (`model::candidate_command`) in `scripts_dir`, on
+/// `BD_TIMEOUT`. A non-planning role is `ReadError::Invalid` and runs nothing; a failed or
+/// unparsable run is returned as itself - never an empty list, which would say there is nothing to
+/// plan (cb-10d.2.2).
+pub fn read_candidates(
+    paths: &ReaderPaths,
+    commands: &dyn CommandRunner,
+    role: &str,
+) -> Result<Vec<model::Candidate>, ReadError> {
+    let Some((script, args)) = model::candidate_command(role) else {
+        return Err(ReadError::Invalid {
+            source: Invocation::new(&paths.scripts_dir, &[role]),
+            message: format!("{role} is not a planning role"),
+        });
+    };
+    let program = paths.scripts_dir.join(script);
+    let stdout = commands.run(&program, args, None, BD_TIMEOUT)?;
+    serde_json::from_slice(&stdout).map_err(|e| ReadError::Invalid {
+        source: Invocation::new(&program, args),
+        message: e.to_string(),
+    })
 }
 
 /// The beads an implementer may be handed, via `<scripts_dir>/assignable-beads` - the one place
@@ -1444,7 +1473,7 @@ mod tests {
     const BUCKETED_BEADS: &str = r#"[
       {"id":"cb-claimed","title":"being built","status":"in_progress","issue_type":"feature","labels":[],"priority":1,"updated_at":null,"assignee":"Cyclops"},
       {"id":"cb-planned","title":"ready","status":"open","issue_type":"feature","labels":["planned"],"priority":2,"updated_at":null,"assignee":null},
-      {"id":"cb-held","title":"mid-plan","status":"open","issue_type":"feature","labels":["planning:Xavier"],"priority":2,"updated_at":null,"assignee":null},
+      {"id":"cb-held","title":"mid-plan","status":"open","issue_type":"feature","labels":[],"priority":2,"updated_at":null,"assignee":"Xavier"},
       {"id":"cb-new","title":"filed","status":"open","issue_type":"bug","labels":[],"priority":4,"updated_at":null,"assignee":null},
       {"id":"cb-human","title":"parked","status":"open","issue_type":"feature","labels":["human"],"priority":2,"updated_at":null,"assignee":null},
       {"id":"cb-merged","title":"landed","status":"closed","issue_type":"feature","labels":[],"priority":1,"updated_at":"2026-01-01T00:00:00Z","assignee":null},
@@ -1456,7 +1485,7 @@ mod tests {
         let fake = FakeCommands::always(BUCKETED_BEADS);
         let paths = paths_at(Path::new("/consumer"));
 
-        let work = read_work(&paths, &Programs::default(), &fake).unwrap();
+        let work = read_work(&paths, &Programs::default(), &fake, &BTreeSet::new()).unwrap();
         assert_eq!(ids(&work.claimed), ["cb-claimed", "cb-epic.1"]);
         assert_eq!(ids(&work.planned), ["cb-planned"]);
         assert_eq!(ids(&work.being_planned), ["cb-held"]);
@@ -1485,11 +1514,95 @@ mod tests {
             }
         });
 
-        let work = read_work(&paths, &Programs::default(), &fake).unwrap();
+        let work = read_work(&paths, &Programs::default(), &fake, &BTreeSet::new()).unwrap();
         assert_eq!(work.assignable, ["cb-b", "cb-a"]);
         let calls = fake.calls();
         let call = calls.iter().find(|c| c.program == script).expect("assignable-beads was run");
         assert!(call.args.is_empty(), "no arguments, got {:?}", call.args);
+    }
+
+    /// cb-10d.2.2: the work read runs each asked planning role's candidate script, and only those.
+    #[test]
+    fn read_work_lists_each_asked_planning_roles_candidates() {
+        let paths = paths_at(Path::new("/consumer"));
+        let plan = paths.scripts_dir.join("plan-candidates");
+        let stage = paths.scripts_dir.join("stage-candidates");
+        let assignable = paths.scripts_dir.join("assignable-beads");
+        let (plan_c, stage_c) = (plan.clone(), stage.clone());
+        let fake = FakeCommands::new(move |call: &Call| {
+            if call.program == assignable {
+                Ok(b"[]".to_vec())
+            } else if call.program == plan_c {
+                Ok(br#"[{"id":"cb-p","priority":1}]"#.to_vec())
+            } else if call.program == stage_c && call.args == ["build-design"] {
+                Ok(br#"[{"id":"cb-b","priority":2,"title":"ignored","labels":["ux:agreed"]}]"#.to_vec())
+            } else if call.program == stage_c && call.args == ["ux"] {
+                Ok(br#"[{"id":"cb-u","priority":0},{"id":"cb-v","priority":null}]"#.to_vec())
+            } else {
+                Ok(BUCKETED_BEADS.as_bytes().to_vec())
+            }
+        });
+        let roles: BTreeSet<String> = ["build-design", "ux"].iter().map(|r| r.to_string()).collect();
+
+        let work = read_work(&paths, &Programs::default(), &fake, &roles).unwrap();
+        assert_eq!(
+            work.candidates.get("build-design"),
+            Some(&vec![model::Candidate { id: "cb-b".into(), priority: Some(2) }])
+        );
+        assert_eq!(
+            work.candidates.get("ux"),
+            Some(&vec![
+                model::Candidate { id: "cb-u".into(), priority: Some(0) },
+                model::Candidate { id: "cb-v".into(), priority: None },
+            ])
+        );
+        assert!(!work.candidates.contains_key("planner"), "a role not asked for is absent");
+        let calls = fake.calls();
+        assert!(calls.iter().all(|c| c.program != plan), "plan-candidates was not asked for");
+        let stage_args: Vec<Vec<String>> =
+            calls.iter().filter(|c| c.program == stage).map(|c| c.args.clone()).collect();
+        assert_eq!(stage_args, vec![vec!["build-design".to_string()], vec!["ux".to_string()]]);
+    }
+
+    #[test]
+    fn a_failed_candidate_read_fails_the_work_read() {
+        let paths = paths_at(Path::new("/consumer"));
+        let plan = paths.scripts_dir.join("plan-candidates");
+        let assignable = paths.scripts_dir.join("assignable-beads");
+        let fake = FakeCommands::new(move |call: &Call| {
+            if call.program == plan {
+                Err(exit(1, "plan-candidates: work-beads failed"))
+            } else if call.program == assignable {
+                Ok(b"[]".to_vec())
+            } else {
+                Ok(BUCKETED_BEADS.as_bytes().to_vec())
+            }
+        });
+        let roles: BTreeSet<String> = ["planner".to_string()].into_iter().collect();
+        assert!(read_work(&paths, &Programs::default(), &fake, &roles).is_err());
+    }
+
+    #[test]
+    fn no_planning_roles_runs_no_candidate_script() {
+        let paths = paths_at(Path::new("/consumer"));
+        let fake = FakeCommands::new(|call: &Call| {
+            if call.program.ends_with("assignable-beads") {
+                Ok(b"[]".to_vec())
+            } else {
+                Ok(BUCKETED_BEADS.as_bytes().to_vec())
+            }
+        });
+        let work = read_work(&paths, &Programs::default(), &fake, &BTreeSet::new()).unwrap();
+        assert!(work.candidates.is_empty());
+        assert_eq!(fake.calls().len(), 2, "bd list and assignable-beads, nothing else");
+    }
+
+    #[test]
+    fn read_candidates_refuses_a_role_that_is_not_a_planning_role() {
+        let paths = paths_at(Path::new("/consumer"));
+        let fake = FakeCommands::always("[]");
+        assert!(matches!(read_candidates(&paths, &fake, "verifier"), Err(ReadError::Invalid { .. })));
+        assert!(fake.calls().is_empty());
     }
 
     #[test]
@@ -1503,7 +1616,7 @@ mod tests {
                 Ok(BUCKETED_BEADS.as_bytes().to_vec())
             }
         });
-        assert!(read_work(&paths, &Programs::default(), &fake).is_err());
+        assert!(read_work(&paths, &Programs::default(), &fake, &BTreeSet::new()).is_err());
     }
 
     /// A `bd` that exits non-zero is a failure, not a set of empty queues: an empty board and an
@@ -1512,7 +1625,7 @@ mod tests {
     fn work_reader_preserves_bd_failure() {
         let paths = paths_at(Path::new("/consumer"));
         let fake = FakeCommands::failing(|| exit(1, "bd list failed: database is locked"));
-        match read_work(&paths, &Programs::default(), &fake) {
+        match read_work(&paths, &Programs::default(), &fake, &BTreeSet::new()) {
             Err(ReadError::Exit { status, stderr, .. }) => {
                 assert_eq!(status, Some(1));
                 assert!(stderr.contains("database is locked"), "{stderr}");
@@ -1525,7 +1638,7 @@ mod tests {
     fn work_reader_rejects_invalid_json() {
         let paths = paths_at(Path::new("/consumer"));
         assert!(matches!(
-            read_work(&paths, &Programs::default(), &FakeCommands::always("bd: nothing to list\n")),
+            read_work(&paths, &Programs::default(), &FakeCommands::always("bd: nothing to list\n"), &BTreeSet::new()),
             Err(ReadError::Invalid { .. })
         ));
     }
@@ -1541,7 +1654,7 @@ mod tests {
             source: "/somewhere/bd".into(),
             seconds: 5,
         });
-        match read_work(&paths, &Programs::default(), &fake) {
+        match read_work(&paths, &Programs::default(), &fake, &BTreeSet::new()) {
             Err(ReadError::Timeout { seconds, source }) => {
                 assert_eq!(seconds, 5);
                 assert!(source.program().ends_with("bd"), "the failure names the program: {source}");

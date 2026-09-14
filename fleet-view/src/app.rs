@@ -2134,6 +2134,12 @@ impl App {
         self.fleet.content.value().map(Vec::as_slice).unwrap_or(&[])
     }
 
+    /// The planning roles on the fleet this view is showing, whose candidates the work read lists
+    /// (`model::planning_roles_of`). Empty before the first fleet read (cb-10d.2.2).
+    pub fn planning_roles(&self) -> BTreeSet<String> {
+        crate::model::planning_roles_of(self.fleet_rows())
+    }
+
     /// The names whose recorded exit keeps their row `Dead` rather than restating it as
     /// `Standby` (`cerebro--failed-names`), which asks whether the record has anything to SAY
     /// rather than whether one exists:
@@ -3437,10 +3443,17 @@ impl App {
         let newest = self.writes_answered == self.writes_requested;
         // A failure always takes the header; a success takes it only when it is the newest write,
         // so an older write's sentence cannot replace the dim line of one still running.
-        // A give-back that found its bead elsewhere has nothing to say (cb-10d.1).
+        // A give-back that found its bead elsewhere has nothing to say (cb-10d.1), and neither
+        // has one whose sentence is empty - a planning session that ended holding its bead
+        // (cb-10d.2.2).
         let silent = matches!(
             &answer,
             WriteAnswer::Release { outcome: crate::lifecycle::ReleaseOutcome::Elsewhere, .. }
+        ) || matches!(
+            &answer,
+            WriteAnswer::Release {
+                outcome: crate::lifecycle::ReleaseOutcome::Returned { text }, ..
+            } if text.is_empty()
         );
         if answer.failed() {
             self.set_error_notice(answer.text().to_string());
@@ -3560,7 +3573,8 @@ pub struct Worker<T, Req = ()> {
 /// The fleet's worker: `read_fleet` on its own thread.
 pub type FleetWorker = Worker<Vec<FleetRow>>;
 /// The bead panel's worker: `read_work` on its own thread.
-pub type WorkWorker = Worker<WorkBuckets>;
+/// Its request is the planning roles whose candidates to list (cb-10d.2.2).
+pub type WorkWorker = Worker<WorkBuckets, BTreeSet<String>>;
 impl<T: Send + 'static, Req: Send + 'static> Worker<T, Req> {
     /// `FnMut`, not `Fn`: the `gh` reader keeps the login it has learnt between requests, and the
     /// loop below calls it from one thread only. A `RefCell` in the closure instead would be
@@ -3636,9 +3650,11 @@ impl Worker<Vec<FleetRow>> {
     }
 }
 
-impl Worker<WorkBuckets> {
+impl Worker<WorkBuckets, BTreeSet<String>> {
     pub fn spawn(paths: ReaderPaths, programs: Programs, commands: Commands) -> Self {
-        Self::spawn_reader(move |()| read_work(&paths, &programs, commands.as_ref()))
+        Self::spawn_reader(move |roles: BTreeSet<String>| {
+            read_work(&paths, &programs, commands.as_ref(), &roles)
+        })
     }
 }
 
@@ -5828,6 +5844,26 @@ mod tests {
         app.begin_write(&request, bd_path());
         let action = app.finish_write(release_answer(crate::lifecycle::ReleaseOutcome::Elsewhere));
         assert_eq!(action, AppAction::None);
+        assert_eq!(app.notice.as_deref(), Some("before"));
+        assert!(app.releasing.is_empty());
+    }
+
+    /// cb-10d.2.2: a planning session that ended still holding its bead is given it back without
+    /// a word - nothing went wrong from the navigator's side.
+    #[test]
+    fn an_ended_give_back_says_nothing() {
+        let mut app = App::new();
+        app.set_notice("before".into());
+        app.queue_release("Iceman", "cb-x", crate::lifecycle::GiveBack::Ended);
+        let request = app.take_outbox().pop().unwrap();
+        app.begin_write(&request, bd_path());
+        let action = app.finish_write(WriteAnswer::Release {
+            name: "Iceman".into(),
+            bead: "cb-x".into(),
+            cause: crate::lifecycle::GiveBack::Ended,
+            outcome: crate::lifecycle::ReleaseOutcome::Returned { text: String::new() },
+        });
+        assert_eq!(action, AppAction::RefreshWork);
         assert_eq!(app.notice.as_deref(), Some("before"));
         assert!(app.releasing.is_empty());
     }

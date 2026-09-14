@@ -139,15 +139,15 @@ labelled='[{"id":"tt-plain","issue_type":"task","priority":2,"labels":[]},
 set_stub "$labelled"
 set_stub_for children '[]'
 ids="$(run ux | ids_of)"
-[ "$ids" = "tt-ideas tt-plain tt-revise " ] \
-  || fail "the ux stage listed '$ids', not the three beads still needing a designer"
+[ "$ids" = "tt-held tt-held-x tt-ideas tt-plain tt-revise " ] \
+  || fail "the ux stage listed '$ids', not the five beads still needing a designer (a planning label holds nothing since cb-10d.2.2)"
 pass "the ux stage takes what is not yet agreed"
 
 # --- the build-design stage takes only what is agreed and not yet planned ------------------------
 set_stub "$labelled"
 set_stub_for children '[]'
 ids="$(run build-design | ids_of)"
-[ "$ids" = "tt-agreed " ] || fail "the build-design stage listed '$ids', not tt-agreed alone"
+[ "$ids" = "tt-agreed tt-agreed-held " ] || fail "the build-design stage listed '$ids', not the two agreed beads (a planning label holds nothing since cb-10d.2.2)"
 pass "the build-design stage takes only what is agreed and not yet planned"
 
 # --- a label at position 0 is seen ---------------------------------------------------------------

@@ -130,6 +130,7 @@ labelled='[{"id":"tt-plain","issue_type":"task","priority":2,"labels":[]},
            {"id":"tt-held","issue_type":"task","priority":2,"labels":["planning"]},
            {"id":"tt-held-x","issue_type":"task","priority":2,"labels":["planning:Xavier"]},
            {"id":"tt-ideas","issue_type":"task","priority":2,"labels":["planning-ideas"]},
+           {"id":"tt-assigned","issue_type":"task","priority":2,"labels":[],"assignee":"Xavier"},
            {"id":"tt-failed","issue_type":"task","priority":2,"labels":["verification:failed"]},
            {"id":"tt-revise","issue_type":"task","priority":2,"labels":["verification:failed","plan:revise"]},
            {"id":"tt-stale","issue_type":"task","priority":2,"labels":["verdict:stale","plan:revise"]}]'
@@ -143,14 +144,13 @@ pass "drops a bead that is already planned"
 case " $ids " in *" tt-human "*) fail "a bead parked on the navigator is still a candidate: '$ids'";; esac
 pass "drops a bead parked on the navigator"
 
-case " $ids " in *" tt-held "*) fail "a bead held by a bare planning label is still a candidate: '$ids'";; esac
-case " $ids " in *" tt-held-x "*) fail "a bead held by planning:<name> is still a candidate: '$ids'";; esac
-pass "drops a bead held by either spelling of the planning label"
-
-# The `:` is required rather than a bare prefix, so a label that merely starts with the same
-# letters is not read as a hold.
+# cb-10d.2.2: the fleet view hands a planning session its bead by assignee, so a planning label
+# no longer holds anything - only an assignee does.
+case " $ids " in *" tt-held "*) : ;; *) fail "a bare planning label still holds a bead: '$ids'";; esac
+case " $ids " in *" tt-held-x "*) : ;; *) fail "planning:<name> still holds a bead: '$ids'";; esac
 case " $ids " in *" tt-ideas "*) : ;; *) fail "planning-ideas was read as a hold: '$ids'";; esac
-pass "keeps a bead labelled planning-ideas"
+case " $ids " in *" tt-assigned "*) fail "an assigned bead is still a candidate: '$ids'";; esac
+pass "a planning label no longer holds a bead"
 
 case " $ids " in *" tt-failed "*) fail "a failed verification with no plan:revise is a candidate: '$ids'";; esac
 case " $ids " in *" tt-revise "*) : ;; *) fail "a failed verification with plan:revise was dropped: '$ids'";; esac

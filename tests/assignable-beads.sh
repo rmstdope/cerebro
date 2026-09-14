@@ -37,10 +37,11 @@ out="$(run)"
   || fail "the ready beads come back sorted by priority then id, got $out"
 log="$(cat "$stub/bd.log")"
 for want in --readonly " ready " "--label planned" "--exclude-label human" \
-            "--exclude-label verdict:stale" "--exclude-type epic" "-n 0"; do
+            "--exclude-label verdict:stale" "--exclude-type epic" "-n 0" "--unassigned"; do
   [[ "$log" == *"$want"* ]] || fail "bd is asked with $want, got: $log"
 done
 pass "prints the ready planned beads sorted by priority then id"
+pass "an assigned planned bead is never assignable (bd ready --unassigned)"
 
 # --- any argument is a usage error --------------------------------------------------------------
 

@@ -777,6 +777,10 @@ pub enum GiveBack {
     NeverStarted,
     /// `k` on a starting row.
     Stopped,
+    /// A planning session that is no longer running still holds its bead on the board: killed,
+    /// crashed, a closed window, or a skill that forgot to clear its assignee (cb-10d.2.2).
+    /// Silent on screen - nothing went wrong from the navigator's side.
+    Ended,
 }
 
 impl GiveBack {
@@ -786,6 +790,7 @@ impl GiveBack {
             GiveBack::DidNotStart => "did-not-start",
             GiveBack::NeverStarted => "never-started",
             GiveBack::Stopped => "stopped",
+            GiveBack::Ended => "ended",
         }
     }
 
@@ -799,6 +804,9 @@ impl GiveBack {
                 format!("{name} never started; {bead} is back with the planned work.")
             }
             GiveBack::Stopped => format!("{name} was stopped; {bead} is back with the planned work."),
+            // No sentence was agreed for it, and none is owed: `App::finish_write` says nothing
+            // for an empty text.
+            GiveBack::Ended => String::new(),
         }
     }
 }
@@ -876,6 +884,29 @@ pub fn orphaned_handover(
     age_seconds: i64,
 ) -> bool {
     !hosted_live && !row_alive && !releasing && age_seconds >= HANDOVER_GRACE_SECONDS
+}
+
+/// The bead a planning session that is no longer running still holds on the board, if any: the
+/// first `being_planned` bead assigned to NAME. `None` when NAME is hosted and live, its row is
+/// alive, it is already giving something back, or it holds nothing (cb-10d.2.2).
+///
+/// Safe on a thirty-second-old board: `release-bead` re-reads the bead and answers `running` for
+/// a live agent and `free` for one already unassigned, so a stale bucket costs one no-op write.
+pub fn ended_holding<'a>(
+    name: &str,
+    hosted_live: bool,
+    row_alive: bool,
+    releasing: bool,
+    buckets: &'a crate::model::WorkBuckets,
+) -> Option<&'a str> {
+    if hosted_live || row_alive || releasing {
+        return None;
+    }
+    buckets
+        .being_planned
+        .iter()
+        .find(|bead| bead.assignee.as_deref() == Some(name))
+        .map(|bead| bead.id.as_str())
 }
 
 /// What the header says when a handover empties the armed set (cb-nc8).
@@ -1289,6 +1320,39 @@ mod tests {
         assert!(!orphaned_handover(true, false, false, 600));
         assert!(!orphaned_handover(false, true, false, 600));
         assert!(!orphaned_handover(false, false, true, 600));
+    }
+
+    fn holding(assignee: &str) -> crate::model::WorkBuckets {
+        let bead = crate::model::Bead {
+            id: "cb-x".into(),
+            title: "cb-x".into(),
+            status: "open".into(),
+            issue_type: "task".into(),
+            labels: vec!["ux:agreed".into()],
+            priority: Some(2),
+            updated_at: None,
+            assignee: Some(assignee.into()),
+            metadata: serde_json::Value::Null,
+            external_ref: None,
+        };
+        crate::model::partition_beads(vec![bead])
+    }
+
+    #[test]
+    fn a_planning_session_that_ended_holding_its_bead_gives_it_back() {
+        let buckets = holding("Iceman");
+        assert_eq!(buckets.being_planned.len(), 1, "the fixture is being planned");
+        assert_eq!(ended_holding("Iceman", false, false, false, &buckets), Some("cb-x"));
+        assert_eq!(ended_holding("Iceman", true, false, false, &buckets), None, "hosted and live");
+        assert_eq!(ended_holding("Iceman", false, true, false, &buckets), None, "its row is alive");
+        assert_eq!(ended_holding("Iceman", false, false, true, &buckets), None, "already giving back");
+        assert_eq!(ended_holding("Gambit", false, false, false, &buckets), None, "holds nothing");
+    }
+
+    #[test]
+    fn the_ended_give_back_has_no_sentence() {
+        assert_eq!(GiveBack::Ended.notice("Iceman", "cb-x"), "");
+        assert_eq!(GiveBack::Ended.word(), "ended");
     }
 
     #[test]

@@ -192,17 +192,14 @@ agreed="$(run_count --ux-agreed)"
 [ "$agreed" = "1" ] || fail "--ux-agreed counted '$agreed', not the one agreed, undesigned bead"
 pass "counts the agreed but undesigned beads"
 
-# A bead a build-design agent is HOLDING is not work waiting for one: `scripts/stage-candidates
-# build-design` would not hand it out, and a count that includes it is exactly the drift this
-# script header records as already paid for - a trigger counting beads the candidate query
-# excludes starts a session that finds nothing to do. Both live spellings of the hold, since the
-# rule is `planning` or `planning:<name>` and neither is the other.
+# cb-10d.2.2: a planning label is no longer a hold - the fleet view hands a build-design agent its
+# bead by assignee - so an agreed bead that still carries one is counted as waiting.
 held='[{"id":"ha","issue_type":"task","labels":["ux:agreed","planning"]},
        {"id":"hb","issue_type":"task","labels":["ux:agreed","planning:Beast"]}]'
 set_stub "$held"
 agreed="$(run_count --ux-agreed)"
-[ "$agreed" = "0" ] || fail "--ux-agreed counted '$agreed' beads that a build-design agent is already holding"
-pass "a bead held by either spelling of the planning label is not counted as waiting"
+[ "$agreed" = "2" ] || fail "--ux-agreed counted '$agreed'; a planning label still reads as a hold"
+pass "a planning label is no longer a hold"
 
 # cb-10d.2.1: an ASSIGNEE is the other spelling of the same hold - the fleet view hands a
 # build-design agent its bead by assignee - so the count shares it with `stage-candidates

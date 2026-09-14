@@ -52,11 +52,11 @@ A claim from any of them is indistinguishable from a build in flight: it hides a
 fleet, and when that session ends it strands a lease nobody can account for.
 
 **The planner does not use `bd ready` either.** It may plan a bead whose dependencies are still
-unbuilt — often those are the ones most worth having planned — and `bd ready` hides exactly those. It
-picks from `bd list ... --sort priority`, and marks its candidate with a **`planning:<its own
-name>`** label rather than claiming it: enough to keep a second planning session off the same bead,
-while leaving it
-`open`, unassigned and free of any lease. `plan-bead` carries the commands.
+unbuilt — often those are the ones most worth having planned — and `bd ready` hides exactly those. The
+fleet view picks each planning session's bead from `scripts/plan-candidates` or
+`scripts/stage-candidates` and makes the agent its assignee without claiming it — the bead stays
+`open` and free of any lease — and the agent clears the assignee when it finishes. `plan-bead`
+carries the commands.
 
 The claim is atomic, and a failure means somebody else won the race: take the next bead rather than
 retrying.
@@ -69,26 +69,17 @@ Work is split between a **planning** session, which turns an unplanned bead into
 owns every decision the user can see, and one or more **implementation** sessions, which build what
 the plan says. One label carries the handover, and `bd ready --claim` is an atomic compare-and-swap,
 so neither role can double-book a bead. Only the implementation session ever claims: the planner
-holds nothing but a label.
+is only ever the bead's assignee.
 
 | State | How it looks | Who moves it, and how |
 |---|---|---|
 | unplanned | open, no `planned` | — |
-| being planned | open, `planning:<planner>`, unassigned | planner: add the label, then plan it |
-| planned | open, `planned`, unassigned | planner: write the plan, swap its own `planning:` for `planned` |
+| being planned | open, assigned to a planning agent, no `planned` | the fleet view: `scripts/assign-bead` |
+| planned | open, `planned`, unassigned | planner: write the plan, add `planned`, clear its assignee |
 | being implemented | in_progress, implementer holds the lease | the builder pickup above |
 | needs the user | open, unassigned, `human`, **`planned` removed** | either role, on anything it must not decide |
 | parked on a UI answer | open, unassigned, `needs-ui-decision` **and** `human` | planner, when the user is away |
 | parked, and asked about already | as either row above, plus `pause:kept` | orchestrator, when the user was asked and left it parked |
-
-A **split family is owned by one planner**, marked `planner:<name>` on the parent rather than on any
-child: the children share one design, so a second planner taking one of them writes half a family
-that disagrees with the other half. It is not a hold and not a claim — it says who plans this family,
-survives that planner restarting between beads, and is ignored once the name leaves the roster.
-
-A hold is read as **the word `planning`, or the word and a `:` and the holder's name** — never as a
-bare prefix, so an unrelated label that merely starts with those letters is not mistaken for somebody
-holding the bead, and `planner:` is not caught by it either.
 
 The plan lives in the bead's `design` field (`bd update <id> --design-file plan.md`). Read it with
 `bd show <id> --json`: the pretty renderer reflows Markdown and mangles tables.
@@ -129,7 +120,7 @@ Parking it in front of the navigator instead gives a person nothing to decide. N
 adds `plan:revise`; only the verifier sets that.
 
 **A planner escalating has no claim to release**, so it runs the first and third commands and
-`--remove-label planning:<its own name>` in place of the second. `bd unclaim` on a bead you never claimed is not
+`--assignee ""` in place of the second. `bd unclaim` on a bead you never claimed is not
 harmless bookkeeping — it is a claim you should not have had in the first place.
 
 `pause:kept` is the orchestrator's own mark and nobody else writes or reads it. It means *this pause

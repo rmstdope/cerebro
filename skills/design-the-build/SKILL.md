@@ -62,10 +62,10 @@ said `asking`; corrected").
 
 | Moment | Call |
 |---|---|
-| A piece of work gets your `planning:<your-name>` label | `.claude/cerebro/scripts/agent-state <your-name> working --bead <id> --phase design --pid $PPID` |
+| The bead you were given is confirmed yours (*The piece of work you were given*) | `.claude/cerebro/scripts/agent-state <your-name> working --bead <id> --phase design --pid $PPID` |
 | Ending a pass | `.claude/cerebro/scripts/end-pass <your-name> --pid $PPID` |
 
-`design` is this role's one phase word, from the first label to the last push.
+`design` is this role's one phase word, from the confirmation to the last push.
 
 There is **no `asking` row**, and its absence is the point: this role puts no question to anybody.
 The block above still stands as written — it is the shared contract, and a session that somehow does
@@ -102,11 +102,10 @@ written there** rather than copied here:
 | *Everything you cite must exist* | open the file, quote the real symbol, read what a predicate accepts, and label a seam a blocker has not built yet as a promise |
 | *Before you mark it planned, read it as the implementer* | the check that decides whether the plan is finished, including the list of what must not survive it |
 | *The title is part of the plan, and it is yours to fix* | the seven-point title test, and the rewrite |
-| *Too big for one increment* | the split, the `bd dep add` edges, taking the inherited hold off the children, and retyping the parent — with two additions of this skill's own, under *Too big for one increment* below |
+| *Too big for one increment* | the split, the `bd dep add` edges, and retyping the parent — with two additions of this skill's own, under *Too big for one increment* below |
 | *Anything you commit, you commit from a worktree of your own* | never branch in the main checkout |
-| *Reclaiming a hold nobody is holding* | the shape of the reclaim loop — **not** the loop itself, which is below and is this skill's own |
 
-Five things there are **not** yours:
+Four things there are **not** yours:
 
 - ***Interview, don't ask*, the mockups, and the whole of *What you decide, and what you must not*.**
   The experience is agreed; re-opening it would be the combined planner under a new name. You
@@ -114,159 +113,40 @@ Five things there are **not** yours:
 - **The `needs-ui-decision` park.** A shape question that is still open is a *send-back*, not a park:
   the designer settles it, not the navigator.
 - **The buffer's own paragraphs**, though the number is the same one — `planner-buffer --count`.
-- **The candidate query.** `scripts/plan-candidates` is the combined role's;
-  `scripts/stage-candidates build-design` is yours.
-- ***A reopened bead is a P0 with a plan already***, whose own candidate query names
-  `plan-candidates`. It is restated below against `stage-candidates`, under *A piece of work whose
-  plan was judged wrong*.
+- ***A reopened bead is a P0 with a plan already***. It is restated below, under *A piece of work
+  whose plan was judged wrong*.
 
-## Free every abandoned hold
+## The piece of work you were given
 
-**Start every pass with this.** A session that is killed leaves its label behind, and a piece of
-work carrying one is excluded from every queue, so nothing ever considers it again.
+The prompt that started you ends with this sentence:
 
-A hold is held when a **live** agent at either stage names that piece of work in its own state file,
-and abandoned otherwise. Both stages take the same `planning:<name>` label, so both rosters are
-read: freeing the other stage's live hold would hand one piece of work to two agents.
+> Your bead is <id>; it is already assigned to you.
+
+The fleet view chose that piece of work, not you — highest priority first, never an unranked one,
+never one whose blocker has no plan, and never a child of a bead somebody else is splitting — and made
+you its assignee before your session started. Confirm it, then write the state:
 
 ```bash
-labelled="$(mktemp)"; held="$(mktemp)"      # never fixed names: several of you may start at once
-bd list --status open --json \
-  | jq -r '.[] | select((.labels // []) | any(. == "planning" or startswith("planning:"))) | .id' \
-  | sort > "$labelled"
-state="$(.claude/cerebro/scripts/consumer-root --shared)/.cerebro/state"
-for name in $(.claude/cerebro/scripts/roster --role ux) \
-            $(.claude/cerebro/scripts/roster --role build-design); do
-  f="$state/$name.state.json"
-  if [ -f "$f" ]; then
-    if .claude/cerebro/scripts/agent-alive "$name"; then
-      jq -r '.bead // empty' "$f"
-    fi
-  fi
-done | sort > "$held"
-comm -23 "$labelled" "$held"                # labelled, held by nobody: abandoned
-rm -f "$labelled" "$held"
-```
-
-**Two temporary files of your own, never fixed names.** Every pass of every agent at either stage
-starts with this loop, so two sessions a second apart would interleave writes into one pair of
-files — and a truncated held-list makes a *live* hold look abandoned, one line before the command
-that removes it.
-
-Liveness is `agent-alive` and never a bare `kill -0`: pids are recycled, and a dead agent that looks
-alive strands exactly the label this loop exists to free. A `planning:<name>` whose name is on
-neither roster is abandoned outright, whatever any state file says.
-
-For each abandoned one, **say which and why before you free it** — one line, naming it, so the
-navigator can stop you if a family is mid-split:
-
-```bash
-bd update <id> --remove-label <the exact label it carries>
-bd dolt push
-```
-
-Pass the label **exactly as it is carried** — `planning:<Name>`, or the bare `planning` if that is
-what is there. `--remove-label` is an exact match, so the generic word takes nothing off a named
-hold and the piece of work stays stranded while you report it freed.
-
-Then it is an ordinary candidate again, at whatever priority it carries. **Do not take it just
-because you freed it.**
-
-## How much is waiting
-
-```bash
-.claude/cerebro/scripts/planner-buffer --count       # planned=<p> want=<m>
-```
-
-`<p>` is how much planned, unclaimed work is already waiting for the implementers; `<m>` is how much
-the fleet wants. You are short whenever `p < m`, and a short buffer is the reason you were started.
-This stage's output *is* the `planned` count, which is why the number is the planner's own.
-
-**A P0 pre-empts the buffer entirely.** Every P0 waiting for a build design is planned this pass,
-whatever the buffer says:
-
-```bash
-.claude/cerebro/scripts/stage-candidates build-design \
-  | jq -r '.[] | select(.priority==0) | "\(.id)\t\(.title)"'
-```
-
-**Everything else is one piece of work per pass.** When the plan is filed, end the pass — and when
-there was more than one P0, the pass ends once the last of them is filed.
-
-## Choosing what to take
-
-```bash
-.claude/cerebro/scripts/stage-candidates build-design    # a JSON array of what you may take
-```
-
-That script is the one place the harness answers which work is at this stage; do not write the query
-yourself. Order the answer by priority, highest first.
-
-**Never a P4.** Here that does not mean *low priority*, it means *nobody has ranked this yet* — every
-piece of work is filed at P4 whoever files it, and planning one decides the navigator's ordering for
-them. If everything left is P4 there is nothing to take.
-
-**Never take one whose blocker has no plan.** A blocker whose experience is agreed but whose build is
-not designed is exactly what holds this stage up: the plan you would write could not name what it
-builds on.
-
-```bash
-bd show <id> --json | jq -r '(if type=="array" then .[0] else . end)
-  | [ .dependencies[]?
-      | select(.dependency_type=="blocks")
-      | select(.status!="closed")
-      | select((.labels//[]) | index("planned") | not)
-      | .id ] | if length==0 then "nothing" else join(", ") end'
-```
-
-Nothing — take the candidate. Otherwise take what it names instead, and check *that* one the same
-way: a blocker can have a blocker, so walk down to the deepest one with no plan and take that. Three
-details decide whether this query works at all:
-
-- **`select(.dependency_type=="blocks")` is load-bearing.** `dependencies` also carries the
-  `parent-child` edge, so without it a child demands that its own parent be planned.
-- **`bd show --json` returns an array**, hence the `if type=="array"` guard. Without it the command
-  fails, and the failure reads exactly like "no blockers".
-- **The field is `dependency_type` because this is `bd show`.** `bd list` calls the same thing
-  `type`, so a filter written for one silently matches nothing in the other.
-
-When a blocker cannot be taken at all — it is waiting on a person, or its own experience is not
-agreed yet, which is the design stage's — take the next candidate by priority, and say once which one
-you skipped and what is holding it.
-
-## One agent owns a whole family
-
-Follow *One planner owns a whole family* in `skills/plan-bead/SKILL.md` as written, with
-`.claude/cerebro/scripts/roster --role build-design` substituted for `--role planner` everywhere it
-decides whether a `planner:` label names somebody real.
-
-That label is this stage's alone: the design stage deliberately never writes it. So a `planner:`
-label on a parent was written by an agent of this role, or by a combined planner in a project that
-has since switched — and either way a name that is not on this roster does not lock a family.
-
-## Taking it
-
-**The state file first, the label second, the push at once.** That order is deliberate and it is
-easy to get backwards: your state file naming a piece of work you have not labelled yet costs
-nothing, because nobody reads it as a hold, while a label sitting there while your state file says
-`idle` is exactly the shape of an abandoned hold — and the loop above would let another agent take
-your candidate out from under you.
-
-```bash
+bd dolt pull
+bd show <id> --json | jq -r '(if type=="array" then .[0] else . end) | "\(.status) \(.assignee // "")"'
 .claude/cerebro/scripts/agent-state <your-name> working --bead <id> --phase design --pid $PPID
-bd update <id> --add-label planning:<your-name>
-bd dolt push
 ```
 
-Label before you read a line of anything, and push at once. Between the query that picked your
-candidate and your label reaching the other agents, they are looking at a list that still has it on.
+`open <your-name>` is yours. Anything else — another assignee, no assignee, a status that is not
+`open` — and it is not: say in one line what you found, write nothing to the bead, and end the pass.
+
+**No such sentence in the prompt** means nothing was handed to you: say *Nothing is waiting for a
+build design right now.* and end the pass.
+
+**Never pick, never add a label to hold anything, and never take a second piece of work.** One bead
+per pass, a P0 included: the fleet view hands the next one to the next session.
 
 ## A piece of work whose plan was judged wrong
 
 One carrying `verification:failed` **and** `plan:revise` is one a person tried and a navigator judged
 the *plan* wrong for. `stage-candidates` already hides a `verification:failed` that does not carry
-`plan:revise`, and hides anything carrying `verdict:stale` outright, so a candidate that reaches you
-is genuinely yours.
+`plan:revise`, and hides anything carrying `verdict:stale` outright, so one handed to you is
+genuinely yours to revise.
 
 Read the failure, **amend the existing plan in place rather than rewriting it** — all eight headings
 and the whole of *User-facing decisions* stay — and revise only what the failure touches. Note under
@@ -275,7 +155,7 @@ is about the experience itself, that is a send-back and not a revision.
 
 ```bash
 bd update <id> --design-file <file> --add-label planned --remove-label plan:revise \
-               --remove-label planning:<your-name>
+               --assignee ""
 bd dolt push
 ```
 
@@ -283,16 +163,27 @@ The `plan:revise` removal goes in that same call, or the bead is a candidate for
 
 ## Too big for one increment
 
-Follow *Too big for one increment* in `skills/plan-bead/SKILL.md` as written — the children, the
-`bd dep add` edges, taking your inherited hold off each child, the `planner:` label on the new
-parent, and retyping the parent as an epic. Two things are this stage's own:
+Follow *Too big for one increment* in `skills/plan-bead/SKILL.md` as written. **Splitting is the
+pass**: create the children at the parent's priority, wire the `bd dep add` edges, write into each
+child's description which part of the family it is and the decisions already reached while
+splitting, and end with this — then end the pass without planning a child:
+
+```bash
+bd update <child> <child> ... --assignee ""
+bd update <id> --type epic --assignee ""
+bd dolt push
+```
+
+The first line is defensive: `bd create` has an `--assignee` flag, and a child that inherited one
+would be hidden from every queue. The children are then handed out one per pass, and a child whose
+blocker sibling has no plan is not handed out. Two things are this stage's own:
 
 - **The parent's `acceptance` is copied verbatim onto every child as it is created**, and never a
   word of it is changed or summarised. Copying is not editing: the rule stays *never edit an agreed
   record*.
 
   ```bash
-  agreed="$(mktemp)"          # `mktemp` here for the same reason as the reclaim loop above
+  agreed="$(mktemp)"          # never a fixed name: several sessions may split at once
   bd show <id> --json | jq -r '(if type=="array" then .[0] else . end).acceptance' > "$agreed"
   bd update <child> --acceptance "$(cat "$agreed")"
   rm -f "$agreed"
@@ -348,24 +239,23 @@ The two `###` subsections, filled differently at this stage:
 
 ## Filing it
 
-**Check you still hold it, immediately before you write** — the last moment the check is worth
+**Check it is still yours, immediately before you write** — the last moment the check is worth
 anything:
 
 ```bash
 bd dolt pull
-bd show <id> --json | jq -r '(if type=="array" then .[0] else . end).labels // [] | join(" ")'
+bd show <id> --json | jq -r '(if type=="array" then .[0] else . end).assignee // ""'
 ```
 
-**Do not write** if your own hold is gone, or if somebody else's `planning:` sits there beside it:
-two holds means two designs, whoever started first. Say in one line that you lost it and what you had
-decided, and end the pass.
+**Do not write** unless the answer is your own name: anything else means the piece of work is no
+longer yours. Say in one line that you lost it and what you had decided, and end the pass.
 
 Otherwise the title first, rewritten by *The title is part of the plan* if it needs it, and then the
 plan:
 
 ```bash
 bd update <id> --title "<the rewritten title>"
-bd update <id> --design-file <file> --add-label planned --remove-label planning:<your-name>
+bd update <id> --design-file <file> --add-label planned --assignee ""
 bd dolt push
 ```
 
@@ -374,7 +264,7 @@ bd dolt push
 
 ## What you say
 
-Five messages, and there is no sixth: this role asks nothing and confirms nothing.
+Four messages, and there is no fifth: this role asks nothing and confirms nothing.
 
 **The opening**, said before anything is read, with your own name first as every role in this fleet
 says it:
@@ -396,14 +286,11 @@ says it:
 
 That last line is on screen because the pass ends here and the developer cannot ask for it.
 
-**A blocker taken instead:**
-
-> \<id\> is waiting on \<blocker\>, which has no plan yet — its build has to exist before this one
-> can name what it builds on. I've taken \<blocker\> instead.
-
 **Nothing waiting:**
 
 > Nothing is waiting for a build design right now.
+
+Said only when the prompt names no bead.
 
 **The send-back**, below.
 
@@ -415,15 +302,14 @@ something the product cannot do. It is **not** for work that is merely hard, and
 disagreement of taste.
 
 ```bash
-bd update <id> --remove-label ux:agreed --remove-label planning:<your-name> \
+bd update <id> --remove-label ux:agreed --assignee "" \
   --append-notes "## Sent back to the UX stage
 
 <what is missing, what still stands, and the question the designer has to answer>"
 bd dolt push
 ```
 
-`--remove-label planning:<your-name>` goes in that same call, or the bead goes back to a queue that
-excludes it. No `human` label and nobody flagged: it is an ordinary candidate for the design stage
+`--assignee ""` goes in that same call, or the bead stays assigned to a session that has ended. No `human` label and nobody flagged: it is an ordinary candidate for the design stage
 again.
 
 **The note follows three rules.** It names **what is missing**, rather than what is wrong with the
@@ -465,11 +351,7 @@ Then, and only then:
 **The pass ends the moment the plan is filed** — no closing question and no waiting, whatever the
 buffer says afterwards. A send-back ends a pass the same way, and so does a pass with nothing to
 take. Say in one line what the pass did and **stop producing output**. Never a sleep loop inside your
-own session, and never a second piece of work.
-
-**The one exception is a P0**, and it is the whole of *How much is waiting*'s pre-emption: when
-`stage-candidates` returned more than one, they are all planned in this pass, however many there
-are, and the pass ends when the last of them is filed. Nothing else earns a second piece of work.
+own session, and never a second piece of work — a P0 included.
 
 ## What you never do
 
@@ -479,11 +361,7 @@ are, and the pass ends when the last of them is filed. Nothing else earns a seco
   back; do not redesign it.
 - **Never interview anybody.** No mockups and no questions.
 - **Never build the bead you planned.**
-- **Never claim a bead.** You take one with a label.
+- **Never claim a bead, and never pick one:** you are given one.
 - **Never take work that is unranked**, and never rank one.
-- **Never take a bead whose blocker has no plan.**
-- **Never touch a hold you did not set**, and never leave your own behind.
-- **Never take a candidate out of a family another build-design agent owns** — except a P0.
 - **Never branch in the main checkout.**
-- **Never take a second piece of work in one pass** — except a P0, which pre-empts the buffer: every
-  P0 waiting for a build design is planned in the pass that found it.
+- **Never take a second piece of work in one pass**, a P0 included.

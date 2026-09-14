@@ -260,13 +260,9 @@ planner`), which is the one place a name and a role stop being interchangeable:
   builders, sized from the roster's implementers minus any told to finish (`planner_buffer_multiple`
   each — absent means one each — and never fewer than two) and refilled one bead per pass, with no wake interval to wait out — the rule itself lives in `scripts/planner-buffer`,
   which the skill calls and `cerebro-test/the-trigger-counts-what-planner-buffer-counts` holds the
-  fleet view to. They divide
-  the work through the `planning:<name>` label alone, and a whole split family through a
-  `planner:<name>` label on its parent — taken before research and pushed at once (after the
-  state file names the bead, which is what makes an abandoned label safe to tell apart from a held
-  one), freed again by whichever planner finds it held by nobody. The buffer counts `planned` beads
-  and never held ones: a bead being planned is not claimable, and counting it put both
-  planners to sleep over a two-bead queue (ah-2p.1).
+  fleet view to. The fleet view hands each its bead (`scripts/assign-bead`, cb-10d.2.2), so
+  nothing divides the work but that. The buffer counts `planned` beads, never assigned ones
+  (ah-2p.1).
 - **Cerebro** (`orchestrator`, Opus/medium) — stops implementers on request by writing their stop
   flag; it cannot start one, since that means starting a session. Ranks the P4 backlog with the
   navigator (the triage pass that was the first planner's until cb-5lx.1). **Starts nothing on its
@@ -377,22 +373,16 @@ These are load-bearing; changing them changes how the fleet behaves in every con
 - **Nothing merges unreviewed, red, or stale.** The implementer's standing approval to merge without
   asking comes from the consumer repo's CLAUDE.md ("Four Eye Principle") and applies only to a
   planned bead.
-- **A session is started only for work nobody is already coming for.** Since cb-cz7 the planner,
-  `ux` and `build-design` conditions subtract the live
-  sessions of their own role that name no bead (`triggers::in_flight`, `cerebro--in-flight`) from
-  the work they read, and a headroom of zero starts nobody and shows `→ 0 free` on the row. Both
-  views answer `tests/lib/start-headroom.cases`, and each carries its own half of the within-tick
-  rule (`triggers::no_headroom`, `cerebro--no-headroom-p`): a start made in one pass of the start
-  loop is subtracted from the headroom the next row is judged against, since the fleet read that
-  would show it up is five seconds away. The spacing in the bullet below stays, staggering the
-  boots a real queue does justify. **An implementer is not gated by headroom since cb-10d.1**: the
-  view hands it a bead no row or record holds (`scripts/assign-bead`, `App::handed`), and a bead
-  handed out earlier in a tick is taken out of the rest of that tick.
+- **A session is started only with a bead nobody holds.** The view picks the bead for an
+  implementer (cb-10d.1) and for the three planning roles (cb-10d.2.2), and never one a row's state
+  file names, one `App::handed` holds, or one a give-back is carrying (`triggers::spoken_for`); it
+  launches the session with `scripts/launch <Name> --bead <id>`, and a bead handed out earlier in a
+  tick is taken out of the rest of that tick (`TriggerFacts::take`), since the fleet read that would
+  show the start up is five seconds away. Start headroom and its table are gone with cb-10d.2.2.
 - **A role more than one agent holds is started one at a time.** The planners answer the same buffer
   rule off the same panel, so a tick where it is true is true for both, and the view started Xavier and
-  Beast in one breath. They then race for one candidate over the startup window the planner bullet
-  above describes — launch to that `planning:` label reaching the remote, about a minute on this
-  fleet — and not over research time. The implementers are the same shape since cb-1or.1: a queue that
+  Beast in one breath; each start is now an `assign-bead` push and a session boot, and the spacing
+  paces those. The implementers are the same shape since cb-1or.1: a queue that
   fills is a condition true for every standby builder on one tick.
   `cerebro-role-start-spacing` holds the second for 30s; it counts
   peers only, so a role is never held by its own restart.
@@ -443,14 +433,11 @@ one.
 Since cb-kcs.4.1 it also **starts** sessions on its own: the roster's `autostart`/`standby`
 declaration is honoured as the view comes up, and the board-backed triggers for the planner,
 implementer, verifier and orchestrator roles bring a blue `standby` row back — held back by a
-per-role wake floor, the unchanged-work fingerprint, role-start spacing and, since cb-cz7, the
-**start headroom**: available work minus the live sessions of that role that name no bead yet, for
-the planning roles. Since cb-10d.1 a builder starts only for a bead no row or record holds, and is
-handed that bead: its row reads a blue `starting <id>` until its session reports, and a start that
-goes away unreported gives the bead back with a gold line in the header. A row held by it reads
-`→ 0 free`, and a start made inside one tick reduces the headroom the next row in the same loop is
-judged against — the fleet read that would show the first one up is five seconds away.
-`tests/lib/start-headroom.cases` is the table both views answer, for `supervise.cases`' reason. Every successful
+per-role wake floor, the unchanged-work fingerprint, role-start spacing and, since
+cb-10d.1 for builders and cb-10d.2.2 for the planning roles, a bead: a start is made only with a bead
+no row, handed record or give-back holds, and the session is handed that bead: its row reads a blue `starting <id>` until its session reports, and a start that
+goes away unreported gives the bead back with a gold line in the header. A bead handed inside one tick is taken out of the rest of that tick — the fleet read that would
+show the first start up is five seconds away. Every successful
 launch arms, whoever asked for it — `s`, an autostart and a trigger alike — and a retire, a `k`
 (at every row state, not only standby), a give-up and a tick on which somebody else has or is
 taking the checkout all disarm; a pass that merely ends does not, which is the whole point of the
@@ -888,7 +875,7 @@ and the key hint stays `g retry` until both panes are fresh.
   between beads has no session (cb-1or.1) — so `agent-alive` is no longer part of the rule.
 - **`scripts/plan-candidates` is the one place "which beads may a planner take at all" is answered**
   (cb-391). It is `work-beads --status open` plus its label and hold rules — not `planned`, not `human`, not
-  held by a `planning` label in either spelling **or an assignee**, `verification:failed` only with
+  held by an assignee, `verification:failed` only with
   `plan:revise`, never `verdict:stale`, not a bead whose parent is assigned, not a bead whose
   `blocks` blocker is open and unplanned (cb-10d.2.1) — and a sort by priority then id. It takes no arguments: one question, and
   its name is the question. It owns **no epic logic of its own**, because `work-beads` has owned

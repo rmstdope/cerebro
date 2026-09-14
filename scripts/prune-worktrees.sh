@@ -134,6 +134,7 @@ done
 # worktree would otherwise answer the worktree, not the repository the sweep needs to walk. See
 # consumer-root's header for the two roots and why a sweep needs the shared one.
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$script_dir/worktree-safety.sh"
 
 repo_root="$("$script_dir/consumer-root" --shared)" || exit 1
 
@@ -162,7 +163,7 @@ declared_reclaim_dirs="$("$script_dir/project-conf" reclaim_dirs 2>/dev/null || 
 
 # How this consumer answers "did this branch's work land?". `gh` is today's behaviour and the
 # default; `none` and a command are for a consumer that has no GitHub PRs to ask about. See
-# `landed_on_main`.
+# `cerebro_worktree_landed` in scripts/worktree-safety.sh.
 merged_check="$("$script_dir/project-conf" merged_check gh 2>/dev/null || echo gh)"
 [ -n "$merged_check" ] || merged_check="gh"
 
@@ -212,66 +213,10 @@ owner_default_branch() {
   esac
 }
 
-# Whether everything in this worktree is already on main.
-#
-# Two tests, because one is not enough. `origin/<default branch>..HEAD` empty catches a branch that was never
-# committed to or was merged by fast-forward — but **this repository merges with `--squash`**, which
-# writes a brand new commit, so a squash-merged branch's own commits are never reachable from main
-# and that test alone would keep every worktree for ever. ah-6xq.8 was the case that found this: PR
-# #156 merged, branch fully delivered, and `rev-list` still counting two commits ahead.
-#
-# So the second test asks whoever this consumer says can answer, and `merged_check` (ah-qled.4) says
-# who that is. GitHub via `gh` was the only authority recognised here, so a GitLab or PR-less
-# consumer read "not merged" for every branch and the janitor never reclaimed anything.
-#
-#   gh         today's behaviour, and the default: ask GitHub for a merged PR from this branch. If
-#              `gh` cannot answer — no network, not authenticated — the answer is no and the
-#              worktree stays. A janitor that guesses permissively is worse than one that leaves a
-#              directory behind.
-#   none       NOT "skip the check". The rev-list test above cannot see a squash merge, so skipping
-#              would keep every delivered worktree for ever — exactly the bug the second test
-#              exists for. `none` pairs it with THE STALENESS BOUND instead: a clean tree (rule 2
-#              has already passed) that nobody has written to in COLD_TARGET_MINUTES — far longer
-#              than a whole tree is ever left alone for — is finished with, whoever merged it and
-#              however. That is the only bound available without an authority to ask, and it is a
-#              bound rather than a free pass: a tree still being written to is kept.
-#   <command>  run it, with `{branch}` substituted if it appears and the branch appended if it does
-#              not; exit 0 means the work landed.
-landed_on_main() {
-  # $1 = the worktree, $2 = the default branch of the repository that owns it. The second argument
-  # exists because a worktree of the submodule is judged against the submodule's own origin, not
-  # the consumer's (ah-apw4); it defaults to the consumer's, which is every other caller.
-  local tree="$1" base="${2:-$default_branch}" branch command_line
-
-  [ "$(git -C "$tree" rev-list --count "origin/$base..HEAD" 2>/dev/null || echo 1)" = "0" ] && return 0
-
-  branch="$(git -C "$tree" symbolic-ref --quiet --short HEAD 2>/dev/null)" || return 1
-  [ -n "$branch" ] || return 1
-
-  case "$merged_check" in
-    gh)
-      # From the tree, in a subshell. `gh` infers its repository from the process's working
-      # directory and not from anything passed to it, so asking from the sweep's own cwd asks the
-      # consumer about a branch it has never heard of — reads "not merged", and keeps a delivered
-      # worktree of another repository for ever (ah-apw4). The subshell leaves the sweep's own
-      # directory alone, and for a consumer tree this is where the answer already came from.
-      [ "$( (cd "$tree" && gh pr list --head "$branch" --state merged --json number --jq 'length') 2>/dev/null || echo 0)" != "0" ]
-      ;;
-    none)
-      # Deep, not `-maxdepth 0`: a tree's own mtime stops moving while every write lands in a
-      # subdirectory that already exists, which would call an actively-used tree cold.
-      [ -z "$(find "$tree" -mmin "-$COLD_TARGET_MINUTES" -print -quit 2>/dev/null)" ]
-      ;;
-    *)
-      case "$merged_check" in
-        *"{branch}"*) command_line="${merged_check//\{branch\}/$branch}" ;;
-        *)            command_line="$merged_check $branch" ;;
-      esac
-      # shellcheck disable=SC2086
-      eval $command_line >/dev/null 2>&1
-      ;;
-  esac
-}
+# Whether everything in this worktree is already on main is `cerebro_worktree_landed`, in
+# scripts/worktree-safety.sh (cb-10d.3), which carries the two tests and the `merged_check` table.
+# Two tests, because this repository merges with `--squash` and a squash-merged branch's own commits
+# are never reachable from main (ah-6xq.8).
 
 # Gigabytes free on the filesystem holding the repository, as an integer, truncated down — an
 # overstatement here would let a bead start on a disk that cannot hold its build.
@@ -451,7 +396,7 @@ sweep() {
       reclaim_cold_target "$tree" "$name"
     elif [ -n "$(git -C "$tree" status --porcelain 2>/dev/null)" ]; then
       reason="it has uncommitted or untracked changes"
-    elif ! landed_on_main "$tree" "$(owner_default_branch "$owner")"; then
+    elif ! cerebro_worktree_landed "$tree" "$(owner_default_branch "$owner")" "$merged_check" "$COLD_TARGET_MINUTES"; then
       reason="it holds work that is not on main yet"
     elif [ -n "$(find "$tree" -maxdepth 0 -mmin "-$STALE_MINUTES" 2>/dev/null)" ]; then
       reason="it was touched in the last $STALE_MINUTES minutes"
@@ -470,22 +415,10 @@ sweep() {
       continue
     fi
 
-    # No `--force`. The checks above already established the tree is clean and merged; forcing would
-    # override the very guard that makes this safe, and a removal that git refuses is a surprise
-    # worth reporting rather than steamrolling.
-    local branch
-    branch="$(git -C "$tree" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
-    if git -C "$owner" worktree remove "$tree" 2>/dev/null; then
+    # No `--force`, and the branch goes with the tree: cerebro_worktree_remove carries both reasons.
+    if cerebro_worktree_remove "$owner" "$tree"; then
       echo "prune-worktrees: removed $name"
       removed=$((removed + 1))
-      # `-d` first, then `-D`. The fallback looks reckless and is not: `landed_on_main` has already
-      # passed, so either the commits are on main — in which case `-d` succeeds and `-D` never runs —
-      # or GitHub says the PR merged, and git only calls the branch unmerged because a squash merge
-      # rewrote it. Without the fallback every squash-merged branch stays for ever.
-      if [ -n "$branch" ]; then
-        git -C "$owner" branch -d "$branch" >/dev/null 2>&1 ||
-          git -C "$owner" branch -D "$branch" >/dev/null 2>&1
-      fi
     else
       echo "prune-worktrees: keeping $name — git would not remove it"
       kept=$((kept + 1))

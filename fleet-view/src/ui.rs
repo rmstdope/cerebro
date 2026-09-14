@@ -1098,6 +1098,10 @@ fn hint_clauses(app: &App) -> Vec<HintClause> {
     // the keys a navigator cannot guess) and costs no existing hint anything: it is dropped
     // first and alone, so the key is offered wherever there is room and nowhere it would push
     // something else off.
+    // cb-10d.5: at `h health`'s rank and for its reason, and only while `a` acts on the row.
+    if matches!(app.work_cursor, Some(app::WorkCursor::Bead(_))) {
+        clauses.push(HintClause { text: "a give", rank: HintRank::Optional });
+    }
     clauses.push(HintClause { text: "h health", rank: HintRank::Optional });
     // cb-bch.1, at the same `Optional` rank as `h health` above and for the same reason: the
     // ordinary hundred-column screen has about one cell of slack, so an unconditional clause at
@@ -1182,6 +1186,12 @@ fn header_state_spans(app: &App) -> Vec<Span<'static>> {
         // confirmation was built and never drawn: a destructive question the navigator could not
         // see, answered by their next keystroke (cb-4cn).
         spans.push(Span::styled(format!(" | {}", prompt.text()), Style::default().fg(GOLD)));
+    } else if let Some(picker) = &app.give {
+        // The give list owns the keyboard while it is open, as a prompt does (cb-10d.5).
+        spans.push(Span::styled(
+            format!(" | {}", crate::give::header(&picker.bead)),
+            Style::default().fg(GOLD),
+        ));
     } else if let Some(notice) = &app.notice {
         // Gold for news, red for a fault: the pruner's failure is the first thing this slot has
         // ever carried that is not something the view did (cb-kcs.5.2, the navigator's choice).
@@ -1622,6 +1632,24 @@ fn work_document(app: &App, now: DateTime<Utc>, width: usize) -> Vec<Line<'stati
                 }
             }
             app::WorkBodyLine::Empty => Line::from(Span::styled("  (none)", dim())),
+            app::WorkBodyLine::GiveRow { candidate, name_width, selected } => {
+                let indent = "    ";
+                let text = format!(
+                    "{}{}",
+                    if *selected { "\u{2192} " } else { "  " },
+                    crate::give::row_text(candidate, *name_width)
+                );
+                let text = truncate_cells(&text, width.saturating_sub(indent.len()));
+                let mut style = if candidate.standing == crate::give::Standing::Free {
+                    Style::default()
+                } else {
+                    dim()
+                };
+                if *selected {
+                    style = style.bg(SELECTED_BG);
+                }
+                Line::from(vec![Span::raw(indent), Span::styled(text, style)])
+            }
             app::WorkBodyLine::More { hidden, expanded, .. } => {
                 // `Enter` is advertised only under the cursor: always saying it is eight cells of
                 // noise on every frame, and never saying it means nobody finds it.
@@ -6256,6 +6284,7 @@ mod tests {
             vec![
                 pane,
                 scroll,
+                HintClause { text: "a give", rank: HintRank::Optional },
                 health,
                 size,
                 HintClause { text: "0-4/+/-/u priority", rank: HintRank::Cursor },
@@ -6591,5 +6620,94 @@ mod tests {
                 assert!(line.width() <= width as usize, "at {width}: {line:?}");
             }
         }
+    }
+
+    // --- cb-10d.5: the give list ---------------------------------------------------------------
+
+    fn give_bead_row(id: &str, labels: &[&str]) -> Bead {
+        Bead { labels: labels.iter().map(|l| l.to_string()).collect(), ..bead(id, Some(1), "work") }
+    }
+
+    fn give_app(open: bool) -> App {
+        let mut app = App::new();
+        for name in ["Rogue", "Storm", "Xavier"] {
+            app.armed.insert(name.to_string());
+        }
+        app.finish_refresh(
+            Ok(vec![
+                row("Rogue", "implementer", RowState::Dead),
+                row("Storm", "implementer", RowState::Dead),
+                working("Cyclops", "implementer", "build", "cb-9su"),
+                row("Xavier", "ux", RowState::Dead),
+            ]),
+            at(86_400),
+        );
+        app.finish_work_refresh(
+            Ok(WorkBuckets {
+                planned: vec![give_bead_row("cb-44b", &["planned"]), give_bead_row("cb-55c", &["planned"])],
+                ..WorkBuckets::default()
+            }),
+            at(86_400),
+        );
+        app.focus = app::PaneFocus::Work;
+        app.work_cursor = Some(app::WorkCursor::Bead("cb-44b".into()));
+        if open {
+            app.open_give(20, now());
+        }
+        app
+    }
+
+    #[test]
+    fn the_give_list_is_drawn_as_agreed() {
+        let app = give_app(true);
+        let buffer = render(&app, 100, 24);
+        let rendered = lines(&buffer);
+        assert!(rendered[0].contains("| Give cb-44b to…  ↑↓ Enter · Esc"), "{:?}", rendered[0]);
+        assert_eq!(style_where(&buffer, "Give cb-44b").fg, Some(GOLD));
+        let rows = body(&buffer);
+        let at = rows.iter().position(|l| l.contains("cb-44b") && !l.contains("Give")).expect("the bead row");
+        // The split Work pane is 38 cells inside, so the two widest rows are cut with `…`.
+        let expected = [
+            "    → Rogue    implementer  standby",
+            "      Storm    implementer  standby",
+            "      Cyclops  busy with cb-9su",
+            "      Xavier   only designs unpla",
+        ];
+        for (offset, text) in expected.iter().enumerate() {
+            assert!(rows[at + 1 + offset].starts_with(text), "{offset}: {:?}", rows[at + 1 + offset]);
+        }
+        assert!(rows[at + 5].contains("cb-55c"), "{:?}", rows[at + 5]);
+        assert_eq!(style_where(&buffer, "→ Rogue").bg, Some(SELECTED_BG));
+        assert!(style_where(&buffer, "Cyclops  busy").add_modifier.contains(Modifier::DIM));
+        assert!(style_where(&buffer, "Xavier   only").add_modifier.contains(Modifier::DIM));
+        assert!(!style_where(&buffer, "Storm    impl").add_modifier.contains(Modifier::DIM));
+    }
+
+    #[test]
+    fn the_give_list_sits_in_the_stacked_work_pane_and_cuts_long_names() {
+        let app = give_app(true);
+        let buffer = render(&app, 60, 40);
+        let rows = body(&buffer);
+        let at = rows.iter().position(|l| l.contains("cb-44b") && !l.contains("Give")).expect("the bead row");
+        assert!(rows[at + 1].starts_with("    → Rogue    implementer  standby"), "{:?}", rows[at + 1]);
+        assert!(rows[at + 4].starts_with("      Xavier   only designs unplanned work"), "{:?}", rows[at + 4]);
+        let narrow = render(&app, 40, 40);
+        assert!(body_has_cut_give_row(&narrow), "{:#?}", body(&narrow));
+    }
+
+    fn body_has_cut_give_row(buffer: &Buffer) -> bool {
+        body(buffer).iter().any(|l| l.contains("Xavier") && l.trim_end().ends_with('…'))
+    }
+
+    #[test]
+    fn a_give_is_hinted_only_on_a_bead() {
+        let app = give_app(false);
+        let clauses = hint_clauses(&app);
+        let at = clauses.iter().position(|c| c.text == "a give").expect("a give on a bead");
+        assert_eq!(clauses[at].rank, HintRank::Optional);
+        assert_eq!(clauses[at + 1].text, "h health");
+        let mut app = give_app(false);
+        app.work_cursor = Some(app::WorkCursor::Finding("unclaim:cb-a".into()));
+        assert!(!hint_clauses(&app).iter().any(|c| c.text == "a give"));
     }
 }

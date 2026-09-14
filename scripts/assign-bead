@@ -32,14 +32,27 @@
 # `scripts/release-bead` removes it when the bead is given back.
 #
 # The push is advisory and never decides the exit status (.cerebro/traps.md, first entry).
+#
+# --GIVEN (cb-10d.5). `assign-bead --given <Name> <id>` is the fleet view's Work-pane `a` key, and
+# that key is its only caller. It writes the handover with a second line, `given`, which tells the
+# supervising view to START the named agent on that bead rather than treat the handover as an orphan,
+# and on exit 0 it prints exactly one word on stdout: `pushed` (pushed, or nothing to push) or
+# `unpushed` (`bd dolt push` failed). Without the flag stdout stays empty, because `launch` runs this
+# script inside the session's pty; and `launch --bead` calls it without the flag, so the start
+# rewrites a given handover as the bare id. Exit codes and stderr are the same either way.
 
 set -euo pipefail
 
 usage() {
-  echo "usage: assign-bead <Name> <id>" >&2
+  echo "usage: assign-bead [--given] <Name> <id>" >&2
   exit 2
 }
 
+given=""
+if [[ "${1:-}" == "--given" ]]; then
+  given=1
+  shift
+fi
 [[ $# -eq 2 && -n "$1" && -n "$2" ]] || usage
 name="$1"
 id="$2"
@@ -73,6 +86,14 @@ root="$("$script_dir/consumer-root" --shared)"
 state="$root/.cerebro/state"
 mkdir -p "$state"
 
+write_handover() {
+  if [[ -n "$given" ]]; then
+    cerebro_state_write_atomic "$state/$name.handover" printf '%s\ngiven\n' "$id"
+  else
+    cerebro_state_write_atomic "$state/$name.handover" printf '%s\n' "$id"
+  fi
+}
+
 if ! shown="$(bd -C "$root" show "$id" --json)"; then
   exit 1
 fi
@@ -91,9 +112,10 @@ if [[ "$status" == "$mine_status" && "$assignee" == "$name" ]]; then
     reported="$(jq -r '.bead // empty' "$state/$name.state.json" 2>/dev/null || true)"
   fi
   if [[ "$reported" != "$id" ]]; then
-    cerebro_state_write_atomic "$state/$name.handover" printf '%s\n' "$id" || exit 1
+    write_handover || exit 1
   fi
   echo "assign-bead: $id is already $verb $name" >&2
+  if [[ -n "$given" ]]; then echo pushed; fi
   exit 0
 fi
 
@@ -123,10 +145,12 @@ else
   fi
 fi
 
-cerebro_state_write_atomic "$state/$name.handover" printf '%s\n' "$id" || exit 1
+write_handover || exit 1
 
+pushed=pushed
 bd -C "$root" dolt push \
-  || echo "assign-bead: $id is $verb $name, but bd dolt push failed - other machines will not see it yet" >&2
+  || { echo "assign-bead: $id is $verb $name, but bd dolt push failed - other machines will not see it yet" >&2; pushed=unpushed; }
 
 echo "assign-bead: $id is $verb $name" >&2
+if [[ -n "$given" ]]; then echo "$pushed"; fi
 exit 0

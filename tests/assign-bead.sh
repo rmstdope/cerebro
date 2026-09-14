@@ -176,4 +176,50 @@ err="$(BD_PUSH_EXIT=1 run Rogue cb-x 2>&1 >/dev/null)" || fail "a failed push is
 [[ "$(cat "$state/Rogue.handover")" == "cb-x" ]] || fail "a failed push keeps the handover"
 pass "a failed push is still exit 0, says so on stderr, and keeps the handover"
 
+# --- cb-10d.5: --given marks the handover given and says pushed or unpushed on stdout -----------
+
+exact() { cat "$1"; printf '.'; }
+
+reset "$open" "$ready"
+out="$(run --given Rogue cb-x 2>/dev/null)" || fail "--given on an assignable bead is exit 0"
+[[ "$out" == "pushed" ]] || fail "--given prints pushed, got: '$out'"
+[[ "$(exact "$state/Rogue.handover")" == $'cb-x\ngiven\n.' ]] || fail "--given marks the handover given, got: $(cat "$state/Rogue.handover")"
+claim_line="$(grep -n -- "update cb-x --claim" "$stub/bd.log" | cut -d: -f1)"
+push_line="$(grep -n -- "dolt push" "$stub/bd.log" | cut -d: -f1)"
+[[ -n "$claim_line" && -n "$push_line" && "$claim_line" -lt "$push_line" ]] || fail "--given claims and then pushes"
+pass "--given marks the handover given and prints pushed"
+
+reset "$open" "$ready"
+out="$(BD_PUSH_EXIT=1 run --given Rogue cb-x 2>/dev/null)" || fail "--given with a failed push is exit 0"
+[[ "$out" == "unpushed" ]] || fail "--given with a failed push prints unpushed, got: '$out'"
+[[ "$(exact "$state/Rogue.handover")" == $'cb-x\ngiven\n.' ]] || fail "a failed push keeps the given handover"
+pass "--given with a failed push prints unpushed and exits 0"
+
+reset "$unassigned"
+out="$(CANDIDATES_JSON="$candidates" run --given Iceman cb-x 2>/dev/null)" || fail "--given for a build-design agent is exit 0"
+[[ "$out" == "pushed" ]] || fail "--given build-design prints pushed, got: '$out'"
+grep -q -- "update cb-x --assignee Iceman" "$stub/bd.log" || fail "--given assigns Iceman"
+[[ "$(exact "$state/Iceman.handover")" == $'cb-x\ngiven\n.' ]] || fail "--given build-design marks the handover given"
+pass "--given assigns a build-design agent and marks the handover given"
+
+reset '[{"id":"cb-x","status":"in_progress","assignee":"Rogue"}]' '[]'
+out="$(run --given Rogue cb-x 2>/dev/null)" || fail "--given on a bead already Rogue's is exit 0"
+[[ "$out" == "pushed" ]] || fail "--given on a bead already Rogue's prints pushed, got: '$out'"
+! grep -q -- "update" "$stub/bd.log" || fail "--given on a bead already Rogue's writes nothing"
+! grep -q -- "dolt push" "$stub/bd.log" || fail "--given on a bead already Rogue's pushes nothing"
+[[ "$(exact "$state/Rogue.handover")" == $'cb-x\ngiven\n.' ]] || fail "--given on a bead already Rogue's marks the handover given"
+pass "--given on a bead already the agent's prints pushed and marks the handover given"
+
+reset "$open" "$ready"
+out="$(run Rogue cb-x 2>/dev/null)" || fail "the plain claim is exit 0"
+[[ -z "$out" ]] || fail "without --given nothing is printed on stdout, got: '$out'"
+[[ "$(exact "$state/Rogue.handover")" == $'cb-x\n.' ]] || fail "without --given the handover is the bare id"
+pass "without --given nothing is printed on stdout"
+
+reset '[{"id":"cb-x","status":"in_progress","assignee":"Gambit"}]' '[]'
+status=0; out="$(run --given Rogue cb-x 2>/dev/null)" || status=$?
+[[ $status -eq 3 ]] || fail "--given keeps exit 3, got $status"
+[[ -z "$out" ]] || fail "--given prints nothing on a refusal, got: '$out'"
+pass "--given keeps every refusal's exit status and prints nothing"
+
 suite_passed

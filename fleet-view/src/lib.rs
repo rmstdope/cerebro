@@ -73,6 +73,7 @@
 //! `tests/lib/` table for two views to answer.
 
 pub mod app;
+pub mod give;
 pub mod lifecycle;
 pub mod log;
 pub mod model;

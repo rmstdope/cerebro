@@ -9,7 +9,9 @@ use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
 
-use crate::model::{AgentKind, FleetRow, GhSnapshot, LinkedBead, RosterEntry, RowState, WorkBuckets};
+use crate::model::{
+    AgentKind, Candidate, FleetRow, GhSnapshot, LinkedBead, RosterEntry, WorkBuckets,
+};
 
 #[cfg(test)]
 use crate::model::{GhAuthor, GhIssue, GhPull};
@@ -228,23 +230,18 @@ pub fn default_spacing(role: &str) -> Option<u64> {
 /// to build a `TriggerFacts` at all says the same thing without a sentinel.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TriggerFacts {
-    /// Ids of unplanned, unparked beads at priority 0, in bucket order. For the COMBINED
-    /// `planner` role, so it is `p0_undesigned` followed by `p0_ux_agreed` (cb-lz5.1).
+    /// Ids of the planning roles' candidates at priority 0 - across every list in
+    /// `planning_candidates`, roles in map order, first sighting kept (cb-10d.2.2). On the
+    /// evaluation line; the P0 arm itself reads the role's own first candidate.
     pub p0_unplanned: Vec<String>,
-    /// Ids of the unplanned, unparked, non-P4 beads whose experience has NOT been agreed - what
-    /// the `ux` role may take. Empty on a board where nothing carries `ux:agreed`, which is every
-    /// board not running the cb-lz5 trial.
-    pub undesigned_ids: Vec<String>,
-    /// The board revisions paired with `undesigned_ids`, so a bead returned from a later stage
-    /// breaks the UX unchanged-work guard even when its id and labels are unchanged.
+    /// `(id, updated_at)` for each `ux` candidate, the revision taken from `unplanned`, so a bead
+    /// returned from a later stage breaks the UX unchanged-work guard even when its id is unchanged.
     pub undesigned_revisions: Vec<(String, Option<DateTime<Utc>>)>,
-    /// Those of `undesigned_ids` at priority 0, in bucket order.
-    pub p0_undesigned: Vec<String>,
-    /// Ids of the unplanned, unparked, non-P4 beads carrying `ux:agreed` - what the
-    /// `build-design` role may take.
-    pub ux_agreed_ids: Vec<String>,
-    /// Those of `ux_agreed_ids` at priority 0, in bucket order.
-    pub p0_ux_agreed: Vec<String>,
+    /// Each planning role's candidates as the work reader listed them, in the scripts' order,
+    /// minus every id in `spoken_for`. A role the reader was not asked about is absent. What the
+    /// view hands a planning session (`bead_for`) and what its condition reads are this one list,
+    /// so a session is never started for a bead it cannot be given (cb-10d.2.2).
+    pub planning_candidates: BTreeMap<String, Vec<Candidate>>,
     /// How many unplanned, unparked beads carry `ux:agreed` - the `ux` role's own buffer, and the
     /// Rust copy of `scripts/planner-buffer --ux-agreed`. NO P4 filter, exactly as `planned` has
     /// none: this counts what is waiting for a build-designer, and the shell counts it the same
@@ -252,11 +249,6 @@ pub struct TriggerFacts {
     pub ux_agreed: usize,
     /// How many planned, unclaimed, unparked beads there are.
     pub planned: usize,
-    /// Ids of the unplanned, unparked beads the COMBINED planner may actually take - the union
-    /// `undesigned_ids ++ ux_agreed_ids` (cb-lz5.1). P4s excluded, since an
-    /// unranked bead is Cerebro's to rank and not a planner's to plan. Feeds both the buffer
-    /// condition and the planner fingerprint, and the second is why ranking releases the guard.
-    pub actionable_ids: Vec<String>,
     /// Ids of the planned, unclaimed, unparked beads - what an implementer may actually claim.
     pub planned_ids: Vec<String>,
     /// The beads the next implementer start may be handed: `WorkBuckets::assignable` minus every
@@ -287,13 +279,6 @@ pub struct TriggerFacts {
     /// The linked beads as the work reader last saw them (`WorkBuckets::linked`). Filtered per
     /// role by `linked_moved`, for the same reason.
     pub linked: Vec<LinkedBead>,
-    /// Live sessions of each role that name no bead yet - the ones about to take something,
-    /// counted by `in_flight`. Keyed by role; a role absent from the map has none.
-    ///
-    /// Deliberately NOT in `Fingerprint`: the fingerprint compares *work*, and a session coming
-    /// up or going down is not work. Adding it there would make the unchanged-work guard fire on
-    /// session churn.
-    pub in_flight: BTreeMap<String, usize>,
 }
 
 fn parked(labels: &[String]) -> bool {
@@ -332,28 +317,16 @@ impl TriggerFacts {
     pub fn derive(
         buckets: &WorkBuckets,
         roster: &[RosterEntry],
-        in_flight: BTreeMap<String, usize>,
         spoken_for: &std::collections::BTreeSet<String>,
         flagged: impl Fn(&str) -> bool,
         gh: GhAnswer,
         planner_multiple: usize,
     ) -> Self {
-        // The two halves of what used to be one `unplanned` list. Everything the COMBINED
-        // `planner` role reads is their union: a project runs `planner` or the two cb-lz5 roles,
-        // never both, and a bead that carried `ux:agreed` must not vanish from the planner's
-        // trigger, from Cerebro's triage set or from Psylocke's stale-verdict count.
-        let undesigned: Vec<_> = buckets
-            .unplanned
-            .iter()
-            .filter(|bead| !parked(&bead.labels))
-            .collect();
         let agreed: Vec<_> = buckets
             .ux_agreed
             .iter()
             .filter(|bead| !parked(&bead.labels))
             .collect();
-        let unplanned: Vec<_> =
-            undesigned.iter().chain(agreed.iter()).copied().collect::<Vec<_>>();
         let planned: Vec<_> = buckets
             .planned
             .iter()
@@ -373,51 +346,41 @@ impl TriggerFacts {
         .filter(|bead| stale(&bead.labels))
         .count();
 
+        let planning_candidates: BTreeMap<String, Vec<Candidate>> = buckets
+            .candidates
+            .iter()
+            .map(|(role, list)| {
+                let free = list.iter().filter(|c| !spoken_for.contains(&c.id)).cloned().collect();
+                (role.clone(), free)
+            })
+            .collect();
+        let mut p0_unplanned: Vec<String> = Vec::new();
+        for candidate in planning_candidates.values().flatten() {
+            if candidate.priority == Some(0) && !p0_unplanned.contains(&candidate.id) {
+                p0_unplanned.push(candidate.id.clone());
+            }
+        }
+        let undesigned_revisions = planning_candidates
+            .get("ux")
+            .map(|list| {
+                list.iter()
+                    .map(|c| {
+                        let revision = buckets
+                            .unplanned
+                            .iter()
+                            .find(|bead| bead.id == c.id)
+                            .and_then(|bead| bead.updated_at);
+                        (c.id.clone(), revision)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
         Self {
-            p0_unplanned: unplanned
-                .iter()
-                .filter(|bead| bead.priority == Some(0))
-                .map(|bead| bead.id.clone())
-                .collect(),
+            p0_unplanned,
+            undesigned_revisions,
+            planning_candidates,
             planned: planned.len(),
-            // What a planner may actually TAKE, which is narrower than what is unplanned: a P4
-            // is not a low priority, it is a bead nobody has ranked, and `skills/plan-bead`
-            // forbids planning one. Excluding them here does two jobs at once. It keeps the
-            // buffer condition from starting a planner that can only come up and end
-            // (`condition`, the `planner` arm), and it makes RANKING a bead move this set -
-            // which is what the unchanged-work guard compares. Carrying P4s made a P4 -> P2
-            // ranking a no-op to the fingerprint, and the newly plannable bead sat unplanned
-            // until some unrelated board change happened to break it (cb-zgg).
-            actionable_ids: unplanned
-                .iter()
-                .filter(|bead| bead.priority != Some(4))
-                .map(|bead| bead.id.clone())
-                .collect(),
-            undesigned_ids: undesigned
-                .iter()
-                .filter(|bead| bead.priority != Some(4))
-                .map(|bead| bead.id.clone())
-                .collect(),
-            undesigned_revisions: undesigned
-                .iter()
-                .filter(|bead| bead.priority != Some(4))
-                .map(|bead| (bead.id.clone(), bead.updated_at.clone()))
-                .collect(),
-            p0_undesigned: undesigned
-                .iter()
-                .filter(|bead| bead.priority == Some(0))
-                .map(|bead| bead.id.clone())
-                .collect(),
-            ux_agreed_ids: agreed
-                .iter()
-                .filter(|bead| bead.priority != Some(4))
-                .map(|bead| bead.id.clone())
-                .collect(),
-            p0_ux_agreed: agreed
-                .iter()
-                .filter(|bead| bead.priority == Some(0))
-                .map(|bead| bead.id.clone())
-                .collect(),
             ux_agreed: agreed.len(),
             planned_ids: planned.iter().map(|bead| bead.id.clone()).collect(),
             assignable_ids: buckets
@@ -436,7 +399,6 @@ impl TriggerFacts {
             planner_multiple,
             gh,
             linked: buckets.linked.clone(),
-            in_flight,
         }
     }
 
@@ -446,29 +408,6 @@ impl TriggerFacts {
         // Saturating, so an absurd declaration cannot wrap to a number BELOW the floor - which
         // would silently pin the buffer - where elisp would have grown a bignum.
         self.implementers.saturating_mul(self.planner_multiple).max(PLANNER_BUFFER_FLOOR)
-    }
-
-    /// The work of ROLE that no in-flight session will take, or `None` for a role this rule does
-    /// not gate. Never negative: `saturating_sub`.
-    ///
-    ///   planner      -> actionable_ids.len()  - in_flight["planner"]
-    ///   ux           -> undesigned_ids.len()  - in_flight["ux"]
-    ///   build-design -> ux_agreed_ids.len()   - in_flight["build-design"]
-    ///
-    /// An implementer is not gated here since cb-10d.1: the view hands each one a bead no row or
-    /// record holds (`next_bead`, `spoken_for`), so there is nothing left to guess.
-    ///
-    /// One number covers BOTH planner arms: a P0 is unplanned and not P4, so `p0_unplanned` is a
-    /// subset of `actionable_ids`, and a planner in flight takes the P0 first because
-    /// `skills/plan-bead` plans every P0 before it looks at the buffer.
-    pub fn headroom(&self, role: &str) -> Option<usize> {
-        let available = match role {
-            "planner" => self.actionable_ids.len(),
-            "ux" => self.undesigned_ids.len(),
-            "build-design" => self.ux_agreed_ids.len(),
-            _ => return None,
-        };
-        Some(available.saturating_sub(*self.in_flight.get(role).unwrap_or(&0)))
     }
 }
 
@@ -502,11 +441,12 @@ pub struct AgentFacts<'a> {
 /// wake interval, not this guard, is what keeps it from starting too often.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Fingerprint {
+    /// `candidates` is every candidate of the role with its priority, P4s included, so ranking a
+    /// bead still moves the fingerprint (cb-zgg, cb-10d.2.2).
     Planner {
-        p0_unplanned: Vec<String>,
         planned: usize,
         implementers: usize,
-        actionable_ids: Vec<String>,
+        candidates: Vec<(String, Option<u8>)>,
     },
     Implementer {
         planned_ids: Vec<String>,
@@ -515,27 +455,33 @@ pub enum Fingerprint {
         unranked_ids: Vec<String>,
     },
     Ux {
-        p0_undesigned: Vec<String>,
         ux_agreed: usize,
         implementers: usize,
-        undesigned_ids: Vec<String>,
+        candidates: Vec<(String, Option<u8>)>,
         undesigned_revisions: Vec<(String, Option<DateTime<Utc>>)>,
     },
     BuildDesign {
-        p0_ux_agreed: Vec<String>,
         planned: usize,
         implementers: usize,
-        ux_agreed_ids: Vec<String>,
+        candidates: Vec<(String, Option<u8>)>,
     },
+}
+
+/// Every candidate of ROLE with its priority, in the script's order.
+fn candidate_pairs(facts: &TriggerFacts, role: &str) -> Vec<(String, Option<u8>)> {
+    facts
+        .planning_candidates
+        .get(role)
+        .map(|list| list.iter().map(|c| (c.id.clone(), c.priority)).collect())
+        .unwrap_or_default()
 }
 
 pub fn fingerprint(role: &str, facts: &TriggerFacts) -> Option<Fingerprint> {
     match role {
         "planner" => Some(Fingerprint::Planner {
-            p0_unplanned: facts.p0_unplanned.clone(),
             planned: facts.planned,
             implementers: facts.implementers,
-            actionable_ids: facts.actionable_ids.clone(),
+            candidates: candidate_pairs(facts, role),
         }),
         "implementer" => Some(Fingerprint::Implementer {
             planned_ids: facts.planned_ids.clone(),
@@ -544,17 +490,15 @@ pub fn fingerprint(role: &str, facts: &TriggerFacts) -> Option<Fingerprint> {
             unranked_ids: facts.unranked_ids.clone(),
         }),
         "ux" => Some(Fingerprint::Ux {
-            p0_undesigned: facts.p0_undesigned.clone(),
             ux_agreed: facts.ux_agreed,
             implementers: facts.implementers,
-            undesigned_ids: facts.undesigned_ids.clone(),
+            candidates: candidate_pairs(facts, role),
             undesigned_revisions: facts.undesigned_revisions.clone(),
         }),
         "build-design" => Some(Fingerprint::BuildDesign {
-            p0_ux_agreed: facts.p0_ux_agreed.clone(),
             planned: facts.planned,
             implementers: facts.implementers,
-            ux_agreed_ids: facts.ux_agreed_ids.clone(),
+            candidates: candidate_pairs(facts, role),
         }),
         _ => None,
     }
@@ -601,44 +545,25 @@ pub fn trigger(
 /// The role's own condition, first arm true winning.
 fn condition(facts: &TriggerFacts, agent: &AgentFacts<'_>) -> Option<String> {
     match agent.role {
-        "planner" => {
-            // Headroom is a reason to plan only while there is something no already-starting
-            // peer will take. It subsumes the `actionable_ids` test this arm used to carry: a
-            // short buffer is a reason to plan only while there is something to plan, and
-            // without it the second planner is started to find an empty queue every time the
-            // first one takes the last bead. Since cb-zgg the set excludes P4s, so a board of
-            // nothing but unranked beads starts no planner either - that board is Cerebro's to
-            // rank, and the orchestrator arm below is what fires for it.
-            if facts.headroom("planner") == Some(0) {
-                return None;
-            }
-            if let Some(first) = facts.p0_unplanned.first() {
-                return Some(format!("P0 {first} unplanned"));
+        // The three planning roles share one shape (cb-10d.2.2): nothing to hand is no reason to
+        // start, a P0 first in the queue is reason whatever the buffer says, and otherwise a short
+        // buffer is. The pick and the condition read the same list, so a blocked or unranked
+        // bead never starts a session with nothing to take.
+        "planner" | "build-design" => {
+            let pick = bead_for(facts, agent.role)?;
+            if first_candidate(facts.planning_candidates.get(agent.role)?)?.priority == Some(0) {
+                return Some(format!("P0 {pick} unplanned"));
             }
             let want = facts.planner_want();
             (facts.planned < want).then(|| format!("buffer {} of {want}", facts.planned))
         }
-        // The planner's two halves, each over its own queue. A project runs `planner` or these
-        // two, never both, so neither arm can double-start anything.
         "ux" => {
-            if facts.headroom("ux") == Some(0) {
-                return None;
-            }
-            if let Some(first) = facts.p0_undesigned.first() {
-                return Some(format!("P0 {first} unplanned"));
+            let pick = bead_for(facts, agent.role)?;
+            if first_candidate(facts.planning_candidates.get(agent.role)?)?.priority == Some(0) {
+                return Some(format!("P0 {pick} unplanned"));
             }
             let want = facts.planner_want();
             (facts.ux_agreed < want).then(|| format!("UX {} of {want}", facts.ux_agreed))
-        }
-        "build-design" => {
-            if facts.headroom("build-design") == Some(0) {
-                return None;
-            }
-            if let Some(first) = facts.p0_ux_agreed.first() {
-                return Some(format!("P0 {first} unplanned"));
-            }
-            let want = facts.planner_want();
-            (facts.planned < want).then(|| format!("buffer {} of {want}", facts.planned))
         }
         // Stale first: a stale verdict is a bead the fleet cannot act on until she looks again.
         "verifier" => {
@@ -857,12 +782,6 @@ pub fn standby_label(
     agent: AgentFacts<'_>,
     now: DateTime<Utc>,
 ) -> Option<String> {
-    // Headroom first, for both gated roles: a row whose work is already spoken for is waiting
-    // for more work, not for its own condition. Shown only at exactly zero - above it the row
-    // starts on the next tick, so `→ 2 free` is a string almost nobody would ever see.
-    if facts.headroom(role) == Some(0) {
-        return Some("→ 0 free".to_string());
-    }
     match role {
         "planner" => Some(format!("→ buffer<{}", facts.planner_want())),
         "ux" => Some(format!("→ agreed {}/{}", facts.ux_agreed, facts.planner_want())),
@@ -884,52 +803,40 @@ pub fn standby_label(
     }
 }
 
-/// How many live sessions of each role hold no bead - the ones a start would be racing.
-///
-/// `Waiting` is excluded and every other live state counted, `Unknown` included: a pass that is
-/// over will claim nothing, and a live session whose state word this view does not understand
-/// might. `Dead`, `Standby` and `Invalid` host no session at all. A row that NAMES a bead is not
-/// counted: that bead has already left `planned_ids`, so subtracting the row too would count it
-/// twice.
-///
-/// A role absent from the map has none.
-pub fn in_flight(rows: &[FleetRow]) -> BTreeMap<String, usize> {
-    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
-    for row in rows {
-        // The liveness rule is `lifecycle::row_is_alive`'s, minus `Waiting`: a positive list of
-        // variants here would silently leave a NEW `RowState` out of flight, which is headroom
-        // too high and a session started for work already taken - the defect this rule fixes.
-        let live = crate::lifecycle::row_is_alive(row) && row.state != RowState::Waiting;
-        if live && row.bead.is_none() {
-            *counts.entry(row.role.clone()).or_default() += 1;
-        }
-    }
-    counts
-}
-
-/// Is ROLE's work already spoken for - by sessions in flight, plus TAKEN starts made in the
-/// caller's own loop this tick?
-///
-/// Stated here rather than inline in `start_due` so the rule has one home per language
-/// (`cerebro--no-headroom-p` is the elisp copy). `false` for a role headroom does not gate.
-///
-/// **Deliberately not conditioned on the trigger having fired.** `condition` already gates on
-/// headroom, so a row whose tick STARTS at zero headroom answers `None` there and would log no
-/// guard at all - which is the "why did nothing happen" cb-kcs.4.4's line exists to close.
-pub fn no_headroom(facts: &TriggerFacts, role: &str, taken: usize) -> bool {
-    facts.headroom(role).is_some_and(|free| taken >= free)
-}
-
 /// The bead the next implementer start is given: the first assignable one, or `None` (cb-10d.1).
 pub fn next_bead(facts: &TriggerFacts) -> Option<&str> {
     facts.assignable_ids.first().map(String::as_str)
 }
 
+/// Whether ROLE is started with a bead the view picked: `implementer` (cb-10d.1) and the three
+/// planning roles (cb-10d.2.2).
+pub fn hands_a_bead(role: &str) -> bool {
+    role == "implementer" || crate::model::PLANNING_ROLES.contains(&role)
+}
+
+/// The first candidate a planning role may be given: not P4 and not unranked (`priority` `None`)
+/// - a P4 is a bead nobody has ranked, which is Cerebro's to rank and not a planner's to plan.
+pub fn first_candidate(candidates: &[Candidate]) -> Option<&Candidate> {
+    candidates.iter().find(|c| !matches!(c.priority, Some(4) | None))
+}
+
+/// The bead the next start of ROLE is given: an implementer's first assignable bead, a planning
+/// role's `first_candidate`, and `None` for any other role.
+pub fn bead_for<'a>(facts: &'a TriggerFacts, role: &str) -> Option<&'a str> {
+    if role == "implementer" {
+        return next_bead(facts);
+    }
+    first_candidate(facts.planning_candidates.get(role)?).map(|c| c.id.as_str())
+}
+
 impl TriggerFacts {
-    /// Remove ID from `assignable_ids`: a bead handed out earlier in THIS tick is not handed
-    /// again. The whole of the implementer's within-tick rule since cb-10d.1.
+    /// Remove ID from `assignable_ids` and from every planning role's candidates: a bead handed
+    /// out earlier in THIS tick is not handed again, to any role.
     pub fn take(&mut self, id: &str) {
         self.assignable_ids.retain(|candidate| candidate != id);
+        for list in self.planning_candidates.values_mut() {
+            list.retain(|candidate| candidate.id != id);
+        }
     }
 }
 
@@ -1110,7 +1017,9 @@ impl StartLedger {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{partition_beads, AgentKind, Bead, RosterEntry};
+    use crate::model::{partition_beads, AgentKind, Bead, Candidate, RosterEntry};
+    use std::collections::BTreeSet;
+    use crate::model::RowState;
 
     fn row(name: &str, role: &str, state: RowState, bead: Option<&str>) -> FleetRow {
         FleetRow {
@@ -1133,17 +1042,21 @@ mod tests {
         }
     }
 
-    fn facts_for(beads: Vec<Bead>, flight: &[(&str, usize)]) -> TriggerFacts {
+    fn facts_for(beads: Vec<Bead>, candidates: &[(&str, Vec<(&str, u8)>)]) -> TriggerFacts {
         let roster = roster(&[("Xavier", "planner"), ("Cyclops", "implementer")]);
-        TriggerFacts::derive(
-            &partition_beads(beads),
-            &roster,
-            flight.iter().map(|(r, n)| ((*r).to_string(), *n)).collect(),
-            &std::collections::BTreeSet::new(),
-            |_| false,
-            GhAnswer::Unanswered,
-            1,
-        )
+        let mut buckets = partition_beads(beads);
+        buckets.candidates = cands(candidates);
+        TriggerFacts::derive(&buckets, &roster, &BTreeSet::new(), |_| false, GhAnswer::Unanswered, 1)
+    }
+
+    /// Each role's candidates, as its script would list them.
+    fn cands(list: &[(&str, Vec<(&str, u8)>)]) -> BTreeMap<String, Vec<Candidate>> {
+        list.iter()
+            .map(|(role, ids)| {
+                let row = |(id, p): &(&str, u8)| Candidate { id: id.to_string(), priority: Some(*p) };
+                (role.to_string(), ids.iter().map(row).collect())
+            })
+            .collect()
     }
 
     fn agent_of(role: &str) -> AgentFacts<'_> {
@@ -1151,8 +1064,8 @@ mod tests {
     }
 
     /// The cb-lz5 split must be invisible to the combined `planner` role, which this repository
-    /// itself runs: `actionable_ids`, `p0_unplanned` and `headroom` are the UNION of the two
-    /// buckets, or a bead that carries `ux:agreed` becomes work no planner can see.
+    /// itself runs: `plan-candidates` lists an agreed bead too, and the planner is handed it
+    /// (cb-10d.2.2).
     #[test]
     fn the_planner_still_sees_an_agreed_bead_as_its_own_work() {
         let facts = facts_for(
@@ -1160,16 +1073,14 @@ mod tests {
                 bead("cb-a2", "open", &["ux:agreed"], 2),
                 bead("cb-a0", "open", &["ux:agreed"], 0),
             ],
-            &[],
+            &[("planner", vec![("cb-a0", 0), ("cb-a2", 2)])],
         );
-        assert!(facts.actionable_ids.contains(&"cb-a2".to_string()));
-        assert!(facts.actionable_ids.contains(&"cb-a0".to_string()));
         assert_eq!(facts.p0_unplanned, vec!["cb-a0".to_string()]);
         assert_eq!(
             condition(&facts, &agent_of("planner")),
             Some("P0 cb-a0 unplanned".to_string())
         );
-        assert_eq!(facts.headroom("planner"), Some(2));
+        assert_eq!(bead_for(&facts, "planner"), Some("cb-a0"));
     }
 
     /// Cerebro's triage arm and Psylocke's stale-verdict arm read the open buckets too, and both
@@ -1198,7 +1109,7 @@ mod tests {
                 bead("cb-u3", "open", &[], 2),
                 bead("cb-a1", "open", &["ux:agreed"], 2),
             ],
-            &[],
+            &[("ux", vec![("cb-u1", 2), ("cb-u2", 2), ("cb-u3", 2)])],
         );
         assert_eq!(facts.planner_want(), 2);
         assert_eq!(condition(&facts, &agent_of("ux")), Some("UX 1 of 2".to_string()));
@@ -1212,7 +1123,7 @@ mod tests {
                 bead("cb-a1", "open", &["ux:agreed"], 2),
                 bead("cb-a2", "open", &["ux:agreed"], 2),
             ],
-            &[],
+            &[("ux", vec![("cb-p0", 0)])],
         );
         assert_eq!(
             condition(&facts, &agent_of("ux")),
@@ -1223,17 +1134,18 @@ mod tests {
 
     #[test]
     fn the_ux_role_is_held_when_nothing_is_undesigned() {
-        let facts = facts_for(vec![bead("cb-a1", "open", &["ux:agreed"], 2)], &[]);
+        let facts = facts_for(vec![bead("cb-a1", "open", &["ux:agreed"], 2)], &[("ux", vec![])]);
         assert_eq!(condition(&facts, &agent_of("ux")), None);
         assert_eq!(
             standby_label("ux", &facts, agent_of("ux"), at(0)),
-            Some("\u{2192} 0 free".to_string())
+            Some("\u{2192} agreed 1/2".to_string())
         );
     }
 
     #[test]
     fn the_build_design_role_starts_while_the_planned_buffer_is_short() {
-        let short = facts_for(vec![bead("cb-a1", "open", &["ux:agreed"], 2)], &[]);
+        let queue = || vec![("build-design", vec![("cb-a1", 2)])];
+        let short = facts_for(vec![bead("cb-a1", "open", &["ux:agreed"], 2)], &queue());
         assert_eq!(
             condition(&short, &agent_of("build-design")),
             Some("buffer 0 of 2".to_string())
@@ -1245,18 +1157,18 @@ mod tests {
                 bead("cb-p1", "open", &["planned"], 2),
                 bead("cb-p2", "open", &["planned"], 2),
             ],
-            &[],
+            &queue(),
         );
         assert_eq!(condition(&full, &agent_of("build-design")), None);
     }
 
     #[test]
     fn the_build_design_role_is_held_when_nothing_is_agreed() {
-        let facts = facts_for(vec![bead("cb-u1", "open", &[], 2)], &[]);
+        let facts = facts_for(vec![bead("cb-u1", "open", &[], 2)], &[("build-design", vec![])]);
         assert_eq!(condition(&facts, &agent_of("build-design")), None);
         assert_eq!(
             standby_label("build-design", &facts, agent_of("build-design"), at(0)),
-            Some("\u{2192} 0 free".to_string())
+            Some("\u{2192} planned 0/2".to_string())
         );
     }
 
@@ -1280,7 +1192,6 @@ mod tests {
             TriggerFacts::derive(
                 &partition_beads(beads),
                 &roster,
-                std::collections::BTreeMap::new(),
                 &std::collections::BTreeSet::new(),
                 |_| false,
                 GhAnswer::Unanswered,
@@ -1288,8 +1199,6 @@ mod tests {
             )
         };
 
-        // One plain unplanned bead in each fixture, so the `ux` row has headroom and reads its
-        // note rather than the `\u{2192} 0 free` that wins above every role's own condition.
         let two = four(vec![
             bead("cb-u1", "open", &[], 2),
             bead("cb-a1", "open", &["ux:agreed"], 2),
@@ -1361,20 +1270,6 @@ mod tests {
     }
 
     #[test]
-    fn an_in_flight_session_of_each_new_role_takes_its_own_queue_down() {
-        let beads = || {
-            vec![
-                bead("cb-u1", "open", &[], 2),
-                bead("cb-a1", "open", &["ux:agreed"], 2),
-            ]
-        };
-        let taken = facts_for(beads(), &[("build-design", 1)]);
-        assert_eq!(taken.headroom("build-design"), Some(0));
-        assert_eq!(condition(&taken, &agent_of("build-design")), None);
-        assert_eq!(taken.headroom("ux"), Some(1), "the other queue is untouched");
-    }
-
-    #[test]
     fn neither_new_role_waits_out_a_wake_interval() {
         assert_eq!(wake_interval("ux"), 0);
         assert_eq!(wake_interval("build-design"), 0);
@@ -1385,27 +1280,16 @@ mod tests {
     #[test]
     fn the_new_fingerprints_move_with_their_own_queues() {
         let one = facts_for(
-            vec![
-                bead("cb-u1", "open", &[], 2),
-                bead("cb-a1", "open", &["ux:agreed"], 2),
-            ],
-            &[],
+            vec![],
+            &[("ux", vec![("cb-u1", 2)]), ("build-design", vec![("cb-a1", 2)])],
         );
         let more_undesigned = facts_for(
-            vec![
-                bead("cb-u1", "open", &[], 2),
-                bead("cb-u2", "open", &[], 2),
-                bead("cb-a1", "open", &["ux:agreed"], 2),
-            ],
-            &[],
+            vec![],
+            &[("ux", vec![("cb-u1", 2), ("cb-u2", 2)]), ("build-design", vec![("cb-a1", 2)])],
         );
         let more_agreed = facts_for(
-            vec![
-                bead("cb-u1", "open", &[], 2),
-                bead("cb-a1", "open", &["ux:agreed"], 2),
-                bead("cb-a2", "open", &["ux:agreed"], 2),
-            ],
-            &[],
+            vec![],
+            &[("ux", vec![("cb-u1", 2)]), ("build-design", vec![("cb-a1", 2), ("cb-a2", 2)])],
         );
         assert_ne!(fingerprint("ux", &one), fingerprint("ux", &more_undesigned));
         assert_ne!(
@@ -1418,11 +1302,12 @@ mod tests {
 
     #[test]
     fn a_returned_ux_bead_breaks_the_unchanged_work_guard() {
+        let queue = || vec![("ux", vec![("cb-u1", 2), ("cb-u2", 2)])];
         let mut first_bead = bead("cb-u1", "open", &[], 2);
         first_bead.updated_at = Some(at(0));
         let mut second_bead = bead("cb-u2", "open", &[], 2);
         second_bead.updated_at = Some(at(0));
-        let first = facts_for(vec![first_bead, second_bead], &[]);
+        let first = facts_for(vec![first_bead, second_bead], &queue());
         let first_print = fingerprint("ux", &first).expect("the UX fingerprint exists");
         let completed_pass = AgentFacts {
             role: "ux",
@@ -1448,7 +1333,7 @@ mod tests {
                 },
                 returned_bead,
             ],
-            &[],
+            &queue(),
         );
         assert_eq!(
             trigger(&returned, completed_pass, at(3)),
@@ -1465,7 +1350,6 @@ mod tests {
         TriggerFacts::derive(
             &buckets,
             &roster(&[("Cyclops", "implementer")]),
-            BTreeMap::new(),
             &spoken.iter().map(|id| id.to_string()).collect(),
             |_| false,
             GhAnswer::Unanswered,
@@ -1502,15 +1386,77 @@ mod tests {
     }
 
     #[test]
-    fn headroom_no_longer_gates_implementers() {
-        let mut facts = assignable_facts(&["cb-a"], &[]);
-        facts.in_flight = [("implementer".to_string(), 5)].into_iter().collect();
-        assert_eq!(facts.headroom("implementer"), None);
-        assert!(!no_headroom(&facts, "implementer", 9));
-        assert_eq!(
-            condition(&facts, &agent_of("implementer")),
-            Some("1 planned, unclaimed".to_string())
+    fn a_planning_role_is_given_its_first_ranked_candidate() {
+        let list = || vec![("cb-4", 4), ("cb-2", 2), ("cb-3", 3)];
+        let facts = facts_for(vec![], &[("build-design", list())]);
+        assert_eq!(bead_for(&facts, "build-design"), Some("cb-2"));
+
+        let mut buckets = WorkBuckets::default();
+        buckets.candidates = cands(&[("build-design", list())]);
+        let spoken: BTreeSet<String> = ["cb-2".to_string()].into_iter().collect();
+        let roster = roster(&[("Iceman", "build-design")]);
+        let without =
+            TriggerFacts::derive(&buckets, &roster, &spoken, |_| false, GhAnswer::Unanswered, 1);
+        assert_eq!(bead_for(&without, "build-design"), Some("cb-3"));
+
+        let only_p4 = facts_for(vec![], &[("build-design", vec![("cb-4", 4)])]);
+        assert_eq!(bead_for(&only_p4, "build-design"), None);
+        assert_eq!(condition(&only_p4, &agent_of("build-design")), None);
+
+        let mut unranked = facts_for(vec![], &[("build-design", vec![("cb-n", 2), ("cb-m", 2)])]);
+        unranked.planning_candidates.get_mut("build-design").unwrap()[0].priority = None;
+        assert_eq!(bead_for(&unranked, "build-design"), Some("cb-m"), "an unranked candidate is skipped");
+
+        assert_eq!(bead_for(&facts, "verifier"), None);
+        for role in ["planner", "ux", "build-design", "implementer"] {
+            assert!(hands_a_bead(role), "{role} is handed a bead");
+        }
+        assert!(!hands_a_bead("verifier"));
+    }
+
+    #[test]
+    fn a_p0_candidate_fires_whatever_the_buffer() {
+        let mut facts =
+            facts_for(vec![], &[("planner", vec![("cb-z", 0)]), ("ux", vec![("cb-z", 0)])]);
+        facts.planned = facts.planner_want();
+        facts.ux_agreed = facts.planner_want();
+        assert_eq!(condition(&facts, &agent_of("planner")), Some("P0 cb-z unplanned".to_string()));
+        assert_eq!(condition(&facts, &agent_of("ux")), Some("P0 cb-z unplanned".to_string()));
+        assert_eq!(facts.p0_unplanned, vec!["cb-z".to_string()], "one id, seen in two queues");
+    }
+
+    #[test]
+    fn the_buffer_arm_needs_a_candidate() {
+        let none = facts_for(vec![], &[("build-design", vec![])]);
+        assert_eq!(none.planned, 0);
+        assert_eq!(condition(&none, &agent_of("build-design")), None);
+
+        let one = facts_for(vec![], &[("build-design", vec![("cb-b", 2)]), ("ux", vec![("cb-u", 2)])]);
+        assert_eq!(condition(&one, &agent_of("build-design")), Some("buffer 0 of 2".to_string()));
+        assert_eq!(condition(&one, &agent_of("ux")), Some("UX 0 of 2".to_string()));
+
+        // A role the reader was not asked about has nothing to hand and starts nothing.
+        assert_eq!(condition(&facts_for(vec![], &[]), &agent_of("planner")), None);
+    }
+
+    #[test]
+    fn taking_a_bead_removes_it_from_every_queue() {
+        let mut facts = facts_for(
+            vec![],
+            &[("planner", vec![("cb-a", 2), ("cb-b", 2)]), ("ux", vec![("cb-a", 2)])],
         );
+        facts.take("cb-a");
+        assert_eq!(bead_for(&facts, "planner"), Some("cb-b"));
+        assert_eq!(bead_for(&facts, "ux"), None);
+    }
+
+    #[test]
+    fn standby_cells_no_longer_read_zero_free() {
+        let facts = facts_for(vec![], &[]);
+        let cell = |role: &'static str| standby_label(role, &facts, agent_of(role), at(0));
+        assert_eq!(cell("planner").as_deref(), Some("\u{2192} buffer<2"));
+        assert_eq!(cell("ux").as_deref(), Some("\u{2192} agreed 0/2"));
+        assert_eq!(cell("build-design").as_deref(), Some("\u{2192} planned 0/2"));
     }
 
     #[test]
@@ -1533,104 +1479,6 @@ mod tests {
         .collect();
         let spoken: Vec<String> = spoken_for(&rows, &handed, &releasing).into_iter().collect();
         assert_eq!(spoken, ["cb-1", "cb-2", "cb-3"]);
-    }
-
-    #[test]
-    fn a_planner_already_coming_up_holds_the_second_off_the_last_candidate() {
-        let buffer = || vec![bead("cb-b1", "open", &[], 2)];
-        let p0 = || vec![bead("cb-z0", "open", &[], 0)];
-
-        assert_eq!(
-            condition(&facts_for(buffer(), &[]), &agent_of("planner")),
-            Some("buffer 0 of 2".to_string())
-        );
-        assert_eq!(condition(&facts_for(buffer(), &[("planner", 1)]), &agent_of("planner")), None);
-        // The P0 arm is gated too: an in-flight planner plans every P0 before it looks at the
-        // buffer, so a second started for it would find the `planning:` label taken.
-        assert_eq!(
-            condition(&facts_for(p0(), &[]), &agent_of("planner")),
-            Some("P0 cb-z0 unplanned".to_string())
-        );
-        assert_eq!(condition(&facts_for(p0(), &[("planner", 1)]), &agent_of("planner")), None);
-    }
-
-    #[test]
-    fn a_row_held_by_headroom_reads_zero_free() {
-        let now = at(0);
-        let unplanned = || vec![bead("cb-b1", "open", &[], 2)];
-
-        // Planner only since cb-10d.1: an implementer is no longer held by headroom.
-        for (role, beads) in [
-            ("planner", unplanned as fn() -> Vec<Bead>),
-        ] {
-            let free = facts_for(beads(), &[]);
-            let taken = facts_for(beads(), &[(role, 1)]);
-            let agent = agent_of(role);
-
-            assert_eq!(
-                standby_cell(role, &taken, agent_of(role), now, 0, 0).as_deref(),
-                Some("\u{2192} 0 free")
-            );
-            assert_ne!(
-                standby_cell(role, &free, agent, now, 0, 0).as_deref(),
-                Some("\u{2192} 0 free")
-            );
-            // The retry clock still wins over both.
-            assert_eq!(
-                standby_cell(role, &taken, agent_of(role), now, 3, 120),
-                Some(retry_label(3, 120))
-            );
-        }
-    }
-
-    #[test]
-    fn headroom_is_available_work_minus_the_sessions_going_for_it() {
-        let roster = roster(&[("Xavier", "planner"), ("Cyclops", "implementer")]);
-        let buckets = partition_beads(vec![
-            bead("cb-p1", "open", &["planned"], 2),
-            bead("cb-p2", "open", &["planned"], 2),
-            bead("cb-p3", "open", &["planned"], 2),
-            bead("cb-p4", "open", &["planned"], 2),
-            bead("cb-u1", "open", &[], 2),
-        ]);
-        let facts_with = |flight: &[(&str, usize)]| {
-            TriggerFacts::derive(
-                &buckets,
-                &roster,
-                flight.iter().map(|(r, n)| ((*r).to_string(), *n)).collect(),
-                &std::collections::BTreeSet::new(),
-                |_| false,
-                GhAnswer::Unanswered,
-                1,
-            )
-        };
-
-        assert_eq!(facts_with(&[]).headroom("planner"), Some(1));
-        // Saturating, not wrapping: more sessions in flight than work.
-        assert_eq!(facts_with(&[("planner", 9)]).headroom("planner"), Some(0));
-        assert_eq!(facts_with(&[("planner", 1)]).headroom("planner"), Some(0));
-        // A role this rule does not gate.
-        assert_eq!(facts_with(&[]).headroom("verifier"), None);
-    }
-
-    #[test]
-    fn in_flight_counts_live_sessions_holding_no_bead() {
-        let rows = vec![
-            row("Cyclops", "implementer", RowState::Working, Some("cb-1")),
-            row("Storm", "implementer", RowState::Working, None),
-            row("Rogue", "implementer", RowState::Up, None),
-            row("Gambit", "implementer", RowState::Waiting, None),
-            row("Jubilee", "implementer", RowState::Standby, None),
-            row("Bishop", "implementer", RowState::Dead, None),
-            row("Iceman", "implementer", RowState::Unknown("weird".into()), None),
-            row("Xavier", "planner", RowState::Working, None),
-        ];
-
-        let counts = in_flight(&rows);
-
-        assert_eq!(counts.get("implementer"), Some(&3));
-        assert_eq!(counts.get("planner"), Some(&1));
-        assert_eq!(counts.get("verifier"), None);
     }
 
     fn bead(id: &str, status: &str, labels: &[&str], priority: u8) -> Bead {
@@ -1669,7 +1517,7 @@ mod tests {
 
     #[test]
     fn facts_are_derived_from_the_buckets_the_work_reader_gives() {
-        let buckets = crate::model::partition_beads(vec![
+        let mut buckets = crate::model::partition_beads(vec![
             bead("cb-9zz", "open", &[], 0),
             bead("cb-decl", "open", &["triage:declined"], 4),
             bead("cb-rank", "open", &[], 4),
@@ -1685,14 +1533,17 @@ mod tests {
             ("Rogue", "implementer"),
             ("Storm", "implementer"),
         ]);
+        buckets.candidates = cands(&[("planner", vec![("cb-9zz", 0)])]);
         // Storm has been told to finish: it takes no further bead, so it is not counted.
-        let facts = TriggerFacts::derive(&buckets, &roster, BTreeMap::new(), &std::collections::BTreeSet::new(), |name| name == "Storm", GhAnswer::Unanswered, 1);
+        let facts = TriggerFacts::derive(&buckets, &roster, &std::collections::BTreeSet::new(), |name| name == "Storm", GhAnswer::Unanswered, 1);
 
         assert_eq!(facts.p0_unplanned, vec!["cb-9zz".to_string()]);
         assert_eq!(facts.planned, 2);
-        // `triage:declined` and `human` are the navigator's, and never a planner's - and neither
-        // is an unranked P4: `cb-rank` is in `unranked_ids` below and nowhere else (cb-zgg).
-        assert_eq!(facts.actionable_ids, vec!["cb-9zz".to_string()]);
+        // What a planner may take is the candidate script's list, carried as it came.
+        assert_eq!(
+            facts.planning_candidates["planner"],
+            vec![Candidate { id: "cb-9zz".into(), priority: Some(0) }]
+        );
         assert_eq!(
             facts.planned_ids,
             vec!["cb-p1".to_string(), "cb-p2".to_string()]
@@ -1706,22 +1557,17 @@ mod tests {
     }
 
     /// Ranking a bead is what Cerebro does when the fleet view wakes it, and it has to be able to
-    /// wake a planner. Before cb-zgg `actionable_ids` carried every unplanned bead, so a P4 -> P2
+    /// wake a planner. Before cb-zgg the fingerprint carried every unplanned bead's id alone, so a P4 -> P2
     /// ranking left the whole planner fingerprint identical and the unchanged-work guard held the
     /// start - observed holding for 45 minutes over one ranked bead.
     #[test]
     fn ranking_a_bead_moves_the_planner_fingerprint() {
-        let roster = roster(&[("Xavier", "planner"), ("Cyclops", "implementer")]);
-        let facts_of = |priority: u8| {
-            let buckets = partition_beads(vec![bead("cb-agg", "open", &[], priority)]);
-            TriggerFacts::derive(&buckets, &roster, BTreeMap::new(), &std::collections::BTreeSet::new(), |_| false, GhAnswer::Unanswered, 1)
-        };
-        let unranked = facts_of(4);
-        let ranked = facts_of(2);
+        let unranked = facts_for(vec![], &[("planner", vec![("cb-agg", 4)])]);
+        let ranked = facts_for(vec![], &[("planner", vec![("cb-agg", 2)])]);
 
-        // Unranked: nothing a planner may take, so the buffer rule does not fire at all.
-        assert!(unranked.actionable_ids.is_empty());
-        assert_eq!(ranked.actionable_ids, vec!["cb-agg".to_string()]);
+        // Unranked: nothing a planner may be given, so the buffer rule does not fire at all.
+        assert_eq!(bead_for(&unranked, "planner"), None);
+        assert_eq!(bead_for(&ranked, "planner"), Some("cb-agg"));
         assert_ne!(
             fingerprint("planner", &unranked),
             fingerprint("planner", &ranked)
@@ -1787,14 +1633,10 @@ mod tests {
     fn empty_facts() -> TriggerFacts {
         TriggerFacts {
             p0_unplanned: Vec::new(),
-            undesigned_ids: Vec::new(),
             undesigned_revisions: Vec::new(),
-            p0_undesigned: Vec::new(),
-            ux_agreed_ids: Vec::new(),
-            p0_ux_agreed: Vec::new(),
+            planning_candidates: BTreeMap::new(),
             ux_agreed: 0,
             planned: 0,
-            actionable_ids: Vec::new(),
             planned_ids: Vec::new(),
             assignable_ids: Vec::new(),
             unranked_ids: Vec::new(),
@@ -1804,7 +1646,6 @@ mod tests {
             planner_multiple: 1,
             gh: GhAnswer::Unanswered,
             linked: Vec::new(),
-            in_flight: BTreeMap::new(),
         }
     }
 
@@ -1816,7 +1657,7 @@ mod tests {
     fn every_role_answers_its_own_condition() {
         let mut p0 = empty_facts();
         p0.p0_unplanned = vec!["cb-9zz".into()];
-        p0.actionable_ids = vec!["cb-9zz".into()];
+        p0.planning_candidates = cands(&[("planner", vec![("cb-9zz", 0)])]);
         assert_eq!(
             trigger(&p0, agent("planner"), at(0)),
             Some("P0 cb-9zz unplanned".to_string())
@@ -1824,7 +1665,7 @@ mod tests {
 
         let mut buffer = empty_facts();
         buffer.planned = 2;
-        buffer.actionable_ids = vec!["cb-a".into()];
+        buffer.planning_candidates = cands(&[("planner", vec![("cb-a", 2)])]);
         assert_eq!(
             trigger(&buffer, agent("planner"), at(0)),
             Some("buffer 2 of 4".to_string())
@@ -1832,7 +1673,7 @@ mod tests {
 
         // A short buffer is a reason to plan only while there is something to plan.
         let mut nothing_to_plan = buffer.clone();
-        nothing_to_plan.actionable_ids.clear();
+        nothing_to_plan.planning_candidates.clear();
         assert_eq!(trigger(&nothing_to_plan, agent("planner"), at(0)), None);
 
         let mut stale = empty_facts();
@@ -2004,10 +1845,7 @@ mod tests {
 
     #[test]
     fn the_standby_label_is_a_closed_vocabulary() {
-        // Work nobody is coming for, so the headroom arm above does not fire and every role's
-        // own cell is what is being read here.
         let mut facts = empty_facts();
-        facts.actionable_ids = vec!["cb-a".to_string()];
         facts.planned_ids = vec!["cb-p".to_string()];
         let facts = facts;
         assert_eq!(standby_label("planner", &facts, agent("planner"), at(0)).as_deref(), Some("→ buffer<4"));
@@ -2174,7 +2012,7 @@ mod tests {
     fn planner_facts(planned: usize, implementers: usize) -> TriggerFacts {
         TriggerFacts {
             planned,
-            actionable_ids: vec!["cb-1".to_string()],
+            planning_candidates: cands(&[("planner", vec![("cb-1", 2)])]),
             planned_ids: vec!["cb-2".to_string()],
             implementers,
             ..empty_facts()
@@ -2233,7 +2071,7 @@ mod tests {
     }
 
     fn cadence_facts(gh: GhAnswer) -> TriggerFacts {
-        let mut facts = TriggerFacts::derive(&WorkBuckets::default(), &[], BTreeMap::new(), &std::collections::BTreeSet::new(), |_| false, gh, 1);
+        let mut facts = TriggerFacts::derive(&WorkBuckets::default(), &[], &std::collections::BTreeSet::new(), |_| false, gh, 1);
         facts.linked = Vec::new();
         facts
     }

@@ -898,13 +898,11 @@ fn start_due(
     // No board, no starts. This is `most-positive-fixnum`'s whole job in elisp, said without a
     // sentinel: a `Stale` work pane still carries its last good buckets and is used.
     let Some(buckets) = app.work.content.value() else { return };
-    let in_flight = triggers::in_flight(app.fleet_rows());
     // Every bead a row, a handover or a give-back already holds: no start is given one (cb-10d.1).
     let spoken = triggers::spoken_for(app.fleet_rows(), &app.handed, &app.releasing);
     let mut facts = TriggerFacts::derive(
         buckets,
         roster,
-        in_flight,
         &spoken,
         |name| lifecycle::stop_flag_set(paths, name),
         app.gh_answer(),
@@ -943,11 +941,6 @@ fn start_due(
             .collect(),
     );
 
-    // Starts made in THIS loop, by role. The fleet read that would show the first one up is five
-    // seconds away, so a row judged against `facts` alone would see the same headroom as the row
-    // before it and four standby builders would still start four for one bead. Same reason
-    // `note_started` is written inside the loop rather than after it.
-    let mut taken: BTreeMap<String, usize> = BTreeMap::new();
     for (name, role) in &standby {
         // A flagged name is never started, whatever its trigger says: that is what `f` means. A
         // deliberate, named divergence from `cerebro--start-due`, which checks no flag at all
@@ -969,16 +962,11 @@ fn start_due(
         // question from the one that used to be asked.
         let reason = triggers::trigger(&facts, agent, now);
         let held_by_guard = reason.is_none() && triggers::held_by_unchanged_work(&facts, agent);
-        // Not conditioned on `reason`: `condition` already gates on headroom, so a row whose
-        // tick starts at zero headroom answers `None` there, and a line naming no guard at all
-        // is exactly what this record exists to close.
-        let no_headroom = triggers::no_headroom(&facts, role, *taken.get(role).unwrap_or(&0));
         let spacing_value = triggers::spacing_for(role, spacing);
         // Inside the loop, not before it, because `note_started` writes into the same map - so
         // the second planner in this very pass already sees the first.
         let spaced_out = !flagged
             && reason.is_some()
-            && !no_headroom
             && triggers::role_start_too_soon(
                 &triggers::role_peers(name, role, roster),
                 ledger.started_at_map(),
@@ -993,11 +981,10 @@ fn start_due(
         // gives up when the wait expires rather than when the fourth failure lands.
         let backed_off = !flagged
             && reason.is_some()
-            && !no_headroom
             && !spaced_out
             && failed
             && triggers::retry_wait(failures, started, now) > 0;
-        let acts = !flagged && reason.is_some() && !no_headroom && !spaced_out && !backed_off;
+        let acts = !flagged && reason.is_some() && !spaced_out && !backed_off;
         let gives_up = acts && triggers::give_up(failed, failures);
 
         // What the trigger read and what held it, before anything is done about it: the file
@@ -1034,7 +1021,6 @@ fn start_due(
                 ("merged_unverified", serde_json::Value::from(facts.merged_unverified)),
                 ("stale_verdicts", serde_json::Value::from(facts.stale_verdicts)),
                 ("held_by_guard", flag(held_by_guard)),
-                ("no_headroom", flag(no_headroom)),
                 ("spaced_out", flag(spaced_out)),
                 (
                     "spacing",
@@ -1080,10 +1066,11 @@ fn start_due(
             continue;
         }
 
-        // An implementer is handed the first assignable bead nobody holds (cb-10d.1). `None` is
-        // unreachable while its condition requires one, and `continue` keeps it harmless.
-        let bead = if role == "implementer" {
-            match triggers::next_bead(&facts) {
+        // An implementer (cb-10d.1) and a planning role (cb-10d.2.2) are handed the first bead
+        // nobody holds. `None` is unreachable while each condition requires one, and `continue`
+        // keeps it harmless.
+        let bead = if triggers::hands_a_bead(role) {
+            match triggers::bead_for(&facts, role) {
                 Some(id) => Some(id.to_string()),
                 None => continue,
             }
@@ -1101,7 +1088,6 @@ fn start_due(
                     // The within-tick rule: the next row in this loop is not handed it again.
                     facts.take(id);
                 }
-                *taken.entry(role.clone()).or_default() += 1;
                 ledger.note_started(name, now, triggers::fingerprint(role, &facts));
                 let reason = reason.unwrap_or_default();
                 log_start(logger, name, role, Some(&reason), bead.as_deref(), now);
@@ -1305,16 +1291,28 @@ fn give_back(
     }
 }
 
-/// The bead an implementer start made by hand or by declaration is given: the first of the work
-/// pane's `assignable` not spoken for, or `None` - which launches with no bead, and the implementer
-/// ends its pass as it does today when there is nothing to claim (cb-10d.1).
+/// The bead a start made by hand or by declaration is given: for an implementer the first of the
+/// work pane's `assignable` not spoken for (cb-10d.1), for a planning role its first ranked
+/// candidate not spoken for (`triggers::first_candidate`, the trigger's own rule, so `s` and the
+/// trigger cannot disagree about a P4 - cb-10d.2.2), or `None` - which launches with no bead, and
+/// the agent says there is nothing and ends its pass.
 fn bead_for_start(app: &App, role: &str) -> Option<String> {
-    if role != "implementer" {
+    if !triggers::hands_a_bead(role) {
         return None;
     }
     let buckets = app.work.content.value()?;
     let spoken = triggers::spoken_for(app.fleet_rows(), &app.handed, &app.releasing);
-    buckets.assignable.iter().find(|id| !spoken.contains(*id)).cloned()
+    if role == "implementer" {
+        return buckets.assignable.iter().find(|id| !spoken.contains(*id)).cloned();
+    }
+    let free: Vec<cerebro_tui::model::Candidate> = buckets
+        .candidates
+        .get(role)?
+        .iter()
+        .filter(|candidate| !spoken.contains(&candidate.id))
+        .cloned()
+        .collect();
+    triggers::first_candidate(&free).map(|candidate| candidate.id.clone())
 }
 
 fn log_disarm(logger: &mut Logger, app: &App, name: &str, by: &str, now: DateTime<Utc>) {
@@ -4566,7 +4564,7 @@ mod main_tests {
     /// something to plan, which is the planner's second arm. It is a P2 rather than a P4 since
     /// cb-zgg: an unranked bead is Cerebro's to rank, and no longer counts as something to plan.
     fn short_buffer() -> cerebro_tui::model::WorkBuckets {
-        cerebro_tui::model::partition_beads(vec![cerebro_tui::model::Bead {
+        let mut buckets = cerebro_tui::model::partition_beads(vec![cerebro_tui::model::Bead {
             id: "cb-a".into(),
             title: "cb-a".into(),
             status: "open".into(),
@@ -4577,7 +4575,10 @@ mod main_tests {
             assignee: None,
             metadata: serde_json::Value::Null,
             external_ref: None,
-        }])
+        }]);
+        // What `plan-candidates` lists for that board (cb-10d.2.2).
+        buckets.candidates = [("planner".to_string(), vec![cerebro_tui::model::Candidate { id: "cb-a".into(), priority: Some(2) }])].into_iter().collect();
+        buckets
     }
 
     /// Three planned, unclaimed beads and one unplanned one to plan: a buffer that satisfies a
@@ -4595,12 +4596,14 @@ mod main_tests {
             metadata: serde_json::Value::Null,
             external_ref: None,
         };
-        cerebro_tui::model::partition_beads(vec![
+        let mut buckets = cerebro_tui::model::partition_beads(vec![
             bead("cb-p1", vec!["planned".to_string()]),
             bead("cb-p2", vec!["planned".to_string()]),
             bead("cb-p3", vec!["planned".to_string()]),
             bead("cb-u1", Vec::new()),
-        ])
+        ]);
+        buckets.candidates = [("planner".to_string(), vec![cerebro_tui::model::Candidate { id: "cb-u1".into(), priority: Some(2) }])].into_iter().collect();
+        buckets
     }
 
     /// One planner and COUNT implementers, so `TriggerFacts::implementers` is COUNT.
@@ -4866,12 +4869,15 @@ mod main_tests {
             metadata: serde_json::Value::Null,
             external_ref: None,
         };
-        let previous_work =
+        let ux_queue = || -> BTreeMap<String, Vec<cerebro_tui::model::Candidate>> {
+            [("ux".to_string(), vec![cerebro_tui::model::Candidate { id: "cb-u1".into(), priority: Some(2) }])].into_iter().collect()
+        };
+        let mut previous_work =
             cerebro_tui::model::partition_beads(vec![previous_bead.clone()]);
+        previous_work.candidates = ux_queue();
         let previous_facts = TriggerFacts::derive(
             &previous_work,
             &roster,
-            BTreeMap::new(),
             &std::collections::BTreeSet::new(),
             |_| false,
             triggers::GhAnswer::Unanswered,
@@ -4886,8 +4892,9 @@ mod main_tests {
         ledger.note_ended("Xavier", ended);
 
         previous_bead.updated_at = Some(now);
-        let returned_work =
+        let mut returned_work =
             cerebro_tui::model::partition_beads(vec![previous_bead]);
+        returned_work.candidates = ux_queue();
         let mut app = standby_app(
             supervising(),
             vec![staged_row("Xavier", "ux", RowState::Dead)],
@@ -4963,7 +4970,7 @@ mod main_tests {
         )
     }
 
-    /// Spacing off, so what these two tests measure is headroom and not the peer window.
+    /// Spacing off, so what these tests measure is the pick and not the peer window.
     fn no_spacing() -> std::collections::BTreeMap<String, u64> {
         [("implementer".to_string(), 0u64)].into_iter().collect()
     }
@@ -4996,11 +5003,10 @@ mod main_tests {
         live.len()
     }
 
-    /// The fleet read that would show the first builder up is five seconds away, so a start made
-    /// this tick has to reduce the headroom the next row in the same loop is judged against.
-    /// Two unplanned, ranked beads: a short buffer with headroom for both planners.
+    /// Two unplanned, ranked beads, both on the planner's candidate list: a short buffer with a
+    /// bead for each of two planners.
     fn two_candidates() -> cerebro_tui::model::WorkBuckets {
-        cerebro_tui::model::partition_beads(
+        let mut buckets = cerebro_tui::model::partition_beads(
             ["cb-a", "cb-b"]
                 .iter()
                 .map(|id| cerebro_tui::model::Bead {
@@ -5016,145 +5022,127 @@ mod main_tests {
                     external_ref: None,
                 })
                 .collect(),
-        )
+        );
+        buckets.candidates = [("planner".to_string(), vec![cerebro_tui::model::Candidate { id: "cb-a".into(), priority: Some(2) }, cerebro_tui::model::Candidate { id: "cb-b".into(), priority: Some(2) }])].into_iter().collect();
+        buckets
     }
 
-    /// A row that started nothing has to say which guard was the reason (cb-kcs.4.4), and the
-    /// steady state this bead is about - one bead, one builder already up holding nothing, the
-    /// rest standby - is a tick on which `condition` itself answers `None`. So the flag may not
-    /// be conditioned on the trigger having fired, or the line would name no guard at all.
-    ///
-    /// Asserted on the rule rather than on the written line: `an_evaluation_records_what_the_trigger_read`
-    /// already pins that `no_headroom` is a field of that line, in its place and in its
-    /// null-not-false shape, and reading a tempdir's log back for these two proved unstable on
-    /// the CI runners while passing here.
+    /// Start headroom is gone (cb-10d.2.2), and so is the field that named it: the line says
+    /// which guard held a row, and headroom no longer holds one.
     #[test]
-    fn the_headroom_guard_is_named_whether_or_not_the_trigger_fired() {
-        // A planner row since cb-10d.1: an implementer is handed its bead and is not held by
-        // headroom, while the planning roles still are.
-        let roster = vec![
-            cerebro_tui::model::RosterEntry {
-                name: "Xavier".into(),
-                role: "planner".into(),
-                kind: cerebro_tui::model::AgentKind::Interactive,
-            },
-            cerebro_tui::model::RosterEntry {
-                name: "Beast".into(),
-                role: "planner".into(),
-                kind: cerebro_tui::model::AgentKind::Interactive,
-            },
-        ];
-        let mut one = two_candidates();
-        one.unplanned.truncate(1);
-        let facts_of = |flight: std::collections::BTreeMap<String, usize>| {
-            cerebro_tui::triggers::TriggerFacts::derive(
-                &one,
-                &roster,
-                flight,
-                &std::collections::BTreeSet::new(),
-                |_| false,
-                cerebro_tui::triggers::GhAnswer::Unanswered,
-                1,
-            )
-        };
-        let agent = |role| cerebro_tui::triggers::AgentFacts {
-            role,
-            ended_at: None,
-            started_at: None,
-            last_fingerprint: None,
-        };
-
-        // One planner already coming up for the one candidate: the trigger has ALREADY answered
-        // nothing, because `condition` gates on headroom...
-        let taken_up = facts_of([("planner".to_string(), 1usize)].into_iter().collect());
-        assert_eq!(triggers::trigger(&taken_up, agent("planner"), Utc::now()), None);
-        // ...and the flag says so anyway, which is the whole point of it.
-        assert!(triggers::no_headroom(&taken_up, "planner", 0));
-
-        // Nothing in flight: free until this loop's own start spends it.
-        let free = facts_of(std::collections::BTreeMap::new());
-        assert!(!triggers::no_headroom(&free, "planner", 0));
-        assert!(triggers::no_headroom(&free, "planner", 1));
-        // Nor is an implementer, since cb-10d.1.
-        assert!(!triggers::no_headroom(&free, "implementer", 9));
-        // A role headroom does not gate is never held by it.
-        assert!(!triggers::no_headroom(&free, "verifier", 9));
-    }
-
-    /// `"no_headroom":true` is what a held row writes, and `null` rather than absent when the
-    /// guard did not fire - the shape `spaced_out` and `backed_off` beside it already have.
-    /// Written straight through the logger, so the assertion is about the line and not about
-    /// what a loop happened to decide.
-    #[test]
-    fn an_evaluation_line_carries_a_headroom_that_held_a_row() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(dir.path().join(".cerebro/state")).unwrap();
-        let mut logger = logging(dir.path());
-        let now = Utc::now();
-        let line = |set: bool| {
-            [
-                ("agent", serde_json::Value::from("Rogue")),
-                (
-                    "no_headroom",
-                    if set { serde_json::Value::Bool(true) } else { serde_json::Value::Null },
-                ),
-            ]
-        };
-        logger.evaluation(now, &line(true));
-        logger.evaluation(now, &line(false));
-
-        // The loud half lives in its own file since the three-way split.
-        let lines = log_lines(dir.path(), "evaluations");
-        assert_eq!(lines.len(), 2, "{lines:#?}");
-        assert!(lines[0].contains(r#""no_headroom":true"#), "{}", lines[0]);
-        assert!(lines[1].contains(r#""no_headroom":null"#), "{}", lines[1]);
-    }
-
-    /// And the guard reaches the written line from the loop itself: `flag(no_headroom)` is one
-    /// call, and a field dropped or misspelt there is a row that says nothing about why it
-    /// started nothing. The steady state is the case, because `condition` gates on headroom and
-    /// so the trigger has already answered `None` - the flag is the only thing left to say it.
-    #[test]
-    fn a_row_the_loop_held_on_headroom_says_so_on_its_line() {
+    fn the_evaluation_line_names_no_headroom() {
         let dir = tempfile::tempdir().unwrap();
         let paths = scratch(dir.path(), "sleep 5");
         let mut logger = logging(dir.path());
         let now = Utc::now();
         let mut host = SessionHost::default();
         let mut ledger = cerebro_tui::triggers::StartLedger::default();
-        // Planners since cb-10d.1: the guard still exists for the planning roles.
-        let roster: Vec<cerebro_tui::model::RosterEntry> = ["Xavier", "Beast"]
-            .iter()
-            .map(|name| cerebro_tui::model::RosterEntry {
-                name: (*name).into(),
-                role: "planner".into(),
-                kind: cerebro_tui::model::AgentKind::Interactive,
-            })
-            .collect();
-        let mut one = two_candidates();
-        one.unplanned.truncate(1);
+        let roster = planner_roster(&["Xavier", "Beast"]);
         let mut app = standby_app(
             supervising(),
             vec![
-                cerebro_tui::model::FleetRow {
-                    bead: None,
-                    ..planner_row("Xavier", cerebro_tui::model::RowState::Working)
-                },
+                planner_row("Xavier", cerebro_tui::model::RowState::Working),
                 planner_row("Beast", cerebro_tui::model::RowState::Dead),
             ],
-            Some(one),
+            Some(short_buffer()),
             now,
         );
 
         start_due(&mut app, &mut host, &mut ledger, &mut logger, &paths, &no_spacing(), 1, &roster, now);
 
         let lines = log_lines(dir.path(), "evaluations");
-        let beast = lines
+        assert!(!lines.is_empty(), "the tick evaluated something");
+        for line in &lines {
+            assert!(!line.contains("no_headroom"), "{line}");
+        }
+        host.kill(&paths, "Beast");
+        settle_gone(&mut host, "Beast");
+    }
+
+    /// Two standby build-designers and two candidates: each is handed its own bead in one tick,
+    /// the second never offered the first's (cb-10d.2.2).
+    #[test]
+    fn two_planners_are_given_two_different_beads() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+        let mut ledger = cerebro_tui::triggers::StartLedger::default();
+        let roster: Vec<RosterEntry> = ["Iceman", "Gambit"]
             .iter()
-            .find(|line| line.contains(r#""agent":"Beast""#))
-            .unwrap_or_else(|| panic!("no evaluation for Beast: {lines:#?}"));
-        assert!(beast.contains(r#""reason":null"#), "{beast}");
-        assert!(beast.contains(r#""no_headroom":true"#), "{beast}");
+            .map(|name| RosterEntry {
+                name: (*name).into(),
+                role: "build-design".into(),
+                kind: AgentKind::Interactive,
+            })
+            .collect();
+        let mut buckets = cerebro_tui::model::WorkBuckets::default();
+        buckets.candidates = [(
+            "build-design".to_string(),
+            vec![
+                cerebro_tui::model::Candidate { id: "cb-a".into(), priority: Some(2) },
+                cerebro_tui::model::Candidate { id: "cb-b".into(), priority: Some(2) },
+            ],
+        )]
+        .into_iter()
+        .collect();
+        let mut app = standby_app(
+            supervising(),
+            vec![
+                staged_row("Iceman", "build-design", RowState::Dead),
+                staged_row("Gambit", "build-design", RowState::Dead),
+            ],
+            Some(buckets),
+            now,
+        );
+        let spacing: BTreeMap<String, u64> = [("build-design".to_string(), 0u64)].into_iter().collect();
+
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &spacing, 1, &roster, now);
+
+        assert!(host.is_live("Iceman") && host.is_live("Gambit"), "both were started");
+        let handed: std::collections::BTreeSet<&str> = app.handed.values().map(String::as_str).collect();
+        assert_eq!(handed, ["cb-a", "cb-b"].into_iter().collect(), "{:?}", app.handed);
+        for name in ["Iceman", "Gambit"] {
+            host.kill(&paths, name);
+            settle_gone(&mut host, name);
+        }
+    }
+
+    /// A planner whose only candidate is unranked has nothing to be given, so it is not started -
+    /// and its line says the trigger had no reason (cb-10d.2.2).
+    #[test]
+    fn a_planner_with_nothing_to_take_is_not_started() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let mut logger = logging(dir.path());
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+        let mut ledger = cerebro_tui::triggers::StartLedger::default();
+        let roster = planner_roster(&["Xavier"]);
+        let mut buckets = short_buffer();
+        buckets.candidates = [(
+            "planner".to_string(),
+            vec![cerebro_tui::model::Candidate { id: "cb-a".into(), priority: Some(4) }],
+        )]
+        .into_iter()
+        .collect();
+        let mut app = standby_app(
+            supervising(),
+            vec![planner_row("Xavier", RowState::Dead)],
+            Some(buckets),
+            now,
+        );
+
+        start_due(&mut app, &mut host, &mut ledger, &mut logger, &paths, &no_spacing(), 1, &roster, now);
+
+        assert!(!host.is_live("Xavier"), "nothing to hand, nobody started");
+        assert!(app.handed.is_empty());
+        let lines = log_lines(dir.path(), "evaluations");
+        let xavier = lines
+            .iter()
+            .find(|line| line.contains(r#""agent":"Xavier""#))
+            .unwrap_or_else(|| panic!("no evaluation for Xavier: {lines:#?}"));
+        assert!(xavier.contains(r#""reason":null"#), "{xavier}");
     }
 
     /// The same steady state through the loop: the one bead is already spoken for by a builder
@@ -5946,7 +5934,7 @@ mod main_tests {
 
         assert!(host.is_live("Xavier"));
         let line = one_line(dir.path(), "decisions", "start");
-        assert!(line.contains(r#""agent":"Xavier","role":"planner","reason":"buffer 0 of 2","bead":null,"by":"trigger""#), "{line}");
+        assert!(line.contains(r#""agent":"Xavier","role":"planner","reason":"buffer 0 of 2","bead":"cb-a","by":"trigger""#), "{line}");
         host.kill(&paths, "Xavier");
         settle_gone(&mut host, "Xavier");
     }
@@ -6196,7 +6184,7 @@ mod main_tests {
         let mut host = SessionHost::default();
         let mut ledger = cerebro_tui::triggers::StartLedger::default();
         // Two planners, so the second is held by role-start spacing while the first starts -
-        // and two candidates, so what holds it is the spacing and not the headroom.
+        // and two candidates, so what holds it is the spacing and not an empty queue.
         let roster = planner_roster(&["Xavier", "Beast"]);
         let mut spacing = BTreeMap::new();
         spacing.insert("planner".to_string(), 30);
@@ -6225,12 +6213,11 @@ mod main_tests {
         assert!(xavier.contains(r#""agent":"Xavier","role":"planner","reason":"buffer 0 of 2""#), "{xavier}");
         assert!(xavier.contains(r#""planned":0,"planned_ids":null,"implementers":0,"p0_unplanned":null"#), "{xavier}");
         assert!(xavier.contains(r#""p4_unranked":0,"merged_unverified":0,"stale_verdicts":0"#), "{xavier}");
-        assert!(xavier.contains(r#""held_by_guard":null,"no_headroom":null,"spaced_out":null,"spacing":30"#), "{xavier}");
+        assert!(xavier.contains(r#""held_by_guard":null,"spaced_out":null,"spacing":30"#), "{xavier}");
         assert!(xavier.contains(r#""backed_off":null,"stop_flag":null,"disarmed":null,"failed_starts":0}"#), "{xavier}");
         // And the one the spacing held says so, on the same line as the number that did it.
         let beast = evaluations[1];
         assert!(beast.contains(r#""agent":"Beast""#) && beast.contains(r#""spaced_out":true,"spacing":30"#), "{beast}");
-        assert!(beast.contains(r#""no_headroom":null"#), "{beast}");
         host.kill(&paths, "Xavier");
         settle_gone(&mut host, "Xavier");
     }
@@ -6983,7 +6970,10 @@ mod main_tests {
         host.kill(&paths, "Xavier");
         settle_gone(&mut host, "Xavier");
 
-        // That start produced no pass either. Five seconds later, thirty are owed.
+        // That start produced no pass either, and `give_back` - not run here - would have taken
+        // the handover back (cb-10d.2.2: a planner is handed a bead too). Five seconds later,
+        // thirty are owed.
+        app.handed.clear();
         let later = now + chrono::Duration::seconds(5);
         app.finish_refresh(
             Ok(vec![planner_row("Xavier", cerebro_tui::model::RowState::Dead)]),

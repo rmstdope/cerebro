@@ -1,0 +1,93 @@
+<title>cb-10d.5 — the give key</title>
+<style>
+body{font-family:Menlo,Monaco,monospace;font-size:13px;margin:24px;background:#8a8a8a;color:#111}
+h1{font-size:16px;color:#fff;margin:0 0 2px}h2{font-size:14px;margin:26px 0 8px;color:#fff}
+h3{font-size:13px;margin:14px 0 6px;color:#eee;font-weight:normal}
+pre{margin:0;line-height:1.45;white-space:pre}
+.screen{background:#1e1e1e;color:#d4d4d4;padding:10px 12px;border:1px solid #333;display:inline-block;vertical-align:top;margin:0 14px 10px 0;overflow-x:auto;max-width:100%}
+.note{color:#eee;max-width:104ch;background:#333;padding:9px 13px;margin-top:12px;line-height:1.5}
+.lede{color:#fff;max-width:104ch;margin:0 0 14px;line-height:1.5}
+table{border-collapse:collapse;background:#1e1e1e;color:#d4d4d4;margin:8px 0}
+td,th{border:1px solid #333;padding:5px 10px;text-align:left;font-weight:normal;vertical-align:top}
+th{color:#fff;background:#2a2a2a}
+.d{color:#777}.b{color:#569cd6}.y{color:gold}.e{color:#f14c4c}
+.sel{background:#3a3a3a}.foc{color:#569cd6;font-weight:bold}
+.chosen{background:#2d4a2d;color:#cfe8cf;padding:2px 8px;display:inline-block;margin-left:8px;font-size:12px}
+.rejected{background:#4a2d2d;color:#e8cfcf;padding:2px 8px;display:inline-block;margin-left:8px;font-size:12px}
+</style>
+<h1>cb-10d.5 — the give key, agreed 2026-09-14</h1>
+<p class="lede">Four rounds. The navigator's own hand: <b>a</b> on a piece of work in the Work pane opens
+a short list of agents, and <b>Enter</b> gives it to one. The bead's acceptance field carries the same
+decisions in words; where this file and a plan disagree, this file is right. It reuses
+<code>docs/ui/cb-10d.1-starting-row.html</code> for the row and <code>docs/ui/cb-21g-board-writes.html</code>
+for the dim-then-finished line, and changes neither.</p>
+
+<h2>1. The list <span class="chosen">chosen — press a, pick from a list</span></h2>
+<div class="screen"><pre>Cerebro — supervising | <span class="y">Give cb-44b to…  ↑↓ Enter · Esc</span>
+<span class="foc">┏ Work ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓</span>
+<span class="foc">┃</span>Planned, unclaimed 3                       <span class="foc">┃</span>
+<span class="foc">┃</span>  cb-44b      P1 Enter on a bead in …      <span class="foc">┃</span>
+<span class="foc">┃</span>    <span class="sel">→ Rogue    implementer  standby</span>        <span class="foc">┃</span>
+<span class="foc">┃</span>      Storm    implementer  standby        <span class="foc">┃</span>
+<span class="foc">┃</span>      <span class="d">Cyclops  busy with cb-9su</span>             <span class="foc">┃</span>
+<span class="foc">┃</span>      <span class="d">Xavier   only designs unplanned work</span>   <span class="foc">┃</span>
+<span class="foc">┃</span>  cb-x3u      P2 Reader tests stop …       <span class="foc">┃</span>
+<span class="foc">┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛</span></pre></div>
+<div class="note">Work focus only. Opens directly beneath the row it was pressed on. Every agent whose
+role takes work is listed, in roster order, all of them; agents who cannot take this one right now are
+dim with the reason and the cursor skips them. Roles that never take work (Cerebro, Moira, Psylocke,
+Cypher, Forge) are never listed. The list updates in place as the fleet changes. <b>Esc</b> or any other
+key — a click included — closes it silently and is used up (<b>q</b> closes the list, it does not quit).
+On close the cursor is back on the piece of work.</div>
+
+<h2>2. Giving it</h2>
+<div class="screen"><pre>Cerebro — supervising | <span class="d">Giving cb-44b to Rogue…</span></pre></div>
+<div class="screen"><pre>Cerebro — supervising | <span class="y">Gave cb-44b to Rogue</span></pre></div>
+<h3>her row, the moment she has it — the same row the view's own hand-out shows</h3>
+<div class="screen"><pre>│◌ Rogue        starting    cb-44b     │</pre></div>
+<div class="note">The key only records who the work is for; it starts nothing itself. The supervising
+window starts her through her usual trigger, and the row follows <code>cb-10d.1</code>: starting, up,
+then working. The key works the same from a read-only window.</div>
+
+<h2>3. The hint</h2>
+<div class="screen"><pre>Cerebro — supervising | ↑↓ move · 0-4 priority · Enter open · <b>a give</b> · h health</pre></div>
+<div class="note">Named only while the Work cursor is on a piece of work, ranked with <b>h health</b>, so
+it is among the first clauses dropped on a narrow screen.</div>
+
+<h2>4. Every line it can put in the header</h2>
+<table>
+<tr><th>When</th><th>Line</th></tr>
+<tr><td>list open</td><td class="y">Give cb-44b to…  ↑↓ Enter · Esc</td></tr>
+<tr><td>Enter pressed, while the write runs</td><td class="d">Giving cb-44b to Rogue…</td></tr>
+<tr><td>written and pushed</td><td class="y">Gave cb-44b to Rogue</td></tr>
+<tr><td>a on anything that is not a piece of work (a finding, +N more)</td><td class="y">Put the cursor on a piece of work first</td></tr>
+<tr><td>nobody listed can take it — no list opens; or the last free agent turns busy while open — list closes</td><td class="y">Nobody can take cb-44b right now</td></tr>
+<tr><td>the work is already with somebody — on a, or when it is taken while the list is open (list closes)</td><td class="y">cb-44b is already with Storm</td></tr>
+<tr><td>the shared list refused</td><td class="e">bd would not give cb-44b to Rogue</td></tr>
+<tr><td>saved here, not pushed</td><td class="e">Gave cb-44b to Rogue, but bd dolt push failed — other machines will not see this yet</td></tr>
+</table>
+<p class="lede">The dim reasons inside the list use the same sentences as the refusals agreed in round one:
+<span class="d">busy with cb-9su</span>, <span class="d">only builds planned work</span>. The refusal lines
+<i>Moira doesn't take work from the board</i>, <i>Cyclops is busy with cb-9su</i> and <i>cb-44b isn't planned
+yet — Rogue only builds planned work</i> were agreed too, and stand for any path that reaches a refusal
+without the list (for instance an agent turning busy between the last redraw and Enter).</p>
+
+<h2>5. Edges</h2>
+<table>
+<tr><th>Case</th><th>What happens</th></tr>
+<tr><td>the agent under the cursor turns busy</td><td>the row goes dim and the cursor moves to the next free agent below, else above</td></tr>
+<tr><td>narrow window</td><td>the list sits in the same place in the stacked Work pane; long names are cut with …</td></tr>
+<tr><td>the work refresh lands while open</td><td>the list stays open and updates in place</td></tr>
+<tr><td>the view exits</td><td>nothing is remembered</td></tr>
+</table>
+
+<h2>6. Rejected</h2>
+<div class="screen"><pre>Give cb-44b to Rogue?  y / n     point at the agent in Fleet   <span class="rejected">rejected</span>
+busy agents hidden, "2 busy"                                   <span class="rejected">rejected</span>
+list frozen as opened, Enter re-checks                         <span class="rejected">rejected</span>
+only Esc closes; other keys do nothing                         <span class="rejected">rejected</span>
+idle first, at most five, "+1 more"                            <span class="rejected">rejected</span>
+│○ Rogue  standby  <span class="d">cb-44b</span>│  dim id before start             <span class="rejected">rejected</span>
+│○ Rogue  <span class="b">given</span>    cb-44b│  a new state word                <span class="rejected">rejected</span>
+giving work also starts her session                            <span class="rejected">rejected</span>
+no hint                                                        <span class="rejected">rejected</span></pre></div>

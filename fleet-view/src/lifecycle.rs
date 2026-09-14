@@ -876,6 +876,50 @@ pub fn read_handover(
     Some((bead, age))
 }
 
+/// The bead of NAME's handover when its second line is exactly `given` (cb-10d.5): a bead the
+/// navigator gave by hand, which the supervising view starts rather than gives back. `None` when
+/// the file is absent, empty, unmarked or unreadable.
+pub fn read_given(paths: &ReaderPaths, name: &str) -> Option<String> {
+    let text = std::fs::read_to_string(handover_path(paths, name)).ok()?;
+    let mut lines = text.lines();
+    let bead = lines.next()?.trim().to_string();
+    if bead.is_empty() || lines.next().map(str::trim) != Some("given") {
+        return None;
+    }
+    Some(bead)
+}
+
+/// What `scripts/assign-bead --given` came to - `PriorityOutcome`'s three shapes and meanings.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum GiveOutcome {
+    Ran { text: String },
+    Pushed { text: String },
+    Failed { text: String },
+}
+
+/// `assign-bead` runs `bd show`, a candidate script (several `bd` reads), one write and one push.
+const GIVE_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Run `<scripts_dir>/assign-bead --given NAME BEAD` in the shared root on `GIVE_TIMEOUT`, and
+/// read its one word. Any non-zero exit is `Failed`: the runner discards stdout for those.
+pub fn give_bead(
+    paths: &ReaderPaths,
+    commands: &dyn CommandRunner,
+    name: &str,
+    bead: &str,
+) -> GiveOutcome {
+    let program = paths.scripts_dir.join("assign-bead");
+    let failed = || GiveOutcome::Failed { text: crate::give::refused(bead, name) };
+    match commands.run(&program, &["--given", name, bead], Some(&paths.shared_root), GIVE_TIMEOUT) {
+        Ok(stdout) => match String::from_utf8_lossy(&stdout).trim() {
+            "pushed" => GiveOutcome::Ran { text: crate::give::gave(bead, name) },
+            "unpushed" => GiveOutcome::Pushed { text: crate::give::unpushed(bead, name) },
+            _ => failed(),
+        },
+        Err(_) => failed(),
+    }
+}
+
 /// Is a handover this view did not record a bead to give back? Pure.
 pub fn orphaned_handover(
     hosted_live: bool,
@@ -1353,6 +1397,50 @@ mod tests {
     fn the_ended_give_back_has_no_sentence() {
         assert_eq!(GiveBack::Ended.notice("Iceman", "cb-x"), "");
         assert_eq!(GiveBack::Ended.word(), "ended");
+    }
+
+    #[test]
+    fn give_bead_reads_the_scripts_one_word() {
+        let paths = paths(Path::new("/consumer"));
+        for (answer, expected) in [
+            ("pushed\n", GiveOutcome::Ran { text: "Gave cb-44b to Rogue".into() }),
+            ("unpushed\n", GiveOutcome::Pushed {
+                text: crate::give::unpushed("cb-44b", "Rogue"),
+            }),
+            ("what\n", GiveOutcome::Failed { text: "bd would not give cb-44b to Rogue".into() }),
+        ] {
+            let fake = FakeCommands::new(move |_| Ok(answer.as_bytes().to_vec()));
+            assert_eq!(give_bead(&paths, &fake, "Rogue", "cb-44b"), expected, "{answer}");
+            let calls = fake.calls();
+            assert_eq!(calls[0].program, paths.scripts_dir.join("assign-bead"));
+            assert_eq!(calls[0].args, ["--given", "Rogue", "cb-44b"]);
+            assert_eq!(calls[0].cwd.as_deref(), Some(paths.shared_root.as_path()));
+        }
+        let failing = FakeCommands::failing(|| ReadError::Spawn {
+            source: "assign-bead".into(),
+            message: "exit 3".into(),
+        });
+        assert_eq!(
+            give_bead(&paths, &failing, "Rogue", "cb-44b"),
+            GiveOutcome::Failed { text: "bd would not give cb-44b to Rogue".into() }
+        );
+    }
+
+    #[test]
+    fn a_given_handover_is_read_by_its_second_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = paths(dir.path());
+        assert_eq!(read_given(&paths, "Rogue"), None);
+        std::fs::create_dir_all(dir.path().join(".cerebro/state")).unwrap();
+        for (text, expected) in [
+            ("cb-x\ngiven\n", Some("cb-x")),
+            ("cb-x\n", None),
+            ("cb-x\nother\n", None),
+            ("", None),
+        ] {
+            std::fs::write(handover_path(&paths, "Rogue"), text).unwrap();
+            assert_eq!(read_given(&paths, "Rogue").as_deref(), expected, "{text:?}");
+        }
     }
 
     #[test]

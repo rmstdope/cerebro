@@ -1444,7 +1444,7 @@ mod tests {
     const BUCKETED_BEADS: &str = r#"[
       {"id":"cb-claimed","title":"being built","status":"in_progress","issue_type":"feature","labels":[],"priority":1,"updated_at":null,"assignee":"Cyclops"},
       {"id":"cb-planned","title":"ready","status":"open","issue_type":"feature","labels":["planned"],"priority":2,"updated_at":null,"assignee":null},
-      {"id":"cb-held","title":"mid-plan","status":"open","issue_type":"feature","labels":["planning:Xavier"],"priority":2,"updated_at":null,"assignee":null},
+      {"id":"cb-held","title":"mid-plan","status":"open","issue_type":"feature","labels":[],"priority":2,"updated_at":null,"assignee":"Xavier"},
       {"id":"cb-new","title":"filed","status":"open","issue_type":"bug","labels":[],"priority":4,"updated_at":null,"assignee":null},
       {"id":"cb-human","title":"parked","status":"open","issue_type":"feature","labels":["human"],"priority":2,"updated_at":null,"assignee":null},
       {"id":"cb-merged","title":"landed","status":"closed","issue_type":"feature","labels":[],"priority":1,"updated_at":"2026-01-01T00:00:00Z","assignee":null},

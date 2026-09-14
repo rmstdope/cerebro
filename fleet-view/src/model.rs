@@ -864,6 +864,43 @@ pub struct WorkBuckets {
     /// The ids an implementer may be handed, in `scripts/assignable-beads`' order (priority, then
     /// id). `partition_beads` leaves it empty; `readers::read_work` fills it (cb-10d.1).
     pub assignable: Vec<String>,
+    /// Each planning role's candidates, keyed by role, in its script's order (cb-10d.2.2).
+    /// `partition_beads` leaves it empty; `readers::read_work` fills it for exactly the roles it
+    /// was asked for, so a role absent from the map was not asked for - which is not the same as
+    /// one with nothing to take.
+    pub candidates: BTreeMap<String, Vec<Candidate>>,
+}
+
+/// One row of a planning role's candidate script (`plan-candidates`, `stage-candidates <stage>`),
+/// in the script's own order: priority, then id. The scripts print whole bead rows; only these two
+/// fields are read.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize)]
+pub struct Candidate {
+    pub id: String,
+    pub priority: Option<u8>,
+}
+
+/// The three roles the view hands a bead from a candidate script, in roster-independent order.
+pub const PLANNING_ROLES: [&str; 3] = ["planner", "ux", "build-design"];
+
+/// The script (relative to `scripts_dir`) and argv that list ROLE's candidates, or `None` for a
+/// role that is not a planning role.
+pub fn candidate_command(role: &str) -> Option<(&'static str, &'static [&'static str])> {
+    match role {
+        "planner" => Some(("plan-candidates", &[])),
+        "ux" => Some(("stage-candidates", &["ux"])),
+        "build-design" => Some(("stage-candidates", &["build-design"])),
+        _ => None,
+    }
+}
+
+/// The planning roles that appear on at least one of ROWS - the roster the view is actually
+/// showing, so a project with no `ux` row runs no `stage-candidates ux`.
+pub fn planning_roles_of(rows: &[FleetRow]) -> BTreeSet<String> {
+    rows.iter()
+        .filter(|row| PLANNING_ROLES.contains(&row.role.as_str()))
+        .map(|row| row.role.clone())
+        .collect()
 }
 
 /// A give-back this view has asked for (cb-10d.1): the bead, and when its write failed if it did.
@@ -1781,6 +1818,48 @@ mod tests {
         assert_eq!(ids(&buckets.being_planned), vec!["agreed-held"]);
         assert_eq!(ids(&buckets.paused), vec!["agreed-paused"]);
         assert_eq!(ids(&buckets.unplanned), vec!["plain"]);
+    }
+
+    #[test]
+    fn candidate_command_names_each_planning_roles_script() {
+        assert_eq!(candidate_command("planner"), Some(("plan-candidates", &[][..])));
+        assert_eq!(candidate_command("ux"), Some(("stage-candidates", &["ux"][..])));
+        assert_eq!(
+            candidate_command("build-design"),
+            Some(("stage-candidates", &["build-design"][..]))
+        );
+        assert_eq!(candidate_command("verifier"), None);
+        assert_eq!(candidate_command("implementer"), None);
+        for role in PLANNING_ROLES {
+            assert!(candidate_command(role).is_some(), "{role} has a candidate script");
+        }
+    }
+
+    #[test]
+    fn planning_roles_are_the_ones_the_fleet_shows() {
+        let row = |name: &str, role: &str| FleetRow {
+            name: name.into(),
+            role: role.into(),
+            kind: AgentKind::Interactive,
+            state: RowState::Idle,
+            phase: None,
+            bead: None,
+            since: None,
+            phase_since: None,
+            pid: None,
+            turn_ended: None,
+            sessions: 0,
+            diagnostic: None,
+        };
+        let rows = vec![
+            row("Xavier", "ux"),
+            row("Iceman", "build-design"),
+            row("Rogue", "implementer"),
+            row("Beast", "ux"),
+        ];
+        let want: BTreeSet<String> = ["build-design", "ux"].iter().map(|r| r.to_string()).collect();
+        assert_eq!(planning_roles_of(&rows), want);
+        assert!(planning_roles_of(&[]).is_empty());
     }
 
     #[test]

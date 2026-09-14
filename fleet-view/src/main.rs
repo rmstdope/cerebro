@@ -2260,7 +2260,7 @@ fn dispatch(
     }
     if matches!(action, AppAction::RefreshWork | AppAction::RefreshAll)
         && app.begin_work_refresh(now, clock())
-        && !workers.work.request()
+        && !workers.work.request_with(app.planning_roles())
     {
         app.finish_work_refresh(Err(worker_gone("work reader")), clock());
     }
@@ -7960,6 +7960,7 @@ mod main_tests {
             &nowhere().0,
             &Programs::default(),
             commands.as_ref(),
+            &std::collections::BTreeSet::new(),
         );
         app.finish_work_refresh(beads, Utc::now());
         app.selected = Some("Rogue".to_string());

@@ -2134,6 +2134,12 @@ impl App {
         self.fleet.content.value().map(Vec::as_slice).unwrap_or(&[])
     }
 
+    /// The planning roles on the fleet this view is showing, whose candidates the work read lists
+    /// (`model::planning_roles_of`). Empty before the first fleet read (cb-10d.2.2).
+    pub fn planning_roles(&self) -> BTreeSet<String> {
+        crate::model::planning_roles_of(self.fleet_rows())
+    }
+
     /// The names whose recorded exit keeps their row `Dead` rather than restating it as
     /// `Standby` (`cerebro--failed-names`), which asks whether the record has anything to SAY
     /// rather than whether one exists:
@@ -3560,7 +3566,8 @@ pub struct Worker<T, Req = ()> {
 /// The fleet's worker: `read_fleet` on its own thread.
 pub type FleetWorker = Worker<Vec<FleetRow>>;
 /// The bead panel's worker: `read_work` on its own thread.
-pub type WorkWorker = Worker<WorkBuckets>;
+/// Its request is the planning roles whose candidates to list (cb-10d.2.2).
+pub type WorkWorker = Worker<WorkBuckets, BTreeSet<String>>;
 impl<T: Send + 'static, Req: Send + 'static> Worker<T, Req> {
     /// `FnMut`, not `Fn`: the `gh` reader keeps the login it has learnt between requests, and the
     /// loop below calls it from one thread only. A `RefCell` in the closure instead would be
@@ -3636,9 +3643,11 @@ impl Worker<Vec<FleetRow>> {
     }
 }
 
-impl Worker<WorkBuckets> {
+impl Worker<WorkBuckets, BTreeSet<String>> {
     pub fn spawn(paths: ReaderPaths, programs: Programs, commands: Commands) -> Self {
-        Self::spawn_reader(move |()| read_work(&paths, &programs, commands.as_ref()))
+        Self::spawn_reader(move |roles: BTreeSet<String>| {
+            read_work(&paths, &programs, commands.as_ref(), &roles)
+        })
     }
 }
 

@@ -4265,7 +4265,7 @@ pub struct TidyAnswer {
     pub outcome: crate::lifecycle::TidyOutcome,
 }
 
-/// The worktree tidier's worker (cb-10d.3): a ninth thread, and deliberately NOT the write worker.
+/// The worktree tidier's worker (cb-10d.3): a tenth thread, and deliberately NOT the write worker.
 /// A removal can delete a multi-gigabyte build directory and runs a `git fetch` and a `gh`, and on
 /// the one write worker it would hold the navigator's priority keys behind it for tens of seconds
 /// on every pass. Serial, so one tidy at a time.

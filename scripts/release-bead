@@ -71,11 +71,22 @@ if [[ "${1:-}" == "--worktree" ]]; then
   record="$state/worktrees/$id"
   tree="$root/.cerebro/worktrees/$id"
 
-  owner=""
-  if [[ -f "$record" ]]; then
-    IFS= read -r owner < "$record" || true
-  fi
-  if [[ "$owner" != "$name" ]]; then
+  # Re-read before every act, not once: `assign-bead` may adopt this tree for another agent (or a
+  # new pass of this one) and rewrite the record while a fetch runs here.
+  record_owner() {
+    local who=""
+    if [[ -f "$record" ]]; then
+      IFS= read -r who < "$record" || true
+    fi
+    printf '%s' "$who"
+  }
+  drop_record_if_mine() {
+    if [[ "$(record_owner)" == "$name" ]]; then
+      rm -f "$record"
+    fi
+    return 0
+  }
+  if [[ "$(record_owner)" != "$name" ]]; then
     echo gone
     exit 0
   fi
@@ -97,7 +108,7 @@ if [[ "${1:-}" == "--worktree" ]]; then
 
   if ! [[ -e "$tree" ]]; then
     git -C "$root" worktree prune >/dev/null 2>&1 || true
-    rm -f "$record"
+    drop_record_if_mine
     echo gone
     exit 0
   fi
@@ -113,21 +124,25 @@ if [[ "${1:-}" == "--worktree" ]]; then
   fi
 
   reason="$(cerebro_worktree_keep_reason "$tree" "$default_branch" "$merged_check" "${COLD_TARGET_MINUTES:-1440}")"
+  if [[ "$(record_owner)" != "$name" ]]; then
+    echo gone
+    exit 0
+  fi
   if [[ -z "$reason" ]]; then
     if cerebro_worktree_remove "$root" "$tree"; then
-      rm -f "$record"
+      drop_record_if_mine
       echo removed
       exit 0
     fi
     if ! [[ -e "$tree" ]]; then
       # The watcher removed it between the test and the removal.
-      rm -f "$record"
+      drop_record_if_mine
       echo gone
       exit 0
     fi
     reason="git would not remove it"
   fi
-  rm -f "$record"
+  drop_record_if_mine
   echo "release-bead: keeping $id — $reason" >&2
   echo "kept $reason"
   exit 0

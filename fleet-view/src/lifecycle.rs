@@ -954,6 +954,10 @@ pub fn read_worktree_records(paths: &ReaderPaths, now: std::time::SystemTime) ->
         .filter_map(|entry| {
             let entry = entry.ok()?;
             let bead = entry.file_name().to_str()?.to_string();
+            // `cerebro_state_write_atomic`'s temp file, left by a killed writer: not a record.
+            if bead.ends_with(".tmp") {
+                return None;
+            }
             let text = std::fs::read_to_string(entry.path()).ok()?;
             let owner = text.lines().next()?.trim().to_string();
             if owner.is_empty() {
@@ -1385,6 +1389,7 @@ mod tests {
         std::fs::write(records.join("cb-b"), "Rogue\n").unwrap();
         std::fs::write(records.join("cb-a"), "Gambit\n").unwrap();
         std::fs::write(records.join("cb-c"), "").unwrap();
+        std::fs::write(records.join("cb-d.123.tmp"), "Rogue\n").unwrap();
         let old = std::time::SystemTime::now() - Duration::from_secs(90);
         std::fs::File::options().write(true).open(records.join("cb-a")).unwrap().set_modified(old).unwrap();
         let read = read_worktree_records(&paths, std::time::SystemTime::now());

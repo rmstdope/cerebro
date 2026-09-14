@@ -307,7 +307,7 @@ reopened this bead, so closing the last open child closes it again the same way 
 ## Workspace
 
 **Your tree was made before your session started.** The fleet view ran `disk-preflight` with the
-plan's workload and then `scripts/prepare-worktree` — which fetches `origin/main`, branches,
+plan's workload and then `scripts/prepare-worktree` — which fetches the default branch from origin, branches,
 initialises the `.claude/cerebro` submodule and runs the project's declared `install` — at
 `<repo>/.cerebro/worktrees/<id>`. Never check out `main`; go to your tree and read its branch:
 
@@ -315,7 +315,7 @@ initialises the `.claude/cerebro` submodule and runs the project's declared `ins
 cd <repo>/.cerebro/worktrees/<id>
 git branch --show-current          # <id>, or <id>-2 and onward when that name was taken
 git status --porcelain
-git log --oneline origin/main..HEAD
+git log --oneline "origin/$(.claude/cerebro/scripts/default-branch)..HEAD"
 ```
 
 **If either of the last two shows anything, the tree is an earlier attempt at this same bead**, kept

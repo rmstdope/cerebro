@@ -243,6 +243,22 @@ status=0; out="$(tidy_run --worktree Rogue cb-x 2>/dev/null)" || status=$?
 git_q -C "$tidy" remote set-url origin "$origin_url"
 pass "an unreachable origin is retry and touches nothing"
 
+recorded_tree cb-x Rogue
+real_default="$(readlink "$tidy/.claude/cerebro/scripts/default-branch")"
+rm "$tidy/.claude/cerebro/scripts/default-branch"
+cat > "$tidy/.claude/cerebro/scripts/default-branch" <<STUB
+#!/usr/bin/env bash
+printf 'Gambit\n' > "$record"
+exec "$real_default" "\$@"
+STUB
+chmod +x "$tidy/.claude/cerebro/scripts/default-branch"
+out="$(tidy_run --worktree Rogue cb-x 2>/dev/null)"
+[[ "$out" == "gone" && -e "$tree" && "$(cat "$record")" == "Gambit" ]] \
+  || fail "a record rewritten mid-run is left to its new owner, got: $out"
+rm "$tidy/.claude/cerebro/scripts/default-branch"
+ln -s "$real_default" "$tidy/.claude/cerebro/scripts/default-branch"
+pass "a record adopted by another agent mid-run is not touched"
+
 status=0; out="$(tidy_run --worktree Rogue ../x 2>/dev/null)" || status=$?
 [[ $status -eq 2 && -z "$out" ]] || fail "an id with a slash is exit 2, got $status: $out"
 status=0; out="$(tidy_run --worktree Rogue .x 2>/dev/null)" || status=$?

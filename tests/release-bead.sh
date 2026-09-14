@@ -41,6 +41,7 @@ case "$sub" in
     else cat "$STUB_DIR/show.json"; fi ;;
   unclaim) touch "$STUB_DIR/unclaimed"; exit "${BD_UNCLAIM_EXIT:-0}" ;;
   update) exit "${BD_UPDATE_EXIT:-0}" ;;
+  close) exit "${BD_CLOSE_EXIT:-0}" ;;
   dolt) exit "${BD_PUSH_EXIT:-0}" ;;
 esac
 exit 0
@@ -264,5 +265,113 @@ status=0; out="$(tidy_run --worktree Rogue ../x 2>/dev/null)" || status=$?
 status=0; out="$(tidy_run --worktree Rogue .x 2>/dev/null)" || status=$?
 [[ $status -eq 2 ]] || fail "an id starting with a dot is exit 2, got $status"
 pass "an id with a slash is a usage error"
+
+# --- cb-10d.4: a push that fails after a write is a failed release --------------------------------
+
+reset "$mine"
+status=0; out="$(BD_PUSH_EXIT=1 run Rogue cb-x 2>"$work_dir/err")" || status=$?
+[[ $status -eq 1 ]] || fail "a push that fails after an unclaim is exit 1, got $status: $out"
+grep -q "bd dolt push failed" "$work_dir/err" || fail "stderr names the push, got: $(cat "$work_dir/err")"
+pass "a push that fails after an unclaim exits 1"
+
+reset "$assigned"
+status=0; out="$(BD_PUSH_EXIT=1 run Iceman cb-x 2>/dev/null)" || status=$?
+[[ $status -eq 1 ]] || fail "a push that fails after an unassign is exit 1, got $status: $out"
+pass "a push that fails after an unassign exits 1"
+
+# --- cb-10d.4: --ended takes back what a gone session still holds --------------------------------
+
+ended="$(consumer_new ended --origin --link release-bead roster consumer-root default-branch project-conf bead-delivery.sh)"
+printf 'Rogue implementer\nIceman build-design\n' > "$ended/.cerebro/roster.conf"
+cp "$scripts/agent-alive" "$ended/.claude/cerebro/scripts/agent-alive"
+estate="$ended/.cerebro/state"
+mkdir -p "$estate"
+ended_origin="$(git -C "$ended" remote get-url origin)"
+git_q -C "$work_dir/ended-up" commit -q --allow-empty -m "feat(cb-d): done"
+git_q -C "$work_dir/ended-up" push -q origin HEAD
+
+ended_reset() {
+  rm -f "$stub/bd.log" "$stub/unclaimed" "$stub/show2.json" "$estate/Rogue.state.json"
+  printf '%s' "$1" > "$stub/show.json"
+  git_q -C "$ended" remote set-url origin "$ended_origin"
+}
+ended_run() {
+  STUB_DIR="$stub" PATH="$stub:$PATH" bash "$ended/.claude/cerebro/scripts/release-bead" --ended "$@"
+}
+held='[{"id":"cb-d","status":"in_progress","assignee":"Rogue","labels":[]}]'
+undelivered='[{"id":"cb-u","status":"in_progress","assignee":"Rogue"}]'
+
+ended_reset "$held"
+out="$(ended_run Rogue cb-d 2>/dev/null)" || fail "closed is exit 0"
+[[ "$out" == "closed" ]] || fail "stdout is exactly closed, got: $out"
+grep -qxF -- "--actor Rogue -C $ended close cb-d --reason Delivered; closed by the fleet view, Rogue did not" "$stub/bd.log" \
+  || fail "the close names the fleet view, got: $(cat "$stub/bd.log")"
+[[ "$(tail -1 "$stub/bd.log")" == *"dolt push" ]] || fail "the close is pushed, got: $(cat "$stub/bd.log")"
+pass "a gone implementer's delivered claim is closed and pushed"
+
+ended_reset "$undelivered"
+out="$(ended_run Rogue cb-u 2>/dev/null)" || fail "kept is exit 0"
+[[ "$out" == "kept its work is not on main" ]] || fail "an undelivered claim is kept, got: $out"
+! grep -qE "close|dolt push" "$stub/bd.log" || fail "a kept claim writes nothing, got: $(cat "$stub/bd.log")"
+pass "an undelivered claim is kept and nothing is written"
+
+ended_reset '[{"id":"cb-d","status":"in_progress","assignee":"Rogue","labels":["planned","verification:failed"]}]'
+out="$(ended_run Rogue cb-d 2>/dev/null)"
+[[ "$out" == "kept it was reopened by a failed verification" ]] || fail "a reopened bead is kept, got: $out"
+! grep -q close "$stub/bd.log" || fail "a reopened bead is never closed"
+pass "a reopened bead is kept whatever main holds"
+
+ended_reset '[{"id":"cb-d","status":"open","assignee":"Iceman"}]'
+git_q -C "$ended" remote set-url origin "$work_dir/nowhere.git"
+out="$(ended_run Iceman cb-d 2>/dev/null)" || fail "released is exit 0"
+[[ "$out" == "released" ]] || fail "an open assignment is released without a fetch, got: $out"
+grep -qxF -- "--actor Iceman -C $ended update cb-d --assignee  --if-assignee Iceman" "$stub/bd.log" \
+  || fail "the assignee is cleared, got: $(cat "$stub/bd.log")"
+pass "a planning role's open assignment is cleared without a fetch"
+
+ended_reset "$held"
+printf '{"bead":"cb-d"}\n' > "$estate/Rogue.state.json"
+out="$(ALIVE_EXIT=0 ended_run Rogue cb-d 2>/dev/null)"
+[[ "$out" == "running" && ! -e "$stub/bd.log" ]] || fail "a live agent on this bead is running, got: $out"
+pass "a live agent on this bead is running"
+
+ended_reset "$held"
+printf '{"bead":"cb-y"}\n' > "$estate/Rogue.state.json"
+out="$(ALIVE_EXIT=0 ended_run Rogue cb-d 2>/dev/null)"
+[[ "$out" == "closed" ]] || fail "a live agent on another bead does not keep its old claim, got: $out"
+pass "a live agent on another bead does not keep its old claim"
+
+ended_reset '[{"id":"cb-d","status":"in_progress","assignee":"Storm"}]'
+out="$(ended_run Rogue cb-d 2>/dev/null)"
+[[ "$out" == "elsewhere" ]] && ! grep -qE "close|update|unclaim" "$stub/bd.log" \
+  || fail "somebody else's claim is elsewhere, got: $out"
+pass "somebody else's claim is elsewhere"
+
+ended_reset '[{"id":"cb-d","status":"open","assignee":"","labels":["Rogue"]}]'
+out="$(ended_run Rogue cb-d 2>/dev/null)"
+[[ "$out" == "elsewhere" ]] || fail "an open unassigned bead is elsewhere, got: $out"
+pass "an open unassigned bead is elsewhere"
+
+ended_reset "$held"
+git_q -C "$ended" remote set-url origin "$work_dir/nowhere.git"
+status=0; out="$(ended_run Rogue cb-d 2>/dev/null)" || status=$?
+[[ $status -eq 0 && "$out" == "retry" ]] && ! grep -q close "$stub/bd.log" \
+  || fail "an unreachable origin is retry, got $status: $out"
+pass "an unreachable origin is retry and writes nothing"
+
+ended_reset "$held"
+status=0; out="$(BD_CLOSE_EXIT=1 ended_run Rogue cb-d 2>/dev/null)" || status=$?
+[[ $status -eq 1 && -z "$out" ]] || fail "a refused close is exit 1 with nothing on stdout, got $status: $out"
+pass "a refused close exits 1"
+
+ended_reset "$held"
+status=0; out="$(BD_PUSH_EXIT=1 ended_run Rogue cb-d 2>"$work_dir/err")" || status=$?
+[[ $status -eq 1 ]] || fail "a push that fails after a close is exit 1, got $status"
+grep -q "bd dolt push failed" "$work_dir/err" || fail "stderr names the push, got: $(cat "$work_dir/err")"
+pass "a push that fails after a close exits 1"
+
+status=0; out="$(ended_run Rogue ../x 2>/dev/null)" || status=$?
+[[ $status -eq 2 && -z "$out" ]] || fail "an id with a slash is exit 2, got $status: $out"
+pass "an id with a slash is a usage error for --ended"
 
 suite_passed

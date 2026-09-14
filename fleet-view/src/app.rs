@@ -1871,6 +1871,12 @@ pub struct App {
     /// Give-backs this view has asked for, by agent name: the bead, and whether the write is still
     /// running or failed at a time. Its beads are spoken for until the entry goes.
     pub releasing: std::collections::BTreeMap<String, model::Releasing>,
+    /// Claims `release-bead --ended` kept, as (name, bead): memory only, so `give_back` does not
+    /// ask again every minute. Pruned to what the board still shows; a restarted view asks once
+    /// more (cb-10d.4).
+    pub kept: std::collections::BTreeSet<(String, String)>,
+    /// When each red line was last said, by key: `release:<name>:<bead>`, `tidy:<bead>`.
+    complaints: std::collections::BTreeMap<String, DateTime<Utc>>,
     /// Beads given by hand from this window (`a`, cb-10d.5) whose start this window has not seen
     /// yet: agent name -> bead. Memory only. Drawn as `starting` exactly as `handed` is, and
     /// counted as spoken for. Dropped by `prune_given`.
@@ -2126,6 +2132,8 @@ impl App {
             armed: BTreeSet::new(),
             handed: std::collections::BTreeMap::new(),
             releasing: std::collections::BTreeMap::new(),
+            kept: std::collections::BTreeSet::new(),
+            complaints: std::collections::BTreeMap::new(),
             tidying: std::collections::BTreeMap::new(),
             tidy_outbox: Vec::new(),
             outbox: Vec::new(),
@@ -3651,13 +3659,36 @@ impl App {
     /// Settles a tidy. Never touches the notice: nothing about a tree is drawn (agreed).
     pub fn finish_tidy(&mut self, answer: &TidyAnswer, now: DateTime<Utc>) {
         match answer.outcome {
-            crate::lifecycle::TidyOutcome::Failed { .. } => {
+            crate::lifecycle::TidyOutcome::Failed { .. } | crate::lifecycle::TidyOutcome::Retry => {
                 self.tidying.insert(answer.bead.clone(), Some(now));
             }
             _ => {
                 self.tidying.remove(&answer.bead);
             }
         }
+    }
+
+    /// Say TEXT in red under KEY unless it was said under KEY less than ten minutes ago. Silent on
+    /// a view that may not supervise: it releases nothing, so it has nothing to report (cb-10d.4).
+    pub fn complain(&mut self, key: &str, text: String, now: DateTime<Utc>) {
+        if !self.supervision.may_supervise() {
+            return;
+        }
+        if self
+            .complaints
+            .get(key)
+            .is_some_and(|at| (now - *at).num_seconds() < COMPLAINT_INTERVAL_SECONDS)
+        {
+            return;
+        }
+        self.complaints.insert(key.to_string(), now);
+        self.set_error_notice(text);
+    }
+
+    /// A release or tidy under KEY succeeded: forget it, so a later failure is said at once. The
+    /// line itself goes as any notice does - nothing is cleared here (no success line, agreed).
+    pub fn settle_complaint(&mut self, key: &str) {
+        self.complaints.remove(key);
     }
 
     /// NAME's give-back failed AT: its bead stays spoken for, and it is retried after a minute.
@@ -3723,16 +3754,26 @@ impl App {
         // A give-back that found its bead elsewhere has nothing to say (cb-10d.1), and neither
         // has one whose sentence is empty - a planning session that ended holding its bead
         // (cb-10d.2.2).
+        // A take-back of a gone implementer's claim says nothing either way, and a refused one is
+        // said by the loop through `App::complain`, which has the clock this has not (cb-10d.4).
         let silent = matches!(
             &answer,
-            WriteAnswer::Release { outcome: crate::lifecycle::ReleaseOutcome::Elsewhere, .. }
+            WriteAnswer::Release {
+                outcome: crate::lifecycle::ReleaseOutcome::Elsewhere
+                    | crate::lifecycle::ReleaseOutcome::Closed
+                    | crate::lifecycle::ReleaseOutcome::Kept { .. }
+                    | crate::lifecycle::ReleaseOutcome::Retry
+                    | crate::lifecycle::ReleaseOutcome::Running
+                    | crate::lifecycle::ReleaseOutcome::Failed { .. },
+                ..
+            }
         ) || matches!(
             &answer,
             WriteAnswer::Release {
                 outcome: crate::lifecycle::ReleaseOutcome::Returned { text }, ..
             } if text.is_empty()
         );
-        if answer.failed() {
+        if answer.failed() && !matches!(answer, WriteAnswer::Release { .. }) {
             self.set_error_notice(answer.text().to_string());
         } else if newest && !silent {
             self.set_notice(answer.text().to_string());
@@ -3772,11 +3813,17 @@ impl App {
                     AppAction::RefreshSweeps
                 }
             }
-            WriteAnswer::Release { name, outcome, .. } => {
+            WriteAnswer::Release { name, bead, outcome, .. } => {
                 let action = match outcome {
-                    crate::lifecycle::ReleaseOutcome::Returned { .. } => {
+                    crate::lifecycle::ReleaseOutcome::Returned { .. }
+                    | crate::lifecycle::ReleaseOutcome::Closed => {
                         self.releasing.remove(&name);
                         AppAction::RefreshWork
+                    }
+                    crate::lifecycle::ReleaseOutcome::Kept { .. } => {
+                        self.releasing.remove(&name);
+                        self.kept.insert((name, bead));
+                        AppAction::None
                     }
                     crate::lifecycle::ReleaseOutcome::Elsewhere => {
                         self.releasing.remove(&name);
@@ -3784,7 +3831,9 @@ impl App {
                     }
                     // The entry stays, so its bead is still spoken for; the loop stamps
                     // `failed_at`.
-                    crate::lifecycle::ReleaseOutcome::Failed { .. } => AppAction::None,
+                    crate::lifecycle::ReleaseOutcome::Retry
+                    | crate::lifecycle::ReleaseOutcome::Running
+                    | crate::lifecycle::ReleaseOutcome::Failed { .. } => AppAction::None,
                 };
                 self.prune_given();
                 action
@@ -4068,6 +4117,14 @@ pub enum WriteRequest {
 /// How long a failed give-back waits before it is asked for again.
 pub const RELEASE_RETRY_SECONDS: i64 = 60;
 
+/// How long a red release or tidy line stays quiet before the same one is said again (cb-10d.4).
+///
+/// The clock is never reset by a retry that also fails: saying the line once a minute would be the
+/// header shouting over everything else, and saying it once only would let a fault that never
+/// clears go unseen after the first frame. A second, DIFFERENT fault inside ten minutes has its own
+/// key and is said at once, and every occurrence is still in `errors.jsonl`.
+pub const COMPLAINT_INTERVAL_SECONDS: i64 = 600;
+
 /// How long a failed tidy waits before the reconciler may hand its tree over again (cb-10d.3).
 pub const TIDY_RETRY_SECONDS: i64 = 60;
 
@@ -4137,7 +4194,11 @@ impl WriteAnswer {
             WriteAnswer::Release { outcome, .. } => match outcome {
                 crate::lifecycle::ReleaseOutcome::Returned { text }
                 | crate::lifecycle::ReleaseOutcome::Failed { text } => text,
-                crate::lifecycle::ReleaseOutcome::Elsewhere => "",
+                crate::lifecycle::ReleaseOutcome::Elsewhere
+                | crate::lifecycle::ReleaseOutcome::Closed
+                | crate::lifecycle::ReleaseOutcome::Kept { .. }
+                | crate::lifecycle::ReleaseOutcome::Retry
+                | crate::lifecycle::ReleaseOutcome::Running => "",
             },
             WriteAnswer::Give { outcome, .. } => match outcome {
                 crate::lifecycle::GiveOutcome::Ran { text }
@@ -4185,7 +4246,9 @@ impl WriteAnswer {
                 name: name.clone(),
                 bead: bead.clone(),
                 cause: *cause,
-                outcome: crate::lifecycle::ReleaseOutcome::Failed { text },
+                outcome: crate::lifecycle::ReleaseOutcome::Failed {
+                    text: crate::lifecycle::release_failure(name, bead),
+                },
             },
             WriteRequest::Give { name, bead } => WriteAnswer::Give {
                 name: name.clone(),
@@ -4318,7 +4381,7 @@ mod tests {
         app.queue_tidy("Rogue", "cb-x");
         assert!(!app.may_tidy("cb-x", t));
         assert_eq!(app.take_tidy_outbox(), vec![TidyRequest { name: "Rogue".into(), bead: "cb-x".into() }]);
-        app.finish_tidy(&tidy_answer(crate::lifecycle::TidyOutcome::Failed { text: "x".into() }), t);
+        app.finish_tidy(&tidy_answer(crate::lifecycle::TidyOutcome::Failed { cause: "x".into() }), t);
         assert!(!app.may_tidy("cb-x", t + chrono::Duration::seconds(59)));
         assert!(app.may_tidy("cb-x", t + chrono::Duration::seconds(60)));
         assert_eq!(app.notice, before);
@@ -4371,8 +4434,8 @@ mod tests {
 
     fn judged(action_id: &str) -> Judged {
         let finding = match action_id {
-            "unclaim" => Finding::Unclaim { id: "cb-a".into() },
-            "reclaim" => Finding::Reclaim { id: "cb-b".into() },
+            "unassign" => Finding::Unassign { id: "cb-a".into(), priority: Some(2) },
+            "recheck" => Finding::Recheck { id: "cb-b".into(), priority: Some(2) },
             "epic" => Finding::EpicClose { id: "cb-c".into() },
             other => panic!("no such fixture {other}"),
         };
@@ -4380,7 +4443,7 @@ mod tests {
     }
 
     fn sweep_error() -> ReadError {
-        ReadError::Sweep { script: "sweep-claims".into(), cause: "bd exited 1".into() }
+        ReadError::Sweep { script: "sweep-epics".into(), cause: "bd exited 1".into() }
     }
 
     /// A failed refresh never destroys findings still worth reading - the pane rule, over the
@@ -4388,12 +4451,12 @@ mod tests {
     #[test]
     fn a_failed_sweep_keeps_the_findings_it_had() {
         let mut app = App::default();
-        app.finish_sweep_refresh(Ok(vec![judged("unclaim")]), at(0));
+        app.finish_sweep_refresh(Ok(vec![judged("unassign")]), at(0));
         app.finish_sweep_refresh(Err(sweep_error()), at(5));
         assert_eq!(app.work_findings().len(), 1);
         assert!(matches!(
             &app.sweeps.content,
-            PaneContent::Stale { error, .. } if error == "sweep-claims failed"
+            PaneContent::Stale { error, .. } if error == "sweep-epics failed"
         ));
     }
 
@@ -4407,7 +4470,7 @@ mod tests {
         assert_eq!(
             &work_body(&app, at(0))[..2],
             &[
-                WorkBodyLine::SweepHeader { count: 0, error: Some("sweep-claims failed".into()) },
+                WorkBodyLine::SweepHeader { count: 0, error: Some("sweep-epics failed".into()) },
                 WorkBodyLine::Blank,
             ]
         );
@@ -4451,19 +4514,19 @@ mod tests {
         let mut app = App::default();
         app.focus = PaneFocus::Work;
         app.finish_sweep_refresh(
-            Ok(vec![judged("unclaim"), judged("reclaim"), judged("epic")]),
+            Ok(vec![judged("unassign"), judged("recheck"), judged("epic")]),
             at(0),
         );
         // The first successful read puts the cursor on the first finding, silently.
-        assert_eq!(app.work_cursor, Some(WorkCursor::Finding("unclaim:cb-a".into())));
+        assert_eq!(app.work_cursor, Some(WorkCursor::Finding("unassign:cb-a".into())));
         app.on_key(key(KeyCode::Down), 10, at(0));
-        assert_eq!(app.work_cursor, Some(WorkCursor::Finding("reclaim:cb-b".into())));
-        assert_eq!(app.selected_finding().map(|j| j.finding.key()).as_deref(), Some("reclaim:cb-b"));
+        assert_eq!(app.work_cursor, Some(WorkCursor::Finding("recheck:cb-b".into())));
+        assert_eq!(app.selected_finding().map(|j| j.finding.key()).as_deref(), Some("recheck:cb-b"));
         // Saturating at both ends, exactly as the fleet selection is.
         app.on_key(key(KeyCode::PageDown), 10, at(0));
         assert_eq!(app.work_cursor, Some(WorkCursor::Finding("epic-close:cb-c".into())));
         app.on_key(key(KeyCode::PageUp), 10, at(0));
-        assert_eq!(app.work_cursor, Some(WorkCursor::Finding("unclaim:cb-a".into())));
+        assert_eq!(app.work_cursor, Some(WorkCursor::Finding("unassign:cb-a".into())));
         // And nothing scrolled: three findings fit a ten-line viewport.
         assert_eq!(app.work.scroll, 0);
     }
@@ -4488,19 +4551,19 @@ mod tests {
     fn a_cursor_whose_finding_is_gone_takes_the_row_at_its_index_and_sets_no_notice() {
         let mut app = App::default();
         app.finish_sweep_refresh(
-            Ok(vec![judged("unclaim"), judged("reclaim"), judged("epic")]),
+            Ok(vec![judged("unassign"), judged("recheck"), judged("epic")]),
             at(0),
         );
         app.focus = PaneFocus::Work;
         app.on_key(key(KeyCode::Down), 10, at(0));
-        assert_eq!(app.work_cursor, Some(WorkCursor::Finding("reclaim:cb-b".into())));
+        assert_eq!(app.work_cursor, Some(WorkCursor::Finding("recheck:cb-b".into())));
         // The middle finding is acted on and gone; index 1 is now the third.
-        app.finish_sweep_refresh(Ok(vec![judged("unclaim"), judged("epic")]), at(10));
+        app.finish_sweep_refresh(Ok(vec![judged("unassign"), judged("epic")]), at(10));
         assert_eq!(app.work_cursor, Some(WorkCursor::Finding("epic-close:cb-c".into())));
         assert_eq!(app.notice, None);
         // Past the end, it clamps to the last.
-        app.finish_sweep_refresh(Ok(vec![judged("unclaim")]), at(20));
-        assert_eq!(app.work_cursor, Some(WorkCursor::Finding("unclaim:cb-a".into())));
+        app.finish_sweep_refresh(Ok(vec![judged("unassign")]), at(20));
+        assert_eq!(app.work_cursor, Some(WorkCursor::Finding("unassign:cb-a".into())));
         assert_eq!(app.notice, None);
     }
 
@@ -4509,11 +4572,11 @@ mod tests {
     #[test]
     fn a_failed_sweep_leaves_the_cursor_alone() {
         let mut app = App::default();
-        app.finish_sweep_refresh(Ok(vec![judged("unclaim"), judged("reclaim")]), at(0));
+        app.finish_sweep_refresh(Ok(vec![judged("unassign"), judged("recheck")]), at(0));
         app.focus = PaneFocus::Work;
         app.on_key(key(KeyCode::Down), 10, at(0));
         app.finish_sweep_refresh(Err(sweep_error()), at(5));
-        assert_eq!(app.work_cursor, Some(WorkCursor::Finding("reclaim:cb-b".into())));
+        assert_eq!(app.work_cursor, Some(WorkCursor::Finding("recheck:cb-b".into())));
     }
 
     /// The findings are the first lines of the Work document, so a finding's line depends on the
@@ -4521,22 +4584,22 @@ mod tests {
     #[test]
     fn a_findings_line_is_known_without_a_frame() {
         let mut app = App::default();
-        app.finish_sweep_refresh(Ok(vec![judged("unclaim"), judged("reclaim")]), at(0));
+        app.finish_sweep_refresh(Ok(vec![judged("unassign"), judged("recheck")]), at(0));
         let body = work_body(&app, at(0));
         assert_eq!(
             &body[..4],
             &[
                 WorkBodyLine::SweepHeader { count: 2, error: None },
-                WorkBodyLine::Finding { index: 0, key: "unclaim:cb-a".into() },
-                WorkBodyLine::Finding { index: 1, key: "reclaim:cb-b".into() },
+                WorkBodyLine::Finding { index: 0, key: "unassign:cb-a".into() },
+                WorkBodyLine::Finding { index: 1, key: "recheck:cb-b".into() },
                 WorkBodyLine::Blank,
             ]
         );
         let line = |key: &str| {
             work_line_of_cursor(&body, &WorkCursor::Finding(key.to_string()))
         };
-        assert_eq!(line("unclaim:cb-a"), Some(1));
-        assert_eq!(line("reclaim:cb-b"), Some(2));
+        assert_eq!(line("unassign:cb-a"), Some(1));
+        assert_eq!(line("recheck:cb-b"), Some(2));
         assert_eq!(line("epic-close:cb-z"), None);
     }
 
@@ -4546,7 +4609,7 @@ mod tests {
         let mut app = App::default();
         let many: Vec<Judged> = (0..20)
             .map(|n| {
-                let finding = Finding::Unclaim { id: format!("cb-{n:02}") };
+                let finding = Finding::Unassign { id: format!("cb-{n:02}"), priority: Some(2) };
                 Judged { label: finding.key(), finding }
             })
             .collect();
@@ -4555,7 +4618,7 @@ mod tests {
         for _ in 0..10 {
             app.on_key(key(KeyCode::Down), 5, at(0));
         }
-        assert_eq!(app.work_cursor, Some(WorkCursor::Finding("unclaim:cb-10".into())));
+        assert_eq!(app.work_cursor, Some(WorkCursor::Finding("unassign:cb-10".into())));
         // Line 11 of the body (header, then ten findings above it), in a five-line viewport.
         assert_eq!(app.work.scroll, 7);
     }
@@ -5610,15 +5673,15 @@ mod tests {
         let facts = split_facts();
         app.set_focus(PaneFocus::Fleet);
         app.finish_sweep_refresh(
-            Ok(vec![judged("unclaim"), judged("reclaim"), judged("epic")]),
+            Ok(vec![judged("unassign"), judged("recheck"), judged("epic")]),
             at(0),
         );
-        assert_eq!(app.work_cursor, Some(WorkCursor::Finding("unclaim:cb-a".into())));
+        assert_eq!(app.work_cursor, Some(WorkCursor::Finding("unassign:cb-a".into())));
         app.on_mouse(wheel(false, 5, facts.work.y + 2), some_metrics(), None, at(0));
-        assert_eq!(app.work_cursor, Some(WorkCursor::Finding("reclaim:cb-b".into())));
+        assert_eq!(app.work_cursor, Some(WorkCursor::Finding("recheck:cb-b".into())));
         assert_eq!(app.focus, PaneFocus::Fleet, "still no focus change");
         app.on_mouse(wheel(true, 5, facts.work.y + 2), some_metrics(), None, at(0));
-        assert_eq!(app.work_cursor, Some(WorkCursor::Finding("unclaim:cb-a".into())));
+        assert_eq!(app.work_cursor, Some(WorkCursor::Finding("unassign:cb-a".into())));
     }
 
     #[test]
@@ -6138,14 +6201,14 @@ mod tests {
         assert!(app.notice.is_some());
     }
 
-    /// The notice slot has had one colour since it existed; the pruner's failure is the first
-    /// thing in it that is not news but a fault (cb-kcs.5.2).
+    /// The notice slot has had one colour since it existed; a failed release is a fault rather
+    /// than news (cb-kcs.5.2, cb-10d.4).
     #[test]
     fn an_error_notice_is_urgent_and_a_plain_one_is_not() {
         let mut app = App::new();
         assert_ne!(app.notice_tone, NoticeTone::Urgent, "nothing is urgent before anything is said");
-        app.set_error_notice("Worktree pruning stopped: exit status 2".into());
-        assert_eq!(app.notice.as_deref(), Some("Worktree pruning stopped: exit status 2"));
+        app.set_error_notice("Could not remove Rogue's copy for cb-4xz: exit status 2".into());
+        assert_eq!(app.notice.as_deref(), Some("Could not remove Rogue's copy for cb-4xz: exit status 2"));
         assert_eq!(app.notice_tone, NoticeTone::Urgent);
         // A plain notice after an urgent one is not urgent: a stale colour is a worse lie than a
         // stale line.
@@ -6287,6 +6350,95 @@ mod tests {
         assert!(app.releasing.is_empty());
     }
 
+    /// cb-10d.4: a red release or tidy line is said once, then again only after ten minutes while
+    /// the same one stays broken; a different key is said at once, and a success forgets the key.
+    #[test]
+    fn a_red_line_is_said_once_in_ten_minutes_per_key() {
+        let mut app = App::with_supervision(SupervisionMode::Supervising);
+        let t0 = Utc::now();
+        let secs = chrono::Duration::seconds;
+        app.complain("release:Rogue:cb-x", "one".into(), t0);
+        assert_eq!(app.notice.as_deref(), Some("one"));
+        assert_eq!(app.notice_tone, NoticeTone::Urgent);
+        app.notice = None;
+        app.complain("release:Rogue:cb-x", "one".into(), t0 + secs(599));
+        assert_eq!(app.notice, None, "inside ten minutes");
+        app.complain("tidy:cb-y", "two".into(), t0 + secs(1));
+        assert_eq!(app.notice.as_deref(), Some("two"), "another key is said at once");
+        app.notice = None;
+        app.complain("release:Rogue:cb-x", "one".into(), t0 + secs(600));
+        assert_eq!(app.notice.as_deref(), Some("one"), "ten minutes on");
+        app.notice = None;
+        app.settle_complaint("release:Rogue:cb-x");
+        app.complain("release:Rogue:cb-x", "one".into(), t0 + secs(601));
+        assert_eq!(app.notice.as_deref(), Some("one"), "a settled key is said at once");
+    }
+
+    #[test]
+    fn a_read_only_view_says_no_red_line() {
+        let mut app = App::new();
+        app.set_supervision(SupervisionMode::ReadOnly(crate::supervisor::ReadOnlyReason::OwnedBy));
+        app.complain("release:Rogue:cb-x", "one".into(), Utc::now());
+        assert_eq!(app.notice, None);
+    }
+
+    fn ended_release(outcome: crate::lifecycle::ReleaseOutcome) -> (App, AppAction) {
+        let mut app = App::new();
+        app.set_notice("before".into());
+        app.queue_release("Rogue", "cb-x", crate::lifecycle::GiveBack::Ended);
+        let request = app.take_outbox().pop().unwrap();
+        app.begin_write(&request, bd_path());
+        let action = app.finish_write(WriteAnswer::Release {
+            name: "Rogue".into(),
+            bead: "cb-x".into(),
+            cause: crate::lifecycle::GiveBack::Ended,
+            outcome,
+        });
+        (app, action)
+    }
+
+    #[test]
+    fn a_kept_claim_is_remembered_and_says_nothing() {
+        let (app, action) = ended_release(crate::lifecycle::ReleaseOutcome::Kept {
+            reason: "its work is not on main".into(),
+        });
+        assert_eq!(action, AppAction::None);
+        assert!(!app.releasing.contains_key("Rogue"));
+        assert!(app.kept.contains(&("Rogue".to_string(), "cb-x".to_string())));
+        assert_eq!(app.notice.as_deref(), Some("before"));
+    }
+
+    #[test]
+    fn a_closed_claim_refreshes_the_work_and_says_nothing() {
+        let (app, action) = ended_release(crate::lifecycle::ReleaseOutcome::Closed);
+        assert_eq!(action, AppAction::RefreshWork);
+        assert!(app.releasing.is_empty());
+        assert_eq!(app.notice.as_deref(), Some("before"));
+    }
+
+    #[test]
+    fn a_failed_release_leaves_the_notice_to_the_loop() {
+        let (app, action) = ended_release(crate::lifecycle::ReleaseOutcome::Failed {
+            text: crate::lifecycle::release_failure("Rogue", "cb-x"),
+        });
+        assert_eq!(action, AppAction::None);
+        assert!(app.releasing.contains_key("Rogue"), "still spoken for");
+        assert_eq!(app.notice.as_deref(), Some("before"));
+    }
+
+    #[test]
+    fn an_undeliverable_release_says_the_agreed_line() {
+        let request = WriteRequest::Release {
+            name: "Rogue".into(),
+            bead: "cb-x".into(),
+            cause: crate::lifecycle::GiveBack::Ended,
+        };
+        assert_eq!(
+            WriteAnswer::undeliverable(&request).text(),
+            crate::lifecycle::release_failure("Rogue", "cb-x")
+        );
+    }
+
     #[test]
     fn a_failed_give_back_keeps_its_bead_spoken_for_and_retries_after_a_minute() {
         let mut app = App::new();
@@ -6296,9 +6448,9 @@ mod tests {
         let request = app.take_outbox().pop().unwrap();
         app.begin_write(&request, bd_path());
         app.finish_write(release_answer(crate::lifecycle::ReleaseOutcome::Failed {
-            text: "cb-x could not be given back from Rogue \u{2014} release-bead failed".into(),
+            text: crate::lifecycle::release_failure("Rogue", "cb-x"),
         }));
-        assert_eq!(app.notice_tone, NoticeTone::Urgent);
+        assert_eq!(app.notice, None, "the loop says a refused release, through complain (cb-10d.4)");
         app.note_release_failed("Rogue", now);
         assert_eq!(app.releasing["Rogue"].bead, "cb-x");
         assert!(!app.may_release("Rogue", now + chrono::Duration::seconds(59)));
@@ -6553,11 +6705,11 @@ mod tests {
         };
         assert_eq!(undo.pending_text(bd), "cb-21g: back to P2\u{2026}");
         let finding = WriteRequest::Finding {
-            finding: crate::sweeps::Finding::Reclaim { id: "cb-9f2".into() },
+            finding: crate::sweeps::Finding::Recheck { id: "cb-9f2".into(), priority: Some(2) },
         };
         assert_eq!(
             finding.pending_text(bd),
-            "running /usr/local/bin/bd reclaim --id cb-9f2 --older-than 10m\u{2026}"
+            "running /usr/local/bin/bd set-state cb-9f2 verdict=stale --reason verdict formed against a commit main has moved past\u{2026}"
         );
     }
 
@@ -6580,7 +6732,7 @@ mod tests {
             other => panic!("a priority request answers as a priority write: {other:?}"),
         }
         let finding = WriteRequest::Finding {
-            finding: crate::sweeps::Finding::Reclaim { id: "cb-9f2".into() },
+            finding: crate::sweeps::Finding::Recheck { id: "cb-9f2".into(), priority: Some(2) },
         };
         assert!(WriteAnswer::undeliverable(&finding).failed());
     }
@@ -6606,7 +6758,7 @@ mod tests {
     #[test]
     fn a_key_clears_the_colour_with_the_notice() {
         let mut app = App::new();
-        app.set_error_notice("Worktree pruning stopped: exit status 2".into());
+        app.set_error_notice("Could not remove Rogue's copy for cb-4xz: exit status 2".into());
         app.on_key(key(KeyCode::Tab), 10, at(0));
         assert_eq!(app.notice, None);
         assert_ne!(app.notice_tone, NoticeTone::Urgent);
@@ -6661,7 +6813,7 @@ mod tests {
         let mut app = App::new();
         app.finish_refresh(Ok(vec![row("Storm"), row("Cyclops")]), Utc::now());
         app.selected = Some("Storm".into());
-        app.set_error_notice("Worktree pruning stopped: exit status 2".into());
+        app.set_error_notice("Could not remove Rogue's copy for cb-4xz: exit status 2".into());
 
         app.finish_refresh(Ok(vec![row("Cyclops")]), Utc::now());
 
@@ -7037,7 +7189,7 @@ mod tests {
     /// History rows - and every drawn line named.
     fn document_app() -> App {
         let mut app = App::default();
-        app.finish_sweep_refresh(Ok(vec![judged("unclaim"), judged("reclaim")]), at(0));
+        app.finish_sweep_refresh(Ok(vec![judged("unassign"), judged("recheck")]), at(0));
         app.finish_work_refresh(
             Ok(WorkBuckets {
                 claimed: vec![test_bead("cb-a", Some(1)), test_bead("cb-b", Some(0))],
@@ -7090,8 +7242,8 @@ mod tests {
             shape,
             vec![
                 "sweep-header 2",
-                "finding unclaim:cb-a",
-                "finding reclaim:cb-b",
+                "finding unassign:cb-a",
+                "finding recheck:cb-b",
                 "blank",
                 // The queues, in the order work moves in read backwards. `UX agreed` is not
                 // among them: it is empty here, and empty is the one section that is hidden.
@@ -7161,7 +7313,7 @@ mod tests {
         let mut app = document_app();
         app.focus = PaneFocus::Work;
         // From the first frame it is on the first selectable row, with nothing pressed.
-        assert_eq!(app.work_cursor, Some(WorkCursor::Finding("unclaim:cb-a".into())));
+        assert_eq!(app.work_cursor, Some(WorkCursor::Finding("unassign:cb-a".into())));
 
         let mut seen = vec![app.work_cursor.clone().unwrap()];
         for _ in 0..13 {
@@ -7171,8 +7323,8 @@ mod tests {
         assert_eq!(
             seen,
             vec![
-                WorkCursor::Finding("unclaim:cb-a".into()),
-                WorkCursor::Finding("reclaim:cb-b".into()),
+                WorkCursor::Finding("unassign:cb-a".into()),
+                WorkCursor::Finding("recheck:cb-b".into()),
                 // Straight onto the bead rows: no header, blank or `(none)` in between.
                 WorkCursor::Bead("cb-b".into()),
                 WorkCursor::Bead("cb-a".into()),
@@ -7194,7 +7346,7 @@ mod tests {
         for _ in 0..40 {
             app.on_key(key(KeyCode::Up), 10, at(0));
         }
-        assert_eq!(app.work_cursor, Some(WorkCursor::Finding("unclaim:cb-a".into())));
+        assert_eq!(app.work_cursor, Some(WorkCursor::Finding("unassign:cb-a".into())));
         // PgDn moves a viewport of selectable rows.
         app.on_key(key(KeyCode::PageDown), 5, at(0));
         assert_eq!(app.work_cursor_index(at(0)), Some(5));
@@ -7455,7 +7607,7 @@ mod tests {
         for _ in 0..40 {
             app.on_key(key(KeyCode::Up), viewport, at(0));
         }
-        assert_eq!(app.work_cursor, Some(WorkCursor::Finding("unclaim:cb-a".into())));
+        assert_eq!(app.work_cursor, Some(WorkCursor::Finding("unassign:cb-a".into())));
         assert_eq!(app.work.scroll, 0);
     }
 
@@ -7492,7 +7644,7 @@ mod tests {
         app.on_key(key(KeyCode::Up), 10, at(0));
         assert_eq!(
             app.work_cursor,
-            Some(WorkCursor::Finding("unclaim:cb-a".into())),
+            Some(WorkCursor::Finding("unassign:cb-a".into())),
             "Up put it back on a real row"
         );
     }
@@ -8087,7 +8239,7 @@ mod tests {
         // The cursor still starts on the first selectable row, which is the first sweep finding.
         assert_eq!(
             work_body(&app, at(0)).iter().find_map(WorkBodyLine::cursor),
-            Some(WorkCursor::Finding("unclaim:cb-a".into()))
+            Some(WorkCursor::Finding("unassign:cb-a".into()))
         );
     }
 
@@ -8627,7 +8779,7 @@ mod tests {
         app.open_give(20, at(0));
         assert_eq!(app.notice.as_deref(), Some("Put the cursor on a piece of work first"));
         assert!(app.give.is_none());
-        app.work_cursor = Some(WorkCursor::Finding("unclaim:cb-a".into()));
+        app.work_cursor = Some(WorkCursor::Finding("unassign:cb-a".into()));
         app.open_give(20, at(0));
         assert!(app.give.is_none());
     }

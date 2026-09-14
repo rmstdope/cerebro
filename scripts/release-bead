@@ -23,7 +23,30 @@
 #
 # For released, free and elsewhere it removes `.cerebro/state/<Name>.handover` when that file names
 # THIS bead, and leaves a handover for a different bead alone. `scripts/assign-bead` writes that
-# file; `scripts/agent-state` removes it too. The push is advisory (.cerebro/traps.md).
+# file; `scripts/agent-state` removes it too.
+#
+# THE PUSH IS NOT ADVISORY (cb-10d.4), in any branch that wrote: a board write that is not pushed is
+# a failed release, so a failed `bd dolt push` is one line on stderr and exit 1. A retry then finds
+# the bead already given back or closed, and answers accordingly.
+#
+# THE ENDED MODE (cb-10d.4):
+#
+#     .claude/cerebro/scripts/release-bead --ended <Name> <id>
+#
+# Takes back what a session that is gone still holds. One line on stdout, exit 0 for each:
+#
+#   running        NAME is alive on this bead (the worktree mode's test). Nothing is touched.
+#   released       the bead is open and assigned to NAME: the assignee is cleared, as above.
+#   elsewhere      closed, somebody else's, open and unassigned, or a compare-and-swap lost.
+#   kept it was reopened by a failed verification
+#                  in_progress, NAME's, `verification:failed`: its old commits prove nothing.
+#   retry          `git fetch` failed. Nothing is touched. Fetched only when a close is possible.
+#   closed         in_progress, NAME's, and `scripts/bead-delivery.sh` finds its work on main:
+#                  closed as NAME, with the fleet view named in the reason, and pushed.
+#   kept its work is not on main
+#                  in_progress, NAME's, not delivered. Nothing is written; it is Cerebro's.
+#
+#   exit 1  `bd show` or the close failed, or the push after a write     exit 2  usage
 #
 # THE WORKTREE MODE (cb-10d.3):
 #
@@ -51,7 +74,64 @@ set -euo pipefail
 usage() {
   echo "usage: release-bead <Name> <id>" >&2
   echo "       release-bead --worktree <Name> <id>" >&2
+  echo "       release-bead --ended <Name> <id>" >&2
   exit 2
+}
+
+# NAME is alive and on bead ID: its state file names ID, or names nothing while its handover is
+# absent or names ID. Reads $name, $id and $state.
+alive_on_bead() {
+  local current="" handed=""
+  if ! "$script_dir/agent-alive" "$name" >/dev/null 2>&1; then
+    return 1
+  fi
+  if [[ -f "$state/$name.state.json" ]]; then
+    current="$(jq -r '.bead // empty' "$state/$name.state.json" 2>/dev/null || true)"
+  fi
+  if [[ -f "$state/$name.handover" ]]; then
+    IFS= read -r handed < "$state/$name.handover" || true
+  fi
+  if [[ "$current" == "$id" ]]; then
+    return 0
+  fi
+  if [[ -z "$current" && ( -z "$handed" || "$handed" == "$id" ) ]]; then
+    return 0
+  fi
+  return 1
+}
+
+# Prints "<status>US<assignee>US<labels, comma-joined>" for the bead, or fails. US (0x1f), not a
+# tab: tab is IFS whitespace, so an empty assignee would collapse and the labels read as one.
+read_bead() {
+  local shown
+  shown="$(bd -C "$root" show "$id" --json)" || return 1
+  printf '%s' "$shown" \
+    | jq -r '(if type=="array" then .[0] else . end) | "\(.status // "")\u001f\(.assignee // "")\u001f\((.labels // []) | join(","))"'
+}
+
+# Pushes the board after a write, or fails the release: exit 1 with WHAT named on stderr.
+push_or_fail() {
+  if ! bd -C "$root" dolt push >&2; then
+    echo "release-bead: $id was $1 for $name, but bd dolt push failed" >&2
+    exit 1
+  fi
+}
+
+# A planning role's assignment (cb-10d.2.1): clear the assignee and leave the status alone.
+# `--if-assignee` on `update` reports a lost compare-and-swap as exit 13, so unlike `unclaim`
+# there is nothing to re-read. Captured, not bare, so `set -e` cannot turn 13 into exit 1.
+# Sets $word to released on success; exits 1 on a refusal.
+clear_assignment() {
+  local update_status=0
+  bd --actor "$name" -C "$root" update "$id" --assignee "" --if-assignee "$name" >&2 || update_status=$?
+  if [[ $update_status -eq 0 ]]; then
+    push_or_fail released
+    word=released
+  elif [[ $update_status -ne 13 ]]; then
+    echo "release-bead: could not clear $name as the assignee of $id" >&2
+    exit 1
+  fi
+  return 0
 }
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -91,19 +171,9 @@ if [[ "${1:-}" == "--worktree" ]]; then
     exit 0
   fi
 
-  if "$script_dir/agent-alive" "$name" >/dev/null 2>&1; then
-    current=""
-    if [[ -f "$state/$name.state.json" ]]; then
-      current="$(jq -r '.bead // empty' "$state/$name.state.json" 2>/dev/null || true)"
-    fi
-    handed=""
-    if [[ -f "$state/$name.handover" ]]; then
-      IFS= read -r handed < "$state/$name.handover" || true
-    fi
-    if [[ "$current" == "$id" ]] || [[ -z "$current" && ( -z "$handed" || "$handed" == "$id" ) ]]; then
-      echo running
-      exit 0
-    fi
+  if alive_on_bead; then
+    echo running
+    exit 0
   fi
 
   if ! [[ -e "$tree" ]]; then
@@ -148,6 +218,63 @@ if [[ "${1:-}" == "--worktree" ]]; then
   exit 0
 fi
 
+if [[ "${1:-}" == "--ended" ]]; then
+  [[ $# -eq 3 && -n "$2" && -n "$3" ]] || usage
+  name="$2"
+  id="$3"
+  case "$id" in
+    */* | .*) usage ;;
+  esac
+  source "$script_dir/bead-delivery.sh"
+  root="$("$script_dir/consumer-root" --shared)"
+  state="$root/.cerebro/state"
+
+  if alive_on_bead; then
+    echo running
+    exit 0
+  fi
+  if ! fields="$(read_bead)"; then
+    exit 1
+  fi
+  IFS=$'\x1f' read -r status assignee labels <<<"$fields"
+
+  word=elsewhere
+  if [[ "$status" == "open" && "$assignee" == "$name" ]]; then
+    clear_assignment
+    echo "$word"
+    exit 0
+  fi
+  if [[ "$status" != "in_progress" || "$assignee" != "$name" ]]; then
+    echo elsewhere
+    exit 0
+  fi
+  case ",$labels," in
+    *,verification:failed,*)
+      echo "kept it was reopened by a failed verification"
+      exit 0
+      ;;
+  esac
+
+  default_branch="$("$script_dir/default-branch" 2>/dev/null)" || default_branch=""
+  [[ -n "$default_branch" ]] || default_branch="main"
+  if ! git -C "$root" fetch --quiet origin "$default_branch" 2>/dev/null; then
+    echo retry
+    exit 0
+  fi
+  if ! cerebro_bead_delivered "$root" "$default_branch" "$id"; then
+    echo "kept its work is not on main"
+    exit 0
+  fi
+  if ! bd --actor "$name" -C "$root" close "$id" \
+       --reason "Delivered; closed by the fleet view, $name did not" >&2; then
+    echo "release-bead: could not close $id for $name" >&2
+    exit 1
+  fi
+  push_or_fail closed
+  echo closed
+  exit 0
+fi
+
 [[ $# -eq 2 && -n "$1" && -n "$2" ]] || usage
 name="$1"
 id="$2"
@@ -160,13 +287,6 @@ fi
 root="$("$script_dir/consumer-root" --shared)"
 handover="$root/.cerebro/state/$name.handover"
 
-# Prints "<status><TAB><assignee>" for the bead, or fails.
-read_bead() {
-  local shown
-  shown="$(bd -C "$root" show "$id" --json)" || return 1
-  printf '%s' "$shown" \
-    | jq -r '(if type=="array" then .[0] else . end) | "\(.status // "")\t\(.assignee // "")"'
-}
 
 drop_handover() {
   local held=""
@@ -182,39 +302,26 @@ drop_handover() {
 if ! fields="$(read_bead)"; then
   exit 1
 fi
-IFS=$'\t' read -r status assignee <<<"$fields"
+IFS=$'\x1f' read -r status assignee _labels <<<"$fields"
 
 word=elsewhere
 if [[ "$status" == "in_progress" && "$assignee" == "$name" ]]; then
   if bd --actor "$name" -C "$root" unclaim "$id" --if-assignee "$name" \
        --reason "Given back by the fleet view: $name never ran on it" >&2; then
+    push_or_fail released
     word=released
-    bd -C "$root" dolt push >&2 \
-      || echo "release-bead: $id was given back from $name, but bd dolt push failed" >&2
   else
     if ! fields="$(read_bead)"; then
       exit 1
     fi
-    IFS=$'\t' read -r status assignee <<<"$fields"
+    IFS=$'\x1f' read -r status assignee _labels <<<"$fields"
     if [[ "$status" == "in_progress" && "$assignee" == "$name" ]]; then
       echo "release-bead: could not unclaim $id from $name" >&2
       exit 1
     fi
   fi
 elif [[ "$status" == "open" && "$assignee" == "$name" ]]; then
-  # A planning role's assignment (cb-10d.2.1): clear the assignee and leave the status alone.
-  # `--if-assignee` on `update` reports a lost compare-and-swap as exit 13, so unlike `unclaim`
-  # there is nothing to re-read. Captured, not bare, so `set -e` cannot turn 13 into exit 1.
-  update_status=0
-  bd --actor "$name" -C "$root" update "$id" --assignee "" --if-assignee "$name" >&2 || update_status=$?
-  if [[ $update_status -eq 0 ]]; then
-    word=released
-    bd -C "$root" dolt push >&2 \
-      || echo "release-bead: $id was given back from $name, but bd dolt push failed" >&2
-  elif [[ $update_status -ne 13 ]]; then
-    echo "release-bead: could not clear $name as the assignee of $id" >&2
-    exit 1
-  fi
+  clear_assignment
 elif [[ "$status" == "open" && -z "$assignee" ]]; then
   word=free
 fi

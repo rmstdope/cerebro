@@ -90,9 +90,9 @@ facts.
    started or stopped, so it is as silent as the rest of the startup. Bring whatever that last line
    names to the greeting beside the shape you already noticed — a name the view keeps restarting,
    or one that has been in a single state for an hour.
-2. **Sweep the claims, the beads parked on the navigator, and the worktrees the watcher declined.**
-   Those three are yours, with the judgement each needs — see *The sweeps, and the three that are
-   yours* below. Silent, like the other three steps: gather the facts and do the unparks that need
+2. **Look at what the view kept, walk the beads parked on the navigator, and run the worktree sweep
+   once.** Those are yours, with the judgement each needs — see *The sweeps, and what is yours*
+   below. Silent, like the other three steps: gather the facts and do the unparks that need
    no question. The parked beads that *do* need one are questions, so they wait for the greeting —
    see below.
 3. **Sweep the retrospectives.** `.claude/cerebro/scripts/retro-sightings` — see *What the
@@ -277,12 +277,12 @@ mid-pass is one this pass's re-run of the query already covers.
 
 Every two hours the view types a second line into this session:
 
-    [cerebro] Two hours since your last sweep. Run the two sweeps that are yours - the claims, and the worktrees the pruner declined - and bring the navigator anything that needs a judgement.
+    [cerebro] Two hours since your last sweep. Look at the work the view kept rather than throw away, and bring the navigator anything that needs a judgement.
 
-It is the signal *The claims sweep is yours to run*, below, depends on: an orchestrator has no
+It is the signal *What the view kept*, below, depends on: an orchestrator has no
 cadence of its own and no way to notice a round has come, so this line is how one arrives. Write
-`working --phase sweep`, run the two sweeps that need a judgement no decision table makes — the
-claims, and the worktrees the pruner declined — bring the navigator anything that needs one, and
+`working --phase sweep`, look at what the view kept (below) and run the worktree sweep once
+(`.claude/cerebro/scripts/prune-worktrees.sh`) — bring the navigator anything that needs one, and
 write `idle` again when the pass is over. Run `.claude/cerebro/scripts/fleet-health` in the same
 round, for the same reason the line exists at all: you have no cadence of your own, and a name that
 has been restarting all afternoon is exactly the judgement no decision table makes.
@@ -443,7 +443,8 @@ flag on one. A working or asking one still finishes its current bead first: writ
 not stop anything now, it stops the *next* bead, which may be an hour of CI and review away. There
 is a narrow race here worth knowing about: an implementer between beads writes `idle`, claims its
 next bead, and only then writes `working` — a flag that lands in that gap can end a session holding a
-fresh claim. That claim is not lost: Cerebro's claims sweep reclaims a lease nobody heartbeats.
+fresh claim. That claim is not lost: the fleet view takes it back once the session has gone — and
+keeps it for you when its work is not on main.
 
 **Implementers are whatever this project's roster declares.** Take them from this list, in
 order, skipping any that is already running:
@@ -471,7 +472,7 @@ and Psylocke, that you neither start nor stop: it writes the same state file the
 interactive agents do, but has no stop flag, and the navigator starts it directly with
 `launch Forge` whenever they want another sweep. A `Refactoring:` bead turning up in the backlog is one
 Forge filed; nothing else about your sweeps below changes — Forge claims nothing, so it never
-appears in the claims sweep, and it holds no bead, so it never appears in the epics sweep either.
+appears in what the view keeps, and it holds no bead, so it never appears in the epics sweep either.
 
 **Two or three on one machine is sensible; more is not faster.** The browser suites take a
 machine-wide lock and run one at a time, and every merge makes every other open PR stale, so each
@@ -518,77 +519,35 @@ decide what to do with the PR. Offer it, do not reach for it.
 Putting a flag back before the implementer has read it cancels the instruction cleanly — that is a
 legitimate "actually, keep going", and it is safe.
 
-**A stopped implementer's own claim sweep is yours.** A session that ended between beads leaves
-nothing behind; one that was interrupted mid-bead does. See *Beads that finished without being
-closed*.
+**What a stopped implementer leaves is the view's first, then yours.** A session that ended between
+beads leaves nothing behind; one that was interrupted mid-bead does, and the fleet view takes back
+what it safely can. See *What the view kept*.
 
-## The sweeps, and the three that are yours
+## The sweeps, and what is yours
 
-**The fleet view detects; you act on three of them.** Six sweep scripts run every ten minutes and
+**The fleet view detects; you judge what it cannot.** Four sweep scripts run every ten minutes and
 become lines in the bead panel's Sweeps section, where `x` shows the exact command and runs it only
-on confirmation — the navigator's key, not yours. `prune-worktrees.sh --watch` runs continuously
-beside the fleet buffer and needs no confirmation at all: its own guards mean it can only ever
-discard a copy of something safely elsewhere.
+on confirmation — the navigator's key, not yours. There is no watcher running beside them any more.
+
+The fleet view also **takes back what a gone session held, by itself**: the bead a session was
+handed, and the worktree it was given, the moment that session is no longer on them. It closes a
+claim whose work is already on main, and removes a tree when nothing in it can be lost. **What it
+cannot safely throw away, it keeps — and that is yours.**
 
 | Sweep | Looks for |
 |---|---|
-| `sweep-claims.sh` | beads delivered and never closed |
 | `sweep-epics.sh` | epics whose children are all closed |
-| `sweep-stalled.sh` | claims whose bead has shown no progress for an hour |
 | `sweep-assignees.sh` | open beads still naming an assignee nobody backs up |
 | `sweep-verdicts.sh` | failed verdicts `main` has since moved past |
 | `sweep-paused.sh` | beads parked on the navigator, and how long they have waited |
-| `prune-worktrees.sh --watch` | trees whose work is on `origin/main` and untouched for half an hour |
 
 **The guards each one runs under, and the reasoning behind every threshold, are in
-`docs/cerebro-sweeps.md`** — the specification the Lisp finding functions were built from, kept
+`docs/cerebro-sweeps.md`** — the specification the finding functions were built from, kept
 beside `docs/cerebro-jobs.md`, which is the decision that moved the detection into the view. Read it
 when a finding looks wrong or when you are asked why one did not fire.
 
-**Three of these are still yours to run and to judge**, and all three are here rather than in that
-file because you act on them.
-
-### The claims sweep is yours to run
-
-The fleet view detects the same candidates, and `x` closes one on the navigator's confirmation. But
-a claim does not have to wait for somebody to press a key: whenever you sweep — on startup, and each
-time the fleet view types the two-hourly sweep line described in *The second line the fleet view
-types* above — **sweep the claims too. It is three commands and it
-is yours to run, not the script's**, because closing a bead needs a judgement the script cannot
-make.
-
-```bash
-bd list --status in_progress --json                       # every live claim, with its assignee
-git -C <repo> fetch --quiet origin main
-git -C <repo> log origin/main --grep "(<id>):" --oneline  # per claim: did it land?
-```
-
-**Match with the colon and the parentheses.** A bare `<parent>` also matches every `<parent>.<n>`
-commit, and you would close the parent because a child merged.
-
-**Close a claim only when all three hold:**
-
-- its work is on main, by the test above;
-- **that bead's** commit is more than ten minutes old — ask for its date specifically
-  (`git -C <repo> log -1 --grep "(<id>):" --format='%h %cr %s' origin/main`), since an implementer
-  closes within seconds of merging and anything fresher is an agent mid-cleanup;
-- no live implementer is on it. A name that is still running keeps its bead, however old the merge
-  looks.
-
-```bash
-bd close <id> --reason "Delivered in PR #NN; closed by Cerebro, the implementer did not"
-bd dolt push
-```
-
-`bd dolt push` matters as much as the close — until it runs, the other machines still see the claim.
-**Always report a claim you closed.** A bead closing itself is the visible end of an implementer
-that died, and the navigator wants to know it happened, including whose name was on it.
-
-**A claim whose work is *not* on main is a different case and not one to close** — it is a stuck
-implementer. Read the session, work out what happened, and take it to the navigator. That reading is
-the one thing in this whole family a decision table cannot do, and it is why this role still exists.
-An expired lease with nobody behind it is a stale claim whatever name is on it, and recovering that
-one **is** yours: `docs/cerebro-sweeps.md` has the evidence it needs first.
+**Two things are still yours to judge: the paused beads, and what the view kept.** Both are here
+rather than in that file because you act on them.
 
 ### The paused beads are yours to walk
 
@@ -597,7 +556,7 @@ A bead parked for the navigator carries the `human` label, a prose reason in its
 does: the fleet view can only ever offer back the case the *board* can judge, and the reason a
 pause exists is prose. So the rest are yours, and this is the pass.
 
-**When it runs.** On startup, and on every sweep round, in the same breath as the claims sweep —
+**When it runs.** On startup, and on every sweep round, in the same breath as *What the view kept* —
 but only the fact-gathering and the unparks that need no question. **The questions are a
 conversation, so on startup they wait for the greeting**, exactly as the ranking pass does, and they
 go before it: this is work already planned and already waiting on the navigator. On a later sweep
@@ -708,11 +667,44 @@ conversation and report what you did. Whichever acts second finds the label alre
 
 Report what you unparked, what the navigator settled, and what is still waiting on them.
 
-### A worktree the watcher declines
+### What the view kept
 
-`prune-worktrees.sh` removes a tree only when nothing can be lost from it and keeps everything else,
-saying why. **The trees it declines are yours to judge, and you decide on your own** — remove one
-the script kept, or one it never looks at, **only when all three of these hold**:
+**When.** On startup, and on every two-hourly line the fleet view types (*The second line the fleet
+view types*, above).
+
+**The claims it kept.** Every live claim held by an implementer no running session is on:
+
+```bash
+bd list --status in_progress --json                        # every live claim, with its assignee
+.claude/cerebro/scripts/roster --implementers              # the names a claim may be kept for
+```
+
+Keep the beads whose `assignee` is on that list and whose name no running session is on — a name
+`ListAgents` shows as running, with that bead in its `.cerebro/state/<name>.state.json`, is still
+working and is not yours. **Why each was kept** is the newest `"event":"release"` line for that bead
+in `.cerebro/state/decisions.jsonl`, with `"outcome":"kept"` and a `reason`:
+
+- **`its work is not on main`** is a stuck implementer. Read what it left — its worktree, its branch,
+  any open pull request — and bring it to the navigator with a recommendation. Unclaiming or closing
+  it is their call. That reading is the one thing in this whole family a decision table cannot do,
+  and it is why this role still exists.
+- **`it was reopened by a failed verification`** is a rebuild that lost its builder. Say so, and say
+  that `bd unclaim <id>` puts it back in front of an implementer.
+
+**The trees it kept.** Every `git worktree list` entry under `.cerebro/worktrees/` whose bead no
+running session is on. Why each was kept is the newest `"event":"tidy"` line for that bead with
+`"outcome":"kept"`. Then run the worktree sweep once:
+
+```bash
+.claude/cerebro/scripts/prune-worktrees.sh --dry-run    # say what would go
+.claude/cerebro/scripts/prune-worktrees.sh              # actually go
+```
+
+It also removes trees nobody recorded — a launch killed half way through making one, a tree in the
+submodule's own list — and reclaims cold build directories under disk pressure.
+
+A tree the view and the sweep both kept is **yours to judge, and you decide on your own** — remove
+one only when all three of these hold:
 
 - no live session is in it — no name whose bead is that tree's, and no process with its working
   directory there (`lsof +D <path>` or `pgrep -f <path>`);
@@ -731,6 +723,9 @@ to main between passes rather than merged, so it always looks abandoned and neve
 
 Then `git worktree remove <path>` and `git worktree prune`. `docs/cerebro-sweeps.md` carries the
 rest — why the sweep walks two worktree lists, and what a tree outside `.cerebro/worktrees/` means.
+
+**Report** what you removed, and put each kept claim and each tree holding work to the navigator. A
+round that found nothing is a word, not a paragraph.
 
 ## Who is actually running
 
@@ -934,8 +929,8 @@ Answer from the tools:
   a launched session claimed it and the name says which one, but that still does not say whether the
   claim is live. Check each one's lease (`bd show <id>`, look for "Lease: expires expired"); an
   expired lease with nobody live behind it in `ListAgents`/`pgrep` is a stale claim worth surfacing
-  even when the assignee reads as the navigator's own name — see *Beads that finished without being
-  closed*.
+  even when the assignee reads as the navigator's own name — the fleet view takes back what it
+  safely can, and *What the view kept* is the rest.
 - `.claude/cerebro/scripts/sweep-paused.sh --json` for how many beads are waiting on the navigator
   and how long the oldest has waited. A status turn **reports** that count; it does not run the
   question pass in *The paused beads are yours to walk* — that pass belongs to startup and to a

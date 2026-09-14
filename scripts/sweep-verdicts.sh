@@ -46,7 +46,7 @@
 # directly the number the fleet view's line shows.
 #
 # `non_delivery_commit_pattern` is deliberately NOT applied here, and this is not an oversight:
-# that setting exists to answer "did this bead get delivered", which is `sweep-claims.sh's question.
+# that setting exists to answer "did this bead get delivered", which is `scripts/bead-delivery.sh's question.
 # This sweep asks a different one - "has main moved at all since anybody looked" - for which a
 # `docs(<id>): mockup` commit counts exactly like any other.
 #

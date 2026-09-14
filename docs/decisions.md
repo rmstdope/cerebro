@@ -28,7 +28,7 @@ in, and `cb-` from this repository's own board, since cb-i3l.1 made it a consume
 | Two beads found stale under a human-looking assignee, 2026-08-14 | ah-r2e, ah-52b |
 | "Gone" is about the session, not the name: a live agent on a different bead | ah-v2l, ah-u4e.2, ah-u4e.3 |
 | Epics left open at 2/2 children closed | ah-1is, ah-vp3 |
-| The stalled-claims sweep | ah-4xm4 |
+| The stalled-claims sweep (retired, cb-10d.4) | ah-4xm4 |
 | The interactive roles are ended after each pass and restarted on a per-role trigger | cb-5yr |
 
 ## `agents/verifier.md`

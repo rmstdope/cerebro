@@ -1193,8 +1193,8 @@ fn header_state_spans(app: &App) -> Vec<Span<'static>> {
             Style::default().fg(GOLD),
         ));
     } else if let Some(notice) = &app.notice {
-        // Gold for news, red for a fault: the pruner's failure is the first thing this slot has
-        // ever carried that is not something the view did (cb-kcs.5.2, the navigator's choice).
+        // Gold for news, red for a fault: a failed release is a fault rather than something the
+        // view did (cb-kcs.5.2, cb-10d.4, the navigator's choice).
         // Gold for news, red for a fault, dim for a board write still running (cb-21g).
         let style = match app.notice_tone {
             app::NoticeTone::News => Style::default().fg(GOLD),
@@ -4061,15 +4061,15 @@ mod tests {
         assert_eq!(style_where(&buffer, "Storm is no longer").fg, Some(GOLD));
     }
 
-    /// The pruner's failure is the first thing in this slot that is a fault rather than news,
-    /// and the navigator chose red for it (cb-kcs.5.2, round one).
+    /// A failed release is a fault rather than news, and the navigator chose red for it
+    /// (cb-kcs.5.2, cb-10d.4).
     #[test]
     fn an_urgent_notice_is_red_and_an_ordinary_one_is_gold() {
         let mut app = populated();
-        app.set_error_notice("Worktree pruning stopped: exit status 2".into());
+        app.set_error_notice("Could not remove Rogue's copy for cb-4xz: exit status 2".into());
         let buffer = render(&app, 160, 30);
-        assert!(lines(&buffer)[0].contains("Worktree pruning stopped: exit status 2"));
-        assert_eq!(style_where(&buffer, "Worktree pruning").fg, Some(RED));
+        assert!(lines(&buffer)[0].contains("Could not remove Rogue's copy for cb-4xz: exit status 2"));
+        assert_eq!(style_where(&buffer, "Could not remove").fg, Some(RED));
 
         app.set_notice("Cerebro was asked to rank 2 unranked beads.".into());
         let buffer = render(&app, 160, 30);
@@ -5430,14 +5430,14 @@ mod tests {
     #[test]
     fn the_sweeps_section_is_first_in_work() {
         let app = with_findings(vec![
-            judged(Finding::Unclaim { id: "cb-a".into() }, "unclaim cb-a — Storm stalled"),
-            judged(Finding::Reclaim { id: "cb-b".into() }, "reclaim cb-b — Storm gone"),
+            judged(Finding::Unassign { id: "cb-a".into(), priority: Some(2) }, "unassign cb-a — Storm is not running"),
+            judged(Finding::Recheck { id: "cb-b".into(), priority: Some(2) }, "recheck cb-b — verdict at 0b444332, 2 merges since"),
         ]);
         let rendered = body(&render(&app, 140, 30));
         let header = rendered.iter().position(|l| l.contains("Sweeps 2")).expect("a header");
         let claimed = rendered.iter().position(|l| l.contains("Claimed")).expect("the queues");
         assert!(header < claimed, "{rendered:#?}");
-        assert!(rendered.iter().any(|l| l.contains("unclaim cb-a — Storm stalled")));
+        assert!(rendered.iter().any(|l| l.contains("unassign cb-a — Storm is not running")));
     }
 
     /// Nothing at all when there are no findings and no error - no header and no blank. That is
@@ -5457,22 +5457,22 @@ mod tests {
         let mut app = populated();
         app.finish_work_refresh(Ok(WorkBuckets::default()), at(86_400));
         app.finish_sweep_refresh(
-            Err(ReadError::Sweep { script: "sweep-claims".into(), cause: "bd exited 1".into() }),
+            Err(ReadError::Sweep { script: "sweep-epics".into(), cause: "bd exited 1".into() }),
             at(86_400),
         );
         let rendered = body(&render(&app, 140, 30));
         let line = line_with(&rendered, "Sweeps 0");
-        assert!(line.contains("sweep-claims failed"), "{line:?}");
+        assert!(line.contains("sweep-epics failed"), "{line:?}");
     }
 
-    /// And a stale one keeps its findings AND says which script failed - three of the six `git
-    /// fetch`, so this is ordinary rather than rare, and a stale section that read exactly like a
+    /// And a stale one keeps its findings AND says which script failed - one of the four `git
+    /// fetch`es, so this is ordinary rather than rare, and a stale section that read exactly like a
     /// current one is what Emacs's own silence costs.
     #[test]
     fn a_failed_sweep_keeps_its_findings_and_names_the_script() {
         let mut app = with_findings(vec![judged(
-            Finding::Unclaim { id: "cb-a".into() },
-            "unclaim cb-a — Storm stalled",
+            Finding::Unassign { id: "cb-a".into(), priority: Some(2) },
+            "unassign cb-a — Storm is not running",
         )]);
         app.finish_sweep_refresh(
             Err(ReadError::Sweep { script: "sweep-epics".into(), cause: "bd exited 1".into() }),
@@ -5481,7 +5481,7 @@ mod tests {
         let rendered = body(&render(&app, 140, 30));
         let line = line_with(&rendered, "Sweeps 1");
         assert!(line.contains("sweep-epics failed"), "{line:?}");
-        assert!(rendered.iter().any(|l| l.contains("unclaim cb-a")), "{rendered:#?}");
+        assert!(rendered.iter().any(|l| l.contains("unassign cb-a")), "{rendered:#?}");
     }
 
     /// A stranded P0 is gold and the rest are not. The whole of the escalation.
@@ -5506,23 +5506,23 @@ mod tests {
     #[test]
     fn the_cursor_line_is_highlighted() {
         let mut app = with_findings(vec![
-            judged(Finding::Unclaim { id: "cb-a".into() }, "unclaim cb-a — Storm stalled"),
-            judged(Finding::Reclaim { id: "cb-b".into() }, "reclaim cb-b — Storm gone"),
+            judged(Finding::Unassign { id: "cb-a".into(), priority: Some(2) }, "unassign cb-a — Storm is not running"),
+            judged(Finding::Recheck { id: "cb-b".into(), priority: Some(2) }, "recheck cb-b — verdict at 0b444332, 2 merges since"),
         ]);
-        app.work_cursor = Some(app::WorkCursor::Finding("reclaim:cb-b".into()));
+        app.work_cursor = Some(app::WorkCursor::Finding("recheck:cb-b".into()));
         let buffer = render(&app, 140, 30);
-        assert_eq!(style_where(&buffer, "reclaim cb-b").bg, Some(SELECTED_BG));
-        assert_ne!(style_where(&buffer, "unclaim cb-a").bg, Some(SELECTED_BG));
+        assert_eq!(style_where(&buffer, "recheck cb-b").bg, Some(SELECTED_BG));
+        assert_ne!(style_where(&buffer, "unassign cb-a").bg, Some(SELECTED_BG));
     }
 
     /// Cells, not chars, and the pane's own width: a label carrying a wide glyph cut by `chars`
     /// would push the border off the row.
     #[test]
     fn a_sweep_line_is_cut_at_the_pane_width() {
-        let long = format!("unclaim cb-a — {}", "覚".repeat(60));
-        let app = with_findings(vec![judged(Finding::Unclaim { id: "cb-a".into() }, &long)]);
+        let long = format!("unassign cb-a — {}", "覚".repeat(60));
+        let app = with_findings(vec![judged(Finding::Unassign { id: "cb-a".into(), priority: Some(2) }, &long)]);
         let rendered = body(&render(&app, 140, 30));
-        let line = line_with(&rendered, "unclaim cb-a");
+        let line = line_with(&rendered, "unassign cb-a");
         // The pane's own inner width, whatever the layout gave it - the assertion is that the
         // label was cut in CELLS, not that the pane is a particular size.
         assert!(
@@ -5538,8 +5538,8 @@ mod tests {
     #[test]
     fn x_act_is_hinted_only_when_there_is_a_finding() {
         let mut app = with_findings(vec![judged(
-            Finding::Unclaim { id: "cb-a".into() },
-            "unclaim cb-a — Storm stalled",
+            Finding::Unassign { id: "cb-a".into(), priority: Some(2) },
+            "unassign cb-a — Storm is not running",
         )]);
         app.set_supervision(SupervisionMode::ReadOnly(ReadOnlyReason::NotOwned));
         let header = lines(&render(&app, 160, 30))[0].clone();
@@ -5560,8 +5560,8 @@ mod tests {
                 text: "Disarm Xavier? The view will stop bringing it back.  y / n".into(),
             },
             Prompt::Sweep {
-                finding: Finding::Unclaim { id: "cb-a".into() },
-                text: "run bd unclaim cb-a ?  y / n".into(),
+                finding: Finding::Unassign { id: "cb-a".into(), priority: Some(2) },
+                text: "run bd close cb-a ?  y / n".into(),
             },
         ];
         for prompt in variants {
@@ -6334,8 +6334,8 @@ mod tests {
         );
 
         let findings = with_findings(vec![judged(
-            Finding::Unclaim { id: "cb-a".into() },
-            "unclaim cb-a — Storm stalled",
+            Finding::Unassign { id: "cb-a".into(), priority: Some(2) },
+            "unassign cb-a — Storm is not running",
         )]);
         assert!(
             hint_clauses(&findings)
@@ -6707,7 +6707,7 @@ mod tests {
         assert_eq!(clauses[at].rank, HintRank::Optional);
         assert_eq!(clauses[at + 1].text, "h health");
         let mut app = give_app(false);
-        app.work_cursor = Some(app::WorkCursor::Finding("unclaim:cb-a".into()));
+        app.work_cursor = Some(app::WorkCursor::Finding("unassign:cb-a".into()));
         assert!(!hint_clauses(&app).iter().any(|c| c.text == "a give"));
     }
 }

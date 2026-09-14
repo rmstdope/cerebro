@@ -26,8 +26,8 @@ acceptance artifact — read it before changing what runs where.
 | Tell an implementer to finish | `f` | ah-4ao |
 | Kill an agent | `k` | ah-vcf.3 (PR #229) |
 | Claimed / planned / unplanned / merged counts | (the beads panel) | PR #6 |
-| Worktree pruning | (automatic, with the fleet view) | ah-4ao |
-| Claims sweep — detection and confirmed close/reclaim | `x` on a finding | ah-4ao |
+| Worktree pruning — retired (cb-10d.4): the fleet view takes back and tidies itself | (automatic, with the fleet view) | ah-4ao |
+| Claims sweep — detection and confirmed close/reclaim — retired (cb-10d.4): the fleet view takes back and tidies itself | `x` on a finding | ah-4ao |
 | Epics sweep — detection and confirmed close | `x` on a finding | ah-4ao |
 
 Every one of these was a paragraph of judgement in `orchestrator.md` that turned out, on inspection,
@@ -46,6 +46,9 @@ fully automatic, because `prune-worktrees.sh`'s own guards (clean tree, work alr
 untouched for half an hour) can only ever discard a copy of something that is safely elsewhere —
 there is nothing here for a confirmation to protect against — and one named worktree, `psylocke`,
 that is kept by name because it is reset rather than merged.
+
+Since cb-10d.4 there is no watcher: the view removes a recorded tree when its owner leaves, and
+Cerebro runs the one-shot sweep every two hours.
 
 ## Stays with a session, started when wanted
 

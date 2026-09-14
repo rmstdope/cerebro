@@ -28,16 +28,15 @@
 #
 # Three things this file deliberately does not do:
 #
-#   * It never emits an `in_progress` bead. A live claim is `sweep-claims.sh's and
-#     `sweep-stalled.sh's business, and emitting it here would put two lines in front of the
-#     navigator for one bead.
+#   * It never emits an `in_progress` bead. A live claim is the fleet view's to release when its
+#     session is gone.
 #   * It judges nothing. Whether the assignee is on the roster, whether that session is alive, and
 #     whether the bead is inside its grace period are all `cerebro--assignee-finding's, which is pure
 #     and therefore testable; a filter here would move a guard somewhere it cannot be tested.
 #   * `age_min` is measured from `updated_at', and an edit resets it. That is right rather than a
 #     compromise: a bead somebody has just touched is one somebody is attending to. It is also the
 #     only clock available - an open bead has no lease, so there is no `lease_expires_at' to measure
-#     from as `sweep-claims.sh' does.
+#     from as a claim's lease does.
 
 set -uo pipefail
 

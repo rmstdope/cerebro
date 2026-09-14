@@ -502,9 +502,8 @@ candidate and never reaches you.
 
   then plan it like any other bead. This is the repair the navigator made by hand on `ah-lyg6`.
 
-**Never leave an epic carrying `planned`.** Two things go wrong at once and neither is visible. The
-implementer's pickup is `bd ready … --exclude-type epic --claim`, so no implementer can ever claim
-it; and `scripts/planner-buffer` counts it as buffer, because it counts what `work-beads --status
+**Never leave an epic carrying `planned`.** Two things go wrong at once and neither is visible.
+`scripts/assignable-beads` excludes epics, so no implementer is ever given it; and `scripts/planner-buffer` counts it as buffer, because it counts what `work-beads --status
 open` returns and that list carries a childless epic since cb-hzl. The buffer then reads one higher
 than the work an implementer can actually take, for ever, and the fleet stops starting planners for
 a queue that is short.

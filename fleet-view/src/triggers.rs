@@ -259,6 +259,10 @@ pub struct TriggerFacts {
     pub actionable_ids: Vec<String>,
     /// Ids of the planned, unclaimed, unparked beads - what an implementer may actually claim.
     pub planned_ids: Vec<String>,
+    /// The beads the next implementer start may be handed: `WorkBuckets::assignable` minus every
+    /// bead already spoken for (`spoken_for`), in the script's order. `take` removes one handed out
+    /// earlier in the same tick (cb-10d.1).
+    pub assignable_ids: Vec<String>,
     /// Ids of the unplanned, unparked beads at priority 4, sorted, so the same set in a different
     /// bucket order is the same set.
     pub unranked_ids: Vec<String>,
@@ -329,6 +333,7 @@ impl TriggerFacts {
         buckets: &WorkBuckets,
         roster: &[RosterEntry],
         in_flight: BTreeMap<String, usize>,
+        spoken_for: &std::collections::BTreeSet<String>,
         flagged: impl Fn(&str) -> bool,
         gh: GhAnswer,
         planner_multiple: usize,
@@ -415,6 +420,12 @@ impl TriggerFacts {
                 .collect(),
             ux_agreed: agreed.len(),
             planned_ids: planned.iter().map(|bead| bead.id.clone()).collect(),
+            assignable_ids: buckets
+                .assignable
+                .iter()
+                .filter(|id| !spoken_for.contains(*id))
+                .cloned()
+                .collect(),
             unranked_ids,
             merged_unverified: buckets.merged.len(),
             stale_verdicts,
@@ -440,8 +451,12 @@ impl TriggerFacts {
     /// The work of ROLE that no in-flight session will take, or `None` for a role this rule does
     /// not gate. Never negative: `saturating_sub`.
     ///
-    ///   planner     -> actionable_ids.len() - in_flight["planner"]
-    ///   implementer -> planned_ids.len()    - in_flight["implementer"]
+    ///   planner      -> actionable_ids.len()  - in_flight["planner"]
+    ///   ux           -> undesigned_ids.len()  - in_flight["ux"]
+    ///   build-design -> ux_agreed_ids.len()   - in_flight["build-design"]
+    ///
+    /// An implementer is not gated here since cb-10d.1: the view hands each one a bead no row or
+    /// record holds (`next_bead`, `spoken_for`), so there is nothing left to guess.
     ///
     /// One number covers BOTH planner arms: a P0 is unplanned and not P4, so `p0_unplanned` is a
     /// subset of `actionable_ids`, and a planner in flight takes the P0 first because
@@ -449,7 +464,6 @@ impl TriggerFacts {
     pub fn headroom(&self, role: &str) -> Option<usize> {
         let available = match role {
             "planner" => self.actionable_ids.len(),
-            "implementer" => self.planned_ids.len(),
             "ux" => self.undesigned_ids.len(),
             "build-design" => self.ux_agreed_ids.len(),
             _ => return None,
@@ -638,8 +652,8 @@ fn condition(facts: &TriggerFacts, agent: &AgentFacts<'_>) -> Option<String> {
             (facts.merged_unverified > 0)
                 .then(|| format!("{} merged, unverified", facts.merged_unverified))
         }
-        "implementer" => (facts.headroom("implementer").unwrap_or(0) > 0)
-            .then(|| format!("{} planned, unclaimed", facts.planned_ids.len())),
+        "implementer" => (!facts.assignable_ids.is_empty())
+            .then(|| format!("{} planned, unclaimed", facts.assignable_ids.len())),
         "orchestrator" => (!facts.unranked_ids.is_empty())
             .then(|| format!("{} unranked", facts.unranked_ids.len())),
         // First true wins, and the order is who is waiting: an issue is a person, a linked bead
@@ -906,6 +920,34 @@ pub fn no_headroom(facts: &TriggerFacts, role: &str, taken: usize) -> bool {
     facts.headroom(role).is_some_and(|free| taken >= free)
 }
 
+/// The bead the next implementer start is given: the first assignable one, or `None` (cb-10d.1).
+pub fn next_bead(facts: &TriggerFacts) -> Option<&str> {
+    facts.assignable_ids.first().map(String::as_str)
+}
+
+impl TriggerFacts {
+    /// Remove ID from `assignable_ids`: a bead handed out earlier in THIS tick is not handed
+    /// again. The whole of the implementer's within-tick rule since cb-10d.1.
+    pub fn take(&mut self, id: &str) {
+        self.assignable_ids.retain(|candidate| candidate != id);
+    }
+}
+
+/// Every bead a row's state file names, every bead in HANDED, and every bead a give-back is still
+/// carrying (RELEASING) - the ids no start may be given. Releasing counts because a bead handed
+/// straight back to the same name while its release runs would be unclaimed under a live session.
+pub fn spoken_for(
+    rows: &[FleetRow],
+    handed: &BTreeMap<String, String>,
+    releasing: &BTreeMap<String, crate::model::Releasing>,
+) -> std::collections::BTreeSet<String> {
+    rows.iter()
+        .filter_map(|row| row.bead.clone())
+        .chain(handed.values().cloned())
+        .chain(releasing.values().map(|entry| entry.bead.clone()))
+        .collect()
+}
+
 /// The other holders of ROLE, excluding NAME itself - who a start could race with
 /// (`cerebro--role-peers`). A role with one holder has none, which is what makes this answer "no"
 /// for every role but the planners and the implementers without naming any of them.
@@ -1097,6 +1139,7 @@ mod tests {
             &partition_beads(beads),
             &roster,
             flight.iter().map(|(r, n)| ((*r).to_string(), *n)).collect(),
+            &std::collections::BTreeSet::new(),
             |_| false,
             GhAnswer::Unanswered,
             1,
@@ -1238,6 +1281,7 @@ mod tests {
                 &partition_beads(beads),
                 &roster,
                 std::collections::BTreeMap::new(),
+                &std::collections::BTreeSet::new(),
                 |_| false,
                 GhAnswer::Unanswered,
                 1,
@@ -1413,17 +1457,82 @@ mod tests {
         );
     }
 
-    #[test]
-    fn one_planned_bead_starts_one_implementer() {
-        let beads = || vec![bead("cb-p1", "open", &["planned"], 2)];
-        let free = facts_for(beads(), &[]);
-        let taken = facts_for(beads(), &[("implementer", 1)]);
+    fn assignable_facts(assignable: &[&str], spoken: &[&str]) -> TriggerFacts {
+        let buckets = WorkBuckets {
+            assignable: assignable.iter().map(|id| id.to_string()).collect(),
+            ..WorkBuckets::default()
+        };
+        TriggerFacts::derive(
+            &buckets,
+            &roster(&[("Cyclops", "implementer")]),
+            BTreeMap::new(),
+            &spoken.iter().map(|id| id.to_string()).collect(),
+            |_| false,
+            GhAnswer::Unanswered,
+            1,
+        )
+    }
 
+    #[test]
+    fn an_implementer_starts_only_for_a_bead_nobody_holds() {
+        let one = assignable_facts(&["cb-a", "cb-b"], &["cb-a"]);
         assert_eq!(
-            condition(&free, &agent_of("implementer")),
+            condition(&one, &agent_of("implementer")),
             Some("1 planned, unclaimed".to_string())
         );
-        assert_eq!(condition(&taken, &agent_of("implementer")), None);
+        assert_eq!(next_bead(&one), Some("cb-b"));
+
+        let none = assignable_facts(&["cb-a", "cb-b"], &["cb-a", "cb-b"]);
+        assert_eq!(condition(&none, &agent_of("implementer")), None);
+        assert_eq!(next_bead(&none), None);
+        assert_eq!(
+            standby_label("implementer", &none, agent_of("implementer"), at(0)).as_deref(),
+            Some("\u{2192} planned")
+        );
+    }
+
+    #[test]
+    fn taking_a_bead_removes_it_for_the_rest_of_the_tick() {
+        let mut facts = assignable_facts(&["cb-a", "cb-b"], &[]);
+        facts.take("cb-a");
+        assert_eq!(next_bead(&facts), Some("cb-b"));
+        facts.take("cb-b");
+        assert_eq!(next_bead(&facts), None);
+        assert_eq!(condition(&facts, &agent_of("implementer")), None);
+    }
+
+    #[test]
+    fn headroom_no_longer_gates_implementers() {
+        let mut facts = assignable_facts(&["cb-a"], &[]);
+        facts.in_flight = [("implementer".to_string(), 5)].into_iter().collect();
+        assert_eq!(facts.headroom("implementer"), None);
+        assert!(!no_headroom(&facts, "implementer", 9));
+        assert_eq!(
+            condition(&facts, &agent_of("implementer")),
+            Some("1 planned, unclaimed".to_string())
+        );
+    }
+
+    #[test]
+    fn spoken_for_is_row_beads_handed_and_releasing() {
+        let rows = vec![
+            row("Cyclops", "implementer", RowState::Working, Some("cb-1")),
+            row("Storm", "implementer", RowState::Standby, None),
+        ];
+        let handed: BTreeMap<String, String> =
+            [("Storm".to_string(), "cb-2".to_string())].into_iter().collect();
+        let releasing: BTreeMap<String, crate::model::Releasing> = [(
+            "Rogue".to_string(),
+            crate::model::Releasing {
+                bead: "cb-3".to_string(),
+                failed_at: None,
+                cause: crate::lifecycle::GiveBack::DidNotStart,
+            },
+        )]
+        .into_iter()
+        .collect();
+        let spoken: Vec<String> = spoken_for(&rows, &handed, &releasing).into_iter().collect();
+        assert_eq!(spoken, ["cb-1", "cb-2", "cb-3"]);
     }
 
     #[test]
@@ -1489,7 +1598,6 @@ mod tests {
                     facts.planner_multiple = 1;
                     assert_eq!(facts.planner_want(), number(fields[5]), "row: {line}");
                 }
-                "implementer" => facts.planned_ids = ids("cb-p"),
                 other => panic!("start-headroom.cases: unknown role {other}"),
             }
 
@@ -1513,17 +1621,16 @@ mod tests {
             assert_eq!(cell == "\u{2192} 0 free", expected_zero, "row: {line}");
             rows += 1;
         }
-        assert!(rows >= 15, "start-headroom.cases: only {rows} rows ran");
+        assert!(rows >= 11, "start-headroom.cases: only {rows} rows ran");
     }
 
     #[test]
     fn a_row_held_by_headroom_reads_zero_free() {
         let now = at(0);
-        let planned = || vec![bead("cb-p1", "open", &["planned"], 2)];
         let unplanned = || vec![bead("cb-b1", "open", &[], 2)];
 
+        // Planner only since cb-10d.1: an implementer is no longer held by headroom.
         for (role, beads) in [
-            ("implementer", planned as fn() -> Vec<Bead>),
             ("planner", unplanned as fn() -> Vec<Bead>),
         ] {
             let free = facts_for(beads(), &[]);
@@ -1561,23 +1668,16 @@ mod tests {
                 &buckets,
                 &roster,
                 flight.iter().map(|(r, n)| ((*r).to_string(), *n)).collect(),
+                &std::collections::BTreeSet::new(),
                 |_| false,
                 GhAnswer::Unanswered,
                 1,
             )
         };
 
-        assert_eq!(facts_with(&[]).headroom("implementer"), Some(4));
-        assert_eq!(
-            facts_with(&[("implementer", 2)]).headroom("implementer"),
-            Some(2)
-        );
-        // Saturating, not wrapping: more sessions in flight than work.
-        assert_eq!(
-            facts_with(&[("implementer", 9)]).headroom("implementer"),
-            Some(0)
-        );
         assert_eq!(facts_with(&[]).headroom("planner"), Some(1));
+        // Saturating, not wrapping: more sessions in flight than work.
+        assert_eq!(facts_with(&[("planner", 9)]).headroom("planner"), Some(0));
         assert_eq!(facts_with(&[("planner", 1)]).headroom("planner"), Some(0));
         // A role this rule does not gate.
         assert_eq!(facts_with(&[]).headroom("verifier"), None);
@@ -1656,7 +1756,7 @@ mod tests {
             ("Storm", "implementer"),
         ]);
         // Storm has been told to finish: it takes no further bead, so it is not counted.
-        let facts = TriggerFacts::derive(&buckets, &roster, BTreeMap::new(), |name| name == "Storm", GhAnswer::Unanswered, 1);
+        let facts = TriggerFacts::derive(&buckets, &roster, BTreeMap::new(), &std::collections::BTreeSet::new(), |name| name == "Storm", GhAnswer::Unanswered, 1);
 
         assert_eq!(facts.p0_unplanned, vec!["cb-9zz".to_string()]);
         assert_eq!(facts.planned, 2);
@@ -1684,7 +1784,7 @@ mod tests {
         let roster = roster(&[("Xavier", "planner"), ("Cyclops", "implementer")]);
         let facts_of = |priority: u8| {
             let buckets = partition_beads(vec![bead("cb-agg", "open", &[], priority)]);
-            TriggerFacts::derive(&buckets, &roster, BTreeMap::new(), |_| false, GhAnswer::Unanswered, 1)
+            TriggerFacts::derive(&buckets, &roster, BTreeMap::new(), &std::collections::BTreeSet::new(), |_| false, GhAnswer::Unanswered, 1)
         };
         let unranked = facts_of(4);
         let ranked = facts_of(2);
@@ -1766,6 +1866,7 @@ mod tests {
             planned: 0,
             actionable_ids: Vec::new(),
             planned_ids: Vec::new(),
+            assignable_ids: Vec::new(),
             unranked_ids: Vec::new(),
             merged_unverified: 0,
             stale_verdicts: 0,
@@ -1823,7 +1924,7 @@ mod tests {
         );
 
         let mut planned = empty_facts();
-        planned.planned_ids = vec!["cb-a".into(), "cb-b".into(), "cb-c".into()];
+        planned.assignable_ids = vec!["cb-a".into(), "cb-b".into(), "cb-c".into()];
         assert_eq!(
             trigger(&planned, agent("implementer"), at(0)),
             Some("3 planned, unclaimed".to_string())
@@ -1871,6 +1972,7 @@ mod tests {
     fn a_pass_that_changed_nothing_does_not_start_another() {
         let mut facts = empty_facts();
         facts.planned_ids = vec!["cb-a".into()];
+        facts.assignable_ids = vec!["cb-a".into()];
         let print = fingerprint("implementer", &facts).expect("an implementer has one");
         let held = AgentFacts {
             role: "implementer",
@@ -1883,6 +1985,7 @@ mod tests {
         // One more planned bead is work the last pass did not see.
         let mut moved = facts.clone();
         moved.planned_ids.push("cb-b".into());
+        moved.assignable_ids.push("cb-b".into());
         assert_eq!(
             trigger(&moved, held, at(120)),
             Some("2 planned, unclaimed".to_string())
@@ -1893,6 +1996,7 @@ mod tests {
     fn a_launch_that_never_became_a_pass_is_not_held() {
         let mut facts = empty_facts();
         facts.planned_ids = vec!["cb-a".into()];
+        facts.assignable_ids = vec!["cb-a".into()];
         let print = fingerprint("implementer", &facts).expect("an implementer has one");
         // Started, and no end recorded after it: the launch died before it became a pass.
         let never_ran = AgentFacts {
@@ -2199,7 +2303,7 @@ mod tests {
     }
 
     fn cadence_facts(gh: GhAnswer) -> TriggerFacts {
-        let mut facts = TriggerFacts::derive(&WorkBuckets::default(), &[], BTreeMap::new(), |_| false, gh, 1);
+        let mut facts = TriggerFacts::derive(&WorkBuckets::default(), &[], BTreeMap::new(), &std::collections::BTreeSet::new(), |_| false, gh, 1);
         facts.linked = Vec::new();
         facts
     }

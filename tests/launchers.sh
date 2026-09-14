@@ -1525,4 +1525,47 @@ grep -q 'cleared' <<<"$out" \
   && fail "launch Forge: with nothing cargo-ish set, no cleared line should be printed, got: $out"
 pass "launch says nothing when there was nothing cargo left behind"
 
+# --- launch --bead (cb-10d.1) -------------------------------------------------------------------
+#
+# A stub `assign-bead' records its argv and exits $ASSIGN_EXIT. The fixture holds a COPY, so the real
+# file is set aside and put back once these cases are done - no other case sees the stub.
+bead_name="$("$fixture_scripts/roster" --implementers | sed -n 1p)"
+assign_log="$stub_dir/assign.log"
+mv "$fixture_scripts/assign-bead" "$stub_dir/assign-bead.real"
+cat > "$fixture_scripts/assign-bead" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$assign_log"
+exit "\${ASSIGN_EXIT:-0}"
+STUB
+chmod +x "$fixture_scripts/assign-bead"
+
+rm -f "$assign_log"
+out="$(run_launcher launch "$bead_name" --bead cb-x 2>/dev/null)" \
+  || fail "launch --bead: an assigned bead starts the session"
+[[ "$(cat "$assign_log")" == "$bead_name cb-x" ]] || fail "launch --bead: assign-bead saw $(cat "$assign_log" 2>/dev/null)"
+grep -qF "Your bead is cb-x; it is already claimed for you." <<<"$out" \
+  || fail "launch --bead: the prompt names the bead, got: $out"
+grep -q '^ARG:--bead$' <<<"$out" && fail "launch --bead: --bead is not passed to the agent CLI"
+pass "launch with --bead claims before exec and names the bead in the prompt"
+
+rm -f "$assign_log"
+status=0
+out="$(ASSIGN_EXIT=3 run_launcher launch "$bead_name" --bead cb-x 2>/dev/null)" || status=$?
+[[ $status -eq 3 ]] || fail "launch --bead: an unavailable bead is exit 3, got $status"
+grep -q '^ARG:' <<<"$out" && fail "launch --bead: an unavailable bead starts no session, got: $out"
+pass "a bead that is not available exits 3 without starting the session"
+
+status=0
+err="$(ASSIGN_EXIT=1 run_launcher launch "$bead_name" --bead cb-x 2>&1 >/dev/null)" || status=$?
+[[ $status -eq 2 ]] || fail "launch --bead: a failed claim is exit 2, got $status"
+grep -qF "could not claim cb-x for $bead_name" <<<"$err" || fail "launch --bead: the refusal names the claim, got: $err"
+pass "a claim that fails is a refusal with exit 2"
+
+rm -f "$assign_log"
+run_launcher launch "$bead_name" >/dev/null 2>&1 || fail "launch without --bead still starts"
+[[ ! -e "$assign_log" ]] || fail "launch without --bead calls no assign-bead"
+pass "launch without --bead does not call assign-bead"
+
+mv -f "$stub_dir/assign-bead.real" "$fixture_scripts/assign-bead"
+
 suite_passed

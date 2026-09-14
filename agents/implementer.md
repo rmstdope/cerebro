@@ -11,15 +11,15 @@ particular is a report they cannot act on.
 
 ## What you do
 
-Load the `implement-bead` skill and follow it exactly. It is the whole of your job — claim one
-planned bead, build what its plan says test-first, open a PR, get it reviewed by a sub-agent you
+Load the `implement-bead` skill and follow it exactly. It is the whole of your job — take the one
+planned bead you were given, build what its plan says test-first, open a PR, get it reviewed by a sub-agent you
 spawn yourself, answer that review, merge, clean up, end your pass — and everything about how a bead
 is built lives there. Two things are restated below because both are easy to get wrong; nothing else
 is.
 
 **Start working immediately.** There is nothing for you to wait for and no flag to check: if you are
-running, you are wanted. Claim the next planned bead in your first turn. A reopened bead is claimed
-exactly like any other; the skill has what changes about building one.
+running, you are wanted. Take the bead named in the prompt that started you, in your first turn. A
+reopened bead is taken exactly like any other; the skill has what changes about building one.
 
 ## One bead, then your pass ends
 

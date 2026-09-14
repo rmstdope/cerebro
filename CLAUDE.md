@@ -281,7 +281,7 @@ planner`), which is the one place a name and a role stop being interchangeable:
   filing the beads the navigator asks for, by interview, through `write-bead`,
   handing a release
   request to the project's own release skill, diagnosing a stuck implementer, and anything needing a forced reassignment.
-- **implementer** (Sonnet) — loads `implement-bead`. One bead per session: claim, build test-first in
+- **implementer** (Sonnet) — loads `implement-bead`. One bead per session: given its bead by the fleet view, build test-first in
   its own git worktree, PR, spawn a `reviewer` sub-agent and answer what it finds, merge, close, end
   its pass with `waiting`.
   Interactive, so it cannot end itself — the fleet view ends it and starts a fresh session when
@@ -377,15 +377,17 @@ These are load-bearing; changing them changes how the fleet behaves in every con
 - **Nothing merges unreviewed, red, or stale.** The implementer's standing approval to merge without
   asking comes from the consumer repo's CLAUDE.md ("Four Eye Principle") and applies only to a
   planned bead.
-- **A session is started only for work nobody is already coming for.** Since cb-cz7 the planner
-  and implementer conditions subtract the live
+- **A session is started only for work nobody is already coming for.** Since cb-cz7 the planner,
+  `ux` and `build-design` conditions subtract the live
   sessions of their own role that name no bead (`triggers::in_flight`, `cerebro--in-flight`) from
   the work they read, and a headroom of zero starts nobody and shows `→ 0 free` on the row. Both
   views answer `tests/lib/start-headroom.cases`, and each carries its own half of the within-tick
   rule (`triggers::no_headroom`, `cerebro--no-headroom-p`): a start made in one pass of the start
   loop is subtracted from the headroom the next row is judged against, since the fleet read that
   would show it up is five seconds away. The spacing in the bullet below stays, staggering the
-  boots a real queue does justify.
+  boots a real queue does justify. **An implementer is not gated by headroom since cb-10d.1**: the
+  view hands it a bead no row or record holds (`scripts/assign-bead`, `App::handed`), and a bead
+  handed out earlier in a tick is taken out of the rest of that tick.
 - **A role more than one agent holds is started one at a time.** The planners answer the same buffer
   rule off the same panel, so a tick where it is true is true for both, and the view started Xavier and
   Beast in one breath. They then race for one candidate over the startup window the planner bullet
@@ -442,8 +444,10 @@ Since cb-kcs.4.1 it also **starts** sessions on its own: the roster's `autostart
 declaration is honoured as the view comes up, and the board-backed triggers for the planner,
 implementer, verifier and orchestrator roles bring a blue `standby` row back — held back by a
 per-role wake floor, the unchanged-work fingerprint, role-start spacing and, since cb-cz7, the
-**start headroom**: available work minus the live sessions of that role that name no bead yet, so
-one planned bead starts exactly one builder and four still staff four. A row held by it reads
+**start headroom**: available work minus the live sessions of that role that name no bead yet, for
+the planning roles. Since cb-10d.1 a builder starts only for a bead no row or record holds, and is
+handed that bead: its row reads a blue `starting <id>` until its session reports, and a start that
+goes away unreported gives the bead back with a gold line in the header. A row held by it reads
 `→ 0 free`, and a start made inside one tick reduces the headroom the next row in the same loop is
 judged against — the fleet read that would show the first one up is five seconds away.
 `tests/lib/start-headroom.cases` is the table both views answer, for `supervise.cases`' reason. Every successful
@@ -894,6 +898,18 @@ and the key hint stays `g retry` until both panes are fresh.
   to plan and was woken again by the same bead. Priority stays at the two call sites, because
   *which* candidate and in what order is policy the skill explains at length. `tests/plan-candidates.sh`
   is its suite.
+- **`scripts/assignable-beads` is the one place "which beads may an implementer be given" is
+  answered** (cb-10d.1) — `bd ready --label planned`, excluding `human`, `verdict:stale` and epics,
+  sorted by priority then id; `bd ready` because it hides a bead with an open blocker. The fleet
+  view's work reader and `scripts/assign-bead` both call it, so they cannot disagree.
+  `scripts/assign-bead <Name> <id>` (called by `scripts/launch --bead`, after the preflight and
+  before exec) and `scripts/release-bead <Name> <id>` are its two writers: the first claims **as
+  the agent** (`--actor`) and exits 3 rather than 2 for a bead somebody took meanwhile, so losing a
+  race costs a retry and not a parked name; the second answers one word and exits 0 for all four,
+  because the view's command runner throws stdout away on a non-zero exit. Between them sits
+  `.cerebro/state/<Name>.handover` — written by `assign-bead`, removed by `agent-state` on the
+  agent's first write and by `release-bead` — which is what lets a view that died between handing
+  and starting give the bead back after `HANDOVER_GRACE_SECONDS`.
 - `scripts/app-paths` is the one place "which paths are this project's application" is answered
   (ah-qled.6) — the `app_paths` key, and `--classify <path>...` over changed paths. Unlike every
   other reader here it **fails when it does not know**: no declaration means exit 3 and a line on

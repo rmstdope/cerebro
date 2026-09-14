@@ -181,12 +181,20 @@ pub fn supervise_action(agent: Supervised<'_>) -> Option<Supervision> {
     if agent.state == &RowState::Standby {
         return agent.stop_flag.then_some(Supervision::Retire);
     }
+    // A starting row has been handed a bead and has no session that has reported: there is
+    // nothing to end, retire or resume, and a stop flag only draws its marker (cb-10d.1). A start
+    // that goes away is `main::give_back`'s, not supervision's.
+    if agent.state == &RowState::Starting {
+        return None;
+    }
     // The guard that wraps everything else: a session this view did not start is somebody else's
     // to end, and a dead one stays dead.
     if !agent.ours {
         return None;
     }
     match agent.state {
+        // Returned above; stated for the compiler rather than for the rule.
+        RowState::Starting => None,
         RowState::Idle => match agent.kind {
             AgentKind::Implementer => agent.stop_flag.then_some(Supervision::Retire),
             AgentKind::Interactive => {
@@ -644,6 +652,9 @@ pub enum KillOutcome {
     /// question was asked - a standby row is disarmed, anything else is killed - so the sentence
     /// and the action it confirms are decided in one place and cannot drift apart.
     Confirm { prompt: String, disarm: bool },
+    /// `k` on a starting row (cb-10d.1): the standby row's own disarm question, and on `y` the
+    /// start is stopped, the name disarmed and the handed bead given back.
+    ConfirmStop { prompt: String },
     Refuse(String),
     Ignore,
 }
@@ -654,8 +665,14 @@ pub enum KillOutcome {
 /// there is no process anywhere under that name. Without it here, `s` on a backing-off row -
 /// which is the row a navigator most wants to start by hand, the backoff being the whole reason
 /// it is not starting itself - refuses with `is running outside this view`.
+///
+/// `Starting` is not either (cb-10d.1): it is a row this view handed a bead whose session has not
+/// reported, and it is restated from `Dead` or `Standby` only.
 pub fn row_is_alive(row: &FleetRow) -> bool {
-    !matches!(row.state, RowState::Dead | RowState::Invalid | RowState::Standby)
+    !matches!(
+        row.state,
+        RowState::Dead | RowState::Invalid | RowState::Standby | RowState::Starting
+    )
 }
 
 /// What `s` decides, in this order.
@@ -706,6 +723,9 @@ pub fn kill_outcome(situation: Situation<'_>) -> KillOutcome {
     }
     // Ahead of the two rules that refuse a name that is not running: a standby row hosts no
     // session by construction, and `k` on one means disarm rather than kill.
+    if row.state == RowState::Starting {
+        return KillOutcome::ConfirmStop { prompt: disarm_prompt(&row.name) };
+    }
     if row.state == RowState::Standby {
         return KillOutcome::Confirm { prompt: disarm_prompt(&row.name), disarm: true };
     }
@@ -745,6 +765,117 @@ fn disarm_prompt(name: &str) -> String {
 /// question and the outcome match.
 pub fn disarm_notice(name: &str) -> String {
     format!("{name} is disarmed; the view will not bring it back.")
+}
+
+/// Why a bead the view handed an implementer is being given back (cb-10d.1).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GiveBack {
+    /// The launcher refused, or the start crashed.
+    DidNotStart,
+    /// A handover file found with no session behind it - the view closed between handing and
+    /// starting.
+    NeverStarted,
+    /// `k` on a starting row.
+    Stopped,
+}
+
+impl GiveBack {
+    /// `did-not-start` | `never-started` | `stopped` - the `cause` field of the give-back line.
+    pub fn word(self) -> &'static str {
+        match self {
+            GiveBack::DidNotStart => "did-not-start",
+            GiveBack::NeverStarted => "never-started",
+            GiveBack::Stopped => "stopped",
+        }
+    }
+
+    /// The agreed header line, exactly.
+    pub fn notice(self, name: &str, bead: &str) -> String {
+        match self {
+            GiveBack::DidNotStart => {
+                format!("{name} did not start; {bead} is back with the planned work.")
+            }
+            GiveBack::NeverStarted => {
+                format!("{name} never started; {bead} is back with the planned work.")
+            }
+            GiveBack::Stopped => format!("{name} was stopped; {bead} is back with the planned work."),
+        }
+    }
+}
+
+/// What `scripts/release-bead` came to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ReleaseOutcome {
+    /// `released` or `free`: TEXT is `GiveBack::notice`.
+    Returned { text: String },
+    /// `elsewhere` or `running`: nothing to say.
+    Elsewhere,
+    /// Non-zero exit, a timeout, or a word this crate does not know.
+    Failed { text: String },
+}
+
+/// One `bd show`, one `bd unclaim` and one `bd dolt push`, each bounded like `WRITE_TIMEOUT`.
+const RELEASE_TIMEOUT: Duration = Duration::from_secs(45);
+
+/// How old a handover file this view did not write must be before it is given back: a navigator's
+/// hand-typed launch is still in its preflight for some seconds before the agent process exists.
+pub const HANDOVER_GRACE_SECONDS: i64 = 60;
+
+/// Run `<scripts_dir>/release-bead NAME BEAD` in the shared root on `RELEASE_TIMEOUT`, and read
+/// its one word.
+pub fn release_bead(
+    paths: &ReaderPaths,
+    commands: &dyn CommandRunner,
+    name: &str,
+    bead: &str,
+    cause: GiveBack,
+) -> ReleaseOutcome {
+    let program = paths.scripts_dir.join("release-bead");
+    let failed = || ReleaseOutcome::Failed {
+        text: format!("{bead} could not be given back from {name} \u{2014} release-bead failed"),
+    };
+    match commands.run(&program, &[name, bead], Some(&paths.shared_root), RELEASE_TIMEOUT) {
+        Ok(stdout) => match String::from_utf8_lossy(&stdout).trim() {
+            "released" | "free" => ReleaseOutcome::Returned { text: cause.notice(name, bead) },
+            "elsewhere" | "running" => ReleaseOutcome::Elsewhere,
+            _ => failed(),
+        },
+        Err(_) => failed(),
+    }
+}
+
+/// `<shared root>/.cerebro/state/<name>.handover`, beside `stop_flag_path`: written by
+/// `scripts/assign-bead`, removed by `scripts/agent-state` and `scripts/release-bead`.
+pub fn handover_path(paths: &ReaderPaths, name: &str) -> PathBuf {
+    state_dir(paths).join(format!("{name}.handover"))
+}
+
+/// The handover file's first line and its age in whole seconds at NOW, or `None` when it is
+/// absent, empty or unreadable.
+pub fn read_handover(
+    paths: &ReaderPaths,
+    name: &str,
+    now: std::time::SystemTime,
+) -> Option<(String, i64)> {
+    let path = handover_path(paths, name);
+    let text = std::fs::read_to_string(&path).ok()?;
+    let bead = text.lines().next()?.trim().to_string();
+    if bead.is_empty() {
+        return None;
+    }
+    let modified = std::fs::metadata(&path).ok()?.modified().ok()?;
+    let age = now.duration_since(modified).map(|d| d.as_secs() as i64).unwrap_or(0);
+    Some((bead, age))
+}
+
+/// Is a handover this view did not record a bead to give back? Pure.
+pub fn orphaned_handover(
+    hosted_live: bool,
+    row_alive: bool,
+    releasing: bool,
+    age_seconds: i64,
+) -> bool {
+    !hosted_live && !row_alive && !releasing && age_seconds >= HANDOVER_GRACE_SECONDS
 }
 
 /// What the header says when a handover empties the armed set (cb-nc8).
@@ -1020,6 +1151,7 @@ pub fn start(
     paths: &ReaderPaths,
     name: &str,
     clears_flag: bool,
+    bead: Option<&str>,
 ) -> Result<String, ReadError> {
     if clears_flag {
         clear_stop_flag(paths, name).map_err(|error| ReadError::Spawn {
@@ -1030,7 +1162,7 @@ pub fn start(
     // A state file that could not be removed is not a reason to refuse a start: the agent's own
     // first transition overwrites it, and refusing here would leave a name unstartable.
     let _ = delete_state_file(paths, name);
-    host.spawn(name, paths)?;
+    host.spawn(name, paths, bead)?;
     Ok(if clears_flag {
         format!("Started {name}, and cleared a stale stop flag.")
     } else {
@@ -1043,6 +1175,135 @@ mod tests {
     use super::*;
     use crate::readers::testing::FakeCommands;
     use crate::supervisor::ReadOnlyReason;
+
+    // ---- cb-10d.1: giving a handed bead back -------------------------------------------------
+
+    #[test]
+    fn release_bead_reads_the_scripts_one_word() {
+        let root = Path::new("/consumer");
+        let paths = paths(root);
+        for (answer, expected) in [
+            ("released\n", Some(ReleaseOutcome::Returned {
+                text: "Rogue did not start; cb-x is back with the planned work.".into(),
+            })),
+            ("free\n", Some(ReleaseOutcome::Returned {
+                text: "Rogue did not start; cb-x is back with the planned work.".into(),
+            })),
+            ("elsewhere\n", Some(ReleaseOutcome::Elsewhere)),
+            ("running\n", Some(ReleaseOutcome::Elsewhere)),
+            ("nonsense\n", None),
+        ] {
+            let fake = FakeCommands::new(move |_| Ok(answer.as_bytes().to_vec()));
+            let outcome = release_bead(&paths, &fake, "Rogue", "cb-x", GiveBack::DidNotStart);
+            match expected {
+                Some(expected) => assert_eq!(outcome, expected, "{answer}"),
+                None => assert!(matches!(outcome, ReleaseOutcome::Failed { .. }), "{answer}"),
+            }
+            let calls = fake.calls();
+            assert_eq!(calls[0].program, paths.scripts_dir.join("release-bead"));
+            assert_eq!(calls[0].args, ["Rogue", "cb-x"]);
+            assert_eq!(calls[0].cwd.as_deref(), Some(paths.shared_root.as_path()));
+        }
+        let failing = FakeCommands::failing(|| ReadError::Spawn {
+            source: "release-bead".into(),
+            message: "exit 1".into(),
+        });
+        assert!(matches!(
+            release_bead(&paths, &failing, "Rogue", "cb-x", GiveBack::Stopped),
+            ReleaseOutcome::Failed { .. }
+        ));
+    }
+
+    #[test]
+    fn the_give_back_sentences_are_exact() {
+        assert_eq!(
+            GiveBack::DidNotStart.notice("Rogue", "cb-4xz"),
+            "Rogue did not start; cb-4xz is back with the planned work."
+        );
+        assert_eq!(
+            GiveBack::NeverStarted.notice("Rogue", "cb-4xz"),
+            "Rogue never started; cb-4xz is back with the planned work."
+        );
+        assert_eq!(
+            GiveBack::Stopped.notice("Rogue", "cb-4xz"),
+            "Rogue was stopped; cb-4xz is back with the planned work."
+        );
+        let fake = FakeCommands::new(|_| Ok(b"what\n".to_vec()));
+        assert_eq!(
+            release_bead(&paths(Path::new("/c")), &fake, "Rogue", "cb-4xz", GiveBack::Stopped),
+            ReleaseOutcome::Failed {
+                text: "cb-4xz could not be given back from Rogue \u{2014} release-bead failed".into()
+            }
+        );
+        assert_eq!(GiveBack::DidNotStart.word(), "did-not-start");
+        assert_eq!(GiveBack::NeverStarted.word(), "never-started");
+        assert_eq!(GiveBack::Stopped.word(), "stopped");
+    }
+
+    fn starting_row(name: &str) -> FleetRow {
+        FleetRow {
+            name: name.into(),
+            role: "implementer".into(),
+            kind: AgentKind::Implementer,
+            state: RowState::Starting,
+            phase: None,
+            bead: None,
+            since: None,
+            phase_since: None,
+            turn_ended: None,
+            pid: None,
+            sessions: 0,
+            diagnostic: None,
+        }
+    }
+
+    #[test]
+    fn k_on_a_starting_row_asks_to_disarm_and_stops_the_start() {
+        let row = starting_row("Rogue");
+        for hosted in [false, true] {
+            let situation = Situation {
+                row: Some(&row),
+                mode: &SupervisionMode::Supervising,
+                hosted,
+                stop_flag: false,
+            };
+            assert_eq!(
+                kill_outcome(situation),
+                KillOutcome::ConfirmStop {
+                    prompt: "Disarm Rogue? The view will stop bringing it back.  y / n".into()
+                },
+                "hosted {hosted}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_starting_row_is_not_alive() {
+        assert!(!row_is_alive(&starting_row("Rogue")));
+    }
+
+    #[test]
+    fn an_orphaned_handover_waits_out_its_grace() {
+        assert!(!orphaned_handover(false, false, false, 59));
+        assert!(orphaned_handover(false, false, false, 60));
+        assert!(!orphaned_handover(true, false, false, 600));
+        assert!(!orphaned_handover(false, true, false, 600));
+        assert!(!orphaned_handover(false, false, true, 600));
+    }
+
+    #[test]
+    fn a_handover_file_is_read_with_its_age() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = paths(dir.path());
+        let now = std::time::SystemTime::now();
+        assert_eq!(read_handover(&paths, "Rogue", now), None);
+        std::fs::create_dir_all(dir.path().join(".cerebro/state")).unwrap();
+        std::fs::write(handover_path(&paths, "Rogue"), "cb-x\n").unwrap();
+        let later = now + std::time::Duration::from_secs(90);
+        let (bead, age) = read_handover(&paths, "Rogue", later).unwrap();
+        assert_eq!(bead, "cb-x");
+        assert!((89..=91).contains(&age), "{age}");
+    }
 
     #[test]
     fn a_verdict_names_a_refusal_a_code_or_nothing() {

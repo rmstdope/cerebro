@@ -96,6 +96,9 @@ pub enum Event {
     /// The one decision that disarms without a `retire` or `give-up` line per name, which is what
     /// made the incident it is named for invisible.
     DisarmAll,
+    /// A bead this view handed an implementer given back without the agent ever running on it
+    /// (cb-10d.1): `agent`, `bead`, `cause`. Written when the give-back is queued.
+    GiveBack,
     Error,
 }
 
@@ -118,6 +121,7 @@ impl Event {
             Self::Triage => "triage",
             Self::SweepTell => "sweep-tell",
             Self::DisarmAll => "disarm-all",
+            Self::GiveBack => "give-back",
             Self::Error => "error",
         }
     }

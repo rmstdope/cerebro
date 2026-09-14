@@ -208,6 +208,15 @@ phase="$(jq -r '.phase' "$f")"; [[ "$phase" == "gate" ]] || fail "old-format-fil
 rm -rf "$tmp"
 pass "old-format-file-is-fine"
 
+# --- any write removes the agent's handover file ---
+tmp="$(new_fixture)"
+mkdir -p "$tmp/.cerebro/state"
+printf 'cb-x\n' > "$tmp/.cerebro/state/Cyclops.handover"
+run_state "$tmp" Cyclops working --bead cb-x --phase build --pid $$
+[[ ! -e "$tmp/.cerebro/state/Cyclops.handover" ]] || fail "any write removes the agent's handover file"
+[[ -f "$(state_file "$tmp" Cyclops)" ]] || fail "the state file is still written beside the removal"
+pass "any write removes the agent's handover file"
+
 # --- no-tmp-left-behind ---
 tmp="$(new_fixture)"
 run_state "$tmp" Cyclops working --bead ah-f9c --phase build --pid 1

@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+#
+# Give back a bead the fleet view handed an implementer that never ran on it (cb-10d.1):
+#
+#     .claude/cerebro/scripts/release-bead <Name> <id>
+#
+# Prints EXACTLY ONE WORD on stdout and exits 0 for each of the four:
+#
+#   running    `agent-alive <Name>` succeeds - the session is up. Nothing is touched, not even the
+#              handover file, so a session a navigator launched by hand is never unclaimed under it.
+#   released   the bead was in_progress and NAME's, and `bd unclaim --if-assignee NAME` took it back
+#   free       the bead is open with no assignee: nothing to unclaim, it is with the planned work
+#   elsewhere  anything else - another agent holds it, it is closed, or the unclaim's
+#              compare-and-swap lost to somebody who took it meanwhile
+#
+#   exit 1  `bd` failed (including an unclaim that failed with the bead still NAME's)
+#   exit 2  usage
+#
+# All four words exit 0 because the fleet view's command runner (`readers::RealCommands::run`)
+# turns any non-zero exit into an error and throws stdout away.
+#
+# For released, free and elsewhere it removes `.cerebro/state/<Name>.handover` when that file names
+# THIS bead, and leaves a handover for a different bead alone. `scripts/assign-bead` writes that
+# file; `scripts/agent-state` removes it too. The push is advisory (.cerebro/traps.md).
+
+set -euo pipefail
+
+usage() {
+  echo "usage: release-bead <Name> <id>" >&2
+  exit 2
+}
+
+[[ $# -eq 2 && -n "$1" && -n "$2" ]] || usage
+name="$1"
+id="$2"
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if "$script_dir/agent-alive" "$name" >/dev/null 2>&1; then
+  echo running
+  exit 0
+fi
+
+root="$("$script_dir/consumer-root" --shared)"
+handover="$root/.cerebro/state/$name.handover"
+
+# Prints "<status><TAB><assignee>" for the bead, or fails.
+read_bead() {
+  local shown
+  shown="$(bd -C "$root" show "$id" --json)" || return 1
+  printf '%s' "$shown" \
+    | jq -r '(if type=="array" then .[0] else . end) | "\(.status // "")\t\(.assignee // "")"'
+}
+
+drop_handover() {
+  local held=""
+  if [[ -f "$handover" ]]; then
+    IFS= read -r held < "$handover" || true
+  fi
+  if [[ "$held" == "$id" ]]; then
+    rm -f "$handover"
+  fi
+  return 0
+}
+
+if ! fields="$(read_bead)"; then
+  exit 1
+fi
+IFS=$'\t' read -r status assignee <<<"$fields"
+
+word=elsewhere
+if [[ "$status" == "in_progress" && "$assignee" == "$name" ]]; then
+  if bd --actor "$name" -C "$root" unclaim "$id" --if-assignee "$name" \
+       --reason "Given back by the fleet view: $name never ran on it" >&2; then
+    word=released
+    bd -C "$root" dolt push >&2 \
+      || echo "release-bead: $id was given back from $name, but bd dolt push failed" >&2
+  else
+    if ! fields="$(read_bead)"; then
+      exit 1
+    fi
+    IFS=$'\t' read -r status assignee <<<"$fields"
+    if [[ "$status" == "in_progress" && "$assignee" == "$name" ]]; then
+      echo "release-bead: could not unclaim $id from $name" >&2
+      exit 1
+    fi
+  fi
+elif [[ "$status" == "open" && -z "$assignee" ]]; then
+  word=free
+fi
+
+drop_handover
+echo "$word"
+exit 0

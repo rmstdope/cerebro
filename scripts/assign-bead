@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+#
+# Hand a bead to an implementer before its session starts (cb-10d.1):
+#
+#     .claude/cerebro/scripts/assign-bead <Name> <id>
+#
+#   exit 0  the bead is claimed for NAME (newly, or it already was)
+#   exit 1  `bd` failed (its stderr passed through)
+#   exit 2  usage, NAME not on the roster, or NAME's kind is not `implementer`
+#   exit 3  the bead is not available to NAME: not in `scripts/assignable-beads`, and not already
+#           NAME's
+#
+# `scripts/launch <Name> --bead <id>` is its caller, after `launch-preflight` and before the agent
+# CLI is exec'd; so the fleet view and a hand-typed launch take the same path. The claim is made
+# with `--actor NAME`, because `--claim` sets the assignee to the actor, and without it the bead
+# would belong to whoever ran the view.
+#
+# THE HANDOVER FILE. `.cerebro/state/<Name>.handover` holds the id, and means "handed, not yet
+# reported". This script writes it (before the push, so a view that restarts during a slow push
+# still finds it); `scripts/agent-state` removes it on the agent's first write; and
+# `scripts/release-bead` removes it when the bead is given back.
+#
+# The push is advisory and never decides the exit status (.cerebro/traps.md, first entry).
+
+set -euo pipefail
+
+usage() {
+  echo "usage: assign-bead <Name> <id>" >&2
+  exit 2
+}
+
+[[ $# -eq 2 && -n "$1" && -n "$2" ]] || usage
+name="$1"
+id="$2"
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$script_dir/state-write.sh"
+
+if ! entry="$("$script_dir/roster" --entry "$name" 2>/dev/null)"; then
+  echo "assign-bead: $name is not on the roster" >&2
+  exit 2
+fi
+IFS=$'\t' read -r _ role kind <<<"$entry"
+if [[ "$kind" != "implementer" ]]; then
+  echo "assign-bead: $name is a $role; only implementers are handed a bead" >&2
+  exit 2
+fi
+
+root="$("$script_dir/consumer-root" --shared)"
+state="$root/.cerebro/state"
+mkdir -p "$state"
+
+if ! shown="$(bd -C "$root" show "$id" --json)"; then
+  exit 1
+fi
+if ! fields="$(printf '%s' "$shown" \
+      | jq -r '(if type=="array" then .[0] else . end) | "\(.status // "")\t\(.assignee // "")"')"; then
+  echo "assign-bead: bd show $id did not print JSON this script can read" >&2
+  exit 1
+fi
+IFS=$'\t' read -r status assignee <<<"$fields"
+
+if [[ "$status" == "in_progress" && "$assignee" == "$name" ]]; then
+  # Already NAME's. An agent that has already reported this bead must not acquire a handover a later
+  # give-back would act on.
+  reported=""
+  if [[ -f "$state/$name.state.json" ]]; then
+    reported="$(jq -r '.bead // empty' "$state/$name.state.json" 2>/dev/null || true)"
+  fi
+  if [[ "$reported" != "$id" ]]; then
+    cerebro_state_write_atomic "$state/$name.handover" printf '%s\n' "$id" || exit 1
+  fi
+  echo "assign-bead: $id is already claimed for $name" >&2
+  exit 0
+fi
+
+if ! assignable="$("$script_dir/assignable-beads")"; then
+  exit 1
+fi
+if ! printf '%s' "$assignable" | jq -e --arg id "$id" 'any(.[]; .id == $id)' >/dev/null; then
+  echo "assign-bead: $id is not available to $name ($status, assignee ${assignee:-none})" >&2
+  exit 3
+fi
+
+if ! bd --actor "$name" -C "$root" update "$id" --claim; then
+  exit 1
+fi
+
+cerebro_state_write_atomic "$state/$name.handover" printf '%s\n' "$id" || exit 1
+
+bd -C "$root" dolt push \
+  || echo "assign-bead: $id is claimed for $name, but bd dolt push failed - other machines will not see it yet" >&2
+
+echo "assign-bead: $id is claimed for $name" >&2
+exit 0

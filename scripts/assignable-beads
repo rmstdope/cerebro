@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+#
+# The one place the harness answers: "which beads may an implementer be given?" Prints a JSON array
+# of {id, priority} on stdout, sorted by priority ascending then by id.
+#
+#     .claude/cerebro/scripts/assignable-beads
+#
+# No modes and no flags; any argument is a usage error. Its two callers are `scripts/assign-bead`,
+# which refuses a bead that is not on this list, and the fleet view's work reader
+# (`readers::read_assignable`), which picks the bead a standby implementer is started on - so the
+# view and the claim cannot disagree about what a builder may take (cb-10d.1). The rule used to live
+# only in the `bd ready` line of `skills/implement-bead`.
+#
+# Why `bd ready` and not `bd list`: it is exactly the implementer pickup this replaced, and it hides
+# a bead with an open blocker, which the view's own `bd list --brief` read cannot tell. `-n 0` is
+# unlimited; the default is 100.
+#
+# It fails LOUDLY - non-zero, a message on stderr, nothing on stdout - when `bd` fails or prints
+# something this script cannot read. An empty array that meant "the query broke" would tell the view
+# there is nothing to build.
+
+set -euo pipefail
+
+if [[ $# -gt 0 ]]; then
+  echo "usage: assignable-beads" >&2
+  exit 2
+fi
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+root="$("$script_dir/consumer-root" --shared)"
+
+# Captured before the pipe, so a failure leaves stdout empty (see `scripts/plan-candidates`).
+if ! raw="$(bd --readonly -C "$root" ready --label planned --exclude-label human \
+        --exclude-label verdict:stale --exclude-type epic --json --brief -n 0)"; then
+  echo "assignable-beads: bd ready failed - cannot list the assignable beads" >&2
+  exit 1
+fi
+
+if ! out="$(printf '%s' "$raw" | jq '[ .[] | {id, priority} ] | sort_by(.priority, .id)' 2>/dev/null)"; then
+  echo "assignable-beads: bd ready did not print JSON this script can read" >&2
+  exit 1
+fi
+
+printf '%s\n' "$out"

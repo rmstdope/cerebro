@@ -131,7 +131,7 @@ list_names() {
 }
 
 usage() {
-  echo "usage: launch <Name> [agent CLI args...]" >&2
+  echo "usage: launch <Name> [--bead <id>] [agent CLI args...]" >&2
   list_names
   exit 2
 }
@@ -139,6 +139,15 @@ usage() {
 name="${1:-}"
 [[ -n "$name" ]] || usage
 shift
+
+# cb-10d.1: the bead the fleet view hands an implementer, as the two words right after the name.
+# Claimed below by `assign-bead', after the preflight and before exec.
+bead=""
+if [[ "${1:-}" == "--bead" ]]; then
+  [[ -n "${2:-}" ]] || usage
+  bead="$2"
+  shift 2
+fi
 
 lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
 
@@ -341,6 +350,23 @@ fi
 # it checks for is the CLI this session is about to start on, not a fleet-wide declaration.
 "$here/launch-preflight" "$role" "$name" "$tool"
 
+# cb-10d.1: claim the handed bead for this agent before the session exists. After the preflight, so a
+# refused preflight has claimed nothing. `|| assign_status=$?' for the reason `conf_status' gives.
+#
+# Exit 3, NOT 2, when the bead is not available: the fleet view parks a name whose launcher exits 2
+# (a refusal), and a bead somebody took in the seconds between the view's read and this claim must
+# cost a retry on the backoff, not a disarmed builder.
+if [[ -n "$bead" ]]; then
+  assign_status=0
+  "$here/assign-bead" "$name" "$bead" || assign_status=$?
+  if [[ $assign_status -eq 3 ]]; then
+    exit 3
+  elif [[ $assign_status -ne 0 ]]; then
+    "$here/launch-refused" "$name" "could not claim $bead for $name (assign-bead exited $assign_status)"
+    exit 2
+  fi
+fi
+
 # Cerebro's own marker sentence: the WHOLE of the liveness rule since cb-d59.3, and the reason
 # neither `cerebro--session-args-p' nor `scripts/agent-alive' contains a provider's spelling any
 # more. It used to ride on `--settings' and then on `--append-system-prompt' (ah-ybsr, cmux having
@@ -368,6 +394,11 @@ fi
 # carries newlines and a full stop.
 instruction="You are $name. Your agent definition ($role) is the whole of your instructions: follow it from
 the top, and start now rather than waiting to be spoken to."
+if [[ -n "$bead" ]]; then
+  instruction="$instruction
+
+Your bead is $bead; it is already claimed for you."
+fi
 
 prompt="$instruction"
 if [[ -n "$marker" ]]; then

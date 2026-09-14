@@ -1,0 +1,72 @@
+<style>
+body{font-family:Menlo,Monaco,monospace;font-size:13px;margin:24px;background:#8a8a8a;color:#111}
+h1{font-size:16px;color:#fff;margin:0 0 2px}h2{font-size:14px;margin:26px 0 8px;color:#fff}
+h3{font-size:13px;margin:14px 0 6px;color:#eee;font-weight:normal}
+pre{margin:0;line-height:1.45;white-space:pre}
+.screen{background:#1e1e1e;color:#d4d4d4;padding:10px 12px;border:1px solid #333;display:inline-block;vertical-align:top;margin:0 14px 10px 0}
+.note{color:#eee;max-width:104ch;background:#333;padding:9px 13px;margin-top:12px;line-height:1.5}
+.lede{color:#fff;max-width:104ch;margin:0 0 14px;line-height:1.5}
+.g{color:#6a9955}.d{color:#777}.b{color:#569cd6}.y{color:gold}.e{color:#f14c4c}
+.hd{font-weight:bold;color:#ddd}.dim{color:#888}b.k{color:#fff}
+.chosen{background:#2d4a2d;color:#cfe8cf;padding:2px 8px;display:inline-block;margin-left:8px;font-size:12px}
+.rejected{background:#4a2d2d;color:#e8cfcf;padding:2px 8px;display:inline-block;margin-left:8px;font-size:12px}
+</style>
+<meta charset="utf-8"><title>cb-10d.1 — the starting row</title>
+
+<h1>cb-10d.1 — the starting row, agreed 2026-09-14</h1>
+<p class="lede">Two rounds. The fleet view hands a standby implementer its bead <b>before</b> starting
+its session. This file specifies how the moment in between — bead assigned, session not running
+yet — reads on the Fleet row, in the Session pane and in the header. The bead's acceptance field
+carries the same decisions in words.</p>
+
+<h2>1. The row's journey <span class="chosen">chosen — B, "starting"</span></h2>
+<div class="screen"><pre><span class="b">┌─Fleet──────────────────────────────────┐</span>
+<span class="b">│</span> <span class="dim">AGENT        STATE       BEAD</span>       <span class="b">│</span>
+<span class="b">│</span><span class="b">◌</span> Rogue        <span class="b">standby</span>     <span class="b">→ planned</span>  <span class="b">│</span>  <span class="dim">waiting</span>
+<span class="b">│</span><span class="b">◌</span> Rogue        <span class="b">starting</span>    <span class="b">cb-4xz</span>     <span class="b">│</span>  <span class="dim">handed cb-4xz, not running yet</span>
+<span class="b">│</span><span class="g">●</span> Rogue        up          cb-4xz     <span class="b">│</span>  <span class="dim">running, not reported yet</span>
+<span class="b">│</span><span class="g">●</span> Rogue        build       cb-4xz     <span class="b">│</span>  <span class="dim">working</span>
+<span class="b">└────────────────────────────────────────┘</span>
+
+<span class="dim">stacked layout, below 100 cells</span>
+<span class="b">│</span><span class="b">◌</span> Rogue        implementer  <span class="b">starting</span>  <span class="b">cb-4xz</span>             <span class="b">│</span>
+
+<span class="dim">a slow start: never changes, never gold</span>
+<span class="b">│</span><span class="b">◌</span> Rogue        <span class="b">starting</span>    <span class="b">cb-4xz</span>     <span class="b">│</span>
+</pre></div>
+
+<h2>2. The Session pane <span class="chosen">chosen — names the bead</span></h2>
+<div class="screen"><pre><span class="b">┌─Rogue — starting───────────────────────</span>
+<span class="b">│</span>
+<span class="b">│</span>  <span class="dim">Starting Rogue on cb-4xz…</span></pre></div>
+<p class="note">The title follows the row's word, as the pane already always does.</p>
+
+<h2>3. Giving a bead back <span class="chosen">chosen — one gold line</span></h2>
+<div class="screen"><pre><span class="dim">refused, or crashed and waiting to retry</span>
+<span class="hd">Cerebro — supervising</span> <span class="dim">|</span> <span class="y">Rogue did not start; cb-4xz is back with the planned work.</span>
+<span class="b">│</span><span class="d">○</span> Rogue        <span class="d">dead</span>        <span class="e">✗ refused</span>  <span class="b">│</span>   <span class="dim">refused</span>
+<span class="b">│</span><span class="b">◌</span> Rogue        <span class="b">standby</span>     <span class="b">→ 2m</span>       <span class="b">│</span>   <span class="dim">crashed: bead given back at once, retry takes whatever is next</span>
+
+<span class="dim">the window closed between handing over and starting</span>
+<span class="hd">Cerebro — supervising</span> <span class="dim">|</span> <span class="y">Rogue never started; cb-4xz is back with the planned work.</span>
+
+<span class="dim">k on a starting row</span>
+<span class="hd">Cerebro — supervising</span> <span class="dim">|</span> <span class="y">Rogue was stopped; cb-4xz is back with the planned work.</span>
+<span class="b">│</span><span class="d">○</span> Rogue        <span class="d">dead</span>                   <span class="b">│</span></pre></div>
+
+<h2>4. Rejected</h2>
+<div class="screen"><pre><span class="dim">the row between</span>
+<span class="b">│</span><span class="b">◌</span> Rogue        <span class="b">standby</span>     <span class="b">cb-4xz</span>     <span class="b">│</span>  <span class="rejected">rejected</span> <span class="dim">looks like standby → planned</span>
+<span class="b">│</span><span class="b">◌</span> Rogue        <span class="b">standby</span>     <span class="b">→ cb-4xz</span>   <span class="b">│</span>  <span class="rejected">rejected</span> <span class="dim">arrow means two things</span>
+<span class="b">│</span><span class="b">◌</span> Rogue        <span class="b">standby</span>     <span class="b">→ planned</span>  <span class="b">│</span>  <span class="rejected">rejected</span> <span class="dim">row lies for those seconds</span>
+
+<span class="dim">a slow start turning gold</span>
+<span class="b">│</span><span class="y">◌</span> Rogue        <span class="y">starting</span>    <span class="y">6m cb-4xz</span>  <span class="b">│</span>  <span class="rejected">rejected</span>
+
+<span class="dim">keeping the bead through a crash's backoff</span>
+<span class="b">│</span><span class="b">◌</span> Rogue        <span class="b">standby</span>     <span class="b">→ 2m cb-4xz</span><span class="b">│</span>  <span class="rejected">rejected</span>
+
+<span class="dim">k refused while starting</span>
+<span class="y">Rogue is starting — press k again once it is up.</span>                     <span class="rejected">rejected</span>
+
+<span class="dim">a silent give-back; an unchanged "Starting Rogue…"</span>                   <span class="rejected">rejected</span></pre></div>

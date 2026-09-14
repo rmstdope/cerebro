@@ -24,19 +24,133 @@
 # For released, free and elsewhere it removes `.cerebro/state/<Name>.handover` when that file names
 # THIS bead, and leaves a handover for a different bead alone. `scripts/assign-bead` writes that
 # file; `scripts/agent-state` removes it too. The push is advisory (.cerebro/traps.md).
+#
+# THE WORKTREE MODE (cb-10d.3):
+#
+#     .claude/cerebro/scripts/release-bead --worktree <Name> <id>
+#
+# Removes `.cerebro/worktrees/<id>` - the tree `scripts/assign-bead` made for an implementer and
+# recorded in `.cerebro/state/worktrees/<id>` - ONLY when nothing in it can be lost, by the
+# pruner's own test (`scripts/worktree-safety.sh`). One line on stdout, exit 0 for each:
+#
+#   running        NAME is alive on this bead (its state file names it, or names nothing and its
+#                  handover is absent or names it). Nothing is touched.
+#   gone           no record, or a record naming somebody else - nothing of NAME's here, nothing
+#                  touched; or NAME's record with the tree already absent - the record goes.
+#   removed        clean and landed: the tree, its branch and the record are gone.
+#   kept <reason>  the tree stays for a person, the record goes; the reason is on stderr too.
+#   retry          `git fetch` failed: nothing touched, the record kept for the next attempt.
+#
+#   exit 1  git could not list the worktrees     exit 2  usage, or an id that is not a plain name
+#
+# Nothing here backgrounds a child: one holding the pipes open would turn a tidy into the view's
+# whole timeout.
 
 set -euo pipefail
 
 usage() {
   echo "usage: release-bead <Name> <id>" >&2
+  echo "       release-bead --worktree <Name> <id>" >&2
   exit 2
 }
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [[ "${1:-}" == "--worktree" ]]; then
+  [[ $# -eq 3 && -n "$2" && -n "$3" ]] || usage
+  name="$2"
+  id="$3"
+  case "$id" in
+    */* | .*) usage ;;
+  esac
+  source "$script_dir/worktree-safety.sh"
+
+  root="$("$script_dir/consumer-root" --shared)"
+  root="$(cd "$root" && pwd -P)"
+  state="$root/.cerebro/state"
+  record="$state/worktrees/$id"
+  tree="$root/.cerebro/worktrees/$id"
+
+  # Re-read before every act, not once: `assign-bead` may adopt this tree for another agent (or a
+  # new pass of this one) and rewrite the record while a fetch runs here.
+  record_owner() {
+    local who=""
+    if [[ -f "$record" ]]; then
+      IFS= read -r who < "$record" || true
+    fi
+    printf '%s' "$who"
+  }
+  drop_record_if_mine() {
+    if [[ "$(record_owner)" == "$name" ]]; then
+      rm -f "$record"
+    fi
+    return 0
+  }
+  if [[ "$(record_owner)" != "$name" ]]; then
+    echo gone
+    exit 0
+  fi
+
+  if "$script_dir/agent-alive" "$name" >/dev/null 2>&1; then
+    current=""
+    if [[ -f "$state/$name.state.json" ]]; then
+      current="$(jq -r '.bead // empty' "$state/$name.state.json" 2>/dev/null || true)"
+    fi
+    handed=""
+    if [[ -f "$state/$name.handover" ]]; then
+      IFS= read -r handed < "$state/$name.handover" || true
+    fi
+    if [[ "$current" == "$id" ]] || [[ -z "$current" && ( -z "$handed" || "$handed" == "$id" ) ]]; then
+      echo running
+      exit 0
+    fi
+  fi
+
+  if ! [[ -e "$tree" ]]; then
+    git -C "$root" worktree prune >/dev/null 2>&1 || true
+    drop_record_if_mine
+    echo gone
+    exit 0
+  fi
+
+  default_branch="$("$script_dir/default-branch" 2>/dev/null)" || default_branch=""
+  [[ -n "$default_branch" ]] || default_branch="main"
+  merged_check="$("$script_dir/project-conf" merged_check gh 2>/dev/null || echo gh)"
+  [[ -n "$merged_check" ]] || merged_check="gh"
+
+  if ! git -C "$root" fetch --quiet origin "$default_branch" 2>/dev/null; then
+    echo retry
+    exit 0
+  fi
+
+  reason="$(cerebro_worktree_keep_reason "$tree" "$default_branch" "$merged_check" "${COLD_TARGET_MINUTES:-1440}")"
+  if [[ "$(record_owner)" != "$name" ]]; then
+    echo gone
+    exit 0
+  fi
+  if [[ -z "$reason" ]]; then
+    if cerebro_worktree_remove "$root" "$tree"; then
+      drop_record_if_mine
+      echo removed
+      exit 0
+    fi
+    if ! [[ -e "$tree" ]]; then
+      # The watcher removed it between the test and the removal.
+      drop_record_if_mine
+      echo gone
+      exit 0
+    fi
+    reason="git would not remove it"
+  fi
+  drop_record_if_mine
+  echo "release-bead: keeping $id — $reason" >&2
+  echo "kept $reason"
+  exit 0
+fi
 
 [[ $# -eq 2 && -n "$1" && -n "$2" ]] || usage
 name="$1"
 id="$2"
-
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 if "$script_dir/agent-alive" "$name" >/dev/null 2>&1; then
   echo running

@@ -930,6 +930,118 @@ pub fn orphaned_handover(
     !hosted_live && !row_alive && !releasing && age_seconds >= HANDOVER_GRACE_SECONDS
 }
 
+/// `<shared root>/.cerebro/state/worktrees`: one file per bead, holding the name of the agent whose
+/// tree it is. Written by `scripts/assign-bead`, removed by `scripts/release-bead --worktree`
+/// (cb-10d.3).
+pub fn worktree_records_dir(paths: &ReaderPaths) -> PathBuf {
+    state_dir(paths).join("worktrees")
+}
+
+/// One worktree record: the bead, the agent whose tree it is, and the record's age in seconds.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WorktreeRecord {
+    pub bead: String,
+    pub owner: String,
+    pub age_seconds: i64,
+}
+
+/// Every readable, non-empty record, sorted by bead. A missing directory is an empty list.
+pub fn read_worktree_records(paths: &ReaderPaths, now: std::time::SystemTime) -> Vec<WorktreeRecord> {
+    let Ok(entries) = std::fs::read_dir(worktree_records_dir(paths)) else {
+        return Vec::new();
+    };
+    let mut records: Vec<WorktreeRecord> = entries
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let bead = entry.file_name().to_str()?.to_string();
+            // `cerebro_state_write_atomic`'s temp file, left by a killed writer: not a record.
+            if bead.ends_with(".tmp") {
+                return None;
+            }
+            let text = std::fs::read_to_string(entry.path()).ok()?;
+            let owner = text.lines().next()?.trim().to_string();
+            if owner.is_empty() {
+                return None;
+            }
+            let modified = entry.metadata().ok()?.modified().ok()?;
+            let age_seconds = now.duration_since(modified).map(|d| d.as_secs() as i64).unwrap_or(0);
+            Some(WorktreeRecord { bead, owner, age_seconds })
+        })
+        .collect();
+    records.sort_by(|a, b| a.bead.cmp(&b.bead));
+    records
+}
+
+/// Is this record's tree to be handed to `release-bead --worktree`? Pure (cb-10d.3).
+///
+/// OWNER_CURRENT is the bead the owner is on now: its row's `bead`, or else what this view handed
+/// it. An owner that is running with no bead known is given the benefit of the doubt.
+pub fn tree_to_tidy(
+    owner_hosted_live: bool,
+    owner_row_alive: bool,
+    owner_current: Option<&str>,
+    bead: &str,
+    tidying: bool,
+    age_seconds: i64,
+) -> bool {
+    !tidying
+        && age_seconds >= HANDOVER_GRACE_SECONDS
+        && !((owner_hosted_live || owner_row_alive) && owner_current.map_or(true, |b| b == bead))
+}
+
+/// What `scripts/release-bead --worktree` came to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TidyOutcome {
+    Removed,
+    Kept { reason: String },
+    Gone,
+    Running,
+    /// `retry`, a non-zero exit, a timeout or a line this crate does not know.
+    Failed { text: String },
+}
+
+impl TidyOutcome {
+    /// The `outcome` field of the `tidy` line. `Failed` is never logged as a decision.
+    pub fn word(&self) -> &'static str {
+        match self {
+            Self::Removed => "removed",
+            Self::Kept { .. } => "kept",
+            Self::Gone => "gone",
+            Self::Running => "running",
+            Self::Failed { .. } => "failed",
+        }
+    }
+}
+
+/// A tree removal deletes a build directory and fetches; bounded far above a board write.
+const TIDY_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// Run `<scripts_dir>/release-bead --worktree NAME BEAD` in the shared root on `TIDY_TIMEOUT`.
+pub fn tidy_worktree(
+    paths: &ReaderPaths,
+    commands: &dyn CommandRunner,
+    name: &str,
+    bead: &str,
+) -> TidyOutcome {
+    let program = paths.scripts_dir.join("release-bead");
+    let failed = || TidyOutcome::Failed {
+        text: format!("release-bead --worktree {name} {bead} failed"),
+    };
+    match commands.run(&program, &["--worktree", name, bead], Some(&paths.shared_root), TIDY_TIMEOUT) {
+        Ok(stdout) => match String::from_utf8_lossy(&stdout).trim() {
+            "removed" => TidyOutcome::Removed,
+            "gone" => TidyOutcome::Gone,
+            "running" => TidyOutcome::Running,
+            "kept" => TidyOutcome::Kept { reason: String::new() },
+            line => match line.split_once(' ') {
+                Some(("kept", reason)) => TidyOutcome::Kept { reason: reason.to_string() },
+                _ => failed(),
+            },
+        },
+        Err(_) => failed(),
+    }
+}
+
 /// The bead a planning session that is no longer running still holds on the board, if any: the
 /// first `being_planned` bead assigned to NAME. `None` when NAME is hosted and live, its row is
 /// alive, it is already giving something back, or it holds nothing (cb-10d.2.2).
@@ -1250,6 +1362,82 @@ mod tests {
     use super::*;
     use crate::readers::testing::FakeCommands;
     use crate::supervisor::ReadOnlyReason;
+
+    // ---- cb-10d.3: worktrees the view made ----------------------------------------------------
+
+    #[test]
+    fn a_tree_is_tidied_only_once_its_owner_has_left_its_bead() {
+        assert!(!tree_to_tidy(true, false, Some("cb-x"), "cb-x", false, 60));
+        assert!(!tree_to_tidy(false, true, None, "cb-x", false, 60));
+        assert!(tree_to_tidy(true, false, Some("cb-y"), "cb-x", false, 60));
+        assert!(tree_to_tidy(false, false, Some("cb-x"), "cb-x", false, 60));
+        assert!(!tree_to_tidy(false, false, None, "cb-x", false, 59));
+        assert!(!tree_to_tidy(false, false, None, "cb-x", true, 600));
+    }
+
+    #[test]
+    fn worktree_records_are_read_sorted_with_owner_and_age() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = ReaderPaths {
+            consumer_root: dir.path().to_path_buf(),
+            shared_root: dir.path().to_path_buf(),
+            scripts_dir: dir.path().to_path_buf(),
+        };
+        assert!(read_worktree_records(&paths, std::time::SystemTime::now()).is_empty());
+        let records = worktree_records_dir(&paths);
+        std::fs::create_dir_all(&records).unwrap();
+        std::fs::write(records.join("cb-b"), "Rogue\n").unwrap();
+        std::fs::write(records.join("cb-a"), "Gambit\n").unwrap();
+        std::fs::write(records.join("cb-c"), "").unwrap();
+        std::fs::write(records.join("cb-d.123.tmp"), "Rogue\n").unwrap();
+        let old = std::time::SystemTime::now() - Duration::from_secs(90);
+        std::fs::File::options().write(true).open(records.join("cb-a")).unwrap().set_modified(old).unwrap();
+        let read = read_worktree_records(&paths, std::time::SystemTime::now());
+        assert_eq!(read.len(), 2, "{read:?}");
+        assert_eq!((read[0].bead.as_str(), read[0].owner.as_str()), ("cb-a", "Gambit"));
+        assert!(read[0].age_seconds >= 90, "{read:?}");
+        assert_eq!((read[1].bead.as_str(), read[1].owner.as_str()), ("cb-b", "Rogue"));
+    }
+
+    #[test]
+    fn tidy_reads_release_beads_one_line() {
+        let paths = paths(Path::new("/consumer"));
+        for (answer, expected) in [
+            ("removed\n", Some(TidyOutcome::Removed)),
+            ("kept it holds work that is not on main yet\n", Some(TidyOutcome::Kept {
+                reason: "it holds work that is not on main yet".into(),
+            })),
+            ("kept\n", Some(TidyOutcome::Kept { reason: String::new() })),
+            ("gone\n", Some(TidyOutcome::Gone)),
+            ("running\n", Some(TidyOutcome::Running)),
+            ("retry\n", None),
+            ("nonsense\n", None),
+        ] {
+            let fake = FakeCommands::new(move |_| Ok(answer.as_bytes().to_vec()));
+            let outcome = tidy_worktree(&paths, &fake, "Rogue", "cb-x");
+            match expected {
+                Some(expected) => assert_eq!(outcome, expected, "{answer}"),
+                None => assert!(matches!(outcome, TidyOutcome::Failed { .. }), "{answer}"),
+            }
+            let calls = fake.calls();
+            assert_eq!(calls[0].program, paths.scripts_dir.join("release-bead"));
+            assert_eq!(calls[0].args, ["--worktree", "Rogue", "cb-x"]);
+            assert_eq!(calls[0].cwd.as_deref(), Some(paths.shared_root.as_path()));
+        }
+        let failing = FakeCommands::failing(|| ReadError::Spawn {
+            source: "release-bead".into(),
+            message: "exit 1".into(),
+        });
+        assert!(matches!(tidy_worktree(&paths, &failing, "Rogue", "cb-x"), TidyOutcome::Failed { .. }));
+    }
+
+    #[test]
+    fn tidy_words_are_the_log_vocabulary() {
+        assert_eq!(TidyOutcome::Removed.word(), "removed");
+        assert_eq!(TidyOutcome::Kept { reason: "x".into() }.word(), "kept");
+        assert_eq!(TidyOutcome::Gone.word(), "gone");
+        assert_eq!(TidyOutcome::Running.word(), "running");
+    }
 
     // ---- cb-10d.1: giving a handed bead back -------------------------------------------------
 

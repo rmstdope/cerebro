@@ -9,6 +9,17 @@
 #   exit 2  usage, NAME not on the roster, or NAME's role is none of the four below
 #   exit 3  the bead is not available to NAME: not in the role's queue and not already NAME's, or
 #           a planning role lost the assignment race (`bd update --if-assignee ""` exited 13)
+#   exit 4  an implementer's worktree could not be made: `disk-preflight` refused, the path holds
+#           something that is not a worktree, or `prepare-worktree` failed (cb-10d.3)
+#
+# THE WORKTREE (cb-10d.3). For an implementer only, this script makes the tree the session works in:
+# `.cerebro/worktrees/<id>` on branch `<id>` (or the first free `<id>-N`), by `prepare-worktree`,
+# after `disk-preflight` passed with the plan's workload (`non-rust` only when the plan says
+# `disk-preflight --workload non-rust`). A registered tree already at that path - an earlier
+# attempt's, kept because it held work - is adopted. The tree is recorded, owner's name inside, in
+# `.cerebro/state/worktrees/<id>`, and `release-bead --worktree` is what removes it. The preflight
+# runs before the claim, so a refusal claims nothing; the tree is made after the claim and the
+# handover file, so a view that dies during a long install still gives the bead back.
 #
 # Which queue, and how the bead is taken, is decided by ROLE:
 #
@@ -104,6 +115,54 @@ if ! fields="$(printf '%s' "$shown" \
 fi
 IFS=$'\t' read -r status assignee <<<"$fields"
 
+if [[ "$mode" == claim ]]; then
+  # `worktree list` prints physical paths, so the root is compared physically.
+  root_p="$(cd "$root" && pwd -P)"
+  tree="$root_p/.cerebro/worktrees/$id"
+  records="$state/worktrees"
+  mkdir -p "$records"
+  if ! list="$(git -C "$root" worktree list --porcelain)"; then
+    exit 1
+  fi
+  registered=false
+  if printf '%s\n' "$list" | grep -Fxq "worktree $tree"; then
+    registered=true
+  fi
+  if [[ -e "$tree" ]] && ! $registered; then
+    echo "assign-bead: $tree exists and is not a worktree - it needs a person" >&2
+    exit 4
+  fi
+fi
+
+# Make or adopt NAME's tree for ID and record it. Exit 4 on failure, having removed any tree this
+# call created.
+ensure_tree() {
+  local branch n prep_status
+  if [[ -e "$tree" ]]; then
+    # An earlier attempt's tree, kept because it held work. Adopt it; the touch makes the watcher's
+    # stale-minutes rule hold it while the agent starts.
+    touch "$tree"
+  else
+    branch="$id"; n=2
+    while git -C "$root" show-ref --verify --quiet "refs/heads/$branch" \
+       || git -C "$root" show-ref --verify --quiet "refs/remotes/origin/$branch"; do
+      branch="$id-$n"; n=$((n + 1))
+    done
+    prep_status=0
+    "$script_dir/prepare-worktree" --path "$tree" --branch "$branch" >&2 || prep_status=$?
+    if [[ $prep_status -ne 0 ]]; then
+      # Forced, unlike everywhere else in this family, and safe: this call made the tree seconds ago
+      # and no agent has run in it.
+      git -C "$root" worktree remove --force "$tree" >/dev/null 2>&1 || rm -rf "$tree"
+      git -C "$root" worktree prune >/dev/null 2>&1 || true
+      git -C "$root" branch -D "$branch" >/dev/null 2>&1 || true
+      echo "assign-bead: prepare-worktree failed for $id (exit $prep_status)" >&2
+      exit 4
+    fi
+  fi
+  cerebro_state_write_atomic "$records/$id" printf '%s\n' "$name" || exit 1
+}
+
 if [[ "$status" == "$mine_status" && "$assignee" == "$name" ]]; then
   # Already NAME's. An agent that has already reported this bead must not acquire a handover a later
   # give-back would act on.
@@ -113,6 +172,9 @@ if [[ "$status" == "$mine_status" && "$assignee" == "$name" ]]; then
   fi
   if [[ "$reported" != "$id" ]]; then
     write_handover || exit 1
+  fi
+  if [[ "$mode" == claim ]]; then
+    ensure_tree
   fi
   echo "assign-bead: $id is already $verb $name" >&2
   if [[ -n "$given" ]]; then echo pushed; fi
@@ -125,6 +187,19 @@ fi
 if ! printf '%s' "$assignable" | jq -e --arg id "$id" 'any(.[]; .id == $id)' >/dev/null; then
   echo "assign-bead: $id is not available to $name ($status, assignee ${assignee:-none})" >&2
   exit 3
+fi
+
+if [[ "$mode" == claim ]] && ! $registered; then
+  workload=rust
+  if printf '%s' "$shown" \
+       | jq -r '(if type=="array" then .[0] else . end) | .design // ""' \
+       | grep -Fq 'disk-preflight --workload non-rust'; then
+    workload=non-rust
+  fi
+  if ! "$script_dir/disk-preflight" --workload "$workload"; then
+    echo "assign-bead: disk-preflight refused - $name was not handed $id" >&2
+    exit 4
+  fi
 fi
 
 if [[ "$mode" == claim ]]; then
@@ -148,6 +223,10 @@ fi
 write_handover || exit 1
 
 pushed=pushed
+if [[ "$mode" == claim ]]; then
+  ensure_tree
+fi
+
 bd -C "$root" dolt push \
   || { echo "assign-bead: $id is $verb $name, but bd dolt push failed - other machines will not see it yet" >&2; pushed=unpushed; }
 

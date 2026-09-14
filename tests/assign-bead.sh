@@ -11,7 +11,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$repo_root/tests/lib/consumer.sh"
 
-consumer="$(consumer_new repo --link assign-bead assignable-beads roster consumer-root)"
+consumer="$(consumer_new repo --origin --link assign-bead assignable-beads roster consumer-root)"
 printf 'Rogue implementer\nXavier planner\nBeast ux\nIceman build-design\nCerebro orchestrator\n' > "$consumer/.cerebro/roster.conf"
 state="$consumer/.cerebro/state"
 stub="$work_dir/stub"
@@ -49,14 +49,44 @@ STUB
   chmod +x "$consumer/.claude/cerebro/scripts/$cand"
 done
 
+# cb-10d.3: stub disk-preflight and prepare-worktree, logging into the same bd.log so order is
+# assertable. prepare-worktree makes a real tree on success and a bare directory on failure.
+cat > "$consumer/.claude/cerebro/scripts/disk-preflight" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$(basename "$0") $*" >> "$STUB_DIR/bd.log"
+exit "${PREFLIGHT_EXIT:-0}"
+STUB
+cat > "$consumer/.claude/cerebro/scripts/prepare-worktree" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$(basename "$0") $*" >> "$STUB_DIR/bd.log"
+path="$2"; branch="$4"
+if [ "${PREPARE_EXIT:-0}" = 0 ]; then
+  git -C "$CONSUMER" worktree add -q "$path" -b "$branch" origin/main >/dev/null 2>&1
+  echo "$path abc123"
+else
+  mkdir -p "$path"
+fi
+exit "${PREPARE_EXIT:-0}"
+STUB
+chmod +x "$consumer/.claude/cerebro/scripts/disk-preflight" "$consumer/.claude/cerebro/scripts/prepare-worktree"
+
 reset() {
   rm -f "$stub/bd.log" "$stub/candidates.log" "$state"/*.handover "$state"/*.state.json
+  rm -rf "$state/worktrees"
+  for t in "$consumer"/.cerebro/worktrees/*; do
+    [ -e "$t" ] || continue
+    git -C "$consumer" worktree remove --force "$t" >/dev/null 2>&1 || rm -rf "$t"
+  done
+  git -C "$consumer" worktree prune
+  for b in $(git -C "$consumer" for-each-ref --format='%(refname:short)' 'refs/heads/cb-*'); do
+    git -C "$consumer" branch -D "$b" >/dev/null 2>&1
+  done
   printf '%s' "$1" > "$stub/show.json"
   printf '%s' "${2:-[]}" > "$stub/ready.json"
 }
 
 run() {
-  STUB_DIR="$stub" PATH="$stub:$PATH" bash "$consumer/.claude/cerebro/scripts/assign-bead" "$@"
+  CONSUMER="$consumer" STUB_DIR="$stub" PATH="$stub:$PATH" bash "$consumer/.claude/cerebro/scripts/assign-bead" "$@"
 }
 
 open='[{"id":"cb-x","status":"open","assignee":""}]'
@@ -221,5 +251,76 @@ status=0; out="$(run --given Rogue cb-x 2>/dev/null)" || status=$?
 [[ $status -eq 3 ]] || fail "--given keeps exit 3, got $status"
 [[ -z "$out" ]] || fail "--given prints nothing on a refusal, got: '$out'"
 pass "--given keeps every refusal's exit status and prints nothing"
+
+# --- cb-10d.3: an implementer's tree is made and recorded -----------------------------------------
+
+tree="$consumer/.cerebro/worktrees/cb-x"
+line_of() { grep -n -- "$1" "$stub/bd.log" | head -1 | cut -d: -f1; }
+
+reset "$open" "$ready"
+run Rogue cb-x 2>/dev/null || fail "an implementer with a tree is exit 0"
+p="$(line_of "disk-preflight --workload rust")"; c="$(line_of "update cb-x --claim")"
+w="$(line_of "prepare-worktree --path $tree --branch cb-x")"; d="$(line_of "dolt push")"
+[[ -n "$p" && -n "$c" && -n "$w" && -n "$d" && $p -lt $c && $c -lt $w && $w -lt $d ]] \
+  || fail "preflight, claim, prepare, push in that order, got: $(cat "$stub/bd.log")"
+[[ "$(cat "$state/worktrees/cb-x")" == "Rogue" ]] || fail "the tree is recorded for Rogue"
+[[ "$(cat "$state/Rogue.handover")" == "cb-x" ]] || fail "the handover still names cb-x"
+pass "an implementer's tree is made after the claim and recorded"
+
+reset '[{"id":"cb-x","status":"open","assignee":"","design":"run disk-preflight --workload non-rust first"}]' "$ready"
+run Rogue cb-x 2>/dev/null || fail "a non-rust plan is exit 0"
+grep -qx "disk-preflight --workload non-rust" "$stub/bd.log" || fail "a non-rust plan preflights non-rust, got: $(cat "$stub/bd.log")"
+pass "a plan that declares non-rust preflights as non-rust"
+
+reset "$open" "$ready"
+status=0; PREFLIGHT_EXIT=1 run Rogue cb-x 2>/dev/null || status=$?
+[[ $status -eq 4 ]] || fail "a refused preflight is exit 4, got $status"
+! grep -q -- "--claim" "$stub/bd.log" || fail "a refused preflight claims nothing"
+[[ ! -e "$state/Rogue.handover" && ! -e "$state/worktrees/cb-x" ]] || fail "a refused preflight writes nothing"
+pass "a refused preflight claims nothing"
+
+reset "$open" "$ready"
+status=0; PREPARE_EXIT=1 run Rogue cb-x 2>/dev/null || status=$?
+[[ $status -eq 4 ]] || fail "a failed preparation is exit 4, got $status"
+[[ ! -e "$tree" && ! -e "$state/worktrees/cb-x" ]] || fail "a failed preparation leaves no tree and no record"
+[[ "$(cat "$state/Rogue.handover")" == "cb-x" ]] || fail "a failed preparation keeps the handover"
+pass "a failed preparation removes what it made and records nothing"
+
+reset "$open" "$ready"
+git -C "$consumer" branch -q cb-x origin/main
+run Rogue cb-x 2>/dev/null || fail "a taken branch is exit 0"
+grep -q -- "--branch cb-x-2" "$stub/bd.log" || fail "a taken branch moves to cb-x-2, got: $(cat "$stub/bd.log")"
+reset "$open" "$ready"
+git -C "$consumer" branch -q cb-x origin/main; git -C "$consumer" branch -q cb-x-2 origin/main
+run Rogue cb-x 2>/dev/null || fail "two taken branches are exit 0"
+grep -q -- "--branch cb-x-3" "$stub/bd.log" || fail "two taken branches move to cb-x-3"
+pass "a taken branch name moves to the next free suffix"
+
+reset "$open" "$ready"
+git -C "$consumer" worktree add -q "$tree" -b cb-x origin/main
+run Rogue cb-x 2>/dev/null || fail "a registered tree is adopted with exit 0"
+! grep -q "prepare-worktree\|disk-preflight" "$stub/bd.log" || fail "an adopted tree is neither preflighted nor prepared"
+[[ "$(cat "$state/worktrees/cb-x")" == "Rogue" ]] || fail "an adopted tree is recorded"
+pass "a registered tree already there is adopted without preparing"
+
+reset "$open" "$ready"
+mkdir -p "$tree"
+status=0; run Rogue cb-x 2>/dev/null || status=$?
+[[ $status -eq 4 ]] || fail "a stray directory is exit 4, got $status"
+! grep -q -- "--claim" "$stub/bd.log" || fail "a stray directory is refused before the claim"
+pass "a stray directory at the path is refused before the claim"
+
+reset '[{"id":"cb-x","status":"in_progress","assignee":"Rogue"}]' '[]'
+run Rogue cb-x 2>/dev/null || fail "a bead already Rogue's with no tree is exit 0"
+! grep -q -- "--claim" "$stub/bd.log" || fail "no second claim"
+grep -q "prepare-worktree" "$stub/bd.log" || fail "the missing tree is made"
+[[ "$(cat "$state/worktrees/cb-x")" == "Rogue" ]] || fail "the made tree is recorded"
+pass "a bead already the implementer's gets its missing tree"
+
+reset '[{"id":"cb-x","status":"open","assignee":null}]'
+CANDIDATES_JSON='[{"id":"cb-x","priority":2}]' run Iceman cb-x 2>/dev/null || fail "a planning role is exit 0"
+! grep -q "prepare-worktree\|disk-preflight" "$stub/bd.log" || fail "a planning role gets no tree"
+[[ ! -e "$state/worktrees/cb-x" ]] || fail "a planning role gets no record"
+pass "a planning role gets no tree"
 
 suite_passed

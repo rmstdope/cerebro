@@ -102,6 +102,10 @@ pub enum Event {
     /// A bead this view handed an implementer given back without the agent ever running on it
     /// (cb-10d.1): `agent`, `bead`, `cause`. Written when the give-back is queued.
     GiveBack,
+    /// A worktree the view handed to `release-bead --worktree` (cb-10d.3): `agent`, `bead`,
+    /// `outcome` and `reason`. Written on the ANSWER - what was done, including why a tree was
+    /// kept; a failed tidy goes to `errors.jsonl` under `tidy` instead.
+    Tidy,
     Error,
 }
 
@@ -126,6 +130,7 @@ impl Event {
             Self::SweepTell => "sweep-tell",
             Self::DisarmAll => "disarm-all",
             Self::GiveBack => "give-back",
+            Self::Tidy => "tidy",
             Self::Error => "error",
         }
     }

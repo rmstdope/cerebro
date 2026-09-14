@@ -209,15 +209,14 @@ The crate is a pure core over a small impure edge, so the tests exercise the cor
 
 - `model.rs` — parsing and derivation: roster, state files, the marker sentence, the process tree,
   `partition_beads`.
-- `sweeps.rs`, `give.rs` — pure decisions: what the six sweeps find (held to
+- `sweeps.rs`, `give.rs` — pure decisions: what the four sweeps find (held to
   `tests/lib/sweep-findings.json`) and the `a` key's agent list. `probe.rs` is test support.
 - `app.rs` — display state, pane sizes, the resize decision, the per-pane cadences and workers.
 - `ui.rs` — pure over `App` plus an injected clock; widths are terminal cells, never bytes.
 - `lifecycle.rs`, `triggers.rs`, `supervisor.rs` — what to do about a row, when to start one, and
   the lease (`reconcile_supervision`, one bool in, one mode out).
 - `readers.rs` — every file and subprocess, behind `CommandRunner`; tests pass `FakeCommands`.
-- `session.rs`, `pruner.rs` — the hosted pty child and the `prune-worktrees.sh --watch` child;
-  each owns a process and kills it on `Drop`.
+- `session.rs` — the hosted pty child; it owns the process and kills it on `Drop`.
 - `log.rs` — the only writer of `decisions.jsonl`, `evaluations.jsonl` and `errors.jsonl`; its
   root is a constructor parameter, never resolved.
 - `main.rs` — the terminal and the event loop, under an RAII guard.
@@ -234,7 +233,7 @@ Rules a change must keep:
 - **The lease is a bound loopback listener and nothing else** — no pid file, no heartbeat, no
   timeout. `.cerebro/state/supervisor.json` is diagnosis only.
 - **Only a supervising view writes anything**: session starts and ends, the triage and sweep
-  lines, the pruner, the logs. Board writes (`x`, the priority keys, `a`) are the navigator's own
+  lines, the worktree tidies, the logs. Board writes (`x`, the priority keys, `a`) are the navigator's own
   act, run on the one write worker in the order pressed, and are deliberately outside the lease.
 - `ui::draw` reads no file, runs no program and asks no clock, so a `TestBackend` case is an
   assertion about the screen and not about the machine.
@@ -258,7 +257,9 @@ Each of these answers one question in one place. Add a caller, never a second co
   for ending a pass; `scripts/agent-alive` is the predicate.
 - `scripts/plan-candidates`, `scripts/stage-candidates`, `scripts/assignable-beads` — which
   beads a planner, a ux/build-design agent, or an implementer may be given.
-  `scripts/assign-bead` and `scripts/release-bead` are the two writers.
+  `scripts/assign-bead` and `scripts/release-bead` are the two writers; `release-bead --ended`
+  takes back what a gone session still held.
+- `scripts/bead-delivery.sh` — whether a bead's work reached the default branch.
 - `scripts/planner-buffer` — how many planned beads to keep ahead of the implementers.
 - `scripts/work-beads` — the board read, and the epic rule.
 - `scripts/worktree-safety.sh` — whether a worktree can go without losing anything.

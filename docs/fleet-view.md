@@ -78,14 +78,14 @@ untouched in both. One `stuck` line per occurrence goes into `decisions.jsonl`, 
 supervision like the resume beside it. Since cb-ykz.3 it also **acts**, off the same rule and the same
 memory it keeps: one `resume` line typed into the session, then — if it is stuck again
 with its `(since, phase_since)` pair unmoved — the interactive role's session ended, or retired
-under a stop flag, and an implementer's left to `sweep-stalled`. A stuck row this view hosts
+under a stop flag, and an implementer's left for the navigator's `k`, after which the view releases what it held. A stuck row this view hosts
 therefore writes two lines per occurrence, `stuck` and `resume`: the observation and what was done
 about it.
 
-Since cb-kcs.5.1 it runs **the six sweeps** as well, on their own ten-minute cadence and their own
+Since cb-kcs.5.1 it runs **the four sweeps** as well, on their own ten-minute cadence and their own
 in-flight slot, and draws what they found as the Work pane's **first** section — `Sweeps {n}`, one
 truncated line per finding, a gold line for a stranded P0, and the failed script named beside the
-header in red when one did not answer (`sweep-claims failed`), because three of the six `git fetch`
+header in red when one did not answer (`sweep-epics failed`), because one of the four `git fetch`es
 and a stale section that reads like a current one is what silence costs. The chain
 stops at the first script that did not answer, which is what lets the header name exactly one. Under
 Work the arrow and page keys move a **cursor over the findings** while there are any and scroll the
@@ -104,12 +104,10 @@ languages. The header now renders **whichever** `Prompt` is up, through the enum
 (cb-4cn): matching one variant by name is how cb-kcs.4.1's disarm confirmation came to be built and
 never drawn.
 
-Since cb-kcs.5.2 it runs the supervisor's last two unattended jobs as well. It keeps one
-`prune-worktrees.sh --watch` child alive beside itself on a five-second clock while it may act,
-kills it when it may not — the pruner is a writer — and says
-`Worktree pruning stopped: <cause>` in **red** in the header's notice slot when the child will not
-start or has died, once and then again every ten minutes while it stays broken (the cost of
-swallowing it is worktrees quietly not being pruned). And it types the triage line into an
+Since cb-kcs.5.2 it runs the supervisor's last two unattended jobs as well. Since cb-10d.4 there is no
+watcher: a take-back the board refuses says `Could not take <id> back from <Name>: the task list did not
+answer.` and a tree removal that fails says `Could not remove <Name>'s copy for <id>: <cause>`, each red
+in the notice slot, once and then every ten minutes while the same one stays broken (`App::complain`). And it types the triage line into an
 idle orchestrator this view hosts when unranked beads are waiting for a ranking — the same bytes
 Cerebro already reads — saying `Cerebro was asked to rank 3 unranked beads.` in gold beside the
 resume's own line, and repeating the same set every ten minutes while Cerebro stays idle. The line
@@ -120,8 +118,8 @@ took the string, so its throttle then holds for a line that never left the build
 both views go on triaging until the declaration moves.
 
 Since cb-7nx a **second** line goes into an idle orchestrator on the same mechanism: every two hours
-(`cerebro-sweep-interval` / `SWEEP_INTERVAL_SECONDS`, both 7200) it is asked to run the claims sweep
-and the worktrees the pruner declined, the two that need a judgement no table makes — an orchestrator
+(`cerebro-sweep-interval` / `SWEEP_INTERVAL_SECONDS`, both 7200) it is asked to look at the work the view kept
+rather than throw away, which needs a judgement no table makes — an orchestrator
 has no cadence of its own, so without it Cerebro sweeps once at startup and never again.
 `tests/lib/sweep-tell.cases` is its own table, answered by both implementations, and it is separate
 from `triage.cases` for the reason its header gives: triage's trigger is a condition that stays true,
@@ -133,9 +131,7 @@ view), and it is dropped entirely for a name this view holds no session for, whi
 restarted Cerebro from being told to sweep seconds after its own startup sweep. The event is
 `sweep-tell` in both writers, `sweep` being the `x`-on-a-finding decision. `triggers::cadence` is
 deliberately untouched: an orchestrator gets no wake trigger, since a two-hour *cadence* would have
-the view starting Opus sessions round the clock. The pruner writes **no** decision event:
-starting and stopping a watcher is not a fleet decision, and its failures reach `errors.jsonl`
-under the context `prune` and nowhere else. Its surface was approved over three interview rounds
+the view starting Opus sessions round the clock. Its surface was approved over three interview rounds
 on 2026-09-02 and arrives, like cb-kcs.2's, in a docs-only pull request of its own — so no path
 for it is written here, for the reason the paragraph above gives.
 
@@ -335,17 +331,11 @@ nothing checks a path written in prose the way `scripts/tracked-links` checks a 
 The crate is split into a pure core and a small set of impure readers, so the tests exercise the
 pure half with plain data:
 
-- `sweeps.rs` — pure throughout: what the six sweeps decide (`Sweep::judge`), the seven `Finding`
+- `sweeps.rs` — pure throughout: what the four sweeps decide (`Sweep::judge`), the four `Finding`
   shapes, the Sweeps line, the exact argv and the header's question. The Rust copy of
   `cerebro--sweeps` and its neighbours, held to `tests/lib/sweep-findings.json` the way `model.rs`
   is held to its own table. The four thresholds are `const`s here and defcustoms there, exactly as
   `lifecycle::END_GRACE_SECONDS` is.
-- `pruner.rs` — the `prune-worktrees.sh --watch` child and its one pure decision
-  (`prune_action`), its own module for `session.rs`'s reason: it owns a child process with a
-  lifetime longer than any call. Its `Drop` kills the child, and the `Pruner` is constructed
-  **before** the `TerminalGuard` so it drops after it. Both pipes are `Stdio::null()` — a pipe
-  nobody drains is a deadlock — and `Child::try_wait` is what keeps a dead watcher from being a
-  zombie that reads as live for ever.
 - `model.rs` — pure parsing and derivation (roster, state files, the marker sentence, the process
   tree, `partition_beads` — which since cb-hzl skips an epic only while it HAS a direct child,
   answered from the ids the one board read already holds, so a childless epic partitions like any

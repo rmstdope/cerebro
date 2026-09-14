@@ -1,4 +1,4 @@
-//! What the six sweeps decide, and every word the view says about a finding.
+//! What the four sweeps decide, and every word the view says about a finding.
 //!
 //! The Rust half of `cerebro--sweeps` and its neighbours (`emacs/cerebro.el:1102-1169`,
 //! `2681-3068`). Pure throughout: `readers::read_sweeps` runs the scripts and takes the fleet
@@ -13,25 +13,18 @@ use std::path::Path;
 
 use chrono::{DateTime, Utc};
 
-/// One candidate as a sweep script emitted it. Every field of every one of the six shapes, all
+/// One candidate as a sweep script emitted it. Every field of every one of the four shapes, all
 /// optional, because a candidate carries only its own sweep's fields.
 ///
-/// One struct rather than six, deliberately: the finders dispatch on the sweep, not on the type,
-/// and six structs would need an enum around them whose only job is to be matched back apart.
+/// One struct rather than four, deliberately: the finders dispatch on the sweep, not on the type,
+/// and four structs would need an enum around them whose only job is to be matched back apart.
 #[derive(Clone, Debug, Default, PartialEq, serde::Deserialize)]
 pub struct Candidate {
     pub id: String,
     #[serde(default)] pub title: Option<String>,
     #[serde(default)] pub assignee: Option<String>,
     #[serde(default)] pub priority: Option<i64>,
-    #[serde(default)] pub verification_failed: Option<bool>,
-    #[serde(default)] pub on_main: Option<bool>,
-    #[serde(default)] pub commit_age_min: Option<i64>,
-    #[serde(default)] pub docs_only: Option<bool>,
-    #[serde(default)] pub lease_age_min: Option<i64>,
     #[serde(default)] pub minutes_since_last_child_closed: Option<i64>,
-    #[serde(default)] pub progress_age_min: Option<i64>,
-    #[serde(default)] pub progress_source: Option<String>,
     #[serde(default)] pub age_min: Option<i64>,
     #[serde(default)] pub verified_at: Option<String>,
     #[serde(default)] pub merges_since: Option<i64>,
@@ -56,10 +49,8 @@ pub struct Blocker {
 #[derive(Clone, Debug, PartialEq)]
 pub struct LiveSession {
     pub name: String,
-    /// The state file's own word, or `None` when the file parsed with no `state` key. **A live
-    /// session with no state is still live** - `cerebro--stalled-finding` tests membership with
-    /// `assoc` rather than by the state being non-nil, and a port that used `Option` truthiness
-    /// would silently unclaim a bead from a session that is running.
+    /// The state file's own word, or `None` when the file parsed with no `state` key. A live
+    /// session with no state is still live: liveness is membership, never this field.
     pub state: Option<String>,
     pub bead: Option<String>,
 }
@@ -83,14 +74,11 @@ impl Snapshot {
     }
 }
 
-/// The one thing a sweep can offer. Seven shapes, and `finding_command` is the complete list of
+/// The one thing a sweep can offer. Four shapes, and `finding_command` is the complete list of
 /// destructive commands this view can run.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Finding {
-    Close { id: String, reason: String },
-    Reclaim { id: String },
     EpicClose { id: String },
-    Unclaim { id: String },
     Unassign { id: String, priority: Option<i64> },
     Recheck { id: String, priority: Option<i64> },
     Unpause { id: String, priority: Option<i64> },
@@ -100,10 +88,7 @@ impl Finding {
     /// The bead this finding is about.
     pub fn id(&self) -> &str {
         match self {
-            Self::Close { id, .. }
-            | Self::Reclaim { id }
-            | Self::EpicClose { id }
-            | Self::Unclaim { id }
+            Self::EpicClose { id }
             | Self::Unassign { id, .. }
             | Self::Recheck { id, .. }
             | Self::Unpause { id, .. } => id,
@@ -113,10 +98,7 @@ impl Finding {
     /// The action word, for the key below and for a failure message.
     fn action(&self) -> &'static str {
         match self {
-            Self::Close { .. } => "close",
-            Self::Reclaim { .. } => "reclaim",
             Self::EpicClose { .. } => "epic-close",
-            Self::Unclaim { .. } => "unclaim",
             Self::Unassign { .. } => "unassign",
             Self::Recheck { .. } => "recheck",
             Self::Unpause { .. } => "unpause",
@@ -127,8 +109,8 @@ impl Finding {
     ///
     /// A key, never an index, for exactly `App::selected`'s reason: the findings are replaced
     /// wholesale every ten minutes and after every `x`, and an index would silently come to mean
-    /// a different destructive command. The pair is unique: the claims sweep is the only one that
-    /// yields two shapes, and it yields at most one per bead.
+    /// a different destructive command. The pair is unique: each sweep yields one shape, at most once
+    /// per bead.
     pub fn key(&self) -> String {
         format!("{}:{}", self.action(), self.id())
     }
@@ -145,17 +127,12 @@ impl Finding {
     }
 }
 
-/// Minutes past which a claim's delivery, or an epic's last child close, is old enough to act on
-/// rather than mid-cleanup. `cerebro-sweep-stale-minutes`.
+/// Minutes past which an epic's last child close is old enough to act on rather than mid-cleanup. `cerebro-sweep-stale-minutes`.
 ///
 /// A constant here and a defcustom there, exactly as `lifecycle::END_GRACE_SECONDS` is: this
 /// crate has no customisation layer, and inventing a declaration for one is what `main.rs`
 /// forbids in as many words.
 const STALE_MINUTES: i64 = 10;
-
-/// Minutes without progress past which a claim a live session holds is offered as stalled.
-/// `cerebro-stalled-minutes`.
-const STALLED_MINUTES: i64 = 60;
 
 /// How long an open bead may carry an assignee no live session is on. `cerebro-stale-assignee-minutes`.
 const STALE_ASSIGNEE_MINUTES: i64 = 10;
@@ -166,38 +143,32 @@ const STALE_VERDICT_MERGES: i64 = 1;
 /// Which sweep a candidate came from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Sweep {
-    Claims,
     Epics,
-    Stalled,
     Assignees,
     Verdicts,
     Paused,
 }
 
 impl Sweep {
-    /// The six, in run order - `cerebro--sweeps`' own order, which is the order findings appear in.
-    pub const ALL: [Sweep; 6] = [
-        Sweep::Claims,
+    /// The four, in run order - the order findings appear in.
+    pub const ALL: [Sweep; 4] = [
         Sweep::Epics,
-        Sweep::Stalled,
         Sweep::Assignees,
         Sweep::Verdicts,
         Sweep::Paused,
     ];
 
-    /// `"sweep-claims"` - the key the JSON table uses and the name the header prints.
+    /// `"sweep-epics"` - the key the JSON table uses and the name the header prints.
     pub fn key(self) -> &'static str {
         match self {
-            Self::Claims => "sweep-claims",
             Self::Epics => "sweep-epics",
-            Self::Stalled => "sweep-stalled",
             Self::Assignees => "sweep-assignees",
             Self::Verdicts => "sweep-verdicts",
             Self::Paused => "sweep-paused",
         }
     }
 
-    /// `"sweep-claims.sh"` - the file under `scripts/`.
+    /// `"sweep-epics.sh"` - the file under `scripts/`.
     pub fn script(self) -> String {
         format!("{}.sh", self.key())
     }
@@ -210,46 +181,11 @@ impl Sweep {
     /// What this sweep offers for CANDIDATE against SNAPSHOT, or `None` to leave it alone.
     pub fn judge(self, candidate: &Candidate, snapshot: &Snapshot) -> Option<Finding> {
         match self {
-            Self::Claims => claim_finding(candidate, snapshot),
             Self::Epics => epic_finding(candidate),
-            Self::Stalled => stalled_finding(candidate, snapshot),
             Self::Assignees => assignee_finding(candidate, snapshot),
             Self::Verdicts => verdict_finding(candidate),
             Self::Paused => paused_finding(candidate),
         }
-    }
-}
-
-/// `cerebro--claim-finding`. The guards in order: a `verification:failed` label makes `on_main`
-/// meaningless; a live session still holds it; the delivering commit is too fresh to be sure the
-/// implementer has finished tidying up; or nothing is on main and the lease has not been expired
-/// long enough to call the claim dead.
-///
-/// The last is not a detail: an assignee with no live session is exactly as often a claim held by
-/// hand as one a crashed implementer left behind, and the lease is what tells them apart -
-/// `bd reclaim --older-than 10m`'s own window, so a confirmed reclaim cannot be refused by `bd`.
-fn claim_finding(candidate: &Candidate, snapshot: &Snapshot) -> Option<Finding> {
-    if candidate.verification_failed == Some(true) {
-        return None;
-    }
-    if snapshot.live_named(candidate.assignee.as_deref()).is_some() {
-        return None;
-    }
-    if candidate.on_main == Some(true) {
-        return match candidate.commit_age_min {
-            Some(age) if age > STALE_MINUTES => Some(Finding::Close {
-                id: candidate.id.clone(),
-                reason: format!(
-                    "Delivered in PR; closed by the fleet view, {} did not",
-                    candidate.assignee.clone().unwrap_or_default()
-                ),
-            }),
-            _ => None,
-        };
-    }
-    match candidate.lease_age_min {
-        Some(age) if age > STALE_MINUTES => Some(Finding::Reclaim { id: candidate.id.clone() }),
-        _ => None,
     }
 }
 
@@ -260,30 +196,6 @@ fn epic_finding(candidate: &Candidate) -> Option<Finding> {
         Some(minutes) if minutes > STALE_MINUTES => {
             Some(Finding::EpicClose { id: candidate.id.clone() })
         }
-        _ => None,
-    }
-}
-
-/// `cerebro--stalled-finding`. Nobody live holds it (the claims sweep's case), the session is
-/// `asking`, there is no age to judge, or the age is inside the threshold - which includes every
-/// bead sitting in CI.
-///
-/// The `asking` skip is unchanged by cb-0q1 and is now the only thing standing between the
-/// navigator and a claim held by a waiting session: a question waits until it is answered, so a
-/// waiting session is occupied rather than stalled, and offering its unclaim would be putting
-/// back the clock that bead removed. The row itself stays `asking` in the fleet view with its
-/// elapsed time climbing, which is where a wait that has gone on too long is seen.
-///
-/// MEMBERSHIP decides liveness, not the state's truthiness: a live session whose state file
-/// carries no `state` key reaches here with `None` and must still count as live, or a
-/// half-written file becomes a finding against a working implementer.
-fn stalled_finding(candidate: &Candidate, snapshot: &Snapshot) -> Option<Finding> {
-    let session = snapshot.live_named(candidate.assignee.as_deref())?;
-    if session.state.as_deref() == Some("asking") {
-        return None;
-    }
-    match candidate.progress_age_min {
-        Some(age) if age > STALLED_MINUTES => Some(Finding::Unclaim { id: candidate.id.clone() }),
         _ => None,
     }
 }
@@ -351,9 +263,9 @@ fn paused_finding(candidate: &Candidate) -> Option<Finding> {
 /// **the candidate it was judged from**.
 ///
 /// `cerebro--findings-from-snapshot`'s port, which labels inside the same walk for the same
-/// reason: two sweeps list the same bead - `sweep-claims` and `sweep-stalled` both emit one object
-/// per `in_progress` bead - so a candidate looked up by id afterwards is the wrong sweep's as
-/// often as the right one, and the evidence four of the seven labels print comes out `nil`.
+/// reason: two sweeps may still list one bead - an assigned bead with a stale verdict - so a
+/// candidate looked up by id afterwards could be the wrong sweep's, and the evidence the labels
+/// print would come out `nil`.
 /// A sweep absent from OUTPUTS contributes nothing.
 pub fn findings_from<'a>(
     outputs: &'a [(Sweep, Vec<Candidate>)],
@@ -389,28 +301,18 @@ fn age_in_words(minutes: Option<i64>) -> String {
 /// judged it.
 ///
 /// `cerebro--sweep-label`'s port, including `cerebro--paused-label` and `cerebro--age-in-words`.
-/// It takes the candidate because four of the seven arms print evidence the finding does not
+/// It takes the candidate because three of the four arms print evidence the finding does not
 /// carry, and the snapshot for the one arm whose evidence the SCRIPT cannot know: what the
 /// assignee is actually on, which is `cerebro--assignee-enrich`'s whole job there.
 pub fn label(finding: &Finding, candidate: &Candidate, snapshot: &Snapshot) -> String {
     let assignee = candidate.assignee.clone().unwrap_or_default();
     match finding {
-        Finding::Close { id, .. } => format!(
-            "close {id} — delivered by {assignee}, on main {}m",
-            candidate.commit_age_min.map(|m| m.to_string()).unwrap_or_else(|| "?".into())
-        ),
-        Finding::Reclaim { id } => format!("reclaim {id} — {assignee} gone, not on main"),
         Finding::EpicClose { id } => format!(
             "close {id} — all children closed {}m ago",
             candidate
                 .minutes_since_last_child_closed
                 .map(|m| m.to_string())
                 .unwrap_or_else(|| "nil".into())
-        ),
-        Finding::Unclaim { id } => format!(
-            "unclaim {id} — {assignee} stalled, no {} for {}m",
-            if candidate.progress_source.as_deref() == Some("commit") { "commit" } else { "start" },
-            candidate.progress_age_min.map(|m| m.to_string()).unwrap_or_else(|| "nil".into())
         ),
         Finding::Unassign { id, .. } => {
             let doing = match snapshot
@@ -458,8 +360,8 @@ fn paused_label(id: &str, blockers: &[Blocker]) -> String {
 }
 
 /// The label the paused sweep's `unpause` command does not say on its face: where the bead goes.
-/// `cerebro--finding-explanation`, whose other six arms are `None` for the reason it gives -
-/// `bd close`, `bd unclaim` and `bd reclaim` each say their own consequence.
+/// `cerebro--finding-explanation`, whose other three arms are `None` for the reason it gives -
+/// `bd close`, `bd update` and `bd set-state` each say their own consequence.
 fn explanation(finding: &Finding) -> Option<String> {
     match finding {
         Finding::Unpause { id, .. } => {
@@ -472,27 +374,12 @@ fn explanation(finding: &Finding) -> Option<String> {
 /// The exact argv for FINDING, with PROGRAM as argv[0].
 ///
 /// `cerebro--finding-command`'s port and, like it, **the complete list of destructive commands
-/// this view can run**. A total function over the seven shapes: there is no fallthrough arm and
+/// this view can run**. A total function over the four shapes: there is no fallthrough arm and
 /// there must never be one.
 pub fn finding_command(finding: &Finding, program: &Path) -> Vec<String> {
     let bd = program.display().to_string();
     match finding {
-        Finding::Close { id, reason } => {
-            vec![bd, "close".into(), id.clone(), "--reason".into(), reason.clone()]
-        }
-        Finding::Reclaim { id } => vec![
-            bd,
-            "reclaim".into(),
-            "--id".into(),
-            id.clone(),
-            "--older-than".into(),
-            "10m".into(),
-        ],
         Finding::EpicClose { id } => vec![bd, "close".into(), id.clone()],
-        // `bd unclaim`, not `bd reclaim --older-than`: reclaim is for a claim whose session is
-        // gone, and its window would refuse a bead whose lease is still being heartbeated. This
-        // finding is about a session alive and not moving.
-        Finding::Unclaim { id } => vec![bd, "unclaim".into(), id.clone()],
         // Clearing the field, not touching the status: the bead is already `open` and holds no
         // lease, so there is nothing to unclaim or reclaim.
         Finding::Unassign { id, .. } => {
@@ -520,7 +407,7 @@ pub fn finding_command(finding: &Finding, program: &Path) -> Vec<String> {
 
 /// The gold header line that asks for FINDING.
 ///
-/// Six of the seven echo the command, which says its own consequence; `unpause` says the
+/// Three of the four echo the command, which says its own consequence; `unpause` says the
 /// consequence instead, because removing a label does not say where the bead then goes and the
 /// command would be cut on the terminal where it is needed (round three of the interview).
 pub fn prompt(finding: &Finding, program: &Path) -> String {
@@ -595,13 +482,7 @@ mod tests {
         let id = parts[1].as_str().expect("a bead id").to_string();
         let priority = parts.get(2).and_then(serde_json::Value::as_i64);
         Some(match head {
-            "close" => Finding::Close {
-                id,
-                reason: parts[2].as_str().expect("a reason").to_string(),
-            },
-            "reclaim" => Finding::Reclaim { id },
             "epic-close" => Finding::EpicClose { id },
-            "unclaim" => Finding::Unclaim { id },
             "unassign" => Finding::Unassign { id, priority },
             "recheck" => Finding::Recheck { id, priority },
             "unpause" => Finding::Unpause { id, priority },
@@ -617,7 +498,7 @@ mod tests {
     #[test]
     fn the_shared_table_is_answered() {
         let rows = rows();
-        assert!(rows.len() > 30, "the table lost its rows: {}", rows.len());
+        assert!(rows.len() > 20, "the table lost its rows: {}", rows.len());
         let mut heads = BTreeSet::new();
         for row in &rows {
             let sweep = Sweep::from_key(&row.sweep)
@@ -663,20 +544,17 @@ mod tests {
                 row.name
             );
         }
-        assert_eq!(heads.len(), 7, "every finding head is exercised: {heads:?}");
+        assert_eq!(heads.len(), 4, "every finding head is exercised: {heads:?}");
     }
 
     /// This function is the complete list of destructive commands this view can run, so its whole
     /// range is pinned rather than its happy path. There is no fallthrough arm to test, which is
     /// the point: a new variant will not compile until it has a command.
     #[test]
-    fn finding_command_is_total_over_the_seven_shapes() {
+    fn finding_command_is_total_over_the_four_shapes() {
         let bd = Path::new("/usr/local/bin/bd");
         let all = [
-            Finding::Close { id: "a".into(), reason: "r".into() },
-            Finding::Reclaim { id: "a".into() },
             Finding::EpicClose { id: "a".into() },
-            Finding::Unclaim { id: "a".into() },
             Finding::Unassign { id: "a".into(), priority: Some(0) },
             Finding::Recheck { id: "a".into(), priority: Some(0) },
             Finding::Unpause { id: "a".into(), priority: Some(0) },
@@ -692,16 +570,13 @@ mod tests {
 
     #[test]
     fn a_finding_key_is_the_action_and_the_bead() {
-        assert_eq!(Finding::Reclaim { id: "cb-a".into() }.key(), "reclaim:cb-a");
-        assert_eq!(
-            Finding::Close { id: "cb-a".into(), reason: "r".into() }.key(),
-            "close:cb-a"
-        );
-        // The claims sweep is the only one that yields two shapes for one bead, and it yields at
-        // most one - so the pair is unique across a whole findings list.
+        assert_eq!(Finding::EpicClose { id: "cb-a".into() }.key(), "epic-close:cb-a");
+        assert_eq!(Finding::Unassign { id: "cb-a".into(), priority: None }.key(), "unassign:cb-a");
+        // Each sweep yields one shape, at most once per bead - so the pair is unique across a
+        // whole findings list even when two sweeps list the same bead.
         assert_ne!(
-            Finding::Close { id: "cb-a".into(), reason: "r".into() }.key(),
-            Finding::Reclaim { id: "cb-a".into() }.key()
+            Finding::EpicClose { id: "cb-a".into() }.key(),
+            Finding::Unassign { id: "cb-a".into(), priority: None }.key()
         );
     }
 
@@ -713,8 +588,7 @@ mod tests {
         assert!(Finding::Recheck { id: "a".into(), priority: Some(0) }.urgent());
         assert!(!Finding::Unassign { id: "a".into(), priority: Some(2) }.urgent());
         assert!(!Finding::Unassign { id: "a".into(), priority: None }.urgent());
-        assert!(!Finding::Unclaim { id: "a".into() }.urgent());
-        assert!(!Finding::Close { id: "a".into(), reason: "r".into() }.urgent());
+        assert!(!Finding::EpicClose { id: "a".into() }.urgent());
     }
 
     /// Run order is `Sweep::ALL`'s, whatever order the outputs arrive in, and a sweep absent from
@@ -722,30 +596,29 @@ mod tests {
     #[test]
     fn findings_are_returned_in_sweep_order() {
         let now = DateTime::from_timestamp(1_767_225_600, 0).expect("a valid timestamp");
-        let snapshot = Snapshot { live: Vec::new(), implementers: Vec::new(), now };
+        let snapshot = Snapshot { live: Vec::new(), implementers: vec!["Storm".into()], now };
         let epic = Candidate {
             id: "cb-e".into(),
             minutes_since_last_child_closed: Some(30),
             ..Candidate::default()
         };
-        let claim = Candidate {
+        let assigned = Candidate {
             id: "cb-c".into(),
             assignee: Some("Storm".into()),
-            on_main: Some(false),
-            lease_age_min: Some(30),
+            age_min: Some(30),
             ..Candidate::default()
         };
-        let outputs = [(Sweep::Epics, vec![epic]), (Sweep::Claims, vec![claim])];
+        let outputs = [(Sweep::Assignees, vec![assigned]), (Sweep::Epics, vec![epic])];
         let findings = findings_from(&outputs, &snapshot);
         assert_eq!(
             findings.iter().map(|(finding, _)| finding.clone()).collect::<Vec<_>>(),
             vec![
-                Finding::Reclaim { id: "cb-c".into() },
                 Finding::EpicClose { id: "cb-e".into() },
+                Finding::Unassign { id: "cb-c".into(), priority: None },
             ]
         );
         // And each carries the candidate it was judged from, which is what the label needs.
-        assert_eq!(findings[0].1.id, "cb-c");
-        assert_eq!(findings[1].1.id, "cb-e");
+        assert_eq!(findings[0].1.id, "cb-e");
+        assert_eq!(findings[1].1.id, "cb-c");
     }
 }

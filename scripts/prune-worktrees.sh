@@ -19,7 +19,6 @@
 #
 #     .claude/cerebro/scripts/prune-worktrees.sh              # one sweep, then exit
 #     .claude/cerebro/scripts/prune-worktrees.sh --dry-run    # say what would go, remove nothing
-#     .claude/cerebro/scripts/prune-worktrees.sh --watch      # sweep every ten minutes until killed
 #
 # ## What counts as safe
 #
@@ -103,7 +102,6 @@ set -uo pipefail
 STALE_MINUTES="${STALE_MINUTES:-30}"
 COLD_TARGET_MINUTES="${COLD_TARGET_MINUTES:-1440}"
 PRESSURE_COLD_MINUTES="${PRESSURE_COLD_MINUTES:-30}"
-WATCH_SECONDS="${WATCH_SECONDS:-600}"
 
 case "$PRESSURE_COLD_MINUTES" in
   ''|*[!0-9]*)
@@ -120,12 +118,10 @@ case "$COLD_TARGET_MINUTES" in
 esac
 
 dry_run=false
-watch=false
 for argument in "$@"; do
   case "$argument" in
     --dry-run) dry_run=true ;;
-    --watch) watch=true ;;
-    *) echo "usage: .claude/cerebro/scripts/prune-worktrees.sh [--dry-run] [--watch]" >&2; exit 2 ;;
+    *) echo "usage: .claude/cerebro/scripts/prune-worktrees.sh [--dry-run]" >&2; exit 2 ;;
   esac
 done
 
@@ -444,11 +440,4 @@ sweep() {
   fi
 }
 
-if $watch; then
-  while :; do
-    sweep
-    sleep "$WATCH_SECONDS"
-  done
-else
-  sweep
-fi
+sweep

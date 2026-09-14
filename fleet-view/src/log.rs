@@ -106,6 +106,10 @@ pub enum Event {
     /// `outcome` and `reason`. Written on the ANSWER - what was done, including why a tree was
     /// kept; a failed tidy goes to `errors.jsonl` under `tidy` instead.
     Tidy,
+    /// What a take-back of a gone implementer's claim came to (cb-10d.4): `agent`, `bead`,
+    /// `outcome` (`closed` | `kept`), `reason` (the kept reason, or null). Written on the answer,
+    /// as `tidy` is.
+    Release,
     Error,
 }
 
@@ -131,6 +135,7 @@ impl Event {
             Self::DisarmAll => "disarm-all",
             Self::GiveBack => "give-back",
             Self::Tidy => "tidy",
+            Self::Release => "release",
             Self::Error => "error",
         }
     }

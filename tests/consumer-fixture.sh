@@ -271,7 +271,7 @@ pass "consumer-root answers both roots from inside a worktree of the consumer"
 
 # --- the sweeps come back clean, driven by the stub tracker ---------------------------------------
 
-for sweep in sweep-claims.sh sweep-epics.sh sweep-stalled.sh; do
+for sweep in sweep-epics.sh; do
   out="$(run_at "$sweep" --json)" || fail "$sweep: non-zero exit against an empty fleet"
   jq -e . >/dev/null 2>&1 <<<"$out" || fail "$sweep: did not print JSON: $out"
   # A clean sweep prints an array; the failure shape is an object carrying `error', so the type has
@@ -279,7 +279,7 @@ for sweep in sweep-claims.sh sweep-epics.sh sweep-stalled.sh; do
   jq -e 'type == "object" and has("error") | not' >/dev/null <<<"$out" \
     || fail "$sweep: reported an error rather than a clean sweep: $out"
 done
-pass "the claim, epic and stalled sweeps come back clean on a trunk-branched consumer"
+pass "the epic sweep comes back clean on a trunk-branched consumer"
 
 run_at prune-worktrees.sh --dry-run >/dev/null || fail "prune-worktrees.sh: non-zero exit"
 pass "prune-worktrees.sh sweeps a consumer whose worktrees hold nothing to reclaim"

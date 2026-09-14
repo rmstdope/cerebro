@@ -1,9 +1,8 @@
 //! `cerebro-tui`: the standalone fleet screen, started by
 //! `.claude/cerebro/scripts/cerebro-tui` and never by hand.
 //!
-//! It owns six things and nothing else: the terminal, the event loop, the workers that keep the
-//! readers off the drawing thread, the sessions it hosts (cb-kcs.2.2), the `prune-worktrees.sh
-//! --watch` child it keeps running beside itself (cb-kcs.5.2), and - since cb-kcs.1 - the
+//! It owns five things and nothing else: the terminal, the event loop, the workers that keep the
+//! readers off the drawing thread, the sessions it hosts (cb-kcs.2.2), and - since cb-kcs.1 - the
 //! supervision lease, through `SupervisorController`. Since cb-kcs.2.3 `s`, `f` and `k` reach the
 //! fleet through `route_key` and `lifecycle_key`: it starts an agent, writes and clears a stop
 //! flag, and kills a session it hosts, each refused with a visible line unless the lease says it
@@ -48,7 +47,6 @@ use cerebro_tui::app::{
 use cerebro_tui::lifecycle;
 use cerebro_tui::log::{self, Logger};
 use cerebro_tui::model::{AgentKind, RosterEntry, RowState};
-use cerebro_tui::pruner::{self, Pruner};
 use cerebro_tui::readers::{
     self, CommandRunner, Commands, Programs, ReadError, ReaderPaths, RealCommands,
 };
@@ -333,14 +331,13 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
     logger.set_enabled(enabled);
 
     // Built BEFORE the terminal guard, so the whole of it is dropped AFTER it: a child killed on
-    // the way out must not be killed while the alternate screen is still up, and the pruner's
+    // the way out must not be killed while the alternate screen is still up, and every
     // `Drop` must run with the terminal already restored. Its field order is its drop order, and
     // it reproduces the order these values had as locals.
     //
     // `told` is what each name was last told about the unranked set, in memory only
     // (cb-kcs.5.2).
     let mut state = LoopState {
-        pruner: Pruner::new(),
         told: lifecycle::TriageLedger::default(),
         swept: lifecycle::SweepLedger::default(),
         host: SessionHost::default(),
@@ -666,51 +663,6 @@ fn supervise(
     }
 }
 
-
-/// Keep the watcher in step with what this view may do, and say so when it cannot.
-///
-/// Its own five-second clock rather than the loop's ~200ms iteration, and outside the fleet poll:
-/// the watcher is nothing to do with what any agent wrote in a state file.
-///
-/// Gated on `may_supervise()` alone, so a view that loses the lease kills its watcher: the pruner
-/// is a writer, and a handover means starting nothing new.
-fn prune(
-    app: &mut App,
-    pruner: &mut Pruner,
-    logger: &mut Logger,
-    paths: &ReaderPaths,
-    now: DateTime<Utc>,
-    at: Instant,
-) {
-    if !pruner.due(at) {
-        return;
-    }
-    match pruner::prune_action(pruner.live(), app.supervision.may_supervise()) {
-        // A read-only view is not a failure, and neither is quitting: nothing is said.
-        pruner::PruneAction::Stop => pruner.stop(),
-        pruner::PruneAction::Leave => {}
-        pruner::PruneAction::Start => {
-            // The death `live` just observed, if there was one, and otherwise the spawn's own
-            // refusal. Neither on the first start as the view comes up, which is silent.
-            let died = pruner.take_exit();
-            let cause = match pruner.start(paths) {
-                Ok(()) => {
-                    logger.clear_error("prune");
-                    died
-                }
-                Err(refusal) => Some(refusal),
-            };
-            let Some(cause) = cause else { return };
-            // Unconditionally to the log, whose per-context dedupe keeps a permanently missing
-            // script to one line and still writes a line for every DIFFERENT fault - which is what
-            // keeps the record complete while the header is inside its ten-minute gate.
-            logger.error("prune", &cause, now);
-            if pruner.should_complain(at) {
-                app.set_error_notice(pruner::failure_notice(&cause));
-            }
-        }
-    }
-}
 
 /// Type the triage line into an idle orchestrator this view hosts, on the rows just applied.
 ///
@@ -1259,11 +1211,29 @@ fn tidy_worktrees(app: &mut App, host: &SessionHost, paths: &ReaderPaths, now: D
 }
 
 /// Settle one tidy answer: a `tidy` decision line for what was done, or an `errors.jsonl` line
-/// under `tidy` for a tidy that failed.
+/// under `tidy` for a tidy that failed - and, for a failure, the agreed red line at most once in
+/// ten minutes per bead (cb-10d.4). A `retry` is recorded and never drawn.
 fn settle_tidy(app: &mut App, logger: &mut Logger, answer: &app::TidyAnswer, now: DateTime<Utc>) {
+    let key = format!("tidy:{}", answer.bead);
     match &answer.outcome {
-        lifecycle::TidyOutcome::Failed { text } => logger.error("tidy", text, now),
+        lifecycle::TidyOutcome::Failed { cause } => {
+            logger.error(
+                "tidy",
+                &format!("release-bead --worktree {} {} failed: {cause}", answer.name, answer.bead),
+                now,
+            );
+            app.complain(&key, lifecycle::tidy_failure(&answer.name, &answer.bead, cause), now);
+        }
+        lifecycle::TidyOutcome::Retry => logger.error(
+            "tidy",
+            &format!(
+                "release-bead --worktree {} {}: the git remote did not answer",
+                answer.name, answer.bead
+            ),
+            now,
+        ),
         outcome => {
+            app.settle_complaint(&key);
             logger.clear_error("tidy");
             let reason = match outcome {
                 lifecycle::TidyOutcome::Kept { reason } => serde_json::Value::from(reason.as_str()),
@@ -1388,6 +1358,39 @@ fn give_back(
         .collect();
     for (name, bead) in ended {
         queue_give_back(app, logger, &name, &bead, lifecycle::GiveBack::Ended, now);
+    }
+    // A gone implementer still holding a claim (cb-10d.4): closed if its work is on main, kept
+    // otherwise. The one job of the retired claims sweep nothing else replaces.
+    if let Some(buckets) = app.work.content.value().cloned() {
+        app.kept.retain(|(name, bead)| {
+            buckets
+                .claimed
+                .iter()
+                .any(|b| &b.id == bead && b.assignee.as_deref() == Some(name.as_str()))
+        });
+        for entry in roster.iter().filter(|e| e.kind == cerebro_tui::model::AgentKind::Implementer) {
+            if app.handed.contains_key(&entry.name) {
+                continue;
+            }
+            let row = app.fleet_rows().iter().find(|row| row.name == entry.name);
+            let alive = host.is_live(&entry.name) || row.is_some_and(lifecycle::row_is_alive);
+            let current = row.and_then(|row| row.bead.clone());
+            let handover = lifecycle::read_handover(paths, &entry.name, std::time::SystemTime::now())
+                .map(|(bead, _)| bead);
+            let releasing = !app.may_release(&entry.name, now) || app.releasing.contains_key(&entry.name);
+            if let Some(bead) = lifecycle::ended_claim(
+                &entry.name,
+                alive,
+                current.as_deref(),
+                handover.as_deref(),
+                releasing,
+                &app.kept,
+                &buckets,
+            ) {
+                let bead = bead.to_string();
+                queue_give_back(app, logger, &entry.name, &bead, lifecycle::GiveBack::Ended, now);
+            }
+        }
     }
 }
 
@@ -1646,12 +1649,11 @@ fn startup_notice(started: &[String], standby: &[String], complaints: &[String])
 /// Everything the loop MUTATES that is not `App` and is not the terminal.
 ///
 /// The field order reproduces the drop order these values have as locals in `start` today
-/// (pruner, then told, then host, then the logger, then the ledger, then the controller -
+/// (told, then host, then the logger, then the ledger, then the controller -
 /// the reverse of the order they were declared in): struct fields drop in declaration
 /// order, and reproducing the existing order is cheaper than proving that none of these
 /// `Drop`s interact.
 struct LoopState {
-    pruner: Pruner,
     told: lifecycle::TriageLedger,
     swept: lifecycle::SweepLedger,
     host: SessionHost,
@@ -1859,14 +1861,12 @@ where
         // Worktree tidies (cb-10d.3), on their own worker: nothing about them is drawn.
         for request in app.take_tidy_outbox() {
             if !workers.tidy.request_with(request.clone()) {
-                let text = "the tidy worker has stopped".to_string();
-                state.logger.error("tidy", &text, clock());
                 let answer = app::TidyAnswer {
                     name: request.name,
                     bead: request.bead,
-                    outcome: lifecycle::TidyOutcome::Failed { text },
+                    outcome: lifecycle::TidyOutcome::Failed { cause: "the tidy worker has stopped".into() },
                 };
-                app.finish_tidy(&answer, clock());
+                settle_tidy(app, &mut state.logger, &answer, clock());
             }
         }
         if let Some(Ok(answer)) = workers.tidy.poll() {
@@ -1874,14 +1874,7 @@ where
         }
         if let Some(Ok(answer)) = workers.write.poll() {
             log_write(&mut state.logger, &answer, clock());
-            if let app::WriteAnswer::Release {
-                name,
-                outcome: lifecycle::ReleaseOutcome::Failed { .. },
-                ..
-            } = &answer
-            {
-                app.note_release_failed(name, clock());
-            }
+            settle_release(app, &mut state.logger, &answer, clock());
             let action = app.finish_write(answer);
             // Neither of the two `dispatch` calls off the keystroke path may carry a `Write`:
             // `App::finish_write` and `App::on_tick` return refresh actions and `None` alone, and
@@ -1932,10 +1925,6 @@ where
         if state.controller.due(Instant::now()) {
             reconcile_ownership(app, state, clock());
         }
-        // The watcher, on its own five-second clock and outside the fleet poll: it is nothing to
-        // do with what any agent wrote in a state file (cb-kcs.5.2).
-        prune(app, &mut state.pruner, &mut state.logger, &config.paths, clock(), Instant::now());
-
         let ticked = app.on_tick(Instant::now());
         debug_assert!(!matches!(ticked, AppAction::Write(_)));
         dispatch(ticked, app, workers, &clock);
@@ -2415,6 +2404,57 @@ fn lifecycle_key(
 ///
 /// Its own function, and not inlined into the poll, so a case can exercise it: `run`'s loop is
 /// not somewhere a test reaches (found in review).
+/// A take-back the board refused (cb-10d.4): retried in a minute, and said in red at most once in
+/// ten minutes for the same name and bead. Its own function because `dispatch`, which has no
+/// logger, answers an undeliverable one too.
+fn release_refused(app: &mut App, name: &str, bead: &str, text: &str, now: DateTime<Utc>) {
+    app.note_release_failed(name, now);
+    app.complain(&format!("release:{name}:{bead}"), text.to_string(), now);
+}
+
+/// Settle what a take-back came to, before `finish_write` (cb-10d.4): stamp a retry, say a refusal
+/// in red at most once in ten minutes, record a close or a keep, and forget a settled complaint.
+fn settle_release(app: &mut App, logger: &mut Logger, answer: &app::WriteAnswer, now: DateTime<Utc>) {
+    let app::WriteAnswer::Release { name, bead, outcome, .. } = answer else {
+        return;
+    };
+    let key = format!("release:{name}:{bead}");
+    let record = |logger: &mut Logger, outcome: &str, reason: serde_json::Value| {
+        logger.write(
+            log::Event::Release,
+            now,
+            &[
+                ("agent", serde_json::Value::from(name.as_str())),
+                ("bead", serde_json::Value::from(bead.as_str())),
+                ("outcome", serde_json::Value::from(outcome)),
+                ("reason", reason),
+            ],
+        );
+    };
+    match outcome {
+        lifecycle::ReleaseOutcome::Failed { text } => release_refused(app, name, bead, text, now),
+        // Still on it by the script's test: nothing to record, but not asked again for a minute.
+        lifecycle::ReleaseOutcome::Running => app.note_release_failed(name, now),
+        lifecycle::ReleaseOutcome::Retry => {
+            app.note_release_failed(name, now);
+            logger.error(
+                "write",
+                &format!("release-bead --ended {name} {bead}: the git remote did not answer"),
+                now,
+            );
+        }
+        lifecycle::ReleaseOutcome::Closed => {
+            app.settle_complaint(&key);
+            record(logger, "closed", serde_json::Value::Null);
+        }
+        lifecycle::ReleaseOutcome::Kept { reason } => {
+            app.settle_complaint(&key);
+            record(logger, "kept", serde_json::Value::from(reason.as_str()));
+        }
+        _ => app.settle_complaint(&key),
+    }
+}
+
 fn log_write(logger: &mut Logger, answer: &app::WriteAnswer, now: DateTime<Utc>) {
     if answer.failed() {
         logger.error("write", answer.text(), now);
@@ -2439,7 +2479,17 @@ fn dispatch(
     if let AppAction::Write(request) = &action {
         if !workers.write.request_with(request.clone()) {
             // A write that could never be sent is reported rather than lost.
-            let answered = app.finish_write(app::WriteAnswer::undeliverable(request));
+            let answer = app::WriteAnswer::undeliverable(request);
+            if let app::WriteAnswer::Release {
+                name,
+                bead,
+                outcome: lifecycle::ReleaseOutcome::Failed { text },
+                ..
+            } = &answer
+            {
+                release_refused(app, name, bead, text, clock());
+            }
+            let answered = app.finish_write(answer);
             // The two `dispatch` calls off the keystroke path can never carry a `Write`:
             // `App::on_tick` and `App::finish_write` return refresh actions and `None` alone, and
             // `AppAction::Write` is produced by `route_key` and by the outbox drain in `run`
@@ -3215,7 +3265,6 @@ mod main_tests {
     /// which is the read-only-with-a-lock-error case these cases already run under.
     fn test_state() -> LoopState {
         LoopState {
-            pruner: Pruner::new(),
             told: lifecycle::TriageLedger::default(),
             swept: lifecycle::SweepLedger::default(),
             host: SessionHost::default(),
@@ -3273,7 +3322,7 @@ mod main_tests {
     }
 
     /// The sweeps' worker, pointed at a directory with no sweep scripts in it - so every request
-    /// answers `sweep-claims failed` and the section is never drawn.
+    /// answers `sweep-epics failed` and the section is never drawn.
     fn history_worker() -> cerebro_tui::app::HistoryWorker {
         cerebro_tui::app::HistoryWorker::spawn(nowhere().0, std::sync::Arc::new(RealCommands))
     }
@@ -4368,8 +4417,8 @@ mod main_tests {
         );
     }
 
-    /// It holds a claim, a worktree and possibly an open pull request; `sweep-stalled` is its
-    /// escalation, not this loop.
+    /// It holds a claim, a worktree and possibly an open pull request; the navigator's `k` ends it,
+    /// and `give_back` then releases what it held.
     #[test]
     fn a_stuck_implementer_is_resumed_and_never_ended() {
         let dir = tempfile::tempdir().unwrap();
@@ -5599,6 +5648,215 @@ mod main_tests {
         }
     }
 
+    /// A board holding `cb-x` claimed by `Rogue` (cb-10d.4).
+    fn claimed_by_rogue(ids: &[&str]) -> cerebro_tui::model::WorkBuckets {
+        cerebro_tui::model::partition_beads(
+            ids.iter()
+                .map(|id| cerebro_tui::model::Bead {
+                    id: (*id).into(),
+                    title: (*id).into(),
+                    status: "in_progress".into(),
+                    issue_type: "task".into(),
+                    labels: vec!["planned".into()],
+                    priority: Some(2),
+                    updated_at: None,
+                    assignee: Some("Rogue".into()),
+                    metadata: serde_json::Value::Null,
+                    external_ref: None,
+                })
+                .collect(),
+        )
+    }
+
+    fn ended_release_queued(out: &[cerebro_tui::app::WriteRequest], bead: &str) -> bool {
+        matches!(
+            out,
+            [cerebro_tui::app::WriteRequest::Release {
+                name,
+                bead: queued,
+                cause: cerebro_tui::lifecycle::GiveBack::Ended,
+            }] if name == "Rogue" && queued == bead
+        )
+    }
+
+    /// cb-10d.4: an implementer that is gone while its claim is still on the board has the claim
+    /// taken back, once.
+    #[test]
+    fn a_gone_implementer_with_a_claim_is_asked_to_release_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "exit 0");
+        let now = Utc::now();
+        let roster = implementer_roster(&["Rogue"]);
+        let mut app = standby_app(
+            supervising(),
+            vec![implementer_row("Rogue", RowState::Standby)],
+            Some(claimed_by_rogue(&["cb-x"])),
+            now,
+        );
+        give_back(&mut app, &SessionHost::default(), &mut test_logger(), &paths, &roster, now);
+        let out = app.take_outbox();
+        assert!(ended_release_queued(&out, "cb-x"), "{out:?}");
+        give_back(&mut app, &SessionHost::default(), &mut test_logger(), &paths, &roster, now);
+        assert!(app.take_outbox().is_empty(), "one take-back per name");
+    }
+
+    #[test]
+    fn a_restarted_implementer_releases_its_old_claim() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "exit 0");
+        let now = Utc::now();
+        let roster = implementer_roster(&["Rogue"]);
+        let row = cerebro_tui::model::FleetRow {
+            bead: Some("cb-y".into()),
+            ..implementer_row("Rogue", RowState::Working)
+        };
+        let mut app = standby_app(supervising(), vec![row], Some(claimed_by_rogue(&["cb-x"])), now);
+        give_back(&mut app, &SessionHost::default(), &mut test_logger(), &paths, &roster, now);
+        let out = app.take_outbox();
+        assert!(ended_release_queued(&out, "cb-x"), "{out:?}");
+    }
+
+    #[test]
+    fn a_kept_claim_is_not_asked_about_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "exit 0");
+        let now = Utc::now();
+        let roster = implementer_roster(&["Rogue"]);
+        let mut app = standby_app(
+            supervising(),
+            vec![implementer_row("Rogue", RowState::Standby)],
+            Some(claimed_by_rogue(&["cb-x"])),
+            now,
+        );
+        app.kept.insert(("Rogue".into(), "cb-x".into()));
+        give_back(&mut app, &SessionHost::default(), &mut test_logger(), &paths, &roster, now);
+        assert!(app.take_outbox().is_empty(), "already judged");
+        assert_eq!(app.kept.len(), 1);
+        app.finish_work_refresh(Ok(claimed_by_rogue(&[])), now);
+        give_back(&mut app, &SessionHost::default(), &mut test_logger(), &paths, &roster, now);
+        assert!(app.kept.is_empty(), "pruned to what the board still shows");
+    }
+
+    #[test]
+    fn a_read_only_view_takes_nothing_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "exit 0");
+        let now = Utc::now();
+        let roster = implementer_roster(&["Rogue"]);
+        let mut app = standby_app(
+            cerebro_tui::supervisor::SupervisionMode::ReadOnly(
+                cerebro_tui::supervisor::ReadOnlyReason::OwnedBy,
+            ),
+            vec![implementer_row("Rogue", RowState::Standby)],
+            Some(claimed_by_rogue(&["cb-x"])),
+            now,
+        );
+        give_back(&mut app, &SessionHost::default(), &mut test_logger(), &paths, &roster, now);
+        assert!(app.take_outbox().is_empty());
+    }
+
+    fn release_answer_for(outcome: lifecycle::ReleaseOutcome) -> app::WriteAnswer {
+        app::WriteAnswer::Release {
+            name: "Rogue".into(),
+            bead: "cb-x".into(),
+            cause: lifecycle::GiveBack::Ended,
+            outcome,
+        }
+    }
+
+    #[test]
+    fn a_refused_release_is_red_once_and_retried_in_a_minute() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut logger = logging(dir.path());
+        let t0 = Utc::now();
+        let mut app = App::with_supervision(supervising());
+        app.queue_release("Rogue", "cb-x", lifecycle::GiveBack::Ended);
+        app.take_outbox();
+        let refused = release_answer_for(lifecycle::ReleaseOutcome::Failed {
+            text: lifecycle::release_failure("Rogue", "cb-x"),
+        });
+        settle_release(&mut app, &mut logger, &refused, t0);
+        assert_eq!(
+            app.notice.as_deref(),
+            Some("Could not take cb-x back from Rogue: the task list did not answer.")
+        );
+        assert_eq!(app.notice_tone, app::NoticeTone::Urgent);
+        assert_eq!(app.releasing["Rogue"].failed_at, Some(t0));
+        app.notice = None;
+        settle_release(&mut app, &mut logger, &refused, t0 + chrono::Duration::seconds(60));
+        assert_eq!(app.notice, None, "not again inside ten minutes");
+    }
+
+    /// Review finding 1: the script's `running` holds the name back for a minute, so a view whose
+    /// liveness test disagrees with the script's does not ask on every tick.
+    #[test]
+    fn a_running_answer_is_not_asked_again_for_a_minute() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "exit 0");
+        let mut logger = logging(dir.path());
+        let now = Utc::now();
+        let roster = implementer_roster(&["Rogue"]);
+        let mut app = standby_app(
+            supervising(),
+            vec![implementer_row("Rogue", RowState::Standby)],
+            Some(claimed_by_rogue(&["cb-x"])),
+            now,
+        );
+        give_back(&mut app, &SessionHost::default(), &mut logger, &paths, &roster, now);
+        let request = app.take_outbox().pop().expect("a take-back");
+        app.begin_write(&request, std::path::Path::new("bd"));
+        let answer = release_answer_for(lifecycle::ReleaseOutcome::Running);
+        settle_release(&mut app, &mut logger, &answer, now);
+        app.finish_write(answer);
+        give_back(&mut app, &SessionHost::default(), &mut logger, &paths, &roster, now + chrono::Duration::seconds(5));
+        assert!(app.take_outbox().is_empty(), "not on the next tick");
+        assert_eq!(app.notice, None, "and nothing is said");
+        give_back(&mut app, &SessionHost::default(), &mut logger, &paths, &roster, now + chrono::Duration::seconds(61));
+        assert_eq!(app.take_outbox().len(), 1, "asked again after a minute");
+    }
+
+    #[test]
+    fn a_kept_release_writes_one_release_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut logger = logging(dir.path());
+        let now = Utc::now();
+        let mut app = App::with_supervision(supervising());
+        let kept = release_answer_for(lifecycle::ReleaseOutcome::Kept {
+            reason: "its work is not on main".into(),
+        });
+        settle_release(&mut app, &mut logger, &kept, now);
+        let line = one_line(dir.path(), "decisions", "release");
+        assert!(line.contains(r#""outcome":"kept""#), "{line}");
+        assert!(line.contains(r#""reason":"its work is not on main""#), "{line}");
+        settle_release(&mut app, &mut logger, &release_answer_for(lifecycle::ReleaseOutcome::Closed), now);
+        let closed: Vec<String> = log_lines(dir.path(), "decisions")
+            .into_iter()
+            .filter(|l| l.contains(r#""outcome":"closed""#))
+            .collect();
+        assert_eq!(closed.len(), 1, "{closed:?}");
+        assert!(closed[0].contains(r#""reason":null"#), "{}", closed[0]);
+        assert_eq!(app.notice, None, "neither is said");
+    }
+
+    #[test]
+    fn a_failed_tidy_is_red_with_its_cause() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut logger = logging(dir.path());
+        let now = Utc::now();
+        let mut app = App::with_supervision(supervising());
+        let answer = |outcome| app::TidyAnswer { name: "Rogue".into(), bead: "cb-x".into(), outcome };
+        settle_tidy(&mut app, &mut logger, &answer(lifecycle::TidyOutcome::Failed { cause: "exit status 2".into() }), now);
+        assert_eq!(app.notice.as_deref(), Some("Could not remove Rogue's copy for cb-x: exit status 2"));
+        assert_eq!(app.notice_tone, app::NoticeTone::Urgent);
+        let errors = log_lines(dir.path(), "errors");
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].contains(r#""context":"tidy""#), "{}", errors[0]);
+
+        let mut app = App::with_supervision(supervising());
+        settle_tidy(&mut app, &mut logger, &answer(lifecycle::TidyOutcome::Retry), now);
+        assert_eq!(app.notice, None, "a retry is never drawn");
+    }
+
     /// cb-10d.2.2: a planning session that is gone - killed, crashed, a closed window - while its
     /// bead is still assigned to it on the board has that bead given back, once, with the cause
     /// `ended`.
@@ -5867,7 +6125,7 @@ mod main_tests {
         let failed = app::TidyAnswer {
             name: "Rogue".into(),
             bead: "cb-y".into(),
-            outcome: lifecycle::TidyOutcome::Failed { text: "release-bead --worktree Rogue cb-y failed".into() },
+            outcome: lifecycle::TidyOutcome::Failed { cause: "exit status 2".into() },
         };
         settle_tidy(&mut app, &mut logger, &failed, now);
         let decisions = std::fs::read_to_string(state.join("decisions.jsonl")).unwrap_or_default();
@@ -6990,75 +7248,6 @@ mod main_tests {
         settle_gone(&mut host, "Cerebro");
     }
 
-    // ---- cb-kcs.5.2: the prune watcher in the loop -------------------------------------------
-
-    /// Nothing is spawned in either case here, which is why both belong in this module rather
-    /// than in the integration target beside the fixtures.
-    #[test]
-    fn a_read_only_view_starts_no_watcher() {
-        for mode in [
-            cerebro_tui::supervisor::SupervisionMode::ReadOnly(
-                cerebro_tui::supervisor::ReadOnlyReason::NotOwned,
-            ),
-            cerebro_tui::supervisor::SupervisionMode::ReadOnly(
-                cerebro_tui::supervisor::ReadOnlyReason::OwnedBy,
-            ),
-        ] {
-            let dir = tempfile::tempdir().unwrap();
-            let paths = scratch(dir.path(), "sleep 5");
-            let mut logger = Logger::new(dir.path());
-            logger.set_enabled(true);
-            let mut pruner = Pruner::new();
-            let mut app = App::with_supervision(mode.clone());
-
-            prune(&mut app, &mut pruner, &mut logger, &paths, Utc::now(), Instant::now());
-
-            assert!(!pruner.live(), "no watcher for {mode:?}");
-            assert_eq!(app.notice, None, "and a handover is not a failure");
-            assert!(log_lines(dir.path(), "errors").is_empty(), "{mode:?}");
-        }
-    }
-
-    /// Emacs swallows this, and the cost is that worktrees quietly stop being pruned. Red, once,
-    /// and again only every ten minutes while it stays broken (the navigator's choice, round two).
-    #[test]
-    fn a_watcher_that_will_not_start_is_said_in_red_and_logged() {
-        let dir = tempfile::tempdir().unwrap();
-        // An empty scripts directory: there is no `prune-worktrees.sh` to spawn.
-        let empty = tempfile::tempdir().unwrap();
-        let paths = ReaderPaths {
-            consumer_root: dir.path().into(),
-            shared_root: dir.path().into(),
-            scripts_dir: empty.path().into(),
-        };
-        let mut logger = Logger::new(dir.path());
-        logger.set_enabled(true);
-        let mut pruner = Pruner::new();
-        let mut app = App::with_supervision(supervising());
-
-        let at = Instant::now();
-        prune(&mut app, &mut pruner, &mut logger, &paths, Utc::now(), at);
-
-        assert_eq!(app.notice_tone, app::NoticeTone::Urgent, "a fault, not news");
-        let notice = app.notice.clone().expect("a notice");
-        assert!(
-            notice.starts_with("Worktree pruning stopped: No such file or directory"),
-            "{notice}"
-        );
-        let errors = log_lines(dir.path(), "errors");
-        assert_eq!(errors.len(), 1, "{errors:?}");
-        assert!(errors[0].contains(r#""context":"prune""#), "{}", errors[0]);
-
-        // Five seconds later it is retried and still fails - and says nothing more, on screen or
-        // in the log: the header is inside its ten-minute gate and the fault is the same one.
-        app.notice = None;
-        app.notice_tone = app::NoticeTone::News;
-        prune(&mut app, &mut pruner, &mut logger, &paths, Utc::now(),
-              at + std::time::Duration::from_secs(5));
-        assert_eq!(app.notice, None, "not a strobe");
-        assert_eq!(log_lines(dir.path(), "errors").len(), 1, "the same fault is one line");
-    }
-
     /// A read-only view decides nothing, so it records nothing - not even a reader failure.
     #[test]
     fn a_read_only_view_writes_no_log() {
@@ -7567,8 +7756,8 @@ mod main_tests {
         );
         app.finish_sweep_refresh(
             Ok(vec![cerebro_tui::readers::Judged {
-                finding: cerebro_tui::sweeps::Finding::Unclaim { id: "cb-a".into() },
-                label: "unclaim cb-a — Cyclops stalled".into(),
+                finding: cerebro_tui::sweeps::Finding::EpicClose { id: "cb-a".into() },
+                label: "close cb-a — all children closed 30m ago".into(),
             }]),
             Utc::now(),
         );
@@ -7610,12 +7799,12 @@ mod main_tests {
         assert!(matches!(
             &app.confirm,
             Some(cerebro_tui::app::Prompt::Sweep { text, .. })
-                if text.ends_with("unclaim cb-a ?  y / n")
+                if text.ends_with("close cb-a ?  y / n")
         ), "{:?}", app.confirm);
 
         let action = drive_and_settle(&mut app, &mut host, &paths, &programs, &fake, vec![ch('y')]);
-        assert_eq!(argv(&fake), vec!["unclaim cb-a", "dolt push"]);
-        assert_eq!(app.notice.as_deref().map(|n| n.contains("unclaim cb-a")), Some(true));
+        assert_eq!(argv(&fake), vec!["close cb-a", "dolt push"]);
+        assert_eq!(app.notice.as_deref().map(|n| n.contains("close cb-a")), Some(true));
         // And the section is re-run at once rather than in up to ten minutes.
         assert_eq!(action, AppAction::RefreshSweeps);
     }
@@ -7648,7 +7837,7 @@ mod main_tests {
         assert_eq!(app.focus, cerebro_tui::app::PaneFocus::Fleet);
         let mut host = SessionHost::default();
         drive_and_settle(&mut app, &mut host, &paths, &programs, &fake, vec![ch('x'), ch('y')]);
-        assert_eq!(argv(&fake), vec!["unclaim cb-a", "dolt push"]);
+        assert_eq!(argv(&fake), vec!["close cb-a", "dolt push"]);
     }
 
     /// And a read-only view acts too: the board writes are deliberately outside the supervision
@@ -7664,7 +7853,7 @@ mod main_tests {
         ));
         let mut host = SessionHost::default();
         drive_and_settle(&mut app, &mut host, &paths, &programs, &fake, vec![ch('x'), ch('y')]);
-        assert_eq!(argv(&fake), vec!["unclaim cb-a", "dolt push"]);
+        assert_eq!(argv(&fake), vec!["close cb-a", "dolt push"]);
     }
 
     /// With no finding under the cursor `x` does nothing and says nothing - and it is consumed,

@@ -77,9 +77,8 @@
 #     back.
 #   * STUCK, and `resume_stale' -> the typed line did not take.
 #       - implementer  -> nothing. It holds a claim, a worktree and possibly an open pull request,
-#                         so nothing here ends it; `sweep-stalled' already offers `bd unclaim' for
-#                         a bead a live session has not committed to for sixty minutes, and it
-#                         skips only an `asking' session, so a stuck one is already offered there.
+#                         so nothing here ends it; the navigator's `k' ends it, and the view then
+#                         releases what it held.
 #       - interactive  -> the end decision WITHOUT its grace: a stop flag `retire's, otherwise
 #                         `end'. It holds nothing, its buffer is kept as the record of the pass,
 #                         and its own trigger starts a fresh session.

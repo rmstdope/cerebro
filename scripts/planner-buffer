@@ -107,7 +107,7 @@ planned_count() {
 # `planned_count' above: same `work-beads --status open' call, same capture-then-`jq' shape, same
 # excluded labels, same loud failure.
 #
-# A HELD bead - a `planning' label in either spelling, or an assignee (cb-10d.2.1) - is excluded
+# A HELD bead - one with an assignee (cb-10d.2.1; the only hold since cb-10d.2.2) - is excluded
 # too, so this count and `scripts/stage-candidates build-design' share the hold rule: a bead the
 # other agent has open is not work waiting for one, and a count that includes it starts a session
 # that finds nothing to do - the drift this script's header records as already paid for (de05dc3).
@@ -136,7 +136,6 @@ ux_agreed_count() {
   if ! printf '%s' "$raw" | jq --argjson excluded "$excluded_json" --arg stage "$stage_label" \
         '[.[] | select((.labels // []) | index($stage) != null)
               | select((.labels // []) | index("planned") == null)
-              | select((.labels // []) | any(. == "planning" or startswith("planning:")) | not)
               | select((.assignee // "") == "")
               | select((.labels // []) | any(. as $l | $excluded | index($l) != null) | not)]
          | length' 2>/dev/null; then

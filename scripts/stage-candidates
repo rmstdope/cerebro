@@ -34,9 +34,9 @@
 #   1. `index(...)` returns the POSITION, null when absent; in jq only null and false are falsy, so
 #      a label at position 0 yields 0, which is TRUTHY. `index(x)` and `index(x) | not` are the
 #      correct tests; a `has`/`contains` spelling gets exactly that case wrong.
-#   2. A hold is not one exact string: `planning` and `planning:<name>` are both live, so the test
-#      is `any(. == "planning" or startswith("planning:"))`. The `:` is required rather than a bare
-#      prefix, so `planning-ideas` is not read as a hold.
+#   2. A hold is an assignee and nothing else (cb-10d.2.2): a bead with a non-empty assignee has
+#      been handed to an agent and is not a candidate. `bd`'s `--unassigned` is not used because
+#      the list comes from `work-beads`, and an assignee of "" is read as none.
 #   3. A blocker is unsatisfied when it is in the list and not satisfied, OR when any bead in the
 #      list names it as `parent` and is not satisfied: `work-beads` drops a split bead that has
 #      children, so without the second arm everything it blocks looks free while its children are
@@ -98,8 +98,7 @@ fi
 
 if ! out="$(printf '%s' "$raw" | jq --arg mode "$mode" --arg stage "$stage_label" '. as $all
     | (reduce $all[] as $b ({}; .[$b.id] = $b)) as $by_id
-    | def held: ((.assignee // "") != "")
-                or ((.labels // []) | any(. == "planning" or startswith("planning:")));
+    | def held: ((.assignee // "") != "");
       def satisfied:
         if $mode == "ux"
         then ((.labels // []) | index("planned")) or ((.labels // []) | index($stage))

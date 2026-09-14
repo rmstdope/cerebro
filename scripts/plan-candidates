@@ -32,7 +32,7 @@
 #
 # Beside the label rules it has three more (cb-10d.2.1), because the fleet view hands a planning
 # role its bead and an agent handed a bead can no longer walk to its blocker or skip a held one:
-# a bead with an ASSIGNEE is held, exactly as a `planning` label holds it; a bead whose PARENT is
+# a bead with an ASSIGNEE is held (and since cb-10d.2.2 nothing else is); a bead whose PARENT is
 # assigned is held by that parent's splitter; and a bead with a `blocks` blocker that is not
 # `planned` is not offered - the blocker is, instead.
 #
@@ -42,10 +42,9 @@
 #      a label at position 0 yields 0, which is TRUTHY. `index(x)` and `index(x) | not` are the
 #      correct tests; a `has`/`contains` spelling is not. (`scripts/second-look-beads`' header
 #      records the same trap.)
-#   2. A hold is not one exact string: `planning` and `planning:<name>` are both live, so the test
-#      is `any(. == "planning" or startswith("planning:"))`. `bd`'s own `--exclude-label` matches
-#      one exact string and cannot express it. The `:` is required rather than a bare prefix, so an
-#      unrelated label starting with the same letters is not read as a hold.
+#   2. A hold is an assignee and nothing else (cb-10d.2.2): a bead with a non-empty assignee has
+#      been handed to an agent and is not a candidate. `bd`'s `--unassigned` is not used because
+#      the list comes from `work-beads`, and an assignee of "" is read as none.
 #   3. A blocker is unsatisfied when it is in the list and not `planned`, OR when any bead in the
 #      list names it as `parent` and is not `planned`: `work-beads` drops a split bead that has
 #      children, so without the second arm everything it blocks looks free while its children are
@@ -80,8 +79,7 @@ fi
 
 if ! out="$(printf '%s' "$raw" | jq '. as $all
     | (reduce $all[] as $b ({}; .[$b.id] = $b)) as $by_id
-    | def held: ((.assignee // "") != "")
-                or ((.labels // []) | any(. == "planning" or startswith("planning:")));
+    | def held: ((.assignee // "") != "");
       def satisfied: ((.labels // []) | index("planned"));
       def unsatisfied_blocker($id):
         (($by_id[$id] // null) as $b | $b != null and ($b | satisfied | not))

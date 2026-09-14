@@ -1,0 +1,78 @@
+<style>
+body{font-family:Menlo,Monaco,monospace;font-size:13px;margin:24px;background:#8a8a8a;color:#111}
+h1{font-size:16px;color:#fff;margin:0 0 2px}h2{font-size:14px;margin:26px 0 8px;color:#fff}
+h3{font-size:13px;margin:14px 0 6px;color:#eee;font-weight:normal}
+pre{margin:0;line-height:1.45;white-space:pre}
+.screen{background:#1e1e1e;color:#d4d4d4;padding:10px 12px;border:1px solid #333;display:inline-block;vertical-align:top;margin:0 14px 10px 0}
+.note{color:#eee;max-width:104ch;background:#333;padding:9px 13px;margin-top:12px;line-height:1.5}
+.lede{color:#fff;max-width:104ch;margin:0 0 14px;line-height:1.5}
+.g{color:#6a9955}.d{color:#777}.b{color:#569cd6}.y{color:gold}.e{color:#f14c4c}
+.hd{font-weight:bold;color:#ddd}.dim{color:#888}
+.strike{color:#777;text-decoration:line-through}
+.chosen{background:#2d4a2d;color:#cfe8cf;padding:2px 8px;display:inline-block;margin-left:8px;font-size:12px}
+.rejected{background:#4a2d2d;color:#e8cfcf;padding:2px 8px;display:inline-block;margin-left:8px;font-size:12px}
+</style>
+<meta charset="utf-8"><title>cb-10d.4 — kept work and failed releases</title>
+
+<h1>cb-10d.4 — when the view tidies up after an agent itself, agreed 2026-09-14</h1>
+<p class="lede">One round. The fleet view now hands each agent its bead and worktree and takes both
+back at end of pass, so the claims, stalled and worktrees sweeps and the pruner watcher retire. This
+file specifies what disappears from the screen, where kept work reaches the navigator, and what
+replaces the red pruning line. The bead's acceptance field carries the same decisions in words.</p>
+
+<h2>1. What disappears</h2>
+<div class="screen"><pre><span class="dim">before</span>
+<span class="b">┌ Work ────────────────────────────────┐</span>
+<span class="b">│</span><span class="hd">Sweeps 5                              </span><span class="b">│</span>
+<span class="b">│</span>  <span class="strike">close cb-9su — delivered by Cyclo…</span>  <span class="b">│</span>
+<span class="b">│</span>  <span class="strike">reclaim cb-mqa — Rogue gone, not …</span>  <span class="b">│</span>
+<span class="b">│</span>  close cb-kcs.2 — all children clo…  <span class="b">│</span>
+<span class="b">│</span>  <span class="strike">unclaim cb-akt — Storm stalled, n…</span>  <span class="b">│</span>
+<span class="b">│</span>  recheck cb-1h8 — verdict at 4e707…  <span class="b">│</span>
+<span class="b">└──────────────────────────────────────┘</span>
+<span class="hd">Cerebro — supervising</span> <span class="dim">|</span> <span class="strike">Worktree pruning stopped: exit status 2</span></pre></div>
+<div class="screen"><pre><span class="dim">after</span>
+<span class="b">┌ Work ────────────────────────────────┐</span>
+<span class="b">│</span><span class="hd">Sweeps 2                              </span><span class="b">│</span>
+<span class="b">│</span>  close cb-kcs.2 — all children clo…  <span class="b">│</span>
+<span class="b">│</span>  recheck cb-1h8 — verdict at 4e707…  <span class="b">│</span>
+<span class="b">└──────────────────────────────────────┘</span>
+<span class="hd">Cerebro — supervising</span></pre></div>
+<p class="note">Kept, unchanged: <code>close</code> for an epic, <code>unassign</code>,
+<code>recheck</code>, <code>unpause</code>, and every rule of the section (first in the pane,
+hidden when empty, <code>sweep-… failed</code> beside the header). Gone:
+<code>close … delivered by</code>, <code>reclaim</code>, <code>unclaim</code>, and
+<code>Worktree pruning stopped: …</code>.</p>
+
+<h2>2. Kept work reaches the navigator through Cerebro <span class="chosen">chosen — A</span></h2>
+<div class="screen"><pre><span class="b">┌ Work ────────────────────────────────┐</span>
+<span class="b">│</span><span class="hd">Sweeps 2                              </span><span class="b">│</span>
+<span class="b">│</span>  close cb-kcs.2 — all children clo…  <span class="b">│</span>
+<span class="b">│</span>  recheck cb-1h8 — verdict at 4e707…  <span class="b">│</span>
+<span class="b">└──────────────────────────────────────┘</span>
+<span class="dim">nothing on screen</span>
+
+<span class="dim">typed into an idle Cerebro every two hours, as today, narrowed:</span>
+<span class="dim">[cerebro] Two hours since your last sweep. Look at the work the view kept
+rather than throw away, and bring the navigator anything that needs a judgement.</span>
+
+<span class="dim">…and Cerebro, in its own words, e.g.:</span>
+Rogue's copy for cb-4xz still holds 2 changes that are not on main.
+Shall I keep it or discard it?</pre></div>
+
+<h3>Rejected</h3>
+<div class="screen"><pre><span class="y">kept cb-4xz — Rogue left 2 changes not on main</span>                <span class="rejected">B rejected</span>
+<span class="y">kept cb-4xz — Rogue finished, its work never reached main</span>
+<span class="y">Nothing to run for cb-4xz — ask Cerebro to look at it.</span>
+
+<span class="y">Rogue finished; its copy for cb-4xz was kept — 2 changes not on main.</span>  <span class="rejected">C rejected</span>
+<span class="y">Rogue finished; cb-4xz was kept — its work never reached main.</span></pre></div>
+
+<h2>3. A failed release is one red header line <span class="chosen">chosen — A</span></h2>
+<div class="screen"><pre><span class="hd">Cerebro — supervising</span> <span class="dim">|</span> <span class="e">Could not take cb-4xz back from Rogue: the task list did not answer.</span>
+<span class="hd">Cerebro — supervising</span> <span class="dim">|</span> <span class="e">Could not remove Rogue's copy for cb-4xz: exit status 2</span></pre></div>
+<p class="note">Said once, then again every ten minutes while it stays broken — the same shape,
+colour and repetition as <code>Worktree pruning stopped: …</code>, which it replaces.</p>
+
+<h3>Rejected</h3>
+<div class="screen"><pre><span class="dim">nothing on screen; silent retry, error log only</span>                <span class="rejected">B rejected</span></pre></div>

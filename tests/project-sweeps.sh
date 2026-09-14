@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Proves the three sweeps take atlantis-hud's build layout and git conventions from the consumer's
+# Proves the pruner and the delivery test take atlantis-hud's build layout and git conventions from the consumer's
 # own declaration rather than from literals in their source (ah-qled.4).
 #
 # Four things were hardcoded, and two of them in a destructive script:
@@ -11,9 +11,8 @@
 #     that tree deleted mid-verification;
 #   * it asked GitHub, via `gh`, whether work had landed, so a GitLab or PR-less consumer read
 #     "not merged" for ever and the janitor reclaimed nothing;
-#   * `sweep-claims.sh` and `sweep-stalled.sh` matched a Conventional-Commits subject and a
-#     `<id>-` branch prefix, so a consumer naming branches `feature/PROJ-123` saw every live claim
-#     as stalled and every bead as undelivered.
+#   * `scripts/bead-delivery.sh` (then inside the claims sweep) matched a Conventional-Commits
+#     subject, so a consumer naming beads `PROJ-123` saw every bead as undelivered.
 #
 # THE SAFETY PROPERTY COMES FIRST: `reclaim_dirs` defaults to EMPTY, so the destructive behaviour is
 # opt-in. An unconfigured consumer never has a directory deleted, at any age or under any pressure.
@@ -76,7 +75,7 @@ git init -q --bare "$origin"
 
 consumer="$(consumer_new repo --branch "$branch" --link \
   consumer-root project-conf default-branch roster \
-  prune-worktrees.sh sweep-claims.sh sweep-stalled.sh)"
+  prune-worktrees.sh bead-delivery.sh)"
 mkdir -p "$consumer/scripts"
 
 conf="$consumer/.cerebro/project.conf"
@@ -271,80 +270,43 @@ out="$(run_prune STALE_MINUTES=1)"
 pass "merged_check <command> lets a consumer answer whether work landed"
 
 # =================================================================================================
-# 5. Delivery and branches are patterns, and the defaults reproduce today exactly
+# 5. Delivery is a pattern, and the default reproduces today exactly
 # =================================================================================================
 git_q -C "$consumer" commit -q --allow-empty -m "feat(ah-conv): the conventional-commits subject"
 git_q -C "$consumer" commit -q --allow-empty -m "PROJ-9 done: an id that is not a scope at all"
+git_q -C "$consumer" commit -q --allow-empty -m "docs(ah-mock): mockup"
 git_q -C "$consumer" push -q origin "$branch"
+git_q -C "$consumer" fetch -q origin "$branch"
 
-cat > "$beads_file" <<'JSON'
-[{"id": "ah-conv", "assignee": "Cyclops", "title": "conventional"},
- {"id": "PROJ-9",  "assignee": "Storm",   "title": "not conventional"}]
-JSON
+delivered() {
+  (cd "$consumer" && bash -c 'script_dir="$1/.claude/cerebro/scripts"; source "$script_dir/bead-delivery.sh"
+    if cerebro_bead_delivered "$1" "$2" "$3"; then echo true; else echo false; fi' _ "$consumer" "$branch" "$1")
+}
 
-claims="$consumer/.claude/cerebro/scripts/sweep-claims.sh"
 write_conf </dev/null
-out="$(cd "$consumer" && "$claims" --json)"
-[ "$(jq -r '.[] | select(.id=="ah-conv") | .on_main' <<<"$out")" = "true" ] \
-  || fail "the default commit_ref_pattern no longer detects today's delivery: $out"
-[ "$(jq -r '.[] | select(.id=="PROJ-9") | .on_main' <<<"$out")" = "false" ] \
-  || fail "the default pattern matched a subject it never did before: $out"
+[ "$(delivered ah-conv)" = "true" ] \
+  || fail "the default commit_ref_pattern no longer detects today's delivery"
+[ "$(delivered PROJ-9)" = "false" ] \
+  || fail "the default pattern matched a subject it never did before"
 pass "the default commit_ref_pattern reproduces today's delivery detection exactly"
 
 write_conf <<'CONF'
 commit_ref_pattern {id} done:
 CONF
-out="$(cd "$consumer" && "$claims" --json)"
-[ "$(jq -r '.[] | select(.id=="PROJ-9") | .on_main' <<<"$out")" = "true" ] \
-  || fail "{id} is not substituted anywhere in the subject, only prefixed: $out"
+[ "$(delivered PROJ-9)" = "true" ] \
+  || fail "{id} is not substituted anywhere in the subject, only prefixed"
 pass "commit_ref_pattern substitutes {id} anywhere in the subject, not as a prefix"
 
 # The mockup exclusion is this project's convention, so it is declared rather than built in.
-git_q -C "$consumer" commit -q --allow-empty -m "docs(ah-mock): mockup"
-git_q -C "$consumer" push -q origin "$branch"
-cat > "$beads_file" <<'JSON'
-[{"id": "ah-mock", "assignee": "Beast", "title": "mockup only"}]
-JSON
 write_conf </dev/null
-out="$(cd "$consumer" && "$claims" --json)"
-[ "$(jq -r '.[0].on_main' <<<"$out")" = "true" ] \
-  || fail "nothing is excluded by default, so a mockup commit should read as delivery: $out"
+[ "$(delivered ah-mock)" = "true" ] \
+  || fail "nothing is excluded by default, so a mockup commit should read as delivery"
 write_conf <<'CONF'
 non_delivery_commit_pattern docs({id}): mockup
 CONF
-out="$(cd "$consumer" && "$claims" --json)"
-[ "$(jq -r '.[0].docs_only' <<<"$out")" = "true" ] \
-  || fail "a declared non_delivery_commit_pattern did not exclude the mockup commit: $out"
-pass "non_delivery_commit_pattern is declared, defaults to excluding nothing, and substitutes {id}"
-
-# --- branch_pattern -----------------------------------------------------------------------------
-stalled="$consumer/.claude/cerebro/scripts/sweep-stalled.sh"
-git_q -C "$consumer" worktree add -q "$consumer/.cerebro/worktrees/PROJ-7" -b feature/PROJ-7-work
-# A commit of its own, so "resolved the branch" and "measured from the branch" are distinguishable.
-git_q -C "$consumer/.cerebro/worktrees/PROJ-7" commit -q --allow-empty -m "PROJ-7 work in progress"
-git_q -C "$consumer" worktree add -q "$consumer/.cerebro/worktrees/ah-plain" -b ah-plain-work
-cat > "$beads_file" <<'JSON'
-[{"id": "PROJ-7", "assignee": "Storm", "title": "namespaced branch"},
- {"id": "ah-plain", "assignee": "Rogue", "title": "today's branch"}]
-JSON
-
-write_conf </dev/null
-out="$(cd "$consumer" && "$stalled" --json)"
-[ "$(jq -r '.[] | select(.id=="ah-plain") | .branch' <<<"$out")" = "ah-plain-work" ] \
-  || fail "the default branch_pattern no longer resolves today's branches: $out"
-[ "$(jq -r '.[] | select(.id=="PROJ-7") | .branch' <<<"$out")" = "null" ] \
-  || fail "the default pattern matched a branch it never did before: $out"
-pass "the default branch_pattern reproduces today's branch resolution exactly"
-
-write_conf <<'CONF'
-branch_pattern feature/{id}-*
-CONF
-out="$(cd "$consumer" && "$stalled" --json)"
-[ "$(jq -r '.[] | select(.id=="PROJ-7") | .branch' <<<"$out")" = "feature/PROJ-7-work" ] \
-  || fail "branch_pattern feature/{id}-* did not resolve a namespaced branch: $out"
-[ "$(jq -r '.[] | select(.id=="PROJ-7") | .progress_source' <<<"$out")" = "commit" ] \
-  || fail "a live namespaced branch still reads as measured from the claim: $out"
-pass "branch_pattern feature/{id}-* resolves a namespaced branch, so live work stops reading as stalled"
+[ "$(delivered ah-mock)" = "false" ] \
+  || fail "a declared non_delivery_commit_pattern did not exclude the mockup commit"
+pass "delivered is false for a mockup-only bead when the pattern is declared, and true when it is not"
 
 # =================================================================================================
 # 6. --dry-run stays honest through all of it

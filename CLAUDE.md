@@ -564,7 +564,10 @@ has finished in has no median and is never called long. A failed run keeps the r
 `History 4  fleet-history failed` in red, and a *first* failure draws no section at all, which is
 the ordinary state of a machine that has never run the fleet. Both are **outside the supervision
 lease**, exactly as `x` is, and both hint clauses are shown on a read-only view where `s`/`f`/`k`
-are not.
+are not. Since cb-10d.5 **`a`** on a Work bead opens a live list of the agents who take work from
+the board, directly beneath that row, and **Enter** gives the bead to one through
+`scripts/assign-bead --given`, on the write worker, Work focus only and outside the supervision
+lease; the supervising window starts the agent.
 
 Since cb-xhu.4.2 the Work pane's **first** section — above Sweeps — is `Health {n}`, one line per
 thing `scripts/fleet-health` says is stuck right now: a name running long (red), a name started more
@@ -900,7 +903,10 @@ and the key hint stays `g retry` until both panes are fresh.
   and starting give the bead back after `HANDOVER_GRACE_SECONDS`. Since cb-10d.2.1 `assign-bead` also
   serves the three planning roles, each from its own candidate script (`plan-candidates`,
   `stage-candidates ux`, `stage-candidates build-design`), by **assignee without a claim** —
-  `in_progress` means "being built" — and `release-bead` clears that assignee again.
+  `in_progress` means "being built" — and `release-bead` clears that assignee again. Since cb-10d.5 `assign-bead --given` writes the handover with a
+  second line, `given`, and prints `pushed` or `unpushed` on stdout (nothing without the flag, since
+  `launch` runs it in the session's pty); a supervising view starts the named agent for such a
+  handover instead of giving it back.
 - `scripts/app-paths` is the one place "which paths are this project's application" is answered
   (ah-qled.6) — the `app_paths` key, and `--classify <path>...` over changed paths. Unlike every
   other reader here it **fails when it does not know**: no declaration means exit 3 and a line on

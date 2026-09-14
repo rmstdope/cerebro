@@ -145,4 +145,108 @@ out="$(run Rogue cb-x 2>/dev/null)" || fail "released is exit 0"
 [[ "$(cat "$state/Rogue.handover")" == "cb-y" ]] || fail "a handover for another bead is left alone"
 pass "a handover naming a different bead is left alone"
 
+# --- cb-10d.3: --worktree removes a recorded tree only when nothing in it can be lost ------------
+
+tidy="$(consumer_new tidy --origin --link release-bead roster consumer-root default-branch project-conf)"
+printf 'Rogue implementer\nGambit implementer\n' > "$tidy/.cerebro/roster.conf"
+cp "$scripts/agent-alive" "$tidy/.claude/cerebro/scripts/agent-alive"
+tstate="$tidy/.cerebro/state"
+mkdir -p "$tstate/worktrees"
+cat > "$stub/gh" <<'STUB'
+#!/usr/bin/env bash
+echo 0
+STUB
+chmod +x "$stub/gh"
+origin_url="$(git -C "$tidy" remote get-url origin)"
+
+recorded_tree() {
+  git_q -C "$tidy" remote set-url origin "$origin_url"
+  rm -f "$tstate"/Rogue.state.json "$tstate"/Rogue.handover
+  git -C "$tidy" worktree remove --force "$tidy/.cerebro/worktrees/$1" >/dev/null 2>&1 || true
+  git -C "$tidy" branch -D "$1" >/dev/null 2>&1 || true
+  git_q -C "$tidy" worktree add -q "$tidy/.cerebro/worktrees/$1" -b "$1" origin/main
+  printf '%s\n' "$2" > "$tstate/worktrees/$1"
+}
+
+tidy_run() {
+  STUB_DIR="$stub" PATH="$stub:$PATH" bash "$tidy/.claude/cerebro/scripts/release-bead" "$@"
+}
+tree="$tidy/.cerebro/worktrees/cb-x"
+record="$tstate/worktrees/cb-x"
+
+recorded_tree cb-x Rogue
+out="$(tidy_run --worktree Rogue cb-x 2>/dev/null)" || fail "removed is exit 0"
+[[ "$out" == "removed" ]] || fail "stdout is exactly removed, got: $out"
+[[ ! -e "$tree" && ! -e "$record" ]] || fail "the tree and its record are gone"
+! git -C "$tidy" show-ref --verify --quiet refs/heads/cb-x || fail "the branch is gone"
+pass "a recorded, clean, landed tree is removed with its branch and its record"
+
+recorded_tree cb-x Rogue
+touch "$tree/scratch.txt"
+err="$(tidy_run --worktree Rogue cb-x 2>&1 >"$work_dir/out")" || fail "kept is exit 0"
+[[ "$(cat "$work_dir/out")" == "kept it has uncommitted or untracked changes" ]] || fail "kept says why, got: $(cat "$work_dir/out")"
+[[ "$err" == *"release-bead: keeping cb-x — it has uncommitted or untracked changes"* ]] || fail "stderr keeps the pruner's shape, got: $err"
+[[ -e "$tree" && ! -e "$record" ]] || fail "a kept tree stays and its record goes"
+pass "an untracked file keeps the tree and says why"
+
+recorded_tree cb-x Rogue
+echo more >> "$tree/file.txt"; git_q -C "$tree" commit -q -am more
+out="$(tidy_run --worktree Rogue cb-x 2>/dev/null)"
+[[ "$out" == "kept it holds work that is not on main yet" ]] || fail "an unpushed commit keeps, got: $out"
+pass "an unpushed commit keeps the tree"
+
+recorded_tree cb-x Gambit
+out="$(tidy_run --worktree Rogue cb-x 2>/dev/null)"
+[[ "$out" == "gone" && -e "$tree" && -e "$record" ]] || fail "another agent's tree is untouched, got: $out"
+pass "a tree recorded for another agent is not touched"
+
+recorded_tree cb-x Rogue
+rm -f "$record"
+out="$(tidy_run --worktree Rogue cb-x 2>/dev/null)"
+[[ "$out" == "gone" && -e "$tree" ]] || fail "an unrecorded tree is untouched, got: $out"
+pass "an unrecorded tree is never touched"
+
+recorded_tree cb-x Rogue
+git_q -C "$tidy" worktree remove --force "$tree"
+out="$(tidy_run --worktree Rogue cb-x 2>/dev/null)"
+[[ "$out" == "gone" && ! -e "$record" ]] || fail "a vanished tree is gone and its record goes, got: $out"
+pass "a tree the watcher already removed is gone and its record goes"
+
+recorded_tree cb-x Rogue
+printf '{"bead":"cb-x"}\n' > "$tstate/Rogue.state.json"
+git_q -C "$tidy" remote set-url origin "$work_dir/nowhere.git"
+out="$(ALIVE_EXIT=0 tidy_run --worktree Rogue cb-x 2>/dev/null)"
+[[ "$out" == "running" && -e "$tree" && -e "$record" ]] || fail "a live agent on its bead keeps its tree, got: $out"
+pass "a live agent on this bead keeps its tree"
+
+recorded_tree cb-x Rogue
+printf '{"bead":"cb-y"}\n' > "$tstate/Rogue.state.json"
+out="$(ALIVE_EXIT=0 tidy_run --worktree Rogue cb-x 2>/dev/null)"
+[[ "$out" == "removed" ]] || fail "a live agent on another bead does not keep this tree, got: $out"
+pass "a live agent on another bead does not keep this tree"
+
+recorded_tree cb-x Rogue
+printf '{"bead":null}\n' > "$tstate/Rogue.state.json"
+printf 'cb-y\n' > "$tstate/Rogue.handover"
+out="$(ALIVE_EXIT=0 tidy_run --worktree Rogue cb-x 2>/dev/null)"
+[[ "$out" == "removed" ]] || fail "an unreported agent handed another bead does not keep this tree, got: $out"
+recorded_tree cb-x Rogue
+printf '{"bead":null}\n' > "$tstate/Rogue.state.json"
+out="$(ALIVE_EXIT=0 tidy_run --worktree Rogue cb-x 2>/dev/null)"
+[[ "$out" == "running" ]] || fail "an unreported agent with no handover keeps the tree, got: $out"
+pass "a live agent that has not reported, handed another bead, does not keep this tree"
+
+recorded_tree cb-x Rogue
+git_q -C "$tidy" remote set-url origin "$work_dir/nowhere.git"
+status=0; out="$(tidy_run --worktree Rogue cb-x 2>/dev/null)" || status=$?
+[[ $status -eq 0 && "$out" == "retry" && -e "$tree" && -e "$record" ]] || fail "an unreachable origin is retry, got $status: $out"
+git_q -C "$tidy" remote set-url origin "$origin_url"
+pass "an unreachable origin is retry and touches nothing"
+
+status=0; out="$(tidy_run --worktree Rogue ../x 2>/dev/null)" || status=$?
+[[ $status -eq 2 && -z "$out" ]] || fail "an id with a slash is exit 2, got $status: $out"
+status=0; out="$(tidy_run --worktree Rogue .x 2>/dev/null)" || status=$?
+[[ $status -eq 2 ]] || fail "an id starting with a dot is exit 2, got $status"
+pass "an id with a slash is a usage error"
+
 suite_passed

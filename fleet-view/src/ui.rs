@@ -1098,6 +1098,10 @@ fn hint_clauses(app: &App) -> Vec<HintClause> {
     // the keys a navigator cannot guess) and costs no existing hint anything: it is dropped
     // first and alone, so the key is offered wherever there is room and nowhere it would push
     // something else off.
+    // cb-10d.5: at `h health`'s rank and for its reason, and only while `a` acts on the row.
+    if matches!(app.work_cursor, Some(app::WorkCursor::Bead(_))) {
+        clauses.push(HintClause { text: "a give", rank: HintRank::Optional });
+    }
     clauses.push(HintClause { text: "h health", rank: HintRank::Optional });
     // cb-bch.1, at the same `Optional` rank as `h health` above and for the same reason: the
     // ordinary hundred-column screen has about one cell of slack, so an unconditional clause at
@@ -1182,6 +1186,12 @@ fn header_state_spans(app: &App) -> Vec<Span<'static>> {
         // confirmation was built and never drawn: a destructive question the navigator could not
         // see, answered by their next keystroke (cb-4cn).
         spans.push(Span::styled(format!(" | {}", prompt.text()), Style::default().fg(GOLD)));
+    } else if let Some(picker) = &app.give {
+        // The give list owns the keyboard while it is open, as a prompt does (cb-10d.5).
+        spans.push(Span::styled(
+            format!(" | {}", crate::give::header(&picker.bead)),
+            Style::default().fg(GOLD),
+        ));
     } else if let Some(notice) = &app.notice {
         // Gold for news, red for a fault: the pruner's failure is the first thing this slot has
         // ever carried that is not something the view did (cb-kcs.5.2, the navigator's choice).
@@ -1622,6 +1632,24 @@ fn work_document(app: &App, now: DateTime<Utc>, width: usize) -> Vec<Line<'stati
                 }
             }
             app::WorkBodyLine::Empty => Line::from(Span::styled("  (none)", dim())),
+            app::WorkBodyLine::GiveRow { candidate, name_width, selected } => {
+                let indent = "    ";
+                let text = format!(
+                    "{}{}",
+                    if *selected { "\u{2192} " } else { "  " },
+                    crate::give::row_text(candidate, *name_width)
+                );
+                let text = truncate_cells(&text, width.saturating_sub(indent.len()));
+                let mut style = if candidate.standing == crate::give::Standing::Free {
+                    Style::default()
+                } else {
+                    dim()
+                };
+                if *selected {
+                    style = style.bg(SELECTED_BG);
+                }
+                Line::from(vec![Span::raw(indent), Span::styled(text, style)])
+            }
             app::WorkBodyLine::More { hidden, expanded, .. } => {
                 // `Enter` is advertised only under the cursor: always saying it is eight cells of
                 // noise on every frame, and never saying it means nobody finds it.

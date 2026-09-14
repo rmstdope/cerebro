@@ -1026,6 +1026,9 @@ pub enum WorkBodyLine<'a> {
     /// One finding, already worded by `model::health_findings`. Named `HealthRow` and not
     /// `HealthFinding` so it does not read as the `model::HealthFinding` it carries.
     HealthRow { text: String, tone: HealthTone },
+    /// One agent of the open give list, directly beneath the bead it was opened on (cb-10d.5).
+    /// Never a cursor target: the list has a cursor of its own.
+    GiveRow { candidate: crate::give::Candidate, name_width: usize, selected: bool },
 }
 
 impl WorkBodyLine<'_> {
@@ -1575,6 +1578,23 @@ fn section_body<'a>(
     for bead in sorted.iter().take(shown) {
         let suffix = row_suffix(bead, kind, now);
         body.push(WorkBodyLine::Bead { bead, suffix });
+        if let Some(picker) = app.give.as_ref().filter(|p| p.bead == bead.id) {
+            let candidates = crate::give::candidates(
+                bead,
+                app.fleet_rows(),
+                &app.starting_beads(),
+                &app.releasing,
+            );
+            let name_width = candidates
+                .iter()
+                .map(|c| unicode_width::UnicodeWidthStr::width(c.name.as_str()))
+                .max()
+                .unwrap_or(0);
+            for candidate in candidates {
+                let selected = candidate.name == picker.cursor;
+                body.push(WorkBodyLine::GiveRow { candidate, name_width, selected });
+            }
+        }
     }
     if hidden > 0 {
         body.push(WorkBodyLine::More { section: title, hidden, expanded });
@@ -1607,6 +1627,21 @@ fn history_body(app: &App) -> Vec<WorkBodyLine<'static>> {
         body.push(WorkBodyLine::HistoryRow { text, long });
     }
     body
+}
+
+/// Every bead of every section of BUCKETS.
+fn bucket_beads(buckets: &WorkBuckets) -> impl Iterator<Item = &Bead> {
+    [
+        &buckets.claimed,
+        &buckets.planned,
+        &buckets.being_planned,
+        &buckets.ux_agreed,
+        &buckets.unplanned,
+        &buckets.paused,
+        &buckets.merged,
+    ]
+    .into_iter()
+    .flat_map(|section| section.iter())
 }
 
 /// Overwrite each bead's priority with the one it has been asked to have.
@@ -1758,6 +1793,13 @@ pub enum AppAction {
     Quit,
 }
 
+/// The open give list (cb-10d.5): the bead it was opened on and the agent under its cursor.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GivePicker {
+    pub bead: String,
+    pub cursor: String,
+}
+
 /// One bead's requested priority, and whether the write that asked for it has answered.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PendingPriority {
@@ -1829,6 +1871,15 @@ pub struct App {
     /// Give-backs this view has asked for, by agent name: the bead, and whether the write is still
     /// running or failed at a time. Its beads are spoken for until the entry goes.
     pub releasing: std::collections::BTreeMap<String, model::Releasing>,
+    /// Beads given by hand from this window (`a`, cb-10d.5) whose start this window has not seen
+    /// yet: agent name -> bead. Memory only. Drawn as `starting` exactly as `handed` is, and
+    /// counted as spoken for. Dropped by `prune_given`.
+    pub given: BTreeMap<String, String>,
+    /// The open give list, if any (cb-10d.5).
+    pub give: Option<GivePicker>,
+    /// The `given` names as they stood when the in-flight work read was ASKED for - the
+    /// `work_settled_at_request` rule: only a read that began after the give answered may drop one.
+    work_given_at_request: Vec<String>,
     /// Board writes the loop decided on rather than a key; drained into `dispatch` once per loop.
     outbox: Vec<WriteRequest>,
     /// The names whose stop flag is set, as of the last frame. Copied in by the event loop from
@@ -2103,6 +2154,9 @@ impl App {
             writes_answered: 0,
             pending_priority: BTreeMap::new(),
             work_settled_at_request: Vec::new(),
+            given: BTreeMap::new(),
+            give: None,
+            work_given_at_request: Vec::new(),
             pin: None,
             history: Pane::default(),
             last_history_request: None,
@@ -2179,7 +2233,7 @@ impl App {
     pub fn reapply_standby(&mut self) {
         let parked = self.parked_names();
         let armed = self.armed.clone();
-        let handed = self.handed.clone();
+        let handed = self.starting_beads();
         let restate = |rows: Vec<FleetRow>| {
             model::apply_standby(model::apply_starting(rows, &handed), &armed, &parked)
         };
@@ -2302,6 +2356,13 @@ impl App {
         snapshot: Option<CopySnapshot>,
         now: DateTime<Utc>,
     ) -> AppAction {
+        // An open give list is closed by a click, which is used up; a mere motion leaves it open.
+        if self.give.is_some() {
+            if !matches!(event.kind, MouseEventKind::Moved) {
+                self.close_give();
+            }
+            return AppAction::None;
+        }
         // A modal owns the screen: a prompt consumes every key by construction, and a stray click
         // must not act behind one or clear its gold text.
         if self.quit_refusal.is_some() || self.confirm.is_some() {
@@ -2917,6 +2978,7 @@ impl App {
                 .filter(|(_, entry)| entry.settled)
                 .map(|(id, entry)| (id.clone(), entry.to))
                 .collect();
+            self.work_given_at_request = self.given.keys().cloned().collect();
             true
         } else {
             false
@@ -3196,11 +3258,185 @@ impl App {
         self.work_cursor = Some(cursor.clone());
         let line = work_line_of_cursor(&work_body(self, now), &cursor);
         if let Some(line) = line {
-            let viewport = viewport_lines.max(1);
-            if line < self.work.scroll {
-                self.work.scroll = line;
-            } else if line >= self.work.scroll + viewport {
-                self.work.scroll = line + 1 - viewport;
+            self.scroll_work_to_line(line, viewport_lines);
+        }
+    }
+
+    /// Scroll the Work pane by the least that keeps LINE visible.
+    fn scroll_work_to_line(&mut self, line: usize, viewport_lines: usize) {
+        let viewport = viewport_lines.max(1);
+        if line < self.work.scroll {
+            self.work.scroll = line;
+        } else if line >= self.work.scroll + viewport {
+            self.work.scroll = line + 1 - viewport;
+        }
+    }
+
+    /// Beads this view is starting: `given` overlaid by `handed`, which wins on a shared name.
+    pub fn starting_beads(&self) -> BTreeMap<String, String> {
+        let mut out = self.given.clone();
+        out.extend(self.handed.iter().map(|(k, v)| (k.clone(), v.clone())));
+        out
+    }
+
+    /// Every bead a start may not be made with: `triggers::spoken_for` plus every given bead.
+    pub fn spoken_for(&self) -> BTreeSet<String> {
+        let mut spoken =
+            crate::triggers::spoken_for(self.fleet_rows(), &self.handed, &self.releasing);
+        spoken.extend(self.given.values().cloned());
+        spoken
+    }
+
+    /// Drop a given entry once its start is seen: handed, giving back, or a row only an agent
+    /// writes.
+    pub fn prune_given(&mut self) {
+        if self.given.is_empty() {
+            return;
+        }
+        let reported: BTreeSet<String> = self
+            .fleet_rows()
+            .iter()
+            .filter(|row| {
+                matches!(
+                    row.state,
+                    RowState::Working
+                        | RowState::Asking
+                        | RowState::Waiting
+                        | RowState::Idle
+                        | RowState::Unknown(_)
+                )
+            })
+            .map(|row| row.name.clone())
+            .collect();
+        let before = self.given.len();
+        let handed = &self.handed;
+        let releasing = &self.releasing;
+        self.given.retain(|name, _| {
+            !handed.contains_key(name) && !releasing.contains_key(name) && !reported.contains(name)
+        });
+        if self.given.len() != before {
+            self.reapply_standby();
+        }
+    }
+
+    /// The bead under the Work cursor, owned, when the cursor is on a bead.
+    fn give_bead_under_cursor(&self, id: &str, now: DateTime<Utc>) -> Option<Bead> {
+        work_body(self, now).into_iter().find_map(|line| match line {
+            WorkBodyLine::Bead { bead, .. } if bead.id == id => Some(bead.clone()),
+            _ => None,
+        })
+    }
+
+    /// The document line of the open list's cursor row.
+    fn give_cursor_line(&self, now: DateTime<Utc>) -> Option<usize> {
+        let picker = self.give.as_ref()?;
+        work_body(self, now).iter().position(|line| {
+            matches!(line, WorkBodyLine::GiveRow { candidate, .. } if candidate.name == picker.cursor)
+        })
+    }
+
+    fn keep_give_cursor_on_screen(&mut self, viewport_lines: usize, now: DateTime<Utc>) {
+        if let Some(line) = self.give_cursor_line(now) {
+            self.scroll_work_to_line(line, viewport_lines);
+        }
+    }
+
+    /// `a` under Work focus: opens the list beneath the bead, or sets the gold refusal notice.
+    pub fn open_give(&mut self, viewport_lines: usize, now: DateTime<Utc>) {
+        let bead = match &self.work_cursor {
+            Some(WorkCursor::Bead(_)) => self.selected_bead(now).cloned(),
+            _ => None,
+        };
+        match crate::give::open(bead.as_ref(), self.fleet_rows(), &self.starting_beads(), &self.releasing) {
+            crate::give::Opening::Open { cursor } => {
+                let bead = bead.expect("an open list has a bead");
+                self.give = Some(GivePicker { bead: bead.id, cursor });
+                self.keep_give_cursor_on_screen(viewport_lines, now);
+            }
+            crate::give::Opening::Refuse(text) => self.set_notice(text),
+        }
+    }
+
+    /// ↑/↓ inside the list.
+    pub fn step_give(&mut self, delta: isize, viewport_lines: usize, now: DateTime<Utc>) {
+        let Some(picker) = self.give.clone() else { return };
+        let Some(bead) = self.give_bead_under_cursor(&picker.bead, now) else { return };
+        let candidates = crate::give::candidates(
+            &bead,
+            self.fleet_rows(),
+            &self.starting_beads(),
+            &self.releasing,
+        );
+        let cursor = crate::give::step(&candidates, &picker.cursor, delta);
+        self.give = Some(GivePicker { bead: picker.bead, cursor });
+        self.keep_give_cursor_on_screen(viewport_lines, now);
+    }
+
+    /// Enter inside the list: the write after `begin_write`, or `None` after a refusal or a
+    /// revalidation.
+    pub fn choose_give(
+        &mut self,
+        bd: &std::path::Path,
+        viewport_lines: usize,
+        now: DateTime<Utc>,
+    ) -> AppAction {
+        let Some(picker) = self.give.clone() else { return AppAction::None };
+        let bead = self.give_bead_under_cursor(&picker.bead, now);
+        match crate::give::choose(
+            &picker.bead,
+            &picker.cursor,
+            bead.as_ref(),
+            self.fleet_rows(),
+            &self.starting_beads(),
+            &self.releasing,
+        ) {
+            crate::give::Choice::Give { name, bead } => {
+                self.give = None;
+                let request = WriteRequest::Give { name, bead };
+                self.begin_write(&request, bd);
+                AppAction::Write(request)
+            }
+            crate::give::Choice::Refuse(text) => {
+                self.give = None;
+                self.set_notice(text);
+                AppAction::None
+            }
+            crate::give::Choice::Revalidate => {
+                self.revalidate_give(viewport_lines, now);
+                AppAction::None
+            }
+        }
+    }
+
+    /// Close with nothing written and nothing said. A `Pending` line survives.
+    pub fn close_give(&mut self) {
+        self.give = None;
+        self.clear_notice();
+    }
+
+    /// Move the list cursor after anything changed, or close with its notice.
+    pub fn revalidate_give(&mut self, viewport_lines: usize, now: DateTime<Utc>) {
+        let Some(picker) = self.give.clone() else { return };
+        let bead = self.give_bead_under_cursor(&picker.bead, now);
+        match crate::give::revalidate(
+            &picker.bead,
+            &picker.cursor,
+            bead.as_ref(),
+            self.fleet_rows(),
+            &self.starting_beads(),
+            &self.releasing,
+        ) {
+            crate::give::Revalidated::Keep { cursor } => {
+                if cursor != picker.cursor {
+                    self.give = Some(GivePicker { bead: picker.bead, cursor });
+                    self.keep_give_cursor_on_screen(viewport_lines, now);
+                }
+            }
+            crate::give::Revalidated::Close { notice } => {
+                self.give = None;
+                if let Some(text) = notice {
+                    self.set_notice(text);
+                }
             }
         }
     }
@@ -3304,12 +3540,13 @@ impl App {
         // The previous rows are the ones the pane still holds - read before `finish` replaces
         // them (cb-m0c).
         let closing = self.closing.clone();
+        let starting = self.starting_beads();
         let previous = self.fleet_rows().to_vec();
         let result = result.map(|rows| {
             model::apply_standby(
                 model::apply_starting(
                     model::hold_closing_rows(rows, &previous, &closing),
-                    &self.handed,
+                    &starting,
                 ),
                 &self.armed,
                 &parked,
@@ -3318,6 +3555,7 @@ impl App {
         self.fleet.finish(result, at);
         if succeeded {
             self.clear_completed_copy_from(PaneFocus::Fleet);
+            self.prune_given();
             self.reconcile_selection(previous_index);
             // A refresh can move the selected row's document line with nothing pressed: the stale
             // prefix appearing or going, and a reconciled selection landing on another row. Both
@@ -3495,17 +3733,38 @@ impl App {
                     AppAction::RefreshSweeps
                 }
             }
-            WriteAnswer::Release { name, outcome, .. } => match outcome {
-                crate::lifecycle::ReleaseOutcome::Returned { .. } => {
-                    self.releasing.remove(&name);
-                    AppAction::RefreshWork
+            WriteAnswer::Release { name, outcome, .. } => {
+                let action = match outcome {
+                    crate::lifecycle::ReleaseOutcome::Returned { .. } => {
+                        self.releasing.remove(&name);
+                        AppAction::RefreshWork
+                    }
+                    crate::lifecycle::ReleaseOutcome::Elsewhere => {
+                        self.releasing.remove(&name);
+                        AppAction::None
+                    }
+                    // The entry stays, so its bead is still spoken for; the loop stamps
+                    // `failed_at`.
+                    crate::lifecycle::ReleaseOutcome::Failed { .. } => AppAction::None,
+                };
+                self.prune_given();
+                action
+            }
+            WriteAnswer::Give { name, bead, outcome } => match outcome {
+                crate::lifecycle::GiveOutcome::Failed { .. } => AppAction::None,
+                crate::lifecycle::GiveOutcome::Ran { .. } => {
+                    self.given.insert(name, bead);
+                    self.reapply_standby();
+                    AppAction::RefreshAll
                 }
-                crate::lifecycle::ReleaseOutcome::Elsewhere => {
-                    self.releasing.remove(&name);
-                    AppAction::None
+                crate::lifecycle::GiveOutcome::Pushed { text } => {
+                    // Red although the write happened: the agreed record colours it red, the one
+                    // place a give differs from the priority keys' gold `Pushed`.
+                    self.set_error_notice(text);
+                    self.given.insert(name, bead);
+                    self.reapply_standby();
+                    AppAction::RefreshAll
                 }
-                // The entry stays, so its bead is still spoken for; the loop stamps `failed_at`.
-                crate::lifecycle::ReleaseOutcome::Failed { .. } => AppAction::None,
             },
         }
     }
@@ -3521,6 +3780,24 @@ impl App {
         at: DateTime<Utc>,
     ) {
         let settled = std::mem::take(&mut self.work_settled_at_request);
+        let given_then = std::mem::take(&mut self.work_given_at_request);
+        if let Ok(buckets) = &result {
+            // A give the board no longer shows - failed elsewhere, given back by the supervising
+            // window, unassigned by hand - stops being drawn `starting` here (cb-10d.5).
+            let mut dropped = false;
+            for name in given_then {
+                let Some(bead) = self.given.get(&name) else { continue };
+                if !bucket_beads(buckets)
+                    .any(|b| b.id == *bead && b.assignee.as_deref() == Some(name.as_str()))
+                {
+                    self.given.remove(&name);
+                    dropped = true;
+                }
+            }
+            if dropped {
+                self.reapply_standby();
+            }
+        }
         if let Ok(buckets) = &mut result {
             for (id, to) in settled {
                 if self.pending_priority.get(&id) == Some(&PendingPriority { to, settled: true }) {
@@ -3745,6 +4022,8 @@ pub enum WriteRequest {
     Finding { finding: Finding },
     /// `scripts/release-bead NAME BEAD` - giving back a bead the view handed (cb-10d.1).
     Release { name: String, bead: String, cause: crate::lifecycle::GiveBack },
+    /// `scripts/assign-bead --given NAME BEAD` - the navigator's `a` key (cb-10d.5).
+    Give { name: String, bead: String },
 }
 
 /// How long a failed give-back waits before it is asked for again.
@@ -3770,6 +4049,7 @@ impl WriteRequest {
             }
             // Never drawn: `begin_write` shows no provisional line for a give-back.
             WriteRequest::Release { .. } => String::new(),
+            WriteRequest::Give { name, bead } => crate::give::pending(bead, name),
         }
     }
 }
@@ -3795,6 +4075,7 @@ pub enum WriteAnswer {
         cause: crate::lifecycle::GiveBack,
         outcome: crate::lifecycle::ReleaseOutcome,
     },
+    Give { name: String, bead: String, outcome: crate::lifecycle::GiveOutcome },
 }
 
 impl WriteAnswer {
@@ -3816,6 +4097,11 @@ impl WriteAnswer {
                 | crate::lifecycle::ReleaseOutcome::Failed { text } => text,
                 crate::lifecycle::ReleaseOutcome::Elsewhere => "",
             },
+            WriteAnswer::Give { outcome, .. } => match outcome {
+                crate::lifecycle::GiveOutcome::Ran { text }
+                | crate::lifecycle::GiveOutcome::Pushed { text }
+                | crate::lifecycle::GiveOutcome::Failed { text } => text,
+            },
         }
     }
 
@@ -3831,6 +4117,9 @@ impl WriteAnswer {
             }
             WriteAnswer::Release { outcome, .. } => {
                 matches!(outcome, crate::lifecycle::ReleaseOutcome::Failed { .. })
+            }
+            WriteAnswer::Give { outcome, .. } => {
+                matches!(outcome, crate::lifecycle::GiveOutcome::Failed { .. })
             }
         }
     }
@@ -3855,6 +4144,11 @@ impl WriteAnswer {
                 bead: bead.clone(),
                 cause: *cause,
                 outcome: crate::lifecycle::ReleaseOutcome::Failed { text },
+            },
+            WriteRequest::Give { name, bead } => WriteAnswer::Give {
+                name: name.clone(),
+                bead: bead.clone(),
+                outcome: crate::lifecycle::GiveOutcome::Failed { text },
             },
         }
     }
@@ -3906,6 +4200,10 @@ pub fn run_write(
         WriteRequest::Release { name, bead, cause } => {
             let outcome = crate::lifecycle::release_bead(paths, commands, &name, &bead, cause);
             WriteAnswer::Release { name, bead, cause, outcome }
+        }
+        WriteRequest::Give { name, bead } => {
+            let outcome = crate::lifecycle::give_bead(paths, commands, &name, &bead);
+            WriteAnswer::Give { name, bead, outcome }
         }
     }
 }
@@ -6664,6 +6962,7 @@ mod tests {
                     format!("health-header {count} {failed}")
                 }
                 WorkBodyLine::HealthRow { text, tone } => format!("health {text} {tone:?}"),
+                WorkBodyLine::GiveRow { candidate, .. } => format!("give {}", candidate.name),
             })
             .collect();
         assert_eq!(
@@ -8012,5 +8311,303 @@ mod tests {
             app.on_key(KeyEvent::new(key, KeyModifiers::NONE), 10, at(86_400));
             assert!(app.health_pinned(), "{key:?} leaves it pinned");
         }
+    }
+
+    // --- cb-10d.5: the give key --------------------------------------------------------------
+
+    fn give_row(name: &str, role: &str, state: RowState, bead: Option<&str>) -> FleetRow {
+        FleetRow { role: role.into(), state, bead: bead.map(Into::into), ..row(name) }
+    }
+
+    fn give_bead(id: &str, labels: &[&str], assignee: Option<&str>) -> Bead {
+        crate::model::Bead {
+            id: id.into(),
+            title: "t".into(),
+            status: "open".into(),
+            issue_type: "feature".into(),
+            labels: labels.iter().map(|l| l.to_string()).collect(),
+            priority: Some(1),
+            updated_at: None,
+            assignee: assignee.map(Into::into),
+            metadata: serde_json::Value::Null,
+            external_ref: None,
+        }
+    }
+
+    fn give_rows() -> Vec<FleetRow> {
+        vec![
+            give_row("Rogue", "implementer", RowState::Dead, None),
+            give_row("Storm", "implementer", RowState::Dead, None),
+            give_row("Cyclops", "implementer", RowState::Working, Some("cb-9su")),
+            give_row("Xavier", "ux", RowState::Dead, None),
+        ]
+    }
+
+    fn set_fleet(app: &mut App, rows: Vec<FleetRow>) {
+        app.fleet.refreshing = false;
+        app.begin_refresh(Instant::now());
+        app.finish_refresh(Ok(rows), at(0));
+    }
+
+    fn set_work(app: &mut App, planned: Vec<Bead>) {
+        app.work.refreshing = false;
+        app.begin_work_refresh(Instant::now(), at(0));
+        app.finish_work_refresh(Ok(WorkBuckets { planned, ..WorkBuckets::default() }), at(0));
+    }
+
+    /// Rogue, Storm and Xavier on standby, Cyclops working; cb-44b and cb-55c planned, the Work
+    /// cursor on cb-44b.
+    fn give_app() -> App {
+        let mut app = App::new();
+        for name in ["Rogue", "Storm", "Xavier"] {
+            app.armed.insert(name.to_string());
+        }
+        set_fleet(&mut app, give_rows());
+        set_work(&mut app, vec![give_bead("cb-44b", &["planned"], None), give_bead("cb-55c", &["planned"], None)]);
+        app.focus = PaneFocus::Work;
+        app.work_cursor = Some(WorkCursor::Bead("cb-44b".into()));
+        app
+    }
+
+    fn give_answer(outcome: crate::lifecycle::GiveOutcome) -> WriteAnswer {
+        WriteAnswer::Give { name: "Rogue".into(), bead: "cb-44b".into(), outcome }
+    }
+
+    fn row_state(app: &App, name: &str) -> RowState {
+        app.fleet_rows().iter().find(|r| r.name == name).unwrap().state.clone()
+    }
+
+    #[test]
+    fn a_give_that_answered_draws_the_row_starting() {
+        let mut app = give_app();
+        assert_eq!(row_state(&app, "Rogue"), RowState::Standby);
+        let request = WriteRequest::Give { name: "Rogue".into(), bead: "cb-44b".into() };
+        app.begin_write(&request, bd_path());
+        let action = app.finish_write(give_answer(crate::lifecycle::GiveOutcome::Ran {
+            text: "Gave cb-44b to Rogue".into(),
+        }));
+        assert_eq!(action, AppAction::RefreshAll);
+        assert_eq!(app.notice.as_deref(), Some("Gave cb-44b to Rogue"));
+        assert_eq!(app.notice_tone, NoticeTone::News);
+        assert_eq!(app.given.get("Rogue").map(String::as_str), Some("cb-44b"));
+        assert_eq!(row_state(&app, "Rogue"), RowState::Starting);
+    }
+
+    #[test]
+    fn a_give_whose_push_failed_is_red_and_still_given() {
+        let mut app = give_app();
+        let text = crate::give::unpushed("cb-44b", "Rogue");
+        app.finish_write(give_answer(crate::lifecycle::GiveOutcome::Pushed { text: text.clone() }));
+        assert_eq!(app.notice.as_deref(), Some(text.as_str()));
+        assert_eq!(app.notice_tone, NoticeTone::Urgent);
+        assert_eq!(app.given.get("Rogue").map(String::as_str), Some("cb-44b"));
+    }
+
+    #[test]
+    fn a_refused_give_is_red_and_records_nothing() {
+        let mut app = give_app();
+        let action = app.finish_write(give_answer(crate::lifecycle::GiveOutcome::Failed {
+            text: "bd would not give cb-44b to Rogue".into(),
+        }));
+        assert_eq!(action, AppAction::None);
+        assert_eq!(app.notice.as_deref(), Some("bd would not give cb-44b to Rogue"));
+        assert_eq!(app.notice_tone, NoticeTone::Urgent);
+        assert!(app.given.is_empty());
+    }
+
+    #[test]
+    fn a_give_in_flight_shows_the_dim_line() {
+        let mut app = App::new();
+        app.begin_write(&WriteRequest::Give { name: "Rogue".into(), bead: "cb-44b".into() }, bd_path());
+        assert_eq!(app.notice.as_deref(), Some("Giving cb-44b to Rogue\u{2026}"));
+        assert_eq!(app.notice_tone, NoticeTone::Pending);
+    }
+
+    #[test]
+    fn a_given_bead_is_spoken_for() {
+        let mut app = App::new();
+        app.given.insert("Rogue".into(), "cb-44b".into());
+        assert!(app.spoken_for().contains("cb-44b"));
+    }
+
+    #[test]
+    fn a_given_entry_goes_when_the_start_is_seen() {
+        let mut app = give_app();
+        app.given.insert("Rogue".into(), "cb-44b".into());
+        app.handed.insert("Rogue".into(), "cb-44b".into());
+        app.prune_given();
+        assert!(app.given.is_empty(), "handed");
+
+        let mut app = give_app();
+        app.given.insert("Rogue".into(), "cb-44b".into());
+        app.releasing.insert(
+            "Rogue".into(),
+            crate::model::Releasing {
+                bead: "cb-44b".into(),
+                failed_at: None,
+                cause: crate::lifecycle::GiveBack::DidNotStart,
+            },
+        );
+        app.prune_given();
+        assert!(app.given.is_empty(), "releasing");
+
+        let mut app = give_app();
+        app.given.insert("Rogue".into(), "cb-44b".into());
+        let mut rows = give_rows();
+        rows[0].state = RowState::Working;
+        set_fleet(&mut app, rows);
+        assert!(app.given.is_empty(), "the row reports working");
+    }
+
+    #[test]
+    fn a_given_entry_goes_when_a_later_board_read_shows_it_unassigned() {
+        let unassigned = || vec![give_bead("cb-44b", &["planned"], None)];
+        // A read asked for BEFORE the give answered keeps it.
+        let mut app = give_app();
+        app.work.refreshing = false;
+        app.begin_work_refresh(Instant::now(), at(0));
+        app.given.insert("Rogue".into(), "cb-44b".into());
+        app.finish_work_refresh(Ok(WorkBuckets { planned: unassigned(), ..WorkBuckets::default() }), at(0));
+        assert!(app.given.contains_key("Rogue"), "an older read keeps it");
+        // A read asked for AFTER drops it.
+        set_work(&mut app, unassigned());
+        assert!(app.given.is_empty(), "a later read that shows it unassigned drops it");
+        // ... unless the bead is assigned to that agent.
+        app.given.insert("Rogue".into(), "cb-44b".into());
+        set_work(&mut app, vec![give_bead("cb-44b", &["planned"], Some("Rogue"))]);
+        assert!(app.given.contains_key("Rogue"), "assigned to Rogue keeps it");
+    }
+
+    #[test]
+    fn a_opens_the_list_beneath_the_bead_and_keeps_the_work_cursor() {
+        let mut app = give_app();
+        app.open_give(20, at(0));
+        assert_eq!(app.give, Some(GivePicker { bead: "cb-44b".into(), cursor: "Rogue".into() }));
+        assert_eq!(app.work_cursor, Some(WorkCursor::Bead("cb-44b".into())));
+        let body = work_body(&app, at(0));
+        let bead_line = body
+            .iter()
+            .position(|l| matches!(l, WorkBodyLine::Bead { bead, .. } if bead.id == "cb-44b"))
+            .unwrap();
+        let rows: Vec<usize> = body
+            .iter()
+            .enumerate()
+            .filter(|(_, l)| matches!(l, WorkBodyLine::GiveRow { .. }))
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(rows, (bead_line + 1..bead_line + 5).collect::<Vec<_>>());
+        assert!(rows.iter().all(|&i| body[i].cursor().is_none()));
+    }
+
+    #[test]
+    fn a_refuses_off_a_bead() {
+        let mut app = give_app();
+        app.work_cursor = None;
+        app.open_give(20, at(0));
+        assert_eq!(app.notice.as_deref(), Some("Put the cursor on a piece of work first"));
+        assert!(app.give.is_none());
+        app.work_cursor = Some(WorkCursor::Finding("unclaim:cb-a".into()));
+        app.open_give(20, at(0));
+        assert!(app.give.is_none());
+    }
+
+    #[test]
+    fn enter_gives_closes_and_asks_for_the_write() {
+        let mut app = give_app();
+        app.open_give(20, at(0));
+        let action = app.choose_give(bd_path(), 20, at(0));
+        assert_eq!(
+            action,
+            AppAction::Write(WriteRequest::Give { name: "Rogue".into(), bead: "cb-44b".into() })
+        );
+        assert!(app.give.is_none());
+        assert_eq!(app.notice_tone, NoticeTone::Pending);
+    }
+
+    #[test]
+    fn closing_keeps_a_running_writes_dim_line() {
+        let mut app = give_app();
+        app.set_pending_notice("Giving cb-1 to Storm\u{2026}".into());
+        app.open_give(20, at(0));
+        app.close_give();
+        assert!(app.give.is_none());
+        assert_eq!(app.notice.as_deref(), Some("Giving cb-1 to Storm\u{2026}"));
+    }
+
+    #[test]
+    fn a_click_closes_the_list_and_does_nothing_else() {
+        let mut app = give_app();
+        app.open_give(20, at(0));
+        let moved = MouseEvent { kind: MouseEventKind::Moved, ..mouse_press(1, 1) };
+        assert_eq!(app.on_mouse(moved, no_metrics(), None, at(0)), AppAction::None);
+        assert!(app.give.is_some(), "a motion leaves it open");
+        let selected = app.selected.clone();
+        assert_eq!(app.on_mouse(mouse_press(1, 1), no_metrics(), None, at(0)), AppAction::None);
+        assert!(app.give.is_none());
+        assert_eq!(app.focus, PaneFocus::Work);
+        assert_eq!(app.selected, selected);
+    }
+
+    #[test]
+    fn the_list_follows_the_fleet() {
+        let mut app = give_app();
+        app.open_give(20, at(0));
+        let mut rows = give_rows();
+        rows[0].state = RowState::Working;
+        rows[0].bead = Some("cb-1".into());
+        set_fleet(&mut app, rows.clone());
+        app.revalidate_give(20, at(0));
+        assert_eq!(app.give.as_ref().map(|p| p.cursor.as_str()), Some("Storm"));
+
+        rows[1].state = RowState::Working;
+        rows[1].bead = Some("cb-2".into());
+        set_fleet(&mut app, rows);
+        app.revalidate_give(20, at(0));
+        assert!(app.give.is_none());
+        assert_eq!(app.notice.as_deref(), Some("Nobody can take cb-44b right now"));
+
+        let mut app = give_app();
+        app.open_give(20, at(0));
+        set_work(&mut app, vec![give_bead("cb-44b", &["planned"], Some("Storm"))]);
+        app.revalidate_give(20, at(0));
+        assert!(app.give.is_none());
+        assert_eq!(app.notice.as_deref(), Some("cb-44b is already with Storm"));
+    }
+
+    #[test]
+    fn the_list_survives_a_work_refresh() {
+        let mut app = give_app();
+        app.open_give(20, at(0));
+        app.step_give(1, 20, at(0));
+        set_work(&mut app, vec![give_bead("cb-44b", &["planned"], None), give_bead("cb-55c", &["planned"], None)]);
+        app.revalidate_give(20, at(0));
+        assert_eq!(app.give, Some(GivePicker { bead: "cb-44b".into(), cursor: "Storm".into() }));
+    }
+
+    #[test]
+    fn the_list_row_under_the_cursor_is_kept_on_screen() {
+        let mut app = App::new();
+        let names: Vec<String> = (0..20).map(|i| format!("Imp{i:02}")).collect();
+        for name in &names {
+            app.armed.insert(name.clone());
+        }
+        set_fleet(
+            &mut app,
+            names.iter().map(|n| give_row(n, "implementer", RowState::Dead, None)).collect(),
+        );
+        set_work(&mut app, vec![give_bead("cb-44b", &["planned"], None)]);
+        app.focus = PaneFocus::Work;
+        app.work_cursor = Some(WorkCursor::Bead("cb-44b".into()));
+        app.open_give(8, at(0));
+        for _ in 0..19 {
+            app.step_give(1, 8, at(0));
+            let line = app.give_cursor_line(at(0)).unwrap();
+            assert!(
+                (app.work.scroll..app.work.scroll + 8).contains(&line),
+                "line {line} scroll {}",
+                app.work.scroll
+            );
+        }
+        assert_eq!(app.give.as_ref().unwrap().cursor, "Imp19");
     }
 }

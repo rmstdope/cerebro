@@ -66,6 +66,9 @@ pub enum Event {
     /// BEFORE the write, exactly as `Sweep` is - a decision this view made is worth keeping
     /// whether or not the write then succeeded.
     Priority,
+    /// One give from the Work pane's `a` key (cb-10d.5): the agent and the bead. Written BEFORE
+    /// the write, as `Priority` is.
+    Give,
     /// One triage line typed into an idle orchestrator. Written only when the line actually went
     /// into a session this view hosts (the navigator's choice, round three): the view must not
     /// record something it did not do.
@@ -118,6 +121,7 @@ impl Event {
             Self::Stuck => "stuck",
             Self::Resume => "resume",
             Self::Priority => "priority",
+            Self::Give => "give",
             Self::Triage => "triage",
             Self::SweepTell => "sweep-tell",
             Self::DisarmAll => "disarm-all",

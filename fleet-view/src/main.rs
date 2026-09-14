@@ -899,7 +899,7 @@ fn start_due(
     // sentinel: a `Stale` work pane still carries its last good buckets and is used.
     let Some(buckets) = app.work.content.value() else { return };
     // Every bead a row, a handover or a give-back already holds: no start is given one (cb-10d.1).
-    let spoken = triggers::spoken_for(app.fleet_rows(), &app.handed, &app.releasing);
+    let spoken = app.spoken_for();
     let mut facts = TriggerFacts::derive(
         buckets,
         roster,
@@ -942,6 +942,10 @@ fn start_due(
     );
 
     for (name, role) in &standby {
+        // A name `start_given` launched this tick still reads `Standby` in this tick's rows.
+        if app.handed.contains_key(name) {
+            continue;
+        }
         // A flagged name is never started, whatever its trigger says: that is what `f` means. A
         // deliberate, named divergence from `cerebro--start-due`, which checks no flag at all
         // even though `cerebro--supervise-action`'s own comment says a standby role's flag
@@ -1274,6 +1278,10 @@ fn give_back(
         if app.handed.contains_key(&entry.name) || app.releasing.contains_key(&entry.name) {
             continue;
         }
+        // A given handover waits for its start and is never an orphan, however old (cb-10d.5).
+        if lifecycle::read_given(paths, &entry.name).is_some() {
+            continue;
+        }
         let Some((bead, age)) =
             lifecycle::read_handover(paths, &entry.name, std::time::SystemTime::now())
         else {
@@ -1322,6 +1330,55 @@ fn give_back(
     }
 }
 
+/// Start every agent a bead was given to by hand (a handover marked `given`, cb-10d.5) whose
+/// session is not running: `launch <Name> --bead <id>`, armed and recorded in `handed` exactly as a
+/// trigger start is. A start that fails is given back at once with `GiveBack::DidNotStart`.
+///
+/// No backoff, give-up counter, role spacing or armed check: the navigator's own act is newer than
+/// any of them, and a start that fails is given back once, not retried.
+fn start_given(
+    app: &mut App,
+    host: &mut SessionHost,
+    logger: &mut Logger,
+    paths: &ReaderPaths,
+    roster: &[RosterEntry],
+    now: DateTime<Utc>,
+) {
+    if !app.supervision.may_supervise() {
+        return;
+    }
+    for entry in roster.iter().filter(|e| cerebro_tui::give::stage_of(&e.role).is_some()) {
+        let name = entry.name.as_str();
+        let row_alive = app
+            .fleet_rows()
+            .iter()
+            .find(|row| row.name == name)
+            .is_some_and(lifecycle::row_is_alive);
+        if app.handed.contains_key(name)
+            || app.releasing.contains_key(name)
+            || host.is_live(name)
+            || row_alive
+        {
+            continue;
+        }
+        let Some(bead) = lifecycle::read_given(paths, name) else { continue };
+        match lifecycle::start(host, paths, name, false, Some(&bead)) {
+            Ok(_) => {
+                app.armed.insert(name.to_string());
+                app.handed.insert(name.to_string(), bead.clone());
+                app.given.remove(name);
+                log_start(logger, name, &entry.role, None, Some(&bead), now);
+                app.reapply_standby();
+            }
+            Err(error) => {
+                logger.error(&format!("start {name}"), &error.to_string(), now);
+                host.note_refusal(name, &error.to_string(), now);
+                queue_give_back(app, logger, name, &bead, lifecycle::GiveBack::DidNotStart, now);
+            }
+        }
+    }
+}
+
 /// The bead a start made by hand or by declaration is given: for an implementer the first of the
 /// work pane's `assignable` not spoken for (cb-10d.1), for a planning role its first ranked
 /// candidate not spoken for (`triggers::first_candidate`, the trigger's own rule, so `s` and the
@@ -1332,7 +1389,7 @@ fn bead_for_start(app: &App, role: &str) -> Option<String> {
         return None;
     }
     let buckets = app.work.content.value()?;
-    let spoken = triggers::spoken_for(app.fleet_rows(), &app.handed, &app.releasing);
+    let spoken = app.spoken_for();
     if role == "implementer" {
         return buckets.assignable.iter().find(|id| !spoken.contains(*id)).cloned();
     }
@@ -1620,6 +1677,9 @@ where
         // A page is a page of the FOCUSED pane's own viewport, not the other pane's and not the
         // whole terminal: `App::focused_viewport` is the one place the at-least-one floor lives.
         let viewport_lines = app.focused_viewport(metrics);
+        // The one place a give list follows the fleet and the board with nothing pressed
+        // (cb-10d.5). Not supervision-gated: the list is the navigator's own hand.
+        app.revalidate_give(viewport_lines, now);
         // Clamped from the frame that was just drawn, never before it, and each pane against its
         // own geometry alone: a refresh that returns the same rows must leave the navigator
         // looking at the same line in whichever pane they were reading. A too-small frame is
@@ -1666,6 +1726,9 @@ where
                     .collect();
                 // Before `start_due`, never after: see `give_back` (cb-10d.1).
                 give_back(app, &state.host, &mut state.logger, &config.paths, &roster, now);
+                // Between the two: a given handover is not an orphan, and a name it starts must
+                // not also be started by a trigger this tick (cb-10d.5).
+                start_given(app, &mut state.host, &mut state.logger, &config.paths, &roster, now);
                 start_due(app, &mut state.host, &mut state.ledger, &mut state.logger, &config.paths, &config.spacing, config.planner_multiple, &roster, now);
                 // And a line into an idle Cerebro, on the same freshly derived rows (cb-kcs.5.2).
                 // After `start_due` for its own reason: a Cerebro started on this very tick has
@@ -1998,6 +2061,40 @@ fn route_key(
             }
         };
     }
+    // The give list owns the keyboard while it is open, as a prompt does (cb-10d.5). It can only
+    // be open under Work focus.
+    if app.give.is_some() {
+        return match (key.code, key.modifiers.is_empty()) {
+            (KeyCode::Up, true) => {
+                app.step_give(-1, viewport_lines, now);
+                AppAction::None
+            }
+            (KeyCode::Down, true) => {
+                app.step_give(1, viewport_lines, now);
+                AppAction::None
+            }
+            (KeyCode::Enter, true) => {
+                let action = app.choose_give(&config.programs.bd, viewport_lines, now);
+                if let AppAction::Write(app::WriteRequest::Give { name, bead }) = &action {
+                    // Written BEFORE the command runs, the rule `write_priority` follows.
+                    state.logger.write(
+                        log::Event::Give,
+                        now,
+                        &[
+                            ("agent", serde_json::Value::from(name.as_str())),
+                            ("bead", serde_json::Value::from(bead.as_str())),
+                        ],
+                    );
+                }
+                action
+            }
+            // Esc and every other key close it and are used up: `q` does not quit.
+            _ => {
+                app.close_give();
+                AppAction::None
+            }
+        };
+    }
     // Both tabs reach the agent (cb-lmk): some providers bind `Shift-Tab` themselves, and since
     // cb-5kk `F1`, `F2` and `F3` are the way out of a session, so cb-3v5's reason for holding the
     // tabs back is served by other keys. Those three are held back with no escape hatch; `F4` and
@@ -2040,6 +2137,12 @@ fn route_key(
     if key.modifiers.difference(crossterm::event::KeyModifiers::SHIFT).is_empty()
         && app.focus == app::PaneFocus::Work
     {
+        // cb-10d.5: unmodified `a` only, checked explicitly under this SHIFT-tolerant block.
+        if key.modifiers.is_empty() && key.code == KeyCode::Char('a') {
+            app.clear_notice();
+            app.open_give(viewport_lines, now);
+            return AppAction::None;
+        }
         let requested = match key.code {
             KeyCode::Char(c @ '0'..='4') => {
                 Some(lifecycle::Requested::Exactly(c as u8 - b'0'))
@@ -8407,5 +8510,241 @@ mod main_tests {
             }
             other => panic!("{other:?}"),
         }
+    }
+
+    // ---- cb-10d.5: the give key ------------------------------------------------------------
+
+    fn given_handover(dir: &std::path::Path, name: &str, text: &str, age_secs: u64) {
+        let file = dir.join(format!(".cerebro/state/{name}.handover"));
+        std::fs::write(&file, text).unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&file)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(age_secs))
+            .unwrap();
+    }
+
+    #[test]
+    fn a_given_handover_starts_its_agent_on_that_bead() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), r#"echo "$@" > "$0.args"; sleep 5"#);
+        let mut logger = logging(dir.path());
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+        given_handover(dir.path(), "Rogue", "cb-x\ngiven\n", 0);
+        let mut app = standby_app(
+            supervising(),
+            vec![implementer_row("Rogue", RowState::Dead)],
+            None,
+            now,
+        );
+        app.armed.clear();
+        start_given(&mut app, &mut host, &mut logger, &paths, &implementer_roster(&["Rogue"]), now);
+        assert_eq!(args_of(&dir.path().join("launch.args")), "Rogue --bead cb-x");
+        assert_eq!(app.handed.get("Rogue").map(String::as_str), Some("cb-x"));
+        assert!(app.armed.contains("Rogue"));
+        let line = one_line(dir.path(), "decisions", "start");
+        assert!(line.contains(r#""bead":"cb-x""#), "{line}");
+        assert!(line.contains(r#""by":"navigator""#), "{line}");
+        host.kill(&paths, "Rogue");
+        settle_gone(&mut host, "Rogue");
+    }
+
+    #[test]
+    fn a_given_handover_waits_for_a_running_agent() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), r#"echo "$@" > "$0.args"; sleep 5"#);
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+        hosted(&mut host, &paths, "Rogue");
+        given_handover(dir.path(), "Rogue", "cb-x\ngiven\n", 0);
+        let mut app = standby_app(
+            supervising(),
+            vec![implementer_row("Rogue", RowState::Dead)],
+            None,
+            now,
+        );
+        start_given(&mut app, &mut host, &mut test_logger(), &paths, &implementer_roster(&["Rogue"]), now);
+        assert!(!dir.path().join("launch.args").exists(), "nothing was launched");
+        assert!(app.handed.is_empty());
+        assert!(dir.path().join(".cerebro/state/Rogue.handover").exists(), "the handover is kept");
+    }
+
+    #[test]
+    fn a_given_handover_is_never_an_orphan() {
+        for (text, orphan) in [("cb-x\ngiven\n", false), ("cb-x\n", true)] {
+            let dir = tempfile::tempdir().unwrap();
+            let paths = scratch(dir.path(), "exit 0");
+            let now = Utc::now();
+            given_handover(dir.path(), "Rogue", text, 600);
+            let mut app = standby_app(
+                supervising(),
+                vec![implementer_row("Rogue", RowState::Dead)],
+                None,
+                now,
+            );
+            give_back(&mut app, &SessionHost::default(), &mut test_logger(), &paths, &implementer_roster(&["Rogue"]), now);
+            let out = app.take_outbox();
+            if orphan {
+                assert!(
+                    matches!(
+                        out.as_slice(),
+                        [cerebro_tui::app::WriteRequest::Release {
+                            cause: cerebro_tui::lifecycle::GiveBack::NeverStarted,
+                            ..
+                        }]
+                    ),
+                    "{out:?}"
+                );
+            } else {
+                assert!(out.is_empty(), "a given handover is never given back: {out:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_given_start_that_fails_is_given_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "exit 2");
+        // No launcher at all, so the start itself is refused.
+        std::fs::remove_file(dir.path().join("launch")).unwrap();
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+        given_handover(dir.path(), "Rogue", "cb-x\ngiven\n", 0);
+        let mut app = standby_app(
+            supervising(),
+            vec![implementer_row("Rogue", RowState::Dead)],
+            None,
+            now,
+        );
+        start_given(&mut app, &mut host, &mut test_logger(), &paths, &implementer_roster(&["Rogue"]), now);
+        let out = app.take_outbox();
+        assert!(
+            matches!(
+                out.as_slice(),
+                [cerebro_tui::app::WriteRequest::Release {
+                    cause: cerebro_tui::lifecycle::GiveBack::DidNotStart,
+                    ..
+                }]
+            ),
+            "{out:?}"
+        );
+        assert!(app.handed.is_empty());
+    }
+
+    #[test]
+    fn start_due_does_not_restart_a_name_started_this_tick() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), r#"echo "$@" > "$0.args"; sleep 5"#);
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+        let mut ledger = StartLedger::default();
+        let mut app = standby_app(
+            supervising(),
+            vec![implementer_row("Rogue", RowState::Dead)],
+            Some(planned_beads(2)),
+            now,
+        );
+        assert_eq!(app.fleet_rows()[0].state, RowState::Standby);
+        // Recorded without restating the rows: this tick's rows still read `Standby`.
+        app.handed.insert("Rogue".into(), "cb-given".into());
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &no_spacing(), 1, &implementer_roster(&["Rogue"]), now);
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert!(!dir.path().join("launch.args").exists(), "nobody was launched");
+    }
+
+    #[test]
+    fn a_read_only_view_starts_no_given_agent() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), r#"echo "$@" > "$0.args"; sleep 5"#);
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+        given_handover(dir.path(), "Rogue", "cb-x\ngiven\n", 0);
+        let mut app = standby_app(
+            SupervisionMode::ReadOnly(cerebro_tui::supervisor::ReadOnlyReason::OwnedBy),
+            vec![implementer_row("Rogue", RowState::Dead)],
+            None,
+            now,
+        );
+        start_given(&mut app, &mut host, &mut test_logger(), &paths, &implementer_roster(&["Rogue"]), now);
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert!(!dir.path().join("launch.args").exists());
+        assert!(app.handed.is_empty());
+    }
+
+    fn give_key_app(now: DateTime<Utc>) -> App {
+        let bead = cerebro_tui::model::Bead {
+            id: "cb-44b".into(),
+            title: "work".into(),
+            status: "open".into(),
+            issue_type: "task".into(),
+            labels: vec!["planned".into()],
+            priority: Some(1),
+            updated_at: None,
+            assignee: None,
+            metadata: serde_json::Value::Null,
+            external_ref: None,
+        };
+        let mut app = standby_app(
+            SupervisionMode::ReadOnly(cerebro_tui::supervisor::ReadOnlyReason::OwnedBy),
+            vec![implementer_row("Rogue", RowState::Dead)],
+            Some(cerebro_tui::model::WorkBuckets { planned: vec![bead], ..Default::default() }),
+            now,
+        );
+        app.armed.insert("Rogue".into());
+        app.reapply_standby();
+        app.focus = cerebro_tui::app::PaneFocus::Work;
+        app.work_cursor = Some(cerebro_tui::app::WorkCursor::Bead("cb-44b".into()));
+        app
+    }
+
+    fn press(c: char) -> crossterm::event::KeyEvent {
+        crossterm::event::KeyEvent::new(KeyCode::Char(c), crossterm::event::KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn a_in_the_work_pane_opens_and_q_closes_without_quitting() {
+        let now = Utc::now();
+        let mut app = give_key_app(now);
+        let mut state = test_state();
+        let config = test_config();
+        assert_eq!(route_key(press('a'), &mut app, &mut state, &config, 10, now), AppAction::None);
+        assert!(app.give.is_some(), "a opened the list");
+        assert_eq!(route_key(press('q'), &mut app, &mut state, &config, 10, now), AppAction::None);
+        assert!(app.give.is_none());
+        assert!(!app.quit, "q closed the list and did not quit");
+    }
+
+    #[test]
+    fn enter_in_the_list_logs_the_give_and_sends_the_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let now = Utc::now();
+        let mut app = give_key_app(now);
+        let mut state = LoopState { logger: logging(dir.path()), ..test_state() };
+        let config = test_config();
+        route_key(press('a'), &mut app, &mut state, &config, 10, now);
+        let enter = crossterm::event::KeyEvent::new(KeyCode::Enter, crossterm::event::KeyModifiers::NONE);
+        let action = route_key(enter, &mut app, &mut state, &config, 10, now);
+        assert_eq!(
+            action,
+            AppAction::Write(cerebro_tui::app::WriteRequest::Give {
+                name: "Rogue".into(),
+                bead: "cb-44b".into()
+            })
+        );
+        let line = one_line(dir.path(), "decisions", "give");
+        assert!(line.contains(r#""agent":"Rogue""#) && line.contains(r#""bead":"cb-44b""#), "{line}");
+    }
+
+    #[test]
+    fn a_outside_the_work_pane_does_nothing() {
+        let now = Utc::now();
+        let mut app = give_key_app(now);
+        app.focus = cerebro_tui::app::PaneFocus::Fleet;
+        app.notice = None;
+        route_key(press('a'), &mut app, &mut test_state(), &test_config(), 10, now);
+        assert!(app.give.is_none());
+        assert!(app.notice.is_none());
     }
 }

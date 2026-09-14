@@ -232,7 +232,7 @@ moment something starts, and it refuses with one line naming what is wrong — `
 from `PATH`, a declaration left at a retired path, the submodule not carrying that role's agent
 file — rather than the session going `up` for a moment and then silently `dead`.
 
-`scripts/prune-worktrees.sh` is the worktree sweep, run by Cerebro on a timer and by you whenever
+`scripts/prune-worktrees.sh` is the worktree sweep, run by Cerebro every two hours and by you whenever
 you like (`--dry-run` first).
 
 To take a newer cerebro: `git submodule update --remote --merge .claude/cerebro`, then start

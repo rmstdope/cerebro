@@ -3320,7 +3320,7 @@ mod main_tests {
     }
 
     /// The sweeps' worker, pointed at a directory with no sweep scripts in it - so every request
-    /// answers `sweep-claims failed` and the section is never drawn.
+    /// answers `sweep-epics failed` and the section is never drawn.
     fn history_worker() -> cerebro_tui::app::HistoryWorker {
         cerebro_tui::app::HistoryWorker::spawn(nowhere().0, std::sync::Arc::new(RealCommands))
     }
@@ -4415,8 +4415,8 @@ mod main_tests {
         );
     }
 
-    /// It holds a claim, a worktree and possibly an open pull request; `sweep-stalled` is its
-    /// escalation, not this loop.
+    /// It holds a claim, a worktree and possibly an open pull request; the navigator's `k` ends it,
+    /// and `give_back` then releases what it held.
     #[test]
     fn a_stuck_implementer_is_resumed_and_never_ended() {
         let dir = tempfile::tempdir().unwrap();
@@ -7726,8 +7726,8 @@ mod main_tests {
         );
         app.finish_sweep_refresh(
             Ok(vec![cerebro_tui::readers::Judged {
-                finding: cerebro_tui::sweeps::Finding::Unclaim { id: "cb-a".into() },
-                label: "unclaim cb-a — Cyclops stalled".into(),
+                finding: cerebro_tui::sweeps::Finding::EpicClose { id: "cb-a".into() },
+                label: "close cb-a — all children closed 30m ago".into(),
             }]),
             Utc::now(),
         );
@@ -7769,12 +7769,12 @@ mod main_tests {
         assert!(matches!(
             &app.confirm,
             Some(cerebro_tui::app::Prompt::Sweep { text, .. })
-                if text.ends_with("unclaim cb-a ?  y / n")
+                if text.ends_with("close cb-a ?  y / n")
         ), "{:?}", app.confirm);
 
         let action = drive_and_settle(&mut app, &mut host, &paths, &programs, &fake, vec![ch('y')]);
-        assert_eq!(argv(&fake), vec!["unclaim cb-a", "dolt push"]);
-        assert_eq!(app.notice.as_deref().map(|n| n.contains("unclaim cb-a")), Some(true));
+        assert_eq!(argv(&fake), vec!["close cb-a", "dolt push"]);
+        assert_eq!(app.notice.as_deref().map(|n| n.contains("close cb-a")), Some(true));
         // And the section is re-run at once rather than in up to ten minutes.
         assert_eq!(action, AppAction::RefreshSweeps);
     }
@@ -7807,7 +7807,7 @@ mod main_tests {
         assert_eq!(app.focus, cerebro_tui::app::PaneFocus::Fleet);
         let mut host = SessionHost::default();
         drive_and_settle(&mut app, &mut host, &paths, &programs, &fake, vec![ch('x'), ch('y')]);
-        assert_eq!(argv(&fake), vec!["unclaim cb-a", "dolt push"]);
+        assert_eq!(argv(&fake), vec!["close cb-a", "dolt push"]);
     }
 
     /// And a read-only view acts too: the board writes are deliberately outside the supervision
@@ -7823,7 +7823,7 @@ mod main_tests {
         ));
         let mut host = SessionHost::default();
         drive_and_settle(&mut app, &mut host, &paths, &programs, &fake, vec![ch('x'), ch('y')]);
-        assert_eq!(argv(&fake), vec!["unclaim cb-a", "dolt push"]);
+        assert_eq!(argv(&fake), vec!["close cb-a", "dolt push"]);
     }
 
     /// With no finding under the cursor `x` does nothing and says nothing - and it is consumed,

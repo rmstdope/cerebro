@@ -5,7 +5,7 @@
 #
 #     .claude/cerebro/scripts/sweep-epics.sh --json
 #
-# Read-only, like sweep-claims.sh: no `bd close` here. `bd epic status --eligible-only` has already
+# Read-only, like every sweep: no `bd close` here. `bd epic status --eligible-only` has already
 # done the counting - every child of the epics this prints is closed - so there is no delivery
 # judgement to make the way there is for a claim; the only question left is whether the close is
 # stale enough to be safe (see "Epics left open under closed children" in `docs/cerebro-sweeps.md`):

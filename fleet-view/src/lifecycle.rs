@@ -216,7 +216,8 @@ pub fn supervise_action(agent: Supervised<'_>) -> Option<Supervision> {
             // take.
             Some(_) if agent.resume_stale => match agent.kind {
                 // It holds a claim, a worktree and possibly an open pull request; ending it
-                // strands all three. `sweep-stalled` already offers the unclaim at sixty minutes.
+                // strands all three. The navigator's `k` ends it, and the view then releases what
+                // it held.
                 AgentKind::Implementer => None,
                 // It holds none of those. A stop flag says *no further pass*, so
                 // ending-and-restarting would start the very pass the flag exists to prevent.
@@ -2012,8 +2013,8 @@ mod tests {
         }
     }
 
-    /// It holds a claim, a worktree and possibly an open pull request. `sweep-stalled` is the
-    /// escalation that already exists for it.
+    /// It holds a claim, a worktree and possibly an open pull request; the navigator's `k` ends
+    /// it, and the view then releases what it held.
     #[test]
     fn a_stale_resume_never_ends_an_implementer() {
         let state = RowState::Working;
@@ -2505,7 +2506,7 @@ mod tests {
         let fake = FakeCommands::always("");
 
         let outcome =
-            run_finding(&paths, &programs, &fake, &Finding::Unclaim { id: "cb-a".into() });
+            run_finding(&paths, &programs, &fake, &Finding::EpicClose { id: "cb-a".into() });
 
         let calls = fake.calls();
         assert_eq!(calls.len(), 2, "the write and the push");
@@ -2514,7 +2515,7 @@ mod tests {
             assert_eq!(call.cwd.as_deref(), Some(paths.shared_root.as_path()));
             assert_eq!(call.timeout, WRITE_TIMEOUT);
         }
-        assert_eq!(calls[0].args, vec!["unclaim", "cb-a"]);
+        assert_eq!(calls[0].args, vec!["close", "cb-a"]);
         assert_eq!(calls[1].args, vec!["dolt", "push"]);
         assert!(matches!(outcome, FindingOutcome::Ran { .. }));
     }
@@ -2561,12 +2562,12 @@ mod tests {
             &paths_in(dir.path()),
             &programs,
             &fake,
-            &Finding::Unclaim { id: "cb-a".into() },
+            &Finding::EpicClose { id: "cb-a".into() },
         );
-        assert_eq!(argv(&fake), vec!["unclaim cb-a", "dolt push"]);
+        assert_eq!(argv(&fake), vec!["close cb-a", "dolt push"]);
         assert_eq!(
             outcome,
-            FindingOutcome::Ran { text: format!("ran {} unclaim cb-a", programs.bd.display()) }
+            FindingOutcome::Ran { text: format!("ran {} close cb-a", programs.bd.display()) }
         );
     }
 
@@ -2587,9 +2588,9 @@ mod tests {
             &paths_in(dir.path()),
             &Programs::default(),
             &fake,
-            &Finding::Reclaim { id: "cb-a".into() },
+            &Finding::EpicClose { id: "cb-a".into() },
         );
-        assert_eq!(argv(&fake), vec!["reclaim --id cb-a --older-than 10m", "dolt push"]);
+        assert_eq!(argv(&fake), vec!["close cb-a", "dolt push"]);
         assert_eq!(
             outcome,
             FindingOutcome::Pushed {

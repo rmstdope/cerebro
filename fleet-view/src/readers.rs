@@ -165,7 +165,7 @@ pub enum ReadError {
     },
     Invalid { source: Invocation, message: String },
     Timeout { source: Invocation, seconds: u64 },
-    /// A sweep script that did not answer, in the words the header shows: `sweep-claims failed`.
+    /// A sweep script that did not answer, in the words the header shows: `sweep-epics failed`.
     ///
     /// Its `Display` is deliberately shorter than every other variant's. The navigator chose one
     /// word for all three causes - a non-zero exit, the timeout, and output that is not the JSON
@@ -876,9 +876,9 @@ pub fn read_sweeps(
     }
     let snapshot = read_sweep_snapshot(paths, programs, commands, Utc::now())?;
     // The candidate comes back WITH the finding rather than being looked up by id afterwards:
-    // `sweep-claims` and `sweep-stalled` both emit one object per `in_progress` bead, so a lookup
-    // across the six answers the wrong sweep's candidate as often as the right one - and the
-    // evidence four of the seven labels print then comes out `nil`.
+    // two sweeps can list the same bead - an assigned bead with a stale verdict - so a lookup
+    // across the four could answer the wrong sweep's candidate, and the evidence the labels print
+    // would then come out `nil`.
     Ok(sweeps::findings_from(&outputs, &snapshot)
         .into_iter()
         .map(|(finding, candidate)| {
@@ -1097,7 +1097,7 @@ mod tests {
         assert_eq!(flag.log_message(), flag.to_string());
 
         let sweep = ReadError::Sweep {
-            script: "sweep-claims".into(),
+            script: "sweep-epics".into(),
             cause: "bd exited 1".into(),
         };
         assert_eq!(sweep.log_message(), "bd exited 1");
@@ -1867,9 +1867,7 @@ mod tests {
         assert_eq!(
             sweeps.iter().map(|(name, ..)| name.as_str()).collect::<Vec<_>>(),
             vec![
-                "sweep-claims.sh",
                 "sweep-epics.sh",
-                "sweep-stalled.sh",
                 "sweep-assignees.sh",
                 "sweep-verdicts.sh",
                 "sweep-paused.sh",
@@ -1877,8 +1875,8 @@ mod tests {
         );
         for (name, args, timeout) in &sweeps {
             assert_eq!(args, &vec!["--json".to_string()], "{name}");
-            // Not `COMMAND_TIMEOUT`: three of the six `git fetch`, and five seconds would print
-            // `sweep-claims failed` on any slow network.
+            // Not `COMMAND_TIMEOUT`: one of the four `git fetch`es, and five seconds would print
+            // `sweep-verdicts failed` on any slow network.
             assert_eq!(*timeout, Duration::from_secs(120), "{name}");
         }
     }
@@ -1891,15 +1889,15 @@ mod tests {
         let commands = FakeCommands::new(|call: &Call| {
             let program = call.program.file_name().unwrap().to_string_lossy().into_owned();
             match program.as_str() {
-                "sweep-stalled.sh" => Err(exit(1, "bd is not on PATH")),
+                "sweep-assignees.sh" => Err(exit(1, "bd is not on PATH")),
                 "roster" => Ok(b"Cyclops\timplementer\timplementer\n".to_vec()),
                 "ps" => Ok(Vec::new()),
                 _ => Ok(b"[]".to_vec()),
             }
         });
         let error = read_sweeps(&paths, &Programs::default(), &commands).unwrap_err();
-        assert!(matches!(&error, ReadError::Sweep { script, .. } if script == "sweep-stalled"));
-        assert_eq!(error.to_string(), "sweep-stalled failed");
+        assert!(matches!(&error, ReadError::Sweep { script, .. } if script == "sweep-assignees"));
+        assert_eq!(error.to_string(), "sweep-assignees failed");
         // One word on the header, the whole failure in the log: the navigator chose the first,
         // and the second is what makes a red section diagnosable at all.
         let cause = error.cause().expect("a sweep failure carries its cause");
@@ -1909,7 +1907,7 @@ mod tests {
             .into_iter()
             .map(|call| call.program.file_name().unwrap().to_string_lossy().into_owned())
             .collect();
-        assert!(!ran.iter().any(|name| name == "sweep-assignees.sh"), "{ran:?}");
+        assert!(!ran.iter().any(|name| name == "sweep-verdicts.sh"), "{ran:?}");
         // And no snapshot was taken either: a chain that stopped has nothing to judge.
         assert!(!ran.iter().any(|name| name == "roster"), "{ran:?}");
     }
@@ -1922,22 +1920,21 @@ mod tests {
         let commands = FakeCommands::new(|call: &Call| {
             let program = call.program.file_name().unwrap().to_string_lossy().into_owned();
             match program.as_str() {
-                "sweep-claims.sh" => Ok(b"not json".to_vec()),
+                "sweep-epics.sh" => Ok(b"not json".to_vec()),
                 _ => Ok(b"[]".to_vec()),
             }
         });
         let error = read_sweeps(&paths, &Programs::default(), &commands).unwrap_err();
-        assert_eq!(error.to_string(), "sweep-claims failed");
+        assert_eq!(error.to_string(), "sweep-epics failed");
         // And the parse error is kept too, which is the one cause a re-run cannot show you.
         let cause = error.cause().expect("a sweep failure carries its cause");
-        assert!(cause.contains("sweep-claims.sh"), "{cause:?}");
+        assert!(cause.contains("sweep-epics.sh"), "{cause:?}");
     }
 
-    /// Two sweeps list the same bead - `sweep-claims` and `sweep-stalled` both emit one object per
-    /// `in_progress` bead - so a candidate looked up by id after the judging is the wrong sweep's
-    /// as often as the right one, and the evidence the label prints comes out `nil`
-    /// (`no start for nilm`). The shared table cannot catch this: every row of it feeds exactly
-    /// one sweep.
+    /// Two sweeps can list the same bead - an assigned bead whose verdict has gone stale - so a
+    /// candidate looked up by id after the judging could be the wrong sweep's, and the evidence
+    /// the label prints would come out `nil`. The shared table cannot catch this: every row of it
+    /// feeds exactly one sweep.
     #[test]
     fn a_finding_is_labelled_from_its_own_sweeps_candidate() {
         let paths = ReaderPaths {
@@ -1948,29 +1945,25 @@ mod tests {
             let program = call.program.file_name().unwrap().to_string_lossy().into_owned();
             match program.as_str() {
                 "roster" => Ok(b"Storm\timplementer\timplementer\n".to_vec()),
-                // Storm is running, which is what makes the stalled sweep the one with something
-                // to say about this bead and the claims sweep the one with nothing.
-                "ps" => Ok(format!(
-                    "{pid} 1 claude This session is Storm of the cerebro fleet rooted at /repo/shared/.\n",
-                    pid = std::process::id()
-                )
-                .into_bytes()),
-                // The same bead, from both sweeps, exactly as the two scripts emit it.
-                "sweep-claims.sh" => Ok(br#"[{"id":"cb-x","assignee":"Storm","on_main":false,
-                    "lease_age_min":300}]"#
+                "ps" => Ok(Vec::new()),
+                // The same bead, from both sweeps, each carrying only its own sweep's evidence.
+                "sweep-assignees.sh" => Ok(br#"[{"id":"cb-x","assignee":"Storm","priority":2,
+                    "age_min":30}]"#
                     .to_vec()),
-                "sweep-stalled.sh" => Ok(br#"[{"id":"cb-x","assignee":"Storm",
-                    "progress_age_min":300,"progress_source":"commit"}]"#
+                "sweep-verdicts.sh" => Ok(br#"[{"id":"cb-x","priority":2,
+                    "verified_at":"0b444332aa","merges_since":2}]"#
                     .to_vec()),
                 _ => Ok(b"[]".to_vec()),
             }
         });
         let findings = read_sweeps(&paths, &Programs::default(), &commands).unwrap();
-        assert_eq!(findings.len(), 1, "{findings:#?}");
         assert_eq!(
-            findings[0].label,
-            "unclaim cb-x — Storm stalled, no commit for 300m",
-            "the claims candidate carries neither the age nor the source"
+            findings.iter().map(|j| j.label.as_str()).collect::<Vec<_>>(),
+            vec![
+                "unassign cb-x — Storm is not running",
+                "recheck cb-x — verdict at 0b444332, 2 merges since",
+            ],
+            "{findings:#?}"
         );
     }
 

@@ -106,7 +106,7 @@ before_head="$(git -C "$consumer" rev-parse HEAD)"
 pass "the script writes nothing"
 
 # --- and it contains no mutating command at all -----------------------------------------------
-# The invariant `sweep-claims.sh's header states, checked the way that header says it should be:
+# The invariant every sweep script keeps, checked the way that header says it should be:
 # the only path to a write is the confirmed one in `cerebro.el'.
 # Comments are stripped first: the header *describes* the commands it promises never to run, and a
 # grep over the whole file would match its own promise.

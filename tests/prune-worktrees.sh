@@ -22,7 +22,7 @@ source "$repo_root/tests/lib/consumer.sh"
 
 # --- stubs -------------------------------------------------------------------------------------
 # `df` so the test decides what the disk looks like, and `gh` so `landed_on_main` never asks the
-# network. Both ahead of the real ones on PATH, as tests/sweep-stalled.sh does for `bd`.
+# network. Both ahead of the real ones on PATH.
 stub_dir="$work_dir/bin"
 mkdir -p "$stub_dir"
 free_kb_file="$work_dir/free_kb"

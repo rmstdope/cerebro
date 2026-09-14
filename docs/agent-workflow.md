@@ -80,11 +80,10 @@ on `g` or on its next five-second tick.
 
 Under the list, the **bead panel** answers the questions you actually ask about the queue — Claimed,
 Planned unclaimed, Being planned, Unplanned, Merged unverified — with `0`–`4`, `+`/`-` and `u` to
-re-prioritise a bead on the spot, and `x` on a **Sweeps** finding to run the exact `bd close` or
-`bd reclaim` it maps to, after confirming.
+re-prioritise a bead on the spot, and `x` on a **Sweeps** finding to run the exact `bd close`, `bd update` or
+`bd set-state` it maps to, after confirming.
 
-Two things it does for you without being asked: it starts `prune-worktrees.sh --watch` alongside the
-buffer (see *Leftover worktrees*), and it ends an implementer that reports `waiting` — its buffer
+It ends an implementer that reports `waiting` — its buffer
 kept — and starts a fresh one when a planned bead exists, at most one implementer every 30 seconds.
 It runs the **interactive roles** exactly the same way: a role that writes `waiting` is ended half a
 minute later — its buffer kept, `RET` shows it — and started fresh when its trigger fires: a planner
@@ -295,7 +294,7 @@ locally. The orchestrator will say so if you ask for more, once, and then do as 
 hands a release request to the project's own release skill. It starts nothing — not even an implementer, because starting one means starting a
 session, and only you can do that. The fleet view *starts* it for an unranked bead and for nothing
 else (cb-5lx.2), and *types into* it for two things: that same unranked bead, and a two-hourly
-reminder to run the claims sweep and the worktrees the pruner declined (cb-7nx).
+reminder to look at the work the view kept (cb-7nx, cb-10d.4).
 
 ```bash
 .claude/cerebro/scripts/launch Cerebro
@@ -363,9 +362,8 @@ Agents work in `.cerebro/worktrees/<bead>` and remove the tree when they finish.
 whose bead somebody else merged, leaves it behind — and a stray tree holding `main` makes the next
 agent's `git checkout main` fail for no visible reason.
 
-**The fleet view sweeps them**: opening it starts `prune-worktrees.sh --watch` in the
-background, which prunes every ten minutes for as long as the view lives. You can run the same
-sweep yourself at any time:
+**The fleet view removes an implementer's tree** when its owner has left and nothing in it can be
+lost, and Cerebro runs the full sweep every two hours. You can run it yourself at any time:
 
 ```bash
 .claude/cerebro/scripts/prune-worktrees.sh --dry-run   # say what would go

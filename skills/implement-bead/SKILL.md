@@ -97,8 +97,8 @@ deliver, at the cost the incident above describes, while every `reviewer` sub-ag
 repository's sessions has reported back, including to a parent whose turn had ended meanwhile. That
 is an empirical difference, not a principled one, and it is the whole of the reason to treat them
 differently. **If a review ever fails to arrive, the failure is visible rather than silent**: the
-row sits in `review` with its elapsed time climbing, the claims sweep does not reclaim a bead a live
-session holds (`cerebro--claim-finding`), and the stalled sweep raises it for the navigator.
+row sits in `review` with its elapsed time climbing, the fleet view never takes back a bead a live
+session is on, and the row goes red as stuck for the navigator.
 
 **The lease, honestly.** A lease is about five minutes. A delta round finishes well inside it; **a
 cold read does not** — this file measures one at the better part of ten minutes — so a heartbeat

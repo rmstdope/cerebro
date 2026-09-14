@@ -12,7 +12,7 @@
 # its reason: the prerequisite lands, and the bead sits in `bd human list` exactly as it sat the day
 # it was parked. This script is what gathers the facts that say which pauses are still real.
 #
-# It runs no `git` at all, unlike `sweep-verdicts.sh` and `sweep-stalled.sh`: every fact it needs is
+# It runs no `git` at all, unlike `sweep-verdicts.sh`: every fact it needs is
 # on the bead board, so there is no fetch here and no "could not reach origin" answer.
 #
 # This script never mutates anything - no `bd update', no `bd close', no `bd reclaim', no

@@ -171,9 +171,10 @@ leaves its bead in_progress forever, invisible to `bd ready`, so
 
 ```bash
 bd reclaim --id <bead> --older-than 10m        # one named bead, never a sweep
-git worktree remove --force .cerebro/worktrees/<bead>
-git worktree prune                             # separately: it must run even if the remove failed
 ```
+
+The fleet view removes the dead agent's tree itself when nothing in it can be lost, and keeps it for
+a person otherwise.
 
 **`--id`, always.** Without it `bd reclaim` reaps every stale lease this replica granted, so an agent
 that merely missed a heartbeat during a long CI watch is robbed alongside the genuinely dead one.
@@ -186,14 +187,6 @@ enforces.
 **Only on the machine the claim was made.** A lease is enforceable only on the node that granted it,
 and `bd reclaim` skips leases granted elsewhere. A crashed agent on another machine is the
 navigator's to sort out.
-
-The removal is not decoration, and `--force` is not either: `worktree remove` refuses a tree holding
-untracked files, and `git worktree prune` only clears entries whose directory has already gone. Skip
-either and the dead agent's branch and build artifacts stay behind.
-
-They are separate lines rather than chained with `&&` on purpose. `worktree remove` fails whenever
-the path is already gone or is not a worktree it recognises — exactly the half-cleaned states worth
-pruning — and chaining would skip the prune in precisely those cases.
 
 Anything wider — a sweep with no `--id`, a shorter window, a live claim — is the navigator's call.
 See the Traps section for why this rule used to be absolute.

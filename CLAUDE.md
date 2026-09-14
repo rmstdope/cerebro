@@ -278,7 +278,7 @@ planner`), which is the one place a name and a role stop being interchangeable:
   handing a release
   request to the project's own release skill, diagnosing a stuck implementer, and anything needing a forced reassignment.
 - **implementer** (Sonnet) — loads `implement-bead`. One bead per session: given its bead by the fleet view, build test-first in
-  its own git worktree, PR, spawn a `reviewer` sub-agent and answer what it finds, merge, close, end
+  the git worktree the fleet view made for it, PR, spawn a `reviewer` sub-agent and answer what it finds, merge, close, end
   its pass with `waiting`.
   Interactive, so it cannot end itself — the fleet view ends it and starts a fresh session when
   a planned bead exists, which is what keeps a session's context one bead deep.
@@ -807,6 +807,9 @@ pure half with plain data:
   longer answer — its thread gone — by `App::abandon_outstanding_writes`, because `Worker::poll`
   answers `None` for "nothing yet" and for "never" alike and only the second is news
   (`Worker::is_dead`).
+  Since cb-10d.3 worktree tidies have a worker of their own too, `TidyWorker`, and deliberately not
+  the write worker: a tree removal deletes a build directory and fetches, and on the write worker it
+  would hold the priority keys behind it on every pass.
 - `ui.rs` — pure over `App` plus an injected `DateTime<Utc>`. It never reads a file, runs a
   program or asks the clock, which is what makes its `TestBackend` cases assertions about the
   screen rather than about the machine. Widths are **terminal cells** (`unicode-width`), never
@@ -906,7 +909,17 @@ and the key hint stays `g retry` until both panes are fresh.
   `in_progress` means "being built" — and `release-bead` clears that assignee again. Since cb-10d.5 `assign-bead --given` writes the handover with a
   second line, `given`, and prints `pushed` or `unpushed` on stdout (nothing without the flag, since
   `launch` runs it in the session's pty); a supervising view starts the named agent for such a
-  handover instead of giving it back.
+  handover instead of giving it back. Since
+  cb-10d.3, for an implementer `assign-bead` also runs `disk-preflight` (the plan's workload) and
+  `prepare-worktree`, and records the tree in `.cerebro/state/worktrees/<id>`; exit 4 when it cannot.
+- **`scripts/worktree-safety.sh` is the one place bash answers "can this worktree go without losing
+  anything"** (cb-10d.3) — `cerebro_worktree_landed`, `cerebro_worktree_keep_reason` and
+  `cerebro_worktree_remove`, sourced never executed, relying on neither `set -e` nor its absence.
+  Its two callers are `prune-worktrees.sh` and `release-bead --worktree`; the pruner's other rules
+  (the path, the verifier's tree, the stale minutes) stay in the pruner because they are about trees
+  nobody vouches for. `release-bead --worktree <Name> <id>` touches only a tree recorded for that
+  agent, and the fleet view's `tidy_worktrees` hands it every record whose owner is no longer on
+  that bead, on a tidy worker of its own.
 - `scripts/app-paths` is the one place "which paths are this project's application" is answered
   (ah-qled.6) — the `app_paths` key, and `--classify <path>...` over changed paths. Unlike every
   other reader here it **fails when it does not know**: no declaration means exit 3 and a line on

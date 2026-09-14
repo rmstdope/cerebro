@@ -175,7 +175,7 @@ said `asking`; corrected").
 | *The retrospective*, if you committed one | back to `--phase review` for the new head, then `--phase ci`, then `--phase merge` again |
 | *Merging*, when a `strict` protection asks for a catch-up: GitHub → CI | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase rebase --pid $PPID`, then `... --phase ci ...` |
 | *Asking instead of handing back* | `.claude/cerebro/scripts/agent-state <name> asking --bead <id> --phase <current> --pid $PPID`; on resuming, `working` with the same bead and phase |
-| *Finishing, then going again*, after `bd close` and worktree removal, and the hand-back block | `.claude/cerebro/scripts/end-pass <name> --pid $PPID` |
+| *Finishing, then going again*, after `bd close`, and the hand-back block | `.claude/cerebro/scripts/end-pass <name> --pid $PPID` |
 
 `waiting` is a request to be ended, granted within about half a minute. Run `end-pass` last. There
 is no wake to ask for: the view starts an implementer on a planned bead, not on a clock.
@@ -194,8 +194,8 @@ one-bead-per-session is arranged to protect.
 .claude/cerebro/scripts/end-pass <name> --pid $PPID
 ```
 
-Run it last — after the bead is merged and closed, the retrospective below is written and the
-worktree is gone — then say what you did and stop producing output. **Never end a pass before that
+Run it last — after the bead is merged and closed, and the retrospective below is written
+— then say what you did and stop producing output. **Never end a pass before that
 point.** A bead abandoned in flight strands a claim, a worktree and an open PR for somebody to
 unpick by hand.
 
@@ -276,8 +276,7 @@ which is why the query now lives in a script with a test under it rather than in
 
 **Never add `plan:revise` in either case.** Whether the plan was wrong is the navigator's answer to
 Psylocke's question, asked at the verdict, and it is not an implementer's to assert — the label is
-hers alone to set, and it is what sends the bead to a planner. After either block, remove the
-worktree if one exists (see *Finishing, then going again*) and run `end-pass` last, exactly as a
+hers alone to set, and it is what sends the bead to a planner. After either block, run `end-pass` last, exactly as a
 merged bead does — a hand-back is a complete run too.
 
 ### A reopened bead
@@ -307,39 +306,33 @@ reopened this bead, so closing the last open child closes it again the same way 
 
 ## Workspace
 
-Check there is room before starting — a build that runs out of disk fails inside the linker with a
-message that reads like a code fault:
+**Your tree was made before your session started.** The fleet view ran `disk-preflight` with the
+plan's workload and then `scripts/prepare-worktree` — which fetches `origin/main`, branches,
+initialises the `.claude/cerebro` submodule and runs the project's declared `install` — at
+`<repo>/.cerebro/worktrees/<id>`. Never check out `main`; go to your tree and read its branch:
 
 ```bash
-.claude/cerebro/scripts/disk-preflight --workload <workload from the plan>
-                                      # prints what it found; non-zero means do not start
-```
-
-Never check out `main` — another agent usually holds it. `scripts/prepare-worktree` is the one
-script that makes a tree: it fetches `origin/main`, branches, and — the step five retrospectives
-paid for one at a time before this script existed — initialises the `.claude/cerebro` submodule and
-runs the project's declared `install` inside the new tree, so the first `agent-state` write and the
-first gate run both find what they need instead of failing for a reason that has nothing to
-do with the bead:
-
-```bash
-<repo>/.claude/cerebro/scripts/prepare-worktree --path <repo>/.cerebro/worktrees/<id> --branch <id>-short-description
 cd <repo>/.cerebro/worktrees/<id>
+git branch --show-current          # <id>, or <id>-2 and onward when that name was taken
+git status --porcelain
+git log --oneline origin/main..HEAD
 ```
 
-It prints the tree's path and its short sha on stdout; it does not `cd` for you, so the second line
-above is still yours to run. Pass `--prewarm` here only if you already know this bead will run the
-suites that need the project's prewarmed build — the gate instructions below say when that first
-fails without it.
+**If either of the last two shows anything, the tree is an earlier attempt at this same bead**, kept
+because it held work. Read it before you build. If the tree is missing, hand the bead back with the
+hand-back block, naming that. **Never create, move or remove a worktree yourself.**
 
-Worktrees must stay under `.cerebro/worktrees/`; the script refuses anything else, naming why. `bd`
+If a suite needs the project's prewarmed build, run the command
+`.claude/cerebro/scripts/project-conf prewarm` prints, inside the tree.
+
+Worktrees stay under `.cerebro/worktrees/`. `bd`
 and most build tools find their configuration by walking up, so a worktree outside the repository
 silently gets its own empty bead database and its own multi-gigabyte build directory.
 
 ### A bead whose diff is inside `.claude/cerebro`
 
-**It needs no special tree, and no worktree of the submodule at all.** Run `prepare-worktree`
-exactly as above — it already initialises the submodule inside the new tree — and do the work in
+**It needs no special tree, and no worktree of the submodule at all.** Your tree already has the
+submodule initialised; do the work in
 `<tree>/.claude/cerebro`.
 
 **That checkout is yours alone.** Every consumer worktree gets its own private submodule git dir, so
@@ -455,8 +448,7 @@ change, and CI is what actually gates the merge. The full gate is the rest, and 
 choice when you suspect a regression in a surface the fast gate skips — expect it to be slower, and
 possibly serialized behind a lock. A fresh worktree carries nothing the project declared as its
 `prewarm` build, so a suite that needs one fails on a missing artefact rather than on anything you
-wrote — pass `--prewarm` when you prepared the tree, or run
-`.claude/cerebro/scripts/project-conf prewarm` and run what it names, now.
+wrote — run `.claude/cerebro/scripts/project-conf prewarm` and run what it names, now.
 
 A project may also have a suite in neither gate — one needing a runner this machine has not got, run
 in CI only when the diff touches the paths it covers (`.claude/cerebro/scripts/app-paths` is where
@@ -492,7 +484,7 @@ helper rule above.
 If the change affects or obscures approach, scope, or audience-visible intent, use the existing
 hand-back block rather than inferring a replacement design.
 
-Anything touching **approach, scope, or what the user sees** goes back, by the same hand-back block as a missing section, worktree included. You were given a plan precisely so those decisions were made elsewhere; making
+Anything touching **approach, scope, or what the user sees** goes back, by the same hand-back block as a missing section. You were given a plan precisely so those decisions were made elsewhere; making
 them here is the failure mode this split exists to prevent.
 
 ### Asking instead of handing back
@@ -659,7 +651,7 @@ bump — and they also raise things that are wrong or do not apply. A reasoned r
 answer.
 
 A finding about **approach, scope or what the audience sees** is a hand-back, by the hand-back block
-above, worktree included — those decisions were made elsewhere on purpose.
+above — those decisions were made elsewhere on purpose.
 
 Once every finding is answered:
 
@@ -673,7 +665,7 @@ returns every fix-and-push through the review loop; only after that review is co
 to `ci` and wait for checks on the reviewed head.
 
 **If three attempts for one head are unusable**: leave the PR open, record the attempts in the
-bead's notes, hand it back by the hand-back block in *Picking up*, worktree included, and end the
+bead's notes, hand it back by the hand-back block in *Picking up*, and end the
 pass.
 
 A review a person or a bot leaves on the PR anyway is read and answered like any other comment. It
@@ -937,20 +929,15 @@ survived.
 
 ```bash
 bd close <id> --reason "Delivered in PR #NN"
-git -C <repo> worktree remove --force .cerebro/worktrees/<id>
-git -C <repo> worktree prune
 bd dolt push
 .claude/cerebro/scripts/end-pass <name> --pid $PPID
 ```
 
-`--force`, because `worktree remove` refuses a tree holding untracked files and would otherwise abort
-at the very end of a session — leaving the worktree, its branch and its build artifacts behind. The
-two commands are separate rather than chained for the same reason: a failure in the first should not
-skip the second.
-
-**Do this on every exit, not only this one.** A bead handed back, a review sub-agent that returned
-nothing usable, a CI
-budget spent — each of those leaves a worktree too, and nothing else cleans them up.
+**The fleet view removes your tree after your pass ends**, but only when nothing in it can be lost —
+clean, and its work on the default branch at origin; otherwise it keeps it for a person. So before
+`end-pass`, `git status --porcelain` in the tree must print nothing: delete scratch files you made
+(ignored build output is fine), and never leave work you mean to keep uncommitted. That holds on
+every exit, a hand-back included.
 
 ### Close the parent too, when you were the last child
 

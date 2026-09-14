@@ -43,7 +43,7 @@ use ratatui::Terminal;
 use cerebro_tui::app::{
     self, App, AppAction, DetailWorker, FleetWorker, GhWorker, HealthWorker, HistoryWorker,
     SweepWorker,
-    WorkWorker, WriteWorker,
+    TidyWorker, WorkWorker, WriteWorker,
 };
 use cerebro_tui::lifecycle;
 use cerebro_tui::log::{self, Logger};
@@ -306,7 +306,11 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
     // `bd dolt push` is a network call bounded at thirty seconds, and running it on the drawing
     // thread froze the screen - keys and all - for as long as the remote took (cb-21g).
     let write_worker = WriteWorker::spawn(paths.clone(), Programs::default(), commands.clone());
+    // A TENTH thread for worktree tidies, and not the write worker: a tree removal deletes a build
+    // directory and fetches, and would hold the priority keys behind it (cb-10d.3).
+    let tidy_worker = TidyWorker::spawn(paths.clone(), commands.clone());
     let workers = Workers {
+        tidy: tidy_worker,
         fleet: fleet_worker,
         work: work_worker,
         detail: detail_worker,
@@ -1223,6 +1227,63 @@ fn queue_give_back(
     );
 }
 
+/// Hand every recorded worktree whose owner is no longer running on its bead to
+/// `release-bead --worktree` (cb-10d.3). Gated on supervision, and run after `give_back` and before
+/// `start_due`, for `give_back`'s reason: a name restarted on this tick must not look like the owner
+/// of the tree it just left. Writes no line: the `tidy` line is written on the answer.
+///
+/// One rule, read off the records every tick, covers a pass that ended, a retire, a crash, a `k`, a
+/// refused start and a view that restarted - no hook in `supervise` is needed.
+fn tidy_worktrees(app: &mut App, host: &SessionHost, paths: &ReaderPaths, now: DateTime<Utc>) {
+    if !app.supervision.may_supervise() {
+        return;
+    }
+    for record in lifecycle::read_worktree_records(paths, std::time::SystemTime::now()) {
+        let row = app.fleet_rows().iter().find(|row| row.name == record.owner).cloned();
+        let row_alive = row.as_ref().is_some_and(lifecycle::row_is_alive);
+        let owner_current = row
+            .and_then(|row| row.bead)
+            .or_else(|| app.handed.get(&record.owner).cloned());
+        let tidying = !app.may_tidy(&record.bead, now);
+        if lifecycle::tree_to_tidy(
+            host.is_live(&record.owner),
+            row_alive,
+            owner_current.as_deref(),
+            &record.bead,
+            tidying,
+            record.age_seconds,
+        ) {
+            app.queue_tidy(&record.owner, &record.bead);
+        }
+    }
+}
+
+/// Settle one tidy answer: a `tidy` decision line for what was done, or an `errors.jsonl` line
+/// under `tidy` for a tidy that failed.
+fn settle_tidy(app: &mut App, logger: &mut Logger, answer: &app::TidyAnswer, now: DateTime<Utc>) {
+    match &answer.outcome {
+        lifecycle::TidyOutcome::Failed { text } => logger.error("tidy", text, now),
+        outcome => {
+            logger.clear_error("tidy");
+            let reason = match outcome {
+                lifecycle::TidyOutcome::Kept { reason } => serde_json::Value::from(reason.as_str()),
+                _ => serde_json::Value::Null,
+            };
+            logger.write(
+                log::Event::Tidy,
+                now,
+                &[
+                    ("agent", serde_json::Value::from(answer.name.as_str())),
+                    ("bead", serde_json::Value::from(answer.bead.as_str())),
+                    ("outcome", serde_json::Value::from(outcome.word())),
+                    ("reason", reason),
+                ],
+            );
+        }
+    }
+    app.finish_tidy(answer, now);
+}
+
 /// Give back every bead this view handed a session that went away without reporting, and every
 /// orphaned handover file a previous view left behind (cb-10d.1).
 ///
@@ -1619,6 +1680,7 @@ struct Workers {
     history: HistoryWorker,
     health: HealthWorker,
     write: WriteWorker,
+    tidy: TidyWorker,
 }
 
 /// The whole loop, generic over its terminal and its event source so the cases below can drive it
@@ -1726,6 +1788,7 @@ where
                     .collect();
                 // Before `start_due`, never after: see `give_back` (cb-10d.1).
                 give_back(app, &state.host, &mut state.logger, &config.paths, &roster, now);
+                tidy_worktrees(app, &state.host, &config.paths, now);
                 // Between the two: a given handover is not an orphan, and a name it starts must
                 // not also be started by a trigger this tick (cb-10d.5).
                 start_given(app, &mut state.host, &mut state.logger, &config.paths, &roster, now);
@@ -1792,6 +1855,22 @@ where
         for request in app.take_outbox() {
             app.begin_write(&request, &config.programs.bd);
             dispatch(AppAction::Write(request), app, workers, &clock);
+        }
+        // Worktree tidies (cb-10d.3), on their own worker: nothing about them is drawn.
+        for request in app.take_tidy_outbox() {
+            if !workers.tidy.request_with(request.clone()) {
+                let text = "the tidy worker has stopped".to_string();
+                state.logger.error("tidy", &text, clock());
+                let answer = app::TidyAnswer {
+                    name: request.name,
+                    bead: request.bead,
+                    outcome: lifecycle::TidyOutcome::Failed { text },
+                };
+                app.finish_tidy(&answer, clock());
+            }
+        }
+        if let Some(Ok(answer)) = workers.tidy.poll() {
+            settle_tidy(app, &mut state.logger, &answer, clock());
         }
         if let Some(Ok(answer)) = workers.write.poll() {
             log_write(&mut state.logger, &answer, clock());
@@ -3164,7 +3243,13 @@ mod main_tests {
             history: history_worker(),
             health: health_worker(),
             write: write_worker(),
+            tidy: tidy_worker(),
         }
+    }
+
+    /// The tidy worker, pointed at a directory with no `release-bead` in it.
+    fn tidy_worker() -> TidyWorker {
+        TidyWorker::spawn(nowhere().0, Arc::new(RealCommands))
     }
 
     fn worker() -> FleetWorker {
@@ -5681,6 +5766,114 @@ mod main_tests {
         assert!(app.take_outbox().is_empty(), "and the claim stays, as the prompt promised");
         assert!(!handover.exists(), "so no orphan path can give it back later");
         settle_gone(&mut host, "Rogue");
+    }
+
+    // ---- cb-10d.3: worktree tidies ---------------------------------------------------------------
+
+    fn record_tree(paths: &ReaderPaths, bead: &str, owner: &str, age: u64) {
+        let dir = lifecycle::worktree_records_dir(paths);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(bead), format!("{owner}\n")).unwrap();
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(age);
+        std::fs::File::options().write(true).open(dir.join(bead)).unwrap().set_modified(old).unwrap();
+    }
+
+    #[test]
+    fn an_ended_pass_hands_its_tree_to_release_bead() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "exit 0");
+        let now = Utc::now();
+        record_tree(&paths, "cb-x", "Rogue", 120);
+        let mut app = standby_app(supervising(), vec![implementer_row("Rogue", RowState::Standby)], None, now);
+        tidy_worktrees(&mut app, &SessionHost::default(), &paths, now);
+        assert_eq!(
+            app.take_tidy_outbox(),
+            vec![app::TidyRequest { name: "Rogue".into(), bead: "cb-x".into() }]
+        );
+        assert!(app.tidying.contains_key("cb-x"));
+        tidy_worktrees(&mut app, &SessionHost::default(), &paths, now);
+        assert!(app.take_tidy_outbox().is_empty(), "never twice");
+    }
+
+    #[test]
+    fn a_session_still_on_its_bead_keeps_its_tree() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "exit 0");
+        let now = Utc::now();
+        record_tree(&paths, "cb-x", "Rogue", 120);
+        let row = cerebro_tui::model::FleetRow {
+            bead: Some("cb-x".into()),
+            ..implementer_row("Rogue", RowState::Working)
+        };
+        let mut app = standby_app(supervising(), vec![row], None, now);
+        tidy_worktrees(&mut app, &SessionHost::default(), &paths, now);
+        assert!(app.take_tidy_outbox().is_empty());
+    }
+
+    #[test]
+    fn a_name_restarted_on_another_bead_releases_its_old_tree() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "exit 0");
+        let now = Utc::now();
+        record_tree(&paths, "cb-x", "Rogue", 120);
+        let mut app = standby_app(supervising(), vec![implementer_row("Rogue", RowState::Starting)], None, now);
+        app.handed.insert("Rogue".into(), "cb-y".into());
+        tidy_worktrees(&mut app, &SessionHost::default(), &paths, now);
+        assert_eq!(app.take_tidy_outbox().len(), 1);
+    }
+
+    #[test]
+    fn a_read_only_view_tidies_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "exit 0");
+        let now = Utc::now();
+        record_tree(&paths, "cb-x", "Rogue", 120);
+        let mut app = App::with_supervision(SupervisionMode::ReadOnly(
+            cerebro_tui::supervisor::ReadOnlyReason::OwnedBy,
+        ));
+        app.finish_refresh(Ok(vec![implementer_row("Rogue", RowState::Dead)]), now);
+        tidy_worktrees(&mut app, &SessionHost::default(), &paths, now);
+        assert!(app.take_tidy_outbox().is_empty());
+    }
+
+    #[test]
+    fn a_tidy_answer_writes_one_tidy_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "exit 0");
+        let now = Utc::now();
+        let mut logger = Logger::new(&paths.shared_root);
+        logger.set_enabled(true);
+        let mut app = App::with_supervision(supervising());
+        app.queue_tidy("Rogue", "cb-x");
+        let kept = app::TidyAnswer {
+            name: "Rogue".into(),
+            bead: "cb-x".into(),
+            outcome: lifecycle::TidyOutcome::Kept { reason: "it holds work that is not on main yet".into() },
+        };
+        settle_tidy(&mut app, &mut logger, &kept, now);
+        let state = paths.shared_root.join(".cerebro/state");
+        let lines: Vec<serde_json::Value> = std::fs::read_to_string(state.join("decisions.jsonl"))
+            .unwrap_or_default()
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .filter(|v: &serde_json::Value| v["event"] == "tidy")
+            .collect();
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert_eq!(lines[0]["outcome"], "kept");
+        assert_eq!(lines[0]["agent"], "Rogue");
+        assert_eq!(lines[0]["reason"], "it holds work that is not on main yet");
+
+        app.queue_tidy("Rogue", "cb-y");
+        let failed = app::TidyAnswer {
+            name: "Rogue".into(),
+            bead: "cb-y".into(),
+            outcome: lifecycle::TidyOutcome::Failed { text: "release-bead --worktree Rogue cb-y failed".into() },
+        };
+        settle_tidy(&mut app, &mut logger, &failed, now);
+        let decisions = std::fs::read_to_string(state.join("decisions.jsonl")).unwrap_or_default();
+        assert_eq!(decisions.lines().filter(|l| l.contains("\"tidy\"")).count(), 1, "a failure is no decision");
+        let errors = std::fs::read_to_string(state.join("errors.jsonl")).unwrap_or_default();
+        assert_eq!(errors.lines().filter(|l| l.contains("tidy")).count(), 1, "{errors}");
     }
 
     #[test]

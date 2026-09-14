@@ -1880,6 +1880,10 @@ pub struct App {
     /// The `given` names as they stood when the in-flight work read was ASKED for - the
     /// `work_settled_at_request` rule: only a read that began after the give answered may drop one.
     work_given_at_request: Vec<String>,
+    /// Trees handed to `release-bead --worktree`, by bead: `None` while it runs, `Some(at)` when
+    /// it failed at AT. Memory only; the records on disk are the durable truth (cb-10d.3).
+    pub tidying: std::collections::BTreeMap<String, Option<DateTime<Utc>>>,
+    tidy_outbox: Vec<TidyRequest>,
     /// Board writes the loop decided on rather than a key; drained into `dispatch` once per loop.
     outbox: Vec<WriteRequest>,
     /// The names whose stop flag is set, as of the last frame. Copied in by the event loop from
@@ -2122,6 +2126,8 @@ impl App {
             armed: BTreeSet::new(),
             handed: std::collections::BTreeMap::new(),
             releasing: std::collections::BTreeMap::new(),
+            tidying: std::collections::BTreeMap::new(),
+            tidy_outbox: Vec::new(),
             outbox: Vec::new(),
             flagged: BTreeSet::new(),
             stuck_logged: BTreeSet::new(),
@@ -3621,6 +3627,39 @@ impl App {
         std::mem::take(&mut self.outbox)
     }
 
+    /// May BEAD's tree be handed to `release-bead --worktree` now? No entry, or one that failed
+    /// at least `TIDY_RETRY_SECONDS` ago (cb-10d.3).
+    pub fn may_tidy(&self, bead: &str, now: DateTime<Utc>) -> bool {
+        match self.tidying.get(bead) {
+            None => true,
+            Some(None) => false,
+            Some(Some(at)) => (now - *at).num_seconds() >= TIDY_RETRY_SECONDS,
+        }
+    }
+
+    /// Record a tidy of NAME's tree for BEAD and queue it for the loop.
+    pub fn queue_tidy(&mut self, name: &str, bead: &str) {
+        self.tidying.insert(bead.to_string(), None);
+        self.tidy_outbox.push(TidyRequest { name: name.to_string(), bead: bead.to_string() });
+    }
+
+    /// The tidies the loop decided on since it last asked.
+    pub fn take_tidy_outbox(&mut self) -> Vec<TidyRequest> {
+        std::mem::take(&mut self.tidy_outbox)
+    }
+
+    /// Settles a tidy. Never touches the notice: nothing about a tree is drawn (agreed).
+    pub fn finish_tidy(&mut self, answer: &TidyAnswer, now: DateTime<Utc>) {
+        match answer.outcome {
+            crate::lifecycle::TidyOutcome::Failed { .. } => {
+                self.tidying.insert(answer.bead.clone(), Some(now));
+            }
+            _ => {
+                self.tidying.remove(&answer.bead);
+            }
+        }
+    }
+
     /// NAME's give-back failed AT: its bead stays spoken for, and it is retried after a minute.
     pub fn note_release_failed(&mut self, name: &str, at: DateTime<Utc>) {
         if let Some(entry) = self.releasing.get_mut(name) {
@@ -4029,6 +4068,9 @@ pub enum WriteRequest {
 /// How long a failed give-back waits before it is asked for again.
 pub const RELEASE_RETRY_SECONDS: i64 = 60;
 
+/// How long a failed tidy waits before the reconciler may hand its tree over again (cb-10d.3).
+pub const TIDY_RETRY_SECONDS: i64 = 60;
+
 impl WriteRequest {
     /// The dim line shown from the keystroke until this write answers. BD is `Programs::bd`, the
     /// same path `sweeps::finding_command` is given, so the two lines name the same command.
@@ -4208,6 +4250,44 @@ pub fn run_write(
     }
 }
 
+/// A tree the reconciler handed to `release-bead --worktree` (cb-10d.3).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TidyRequest {
+    pub name: String,
+    pub bead: String,
+}
+
+/// What a tidy came to, with its request echoed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TidyAnswer {
+    pub name: String,
+    pub bead: String,
+    pub outcome: crate::lifecycle::TidyOutcome,
+}
+
+/// The worktree tidier's worker (cb-10d.3): a ninth thread, and deliberately NOT the write worker.
+/// A removal can delete a multi-gigabyte build directory and runs a `git fetch` and a `gh`, and on
+/// the one write worker it would hold the navigator's priority keys behind it for tens of seconds
+/// on every pass. Serial, so one tidy at a time.
+pub type TidyWorker = Worker<TidyAnswer, TidyRequest>;
+
+impl Worker<TidyAnswer, TidyRequest> {
+    pub fn spawn(paths: ReaderPaths, commands: Commands) -> Self {
+        Self::spawn_reader(move |request: TidyRequest| Ok(run_tidy(&paths, commands.as_ref(), request)))
+    }
+}
+
+/// One tidy, with its request echoed into the answer - a free function so a test runs exactly
+/// what the worker thread runs.
+pub fn run_tidy(
+    paths: &ReaderPaths,
+    commands: &dyn crate::readers::CommandRunner,
+    request: TidyRequest,
+) -> TidyAnswer {
+    let outcome = crate::lifecycle::tidy_worktree(paths, commands, &request.name, &request.bead);
+    TidyAnswer { name: request.name, bead: request.bead, outcome }
+}
+
 impl<T, Req> Drop for Worker<T, Req> {
     fn drop(&mut self) {
         // Dropping the sender asks the loop to end, but do not join: a reader may be inside its
@@ -4222,6 +4302,47 @@ impl<T, Req> Drop for Worker<T, Req> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- cb-10d.3: tidies -----------------------------------------------------------------------
+
+    fn tidy_answer(outcome: crate::lifecycle::TidyOutcome) -> TidyAnswer {
+        TidyAnswer { name: "Rogue".into(), bead: "cb-x".into(), outcome }
+    }
+
+    #[test]
+    fn a_failed_tidy_is_retried_after_a_minute_and_draws_nothing() {
+        let mut app = App::with_supervision(crate::supervisor::SupervisionMode::Supervising);
+        let before = app.notice.clone();
+        let t = Utc::now();
+        assert!(app.may_tidy("cb-x", t));
+        app.queue_tidy("Rogue", "cb-x");
+        assert!(!app.may_tidy("cb-x", t));
+        assert_eq!(app.take_tidy_outbox(), vec![TidyRequest { name: "Rogue".into(), bead: "cb-x".into() }]);
+        app.finish_tidy(&tidy_answer(crate::lifecycle::TidyOutcome::Failed { text: "x".into() }), t);
+        assert!(!app.may_tidy("cb-x", t + chrono::Duration::seconds(59)));
+        assert!(app.may_tidy("cb-x", t + chrono::Duration::seconds(60)));
+        assert_eq!(app.notice, before);
+    }
+
+    #[test]
+    fn a_settled_tidy_forgets_its_bead() {
+        use crate::lifecycle::TidyOutcome;
+        for outcome in [
+            TidyOutcome::Removed,
+            TidyOutcome::Kept { reason: "r".into() },
+            TidyOutcome::Gone,
+            TidyOutcome::Running,
+        ] {
+            let mut app = App::with_supervision(crate::supervisor::SupervisionMode::Supervising);
+            let notice = app.notice.clone();
+            let writes = app.writes_requested;
+            app.queue_tidy("Rogue", "cb-x");
+            app.finish_tidy(&tidy_answer(outcome.clone()), Utc::now());
+            assert!(app.tidying.is_empty(), "{outcome:?}");
+            assert_eq!(app.notice, notice);
+            assert_eq!(app.writes_requested, writes);
+        }
+    }
     use crate::model::AgentKind;
     use std::sync::Arc;
 

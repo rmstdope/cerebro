@@ -26,9 +26,8 @@ urgent piece of work whose experience is agreed, read that record and its mockup
 architecture, the files, the increments, the tests and the verification, file the plan where an
 implementer reads it, and end the pass — and everything about how that is done lives there.
 
-**One piece of work per pass.** When the plan is filed, the pass ends, whatever else is waiting —
-with the single exception the skill states, a P0, which pre-empts the buffer and is planned in the
-pass that found it however many there are.
+**One piece of work per pass.** When the plan is filed, the pass ends, whatever else is waiting,
+a P0 included: the fleet view hands the next one to the next session.
 
 ## Ending a pass
 
@@ -48,12 +47,9 @@ question sandwich — is in the skill's *Telling the fleet view what you are doi
 - **Never interview anybody.** No mockups and no questions: the experience is agreed, and everything
   left is yours to decide and to write down.
 - **Never build the bead you planned.** You write plans; an implementer builds them.
-- **Never claim a bead.** You take one with a label.
+- **Never claim a bead, and never pick one: you are given one.**
 - **Never take work that is unranked**, and never rank one.
-- **Never take a bead whose blocker has no plan.** Plan the blocker first, whatever the priorities
-  say.
-- **Never touch a hold you did not set**, and never leave your own behind.
-- **Never take a candidate out of a family another build-design agent owns** — except a P0, which is
-  planned wherever it lives.
+- **Never pick your own work, and never leave the piece you were given assigned to you when the
+  pass ends.**
 - **Never branch in the main checkout.**
-- **Never take a second piece of work in one pass** — except a P0, which pre-empts the buffer.
+- **Never take a second piece of work in one pass**, a P0 included.

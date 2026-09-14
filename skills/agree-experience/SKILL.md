@@ -70,11 +70,11 @@ The moments that are yours:
 
 | Moment | Call |
 |---|---|
-| A piece of work gets your `planning:<your-name>` label | `.claude/cerebro/scripts/agent-state <your-name> working --bead <id> --phase ux --pid $PPID` |
+| The piece of work you were given is confirmed yours (*The piece of work you were given*) | `.claude/cerebro/scripts/agent-state <your-name> working --bead <id> --phase ux --pid $PPID` |
 | Every question you put to the designer | `.claude/cerebro/scripts/agent-state <your-name> asking --bead <id> --phase ux --pid $PPID`, and `working` again as the very first thing you do with the answer |
 | Ending a pass | `.claude/cerebro/scripts/end-pass <your-name> --pid $PPID` |
 
-`ux` is this role's one phase word, from the first label to the last push.
+`ux` is this role's one phase word, from the confirmed bead to the last push.
 
 ## You are one of the design agents, and you have a name
 
@@ -97,149 +97,45 @@ rank it, claim it, split it or change its type. You act on a piece of work that 
 
 ## What of the planner's skill applies
 
-Four sections of `skills/plan-bead/SKILL.md` are this role's too, and are followed **as written
+Three sections of `skills/plan-bead/SKILL.md` are this role's too, and are followed **as written
 there** rather than copied here:
 
 | Section | What it gives you |
 |---|---|
 | *Interview, don't ask* | never one option; mock the states rather than the happy path; `file://` links **inside** the question tool's own text and each option's description; up to four questions at a time; re-state the paths every round; ask once whether they looked, if the answer comes back faster than a look would take |
 | *Anything you commit, you commit from a worktree of your own* | the worktree, the documentation pull request, the self-merge carve-out for a `docs/`-only change the navigator has already read line by line, and the removal afterwards |
-| *Check you still hold it before you write* | the pull and the label re-read immediately before anything is written to the board |
-| *Reclaiming a hold nobody is holding* | the shape of the reclaim loop — but **not** the loop itself, which is below and is this skill's own |
+| *Check it is still yours before you write* | the pull and the assignee re-read immediately before anything is written to the board |
 
-Three things there are **not** yours. The plan's eight headings and its *Decided by me* list: you
-write five different headings in a different field. The buffer rule: yours is `--ux-count`, below.
-And *One planner owns a whole family*, which is deliberately not used at this stage — see *A piece
-of work with children*.
+Two things there are **not** yours. The plan's eight headings and its *Decided by me* list: you
+write five different headings in a different field. The buffer rule: the fleet view reads
+`planner-buffer --ux-count` when it decides to start you, and you never read it yourself.
 
-## Free every abandoned hold
+## The piece of work you were given
 
-**Start every pass with this.** A session that is killed leaves its label behind, and a piece of
-work carrying one is excluded from every queue, so nothing ever considers it again.
+The prompt that started you ends with this sentence:
 
-A hold is held when a **live** agent at either stage names that piece of work in its own state file,
-and abandoned otherwise. Both stages take the same `planning:<name>` label, so both rosters are
-read: freeing the other stage's live hold would hand one piece of work to two agents.
-
-```bash
-labelled="$(mktemp)"; held="$(mktemp)"      # never fixed names: several of you may start at once
-bd list --status open --json \
-  | jq -r '.[] | select((.labels // []) | any(. == "planning" or startswith("planning:"))) | .id' \
-  | sort > "$labelled"
-state="$(.claude/cerebro/scripts/consumer-root --shared)/.cerebro/state"
-for name in $(.claude/cerebro/scripts/roster --role ux) \
-            $(.claude/cerebro/scripts/roster --role build-design); do
-  f="$state/$name.state.json"
-  if [ -f "$f" ]; then
-    if .claude/cerebro/scripts/agent-alive "$name"; then
-      jq -r '.bead // empty' "$f"
-    fi
-  fi
-done | sort > "$held"
-comm -23 "$labelled" "$held"                # labelled, held by nobody: abandoned
-rm -f "$labelled" "$held"
+```text
+Your bead is <id>; it is already assigned to you.
 ```
 
-**Two temporary files of your own, never fixed names.** Every pass of every agent at either stage
-starts with this loop, so two sessions a second apart would interleave writes into one pair of
-files — and a truncated held-list makes a *live* hold look abandoned, one line before the command
-that removes it.
-
-Liveness is `agent-alive` and never a bare `kill -0`: pids are recycled, and a dead agent that looks
-alive strands exactly the label this loop exists to free. A `planning:<name>` whose name is on
-neither roster is abandoned outright, whatever any state file says.
-
-For each abandoned one, **say which and why before you free it** — one line, naming it, so the
-navigator can stop you if a family is mid-split:
+The fleet view chose it — highest priority first, never an unranked one, never one whose blocker's
+experience is not agreed yet, and never a child of a bead somebody else is splitting — and made you
+its assignee before your session started. Confirm it, then write the state:
 
 ```bash
-bd update <id> --remove-label <the exact label it carries>
-bd dolt push
-```
-
-Pass the label **exactly as it is carried** — `planning:<Name>`, or the bare `planning` if that is
-what is there. `--remove-label` is an exact match, so the generic word takes nothing off a named
-hold and the piece of work stays stranded while you report it freed.
-
-Then it is an ordinary candidate again, at whatever priority it carries. **Do not take it just
-because you freed it.**
-
-## How much is waiting
-
-```bash
-.claude/cerebro/scripts/planner-buffer --ux-count      # agreed=<a> want=<m>
-```
-
-`<a>` is how much agreed, undesigned work is already waiting for the build stage; `<m>` is how much
-the fleet wants. You are short whenever `a < m`, and a short buffer is the reason you were started.
-
-**A P0 pre-empts the buffer entirely.** If one is waiting for a design, it is agreed whether or not
-the buffer needs topping up:
-
-```bash
-.claude/cerebro/scripts/stage-candidates ux \
-  | jq -r '.[] | select(.priority==0) | "\(.id)\t\(.title)"'
-```
-
-**One piece of work per pass, either way.** When it is recorded, end the pass.
-
-## Choosing what to take
-
-```bash
-.claude/cerebro/scripts/stage-candidates ux           # a JSON array of what you may take
-```
-
-That script is the one place the harness answers which work is at this stage; do not write the query
-yourself. Order the answer by priority, highest first.
-
-**Never a P4.** Here that does not mean *low priority*, it means *nobody has ranked this yet* — every
-piece of work is filed at P4 whoever files it, and agreeing one decides the navigator's ordering for
-them. If everything left is P4 there is nothing to take.
-
-**Never take one whose blocker's experience is not agreed yet.** A blocker holds this stage up only
-while its own experience is open; one whose experience is agreed but whose build is not designed
-constrains the build rather than the experience, and waiting for it would idle a designer behind a
-developer.
-
-```bash
-bd show <id> --json | jq -r '(if type=="array" then .[0] else . end)
-  | [ .dependencies[]?
-      | select(.dependency_type=="blocks")
-      | select(.status!="closed")
-      | select((.labels//[]) | index("ux:agreed") | not)
-      | .id ] | if length==0 then "nothing" else join(", ") end'
-```
-
-Nothing — take the candidate. Otherwise take what it names instead, and check *that* one the same
-way: a blocker can have a blocker. Three details decide whether this query works at all:
-
-- **`select(.dependency_type=="blocks")` is load-bearing.** `dependencies` also carries the
-  `parent-child` edge, so without it a child demands that its own parent be agreed.
-- **`bd show --json` returns an array**, hence the `if type=="array"` guard. Without it the command
-  fails, and the failure reads exactly like "no blockers".
-- **The field is `dependency_type` because this is `bd show`.** `bd list` calls the same thing
-  `type`, so a filter written for one silently matches nothing in the other.
-
-When a blocker cannot be taken at all — it is waiting on a person — take the next candidate by
-priority, and say once which one you skipped and what is holding it.
-
-## Taking it
-
-**The state file first, the label second, the push at once.** That order is deliberate and it is
-easy to get backwards: your state file naming a piece of work you have not labelled yet costs
-nothing, because nobody reads it as a hold, while a label sitting there while your state file says
-`idle` is exactly the shape of an abandoned hold — and the loop above would let another agent take
-your candidate out from under you.
-
-```bash
+bd dolt pull
+bd show <id> --json | jq -r '(if type=="array" then .[0] else . end) | "\(.status) \(.assignee // "")"'
 .claude/cerebro/scripts/agent-state <your-name> working --bead <id> --phase ux --pid $PPID
-bd update <id> --add-label planning:<your-name>
-bd dolt push
 ```
 
-Label before you research, and push before you read a line of anything. Between the query that
-picked your candidate and your label reaching the other agents, they are looking at a list that
-still has it on.
+`open <your-name>` is yours. Anything else: say in one line what you found, write nothing to the
+piece of work, and end the pass.
+
+If the prompt carries no such sentence, say in one line to the developer reading the transcript that
+nothing is waiting for a design, and end the pass. The designer never sees it.
+
+**Never pick, never add a label to hold anything, and never take a second piece of work** — one per
+pass, a P0 included: the view hands the next one to the next session.
 
 ## A piece of work that came back
 
@@ -277,9 +173,6 @@ You never split and never retype, so one filed as a whole is agreed as a whole, 
 Splitting belongs to the stage that designs increments, and children created after the fact inherit
 the agreed-stage label from their parent — so the experience is agreed once for a family rather than
 four times over.
-
-For the same reason you never take the family-ownership label a splitting agent writes. Two writers
-of one label across two stages lock a family to the wrong stage.
 
 ## How you talk to a designer
 
@@ -392,16 +285,16 @@ Then write the record to a file, under these five headings and in this order:
 answered during the interview, so reading it back decides nothing — and a designer who has stepped
 away parks the whole session on it. Write the record, file it, and say what you filed.
 
-**Check you still hold it, immediately before you write** — the last moment the check is worth
+**Check it is still yours, immediately before you write** — the last moment the check is worth
 anything:
 
 ```bash
 bd dolt pull
-bd show <id> --json | jq -r '(if type=="array" then .[0] else . end).labels // [] | join(" ")'
+bd show <id> --json | jq -r '(if type=="array" then .[0] else . end).assignee // ""'
 ```
 
-**Do not write** if your own hold is gone, or if somebody else's `planning:` sits there beside it:
-two holds means two interviews, whoever started first, and writing anyway overwrites a record
+**Do not write** unless the answer is your own name: another assignee means another interview, and
+writing anyway overwrites a record
 somebody else has just spent one on. Say in one line that you lost it and what you had agreed, tell
 the designer with the failure paragraph below — *somebody else is already working on this piece of
 work* — and end the pass, by *Ending a pass* below, worktree removal included. It is a
@@ -410,8 +303,7 @@ rescues the record rather than the hour.
 
 ```bash
 bd update <id> --acceptance "$(cat /tmp/ux-<id>.md)"
-bd update <id> --add-label ux:agreed --remove-label planning:<your-name> \
-               --remove-label needs-ui-decision
+bd update <id> --add-label ux:agreed --assignee "" --remove-label needs-ui-decision
 bd dolt push
 ```
 
@@ -487,7 +379,7 @@ The three causes that actually happen, in the plain words to use for them:
 |---|---|
 | `bd update` or `bd dolt push` refused | the shared task list wouldn't accept the update |
 | the drawing could not be committed or merged | the drawing couldn't be saved |
-| the hold is gone, or another name holds it too | somebody else is already working on this piece of work |
+| the piece of work is assigned to somebody else | somebody else is already working on this piece of work |
 
 That is the only place any of this appears. Nowhere else in a session does a command, a path or an
 error reach the designer.
@@ -501,7 +393,7 @@ added — only a complete record earns it.
 
 ```bash
 bd update <id> --add-label needs-ui-decision --add-label human \
-  --remove-label planning:<your-name> \
+  --assignee "" \
   --append-notes "## Where we got to in the UX stage
 
 <what is already settled, the open question, and the options offered>" \
@@ -548,7 +440,8 @@ session that accumulates.
 - **Never create work**, rank it, claim it, split it, or change its type.
 - **Never decide the shape of what a person sees**, or a word they will read, alone.
 - **Never say a word from this repository to the designer**, outside the failure detail above.
-- **Never touch a hold you did not set**, and never leave your own behind.
+- **Never pick your own work**, and never leave the piece you were given assigned to you when the
+  pass ends.
 - **Never ask the designer to approve the record.** The interview is where they decide it. By the
   time the record is written every question in it has been answered, so asking again parks a
   finished session on a question that decides nothing.

@@ -1,6 +1,6 @@
 ---
 name: plan-bead
-description: The planning role — plan every P0 immediately, keep a buffer of planned, unclaimed beads ahead of the implementers, sized from the roster's implementers, turning each into something an agent can build unattended, deciding architecture yourself, deciding the detail inside an interaction the navigator has already agreed, and taking the shape of every new one to them. Use when running a planning session.
+description: The planning role — plan the one bead the fleet view hands you, P0s first, keeping a buffer of planned, unclaimed beads ahead of the implementers, sized from the roster's implementers, turning each into something an agent can build unattended, deciding architecture yourself, deciding the detail inside an interaction the navigator has already agreed, and taking the shape of every new one to them. Use when running a planning session.
 ---
 
 # Planning a bead
@@ -27,11 +27,9 @@ planner's.
 .claude/cerebro/scripts/roster --role planner      # the planners, in roster order
 ```
 
-**A planner takes a bead by naming itself on it, and never touches a bead named for anyone else.**
-The machinery for that — the two labels, who owns a family, the order things are written in, and how
-a hold left by a dead session comes back — is *How two planners stay off each other's work*, which
-sits beside *Choosing what to plan* because that is where it is used. **Read it before you take your
-first candidate**; everything between here and there is which bead to take and when.
+**The fleet view gives each planner its bead, so two planners never share one.** You are made the
+bead's assignee before your session starts, and you clear that assignee yourself when you finish —
+see *Choosing what to plan*.
 
 ## Telling the fleet view what you are doing
 
@@ -87,9 +85,8 @@ said `asking`; corrected").
 
 | Moment | Call |
 |---|---|
-| A bead gets your `planning:<your-name>` label | `.claude/cerebro/scripts/agent-state <your-name> working --bead <id> --phase plan --pid $PPID` |
+| The bead you were given is confirmed yours (*Choosing what to plan*) | `.claude/cerebro/scripts/agent-state <your-name> working --bead <id> --phase plan --pid $PPID` |
 | Every interview question while planning it | `.claude/cerebro/scripts/agent-state <your-name> asking --bead <id> --phase plan --pid $PPID`, and `working` again once answered |
-| The P0 check (*P0 pre-empts the buffer*) | stays `working --phase plan`, same as any other bead being planned |
 | Ending a pass (*Ending a pass*) | `.claude/cerebro/scripts/end-pass <your-name> --pid $PPID` |
 
 Writing another planner's name here
@@ -114,21 +111,11 @@ and end the pass: **do not rank one yourself, and do not plan one to keep busy.*
 
 ## P0 pre-empts the buffer
 
-**An unplanned P0 is planned now.** Not next, not when the buffer drains — now, and however full the
-queue already is. A P0 is a bead the navigator has said is the most urgent thing there is, and a plan
-is the only thing standing between it and an implementer picking it up; a P0 sitting unplanned behind
-a healthy buffer is the fleet working on the wrong thing while the right thing waits.
+The fleet view hands an unplanned P0 to the next planner session ahead of everything else, whatever
+the buffer says. A P0 is planned like any other bead, one per pass. Its unplanned blocker is handed
+out first, because the queue does not offer a bead whose blocker has no plan.
 
-Check at the top of every pass, **before you count the buffer**, because the buffer's answer does not
-matter here:
-
-```bash
-.claude/cerebro/scripts/plan-candidates \
-  | jq -r '.[] | select(.priority==0) | "\(.id)\t\(.title)"'
-```
-
-**A failed verification is a candidate only when it carries `plan:revise`** — that is what the second
-`select` says. **And never when it carries `verdict:stale`**, whatever else it carries: that label
+**A failed verification is handed to you only when it carries `plan:revise`.** **And never when it carries `verdict:stale`**, whatever else it carries: that label
 says the fleet view found main has moved past the commit the verdict was formed against, so the
 finding may no longer hold and the plan may be perfectly sound. Revising a plan on the strength of a
 stale verdict is a failure this has already cost — a planner audit that found the shipped code matched the plan
@@ -140,36 +127,14 @@ filter it comes back every pass. A brand-new P0 that was never planned carries n
 unaffected, which is why the test is on `verification:failed` rather than on `planned`.
 
 **The mechanical filters all live in `scripts/plan-candidates`.** Open, not `planned`, not `human`,
-not held by a `planning` label in either spelling, `verification:failed` only when it also carries
-`plan:revise`, never `verdict:stale`, and an epic only while nothing is under it — that is what the
-script answers, and it is where those rules are written down once, with a suite under them. They
-used to be two hand-written `jq` blocks on this page and they drifted from cb-hzl inside a day of it
-merging. What stays at the call site is the **priority**, because that is the policy this section
-explains. (A hold is also not one exact string, so `bd`'s own `--exclude-label` could never have
-expressed it — see *How two planners stay off each other's work*.)
-
-**A P0 is planned even inside a family somebody else owns.** Family ownership — *One planner owns a
-whole family*, under *How two planners stay off each other's work* — is a way of dividing an
-ordinary queue, and it gives way here: everything in
-this section applies before it. Take
-the bead, and say in the same line whose family you took it out of, so the owner's next pass and the
-navigator both see it happened rather than discovering it in a design that disagrees with its
-siblings.
-
-Anything it returns, plan. All of it, one at a time, before you look at the buffer at all — a P0 is
-the exception to the one-bead pass, since every one of them is what the fleet is blocked behind — and
-if that leaves the buffer over its `m`, that is simply what it costs. The buffer is a floor under the
-fleet, not a ceiling on urgent work.
-
-Then go on to the buffer as usual. A P0 you just planned counts toward it like anything else, so the
-top-up that follows is usually short.
+not assigned, `verification:failed` only when it also carries `plan:revise`, never `verdict:stale`,
+not a child of an assigned parent, not a bead whose blocker has no plan, and an epic only while
+nothing is under it — that is what the script answers, the fleet view hands out what it returns, and
+it is where those rules are written down once, with a suite under them.
 
 Everything else about planning holds unchanged, and two parts of it matter more here rather than
 less:
 
-- **A P0's unplanned blocker is still planned first.** Urgency does not make a plan writable against
-  an interface nobody has specified. Walk down to the deepest unplanned blocker exactly as always —
-  it is now the most urgent bead in the repository, since the P0 cannot be built until it exists.
 - **A question about a P0's shape is still the navigator's.** But say plainly that it is a P0 you
   are blocked on, and if it is a question nobody present can answer, park it with
   `needs-ui-decision` and `human` like any other and **lead your next report with it**. A P0 in the `human` queue is the most important thing
@@ -208,7 +173,7 @@ Then re-add `planned` as usual — **and remove `plan:revise` in the same update
 a planner candidate for ever:
 
 ```bash
-bd update <id> --add-label planned --remove-label plan:revise --remove-label planning:<your-name> \
+bd update <id> --add-label planned --remove-label plan:revise --assignee "" \
   --remove-label needs-ui-decision
 ```
 
@@ -238,19 +203,17 @@ counting it would starve the queue while the number looked healthy — as is `tr
 the navigator declined to rank, for the same reason. `epic` is a split parent, which has children
 rather than a plan. The script owns that list; `--print-excluded-labels` prints it.
 
-**Count `planned` only. A bead carrying `planning` is not in the buffer** — not yours, not the other
-planner's. The buffer measures what an idle implementer could claim *right now*, and a bead being
-planned cannot be claimed by anyone: it has no design yet. Counting `planning` too was tried and
-starved the queue within a day (ah-2p.1). Two planners, each holding one candidate, added two to the
-count; with a small fleet that reached the number on its own, so both sessions reported a full buffer
-and went to sleep over a queue with two pickable beads in it.
+**Count `planned` only. A bead being planned is assigned, not planned**, and is not in the buffer.
+The buffer measures what an idle implementer could claim *right now*, and a bead being planned cannot
+be claimed by anyone: it has no design yet. Counting beads in planning too was tried and starved the
+queue within a day: both planners reported a full buffer and went to sleep over a queue with two
+pickable beads in it.
 
 **Both planners filling at once is not a fault to design against.** It is the whole point of a second
-planner, and the cost is bounded: each of you plans one bead and each can only be holding one
-candidate, so the buffer can overshoot by one bead per planner. That is a bead built slightly earlier
-than it needed to be — against a rule this file already states twice, that the buffer is a floor and
-never a ceiling. An under-full buffer costs an idle implementer, which is the expensive error of the
-two.
+planner, and the cost is bounded: each of you is handed one bead, so the buffer can overshoot by one
+bead per planner. That is a bead built slightly earlier than it needed to be — against a rule this
+file already states twice, that the buffer is a floor and never a ceiling. An under-full buffer costs
+an idle implementer, which is the expensive error of the two.
 
 **How many implementers the fleet has** is `n`: the implementer rows of `scripts/roster`, minus any
 whose stop flag is set under `.cerebro/state/` (it finishes its bead and retires, so it will take no
@@ -289,31 +252,16 @@ them on the next five-second tick after the count drops (`cerebro-wake-intervals
 bought nothing and cost the two things a batch always costs: a plan written further ahead of the code
 it describes, and a session holding several candidates at once where one would do.
 
-The cycle:
-
-1. **Free every abandoned `planning` label.** See *Reclaiming a hold nobody is holding* — a bead
-   stranded there is invisible to steps 1 and 2 alike, so it comes first.
-2. **Plan every unplanned P0**, whatever the buffer says. See *P0 pre-empts the buffer*.
-3. **Plan one bead**, if the buffer is below `m` — from ranked candidates only, since a P4 is not a
-   candidate. One, not as many as it takes to reach `m`: the next pass starts seconds after this one
-   ends, so a buffer two short is two passes rather than one long one. If there is nothing you may
-   plan, report the beads waiting on a ranking and go to step 4.
-4. **End the pass.** Write `waiting` and end your turn; the next pass is a fresh session, woken by
-   the buffer or a P0. See *Ending a pass*.
-5. **A fresh session begins at the top of this skill**, re-measuring `n` and freeing any
-   abandoned label again — a session died between passes is exactly when one appears. A new P0 —
-   plan it, always, and then continue. Otherwise: `m` or more in the buffer, end the pass again;
-   **fewer than `m`, plan one more**.
+The fleet view starts a planner when the buffer is below `m` or an unplanned P0 is waiting, and hands
+it one bead. The pass plans that bead and ends: write `waiting` and end your turn (*Ending a pass*).
+The next pass is a fresh session, handed the next bead by the same rule, and it begins at the top of
+this skill.
 
 **One bead per pass is the rule, and it is not a limit on how much you may do.** It is what keeps a
 session's context one bead deep, the way an implementer's is: everything the next pass needs is on
 the board, so a pass that plans one bead well beats one that plans three against a fleet that moved
-underneath it. Freeing an abandoned label is not a bead and does not count against it.
+underneath it.
 
-**The P0 check is the exception, and that is the point.** It runs on every pass and acts on every
-hit — every unplanned P0, not one of them — and it fires with the buffer full at `m`, where step 5
-would otherwise have ended the pass at once. The abandoned-label check has
-no gap either, and for the same reason: what it frees may be the P0.
 
 **A buffer over its number is left alone.** When the fleet shrinks — six planned and one
 implementer — nothing is unplanned; the extra beads simply get built later. The buffer is a floor
@@ -363,54 +311,50 @@ one line and go back to `waiting`; the next pass re-reads the buffer.
 
 ## Choosing what to plan
 
-Everything about *how* a candidate is taken — the two labels, family ownership, the order the state
-file and the label are written in, and the check immediately before you write — is *How two planners
-stay off each other's work*, the section after this one. **Read it before you run the block below**;
-what follows here is which bead to take.
+**You do not choose.** The prompt that started your session ends with the sentence
+`Your bead is <id>; it is already assigned to you.` The fleet view chose it — highest priority first,
+never an unranked one, never one whose blocker has no plan, never a child of a bead somebody else is
+splitting — and made you its assignee, without a claim, before your session started. Confirm it,
+then write the state:
 
 ```bash
 bd dolt pull
-# Candidates: never a P4. Unranked is not a rank, and planning one takes the navigator's
-# decision by default.
-.claude/cerebro/scripts/plan-candidates | jq '[.[] | select(.priority != 4)]'
-# ... the script drops a failed verification unless it also carries plan:revise; without that label
-# it is waiting for Psylocke, not for you. See *A reopened bead is a P0 with a plan already*.
-# ... and the script never lists one carrying verdict:stale: main has moved past the commit that
-# verdict was formed against, so the finding may not hold and the plan may be sound. It is
-# Psylocke's to settle.
-# ... and skip any candidate whose family another planner owns: see *How two planners
-# stay off each other's work*, which is what the script's own filters and the order of the three
-# commands below obey.
+bd show <id> --json | jq -r '(if type=="array" then .[0] else . end) | "\(.status) \(.assignee // "")"'
 .claude/cerebro/scripts/agent-state <your-name> working --bead <id> --phase plan --pid $PPID
-bd update <id> --add-label planning:<your-name>
-bd dolt push                                       # publish it at once
+```
+
+`open <your-name>` is yours. Anything else: say in one line what you found, write nothing to the
+bead, and end the pass. **No such sentence in the prompt**: say that nothing is waiting for a plan,
+and end the pass.
+
+**Never pick, never add a label to hold anything, and never take a second bead** — one bead per
+pass, a P0 included: the view hands the next one to the next session. When the plan is written,
+file it and give the bead up in one call:
+
+```bash
 # ... research, decide, discuss, write ...
-bd update <id> --design-file plan.md --add-label planned --remove-label planning:<your-name> \
+bd update <id> --design-file plan.md --add-label planned --assignee "" \
   --remove-label needs-ui-decision   # a no-op unless the bead was parked on a shape question
-bd dolt push                                       # or the release is invisible elsewhere
+bd dolt push                         # or the release is invisible elsewhere
 ```
 
 ### Which bead, and in what order
 
-The candidate query above already excludes your own `planning:<your-name>` hold, so you never pick
-the bead you are already planning.
+That order is the queue's, and it is worth knowing what it skips, because it explains what reaches
+you. **Highest priority first**: P0 before P1, and so on down.
 
-**Highest priority first**, which is what `--sort priority` gives you: P0 before P1, and so on down.
-P0 goes further than being first in this list — it pre-empts the buffer entirely, so an unplanned one
-is planned whether or not the queue needs topping up. See *P0 pre-empts the buffer*.
-
-**A P4 is not a candidate at all**, which is why the query filters it out rather than leaving it at
-the bottom of the sort. P4 here does not mean *low priority*; it means *nobody has ranked this yet* —
-every bead in this repository is created at P4, whoever files it. Planning one decides the
-navigator's ordering for them, silently, and that is the single thing the ranking step exists to
+**A P4 is never handed to you.** P4 here does not mean *low priority*; it means *nobody has ranked
+this yet* — every bead in this repository is created at P4, whoever files it. Planning one decides
+the navigator's ordering for them, silently, and that is the single thing the ranking step exists to
 prevent: their chance to say "close this", "this is actually a P0", or "this goes behind the other
 thing" is gone the moment a plan exists and an implementer picks it up. Ranking it yourself is worse
-still — see *Ranking is Cerebro's*. If every remaining candidate is a P4, there is nothing to plan; the
-buffer cycle above says what to do about that.
+still — see *Ranking is Cerebro's*. If a launch typed by hand gave you one anyway, give it back,
+push, say so and end the pass:
 
-Several at the same priority is not a decision — take any of them and move on rather than weighing
-them against each other. Priority orders the *candidates*; it never overrides the dependency rule
-below.
+```bash
+bd update <id> --assignee ""
+bd dolt push
+```
 
 **Plan beads whose blockers are unbuilt.** `plan-candidates` is a `bd list` underneath rather than a
 `bd ready`, precisely because `bd ready` hides anything waiting on an unimplemented dependency, and those are often the
@@ -418,46 +362,8 @@ ones most worth having planned. Dependency blocking is not a stored status, so a
 picks them up: on the day this was written it returned seven candidates where `bd ready` returned
 five.
 
-**But never plan a bead whose blocker is unplanned.** Unbuilt is fine; unplanned is not. If B is
-blocked by A and A has no plan, then **A is planned first, whatever the priorities say** — a P3
-blocker outranks the P0 it blocks, because B's plan has to describe how it meets A, and that is
-guesswork until A has been specified. So before taking a candidate, ask what it is standing on:
-
-```bash
-bd show <id> --json | jq -r '(if type=="array" then .[0] else . end)
-  | [ .dependencies[]?
-      | select(.dependency_type=="blocks")
-      | select(.status!="closed")
-      | select((.labels//[]) | index("planned") | not)
-      | .id ] | if length==0 then "nothing" else join(", ") end'
-```
-
-Nothing — plan the candidate. Otherwise plan what it names instead, and check *that* one the same
-way before taking it: a blocker can have a blocker. Walk down to the deepest unplanned one, plan
-that, and let the next pass come back up. Each of those still counts toward the buffer, so nothing is
-wasted.
-
-Three details that decide whether this works:
-
-- **`select(.dependency_type=="blocks")` is load-bearing.** `dependencies` also carries the
-  `parent-child` edge, so without the filter a child demands that its own parent epic be planned —
-  and an epic has children rather than a plan, so you would be stuck for ever. A child `<parent>.<n>`
-  lists both the sibling that blocks it (blocks) and `<parent>` (parent-child); only the first is a
-  blocker.
-- **`bd show --json` returns an array**, hence the `if type=="array"` — indexing it as an object
-  fails with `Cannot index array with string "dependencies"`.
-- **The field is `dependency_type` because this is `bd show`.** In `bd list` the same edge calls it
-  `type` and `dependency_type` is null, so a filter written for one command silently matches nothing
-  in the other — for every bead, which reads as "no blockers" rather than as a mistake.
-  `agents/orchestrator.md` pipes `bd list` and selects on `.type` for exactly that reason; neither
-  is wrong, and neither is portable to the other command.
-- **Closed counts as satisfied.** A delivered blocker needs no plan, and a closed bead keeps its
-  `planned` label anyway, so both tests agree — but the status test is the one that means it.
-
-**When the blocker cannot be planned, skip the candidate.** A blocker parked with `human` is waiting
-on the navigator, and an epic has no plan to write; planning either is not available to you. Take the
-next candidate by priority and say, once, which bead you skipped and what is holding it — that
-sentence is how the navigator learns their queue is jammed behind one decision.
+Unbuilt is fine; unplanned is not — and the queue enforces that for you: a bead whose blocker has no
+plan is not handed out until the blocker has one.
 
 **A bead that was parked and has come back may carry the answer already.** Look for a
 `## Navigator's answer` heading in its notes: it is written when the orchestrator got the navigator
@@ -477,8 +383,8 @@ This is exactly why the blocker is planned first, and it is worth using rather t
 it will touch, the seam it will leave and the traps it already found. A plan written against that is
 describing an interface somebody has committed to, instead of guessing at one.
 
-No heartbeats. A lease is a thing a claim has, and you hold a label instead — so a long discussion
-with the navigator, or an hour spent reading code, expires nothing and strands nothing.
+No heartbeats. A lease is a thing a claim has, and you are an assignee without a claim — so a long
+discussion with the navigator, or an hour spent reading code, expires nothing and strands nothing.
 
 ### An epic with no children is a bead nobody split
 
@@ -489,11 +395,10 @@ candidate and never reaches you.
 
 **Repair it before you plan anything.** Two outcomes and no third:
 
-- **Too big for one increment** — split it, exactly as *Too big for one increment* below describes,
-  including the `planner:<your-name>` label on the parent and taking your `planning:` hold off the
-  children. The parent is already `epic`, so the `bd update <id> --type epic` step at the end of
-  that section is a no-op here; everything else applies unchanged. This is the ordinary case — a
-  bead filed as an epic is usually genuinely big — and it *is* the pass's one bead.
+- **Too big for one increment** — split it, exactly as *Too big for one increment* below describes.
+  The parent is already `epic`, so the `--type epic` in that section's last update changes nothing
+  here; everything else applies unchanged. This is the ordinary case — a bead filed as an epic is
+  usually genuinely big — and the split *is* the pass.
 - **One increment's work** — retype it and plan it in place, in that order:
 
   ```bash
@@ -548,244 +453,21 @@ Where the contradiction is about the shape it is the navigator's: ask, rather th
 version you prefer. Where it is a detail inside a shape they have already agreed, settle it and
 write it into *Decided by me* with the thread as its reason.
 
-## How two planners stay off each other's work
+## Check it is still yours before you write
 
-**Read this before you take your first candidate.** It sits after *Choosing what to plan* because
-that is where it is used, not because it comes second: the queries above already obey it.
-
-Two planners share the work through labels and nothing else: no lease, no claim, no conversation
-between sessions. This section is where that machinery is stated — the labels, how they are read,
-the order they are written in, who owns a family, the check before you write, and how a hold left
-by a dead session comes back. Everywhere else in this skill gives the command and points here for
-the reason. One further rule belongs to the same story but is stated where it applies, because it is
-not about the labels: **count only what an implementer could claim** (*You keep a buffer sized to the
-fleet*).
-
-### The two labels, and who may remove them
-
-**You never claim a bead.** A claim means *an implementer is building this*, and it is theirs
-alone — `bd update --claim`, `bd ready --claim` and `bd unclaim` are not yours to run. What you take
-instead is a label: `planning:<your-name>` on the bead you are planning, which says *this bead is
-being planned right now*, and `planner:<your-name>` on the parent of a split family, which says
-*this whole family is mine to design*. Neither holds a lease, neither takes the bead out of the
-fleet's hands, and neither strands anything if this session dies.
-
-**Your hold names you, and you only ever remove your own.** `--add-label planned --remove-label
-planning` took the label off whoever set it, so a session finishing its own bead could strip another
-session's hold and never know. `planning:<your-name>` makes that impossible by construction, and
-makes a label left behind attributable to the session that left it. Both spellings are live at once —
-a session started before this keeps writing the bare word — so everything that *reads* the label
-matches on the prefix `planning`, never on the whole string.
-
-**Everything that reads either label matches on the prefix, and in `jq` rather than with
-`--exclude-label`.** A hold is the word `planning`, or the word and a `:` and the planner holding
-it, and `bd`'s `--exclude-label` matches one exact string — it cannot express *either of those*, so
-left as an exclusion it silently excludes nothing and hands you a bead the other planner is already
-writing. The `:` is required rather than a bare prefix, so an unrelated label starting with the same
-letters is not read as somebody holding the bead. The same care applies when *removing* one: pass
-the label exactly as the bead carries it, since `--remove-label` is an exact match and the generic
-word takes nothing off a named hold.
-
-**Label before you think, and push before you read a line of code.** The steps in *Choosing what
-to plan* are in that order for the other planner's sake: between the `bd list` that picked your
-candidate and the `planning` label reaching them, they are looking at a list that still has your
-bead on it. Making
-those two adjacent and pushing at once shrinks that window to seconds; researching first and
-labelling when you are ready widens it to the length of a plan, which is exactly long enough for two
-planners to write two designs for one bead and for one of them to be thrown away.
-
-**The state file is written before the label, not after** (it reads oddly, and it is deliberate).
-Your state file naming a bead you have not labelled yet costs nothing — nobody reads it as a hold.
-The label existing while your state file still says `idle` is the dangerous order, because that is
-exactly the shape of an abandoned label, and *Reclaiming a hold nobody is holding* below would let
-the other planner take your candidate out from under you.
-
-If a `bd dolt pull` mid-plan shows the bead already carrying somebody else's `planning:` label, you
-lost the race: drop it without finishing, say so in a line, and pick the next candidate. The one who
-labelled it first keeps it — no negotiation, since there is nobody to negotiate with.
-
-### One planner owns a whole family
-
-**Before you take a candidate, find its parent and read who owns it.** A split family shares one
-design, so two planners on two of its children is the most expensive collision there is: they are not
-merely duplicating an interview, they are answering the *same* design questions separately and
-landing two halves of a family that do not agree with each other.
-
-A bead's parent is its `parent` field, the same one `beads-workflow` and `implement-bead` walk up
-when they close a family:
-
-```bash
-bd show <id> --json | jq -r '(if type=="array" then .[0] else . end) | .parent // empty'
-```
-
-Nothing printed means the candidate has no parent, and none of this applies — take it.
-
-**The `if type=="array"` guard is not optional**: `bd show --json` returns an array, and indexing it
-as an object fails with `Cannot index array with string "parent"` — which reads like a bead with no
-parent rather than like a broken command, and would disable this whole rule silently.
-
-*(This skill used to dig the parent out of a `parent-child` edge in `.dependencies` and told you
-there was no `parent` field to read. There is. The three warnings that went with that query were
-about telling `bd show`'s dependency shape from `bd list`'s, and they went with it.)*
-
-Otherwise read the parent's labels for one starting `planner:`:
-
-```bash
-bd show <parent> --json \
-  | jq -r '(if type=="array" then .[0] else . end).labels // []
-           | .[] | select(startswith("planner:"))'
-.claude/cerebro/scripts/roster --role planner     # who could legitimately own one
-```
-
-- **It names another planner who is on that roster** — skip this candidate. Say once which family
-  you skipped and whose it is, then move to the next candidate. **Do not wait for it**: a family is
-  owned for as long as it takes to plan, which is longer than your pass. The one exception is a P0,
-  which is planned wherever it lives — see *P0 pre-empts the buffer*.
-- **It names you, is absent, or names somebody no longer on the roster** — take the candidate, and
-  set `planner:<your-name>` on the parent in the same breath as your own hold, replacing a stale one.
-
-```bash
-bd update <parent> --remove-label <the stale planner: label, if there is one> \
-                   --add-label planner:<your-name>
-bd update <id> --add-label planning:<your-name>
-bd dolt push
-# then read it back: two planners can claim an unowned family at the same moment
-bd dolt pull
-bd show <parent> --json \
-  | jq -r '(if type=="array" then .[0] else . end).labels // []
-           | .[] | select(startswith("planner:"))'
-```
-
-**If that read-back shows two names, the one listed first by `scripts/roster --role planner` keeps
-the family** and the other removes its own label and drops the candidate. `--add-label` appends
-rather than replaces, so two planners taking an unowned parent in the same moment both succeed and
-the parent ends up owned by nobody in particular; roster order settles it without negotiation,
-because both sessions read the same file and neither has to wait for the other. Say which way it went
-in one line.
-
-**Drop the `planner:` label when the family no longer needs one.** Ownership exists to keep one
-design in one head while it is being written, so it has done its job once every child is `planned`:
-take it off as you finish the last child, in the same `bd update` that swaps that child's own hold
-for `planned`. Left on for ever it outlives its reason, and a family reopened months later at P0 is
-locked to whichever session happened to plan it first.
-
-```bash
-bd update <parent> --remove-label planner:<your-name>    # every child now planned
-```
-
-A worked example, with two planners running and a family of three children:
-
-> The candidate list offers a child of an epic. `bd show` on the child gives the parent; the parent
-> carries `planner:Beast`, and `roster --role planner` prints `Xavier` and `Beast`. Beast is real and
-> on the roster, so **Xavier skips the whole family** — not just that child — says
-> *"skipping <the epic>'s children; Beast owns that family"*, and takes the next candidate down the
-> list. Beast plans all three children across however many passes it needs, and no interview is ever
-> put to the navigator twice.
->
-> Had the parent carried `planner:Jubilee`, and `roster --role planner` not listed Jubilee, Xavier
-> would take the child and overwrite the label with `planner:Xavier`. A name that has left the roster
-> cannot lock a family for ever.
-
-**The lookup goes up one level, and that is enough only because each split labels its own parent.**
-A grandchild finds its immediate parent, which a planner splitting that parent will have labelled. A
-family built before this rule existed has no `planner:` label anywhere, so the check finds nothing
-and the candidate is taken — the safe direction, and the same thing that happens for an unowned
-family. If you split a bead that is itself a child, label the new parent as *Too big for one
-increment* says, or the level below it is invisible to this check.
-
-**Ownership is not cleared when a planner is merely not running.** Sessions restart between beads,
-and churning ownership on every restart would hand a family to whoever happened to be up — which is
-the thing this rule exists to prevent. Only a name that has left the roster is ignorable.
-
-**This does nothing for two unrelated beads**, and that is understood rather than overlooked. Two
-planners can still collide on two beads with no parent between them; the named hold and the
-pre-write re-check below are what narrow that, and neither closes it. Families are where the cost is
-worst, so families are what is protected.
-
-### Check you still hold it before you write
-
-**Check that once more immediately before you write the design**, which is the last moment the check
-is still worth anything:
+**You never claim a bead**, and you never pick one: the fleet view made you its assignee before your
+session started, and that assignee is the whole of your hold. Check it once more immediately before
+you write the design, which is the last moment the check is still worth anything:
 
 ```bash
 bd dolt pull
-bd show <id> --json \
-  | jq -r '(if type=="array" then .[0] else . end).labels // [] | join(" ")'
+bd show <id> --json | jq -r '(if type=="array" then .[0] else . end).assignee // ""'
 ```
 
-**Do not write the design** if the bead no longer carries your hold — or if it carries somebody
-else's as well as yours. The second case is the one this change makes likely rather than rare: a
-label names its holder, so two holds can sit on one bead at once, and a session older than the named
-spelling adds the bare word without displacing anything. Two holds means two interviews, whoever
-started first. Writing anyway is what
-overwrites a plan somebody else has just spent an interview on. Say in one line that you lost the
-bead and what you had decided, so the navigator can see an interview was spent rather than a session
-going quiet, and take the next candidate.
-
-This is a **backstop, and it is worth being honest about what it saves.** By the time it fires the
-navigator has already been asked the same questions twice — it rescues the plan, never the
-interview. It is cheap, and it is the thing to reach for last, not the thing that stops collisions.
-
-### Reclaiming a hold nobody is holding
-
-**Every pass starts by checking whether any `planning` label has been abandoned.** A planning session
-that is killed, or a fleet view that quits mid-plan, leaves the label behind — and a bead carrying
-`planning` is excluded from every candidate query, so nothing ever considers it again. Three beads
-sat like that for a day before anybody noticed (ah-2p.3): the label is the one part of this role that
-strands work when a session dies, precisely because it is deliberately not a claim and so has no
-lease for Cerebro's sweep to reclaim.
-
-A label is **held** when a live planner names that bead in its own state file, and abandoned
-otherwise. A named hold says one more thing the bare word could not: a `planning:<name>` whose name
-is not on `scripts/roster --role planner` at all is abandoned outright, whatever any state file says
-— the session that set it belongs to a roster that no longer exists. That is the same evidence the buffer count uses, read the same way — liveness through
-`scripts/agent-alive` and never a bare `kill -0`, since pids are recycled and a dead planner that
-looks alive strands exactly the label this loop exists to free. `agent-alive` checks the pid's own
-`--name`, the rule `cerebro--session-alive-p` follows in elisp; the `jq` for the bead stays, because
-`agent-alive` answers liveness and nothing else.
-
-```bash
-# Beads carrying the label, and the bead each live planner says it is on.
-bd list --status open --json \
-  | jq -r '.[] | select((.labels // []) | any(. == "planning" or startswith("planning:"))) | .id' \
-  | sort > /tmp/labelled
-state="$(.claude/cerebro/scripts/consumer-root --shared)/.cerebro/state"   # the fleet's, not this worktree's
-for name in $(.claude/cerebro/scripts/roster --role planner); do
-  f="$state/$name.state.json"
-  [ -f "$f" ] || continue
-  .claude/cerebro/scripts/agent-alive "$name" || continue     # a dead session holds nothing
-  jq -r '.bead // empty' "$f"
-done | sort > /tmp/held
-comm -23 /tmp/labelled /tmp/held            # labelled, held by nobody: abandoned
-```
-
-For each abandoned one, take the label off and say which and why — one line, naming the bead, so the
-navigator sees work coming back rather than a queue that silently grew:
-
-```bash
-bd update <id> --remove-label <the exact label it carries>
-bd dolt push
-```
-
-Pass the label **exactly as the bead carries it** — `planning:Beast`, or the bare `planning` if that
-is what is there. `--remove-label` is an exact match, so the generic word takes nothing off a named
-hold and the bead stays stranded while you report it freed.
-
-**A just-split family is the one shape that fools this.** A planner mid-split names one child in its
-state file while its siblings carry the label they inherited, so a sibling reads as abandoned when it
-is not. The rule above — say what you are about to free before you free it — is what catches it, and
-*Too big for one increment* is what stops it arising. If you see a labelled bead whose parent another
-planner is holding, leave it alone and say so.
-
-Then it is an ordinary candidate again, for you or the other planner, at whatever priority it
-carries. **Do not plan it just because you freed it** — it goes back in the queue and is picked in
-priority order like anything else.
-
-This is safe to run with the other planner mid-plan, because of the write order above: a planner
-takes a bead by naming it in its state file *first* and labelling it second, so there is no moment
-where a live planner's candidate looks abandoned. What can still look abandoned is a bead held by a
-planner running outside this fleet, with no state file at all — say what you are about to free
-before you free it, and the navigator can stop you.
+**Do not write the design** unless that prints your own name. Anything else means the bead was given
+back or handed to somebody else while you worked, and writing anyway overwrites whatever they have
+done. Say in one line that you lost the bead and what you had decided, so the navigator can see an
+interview was spent rather than a session going quiet, and end the pass.
 
 ## What you decide, and what you must not
 
@@ -961,7 +643,7 @@ nothing takes the bead off you: it is your own judgement that does. When a quest
 shape** is one nobody present can answer, park the bead and move on:
 
 ```bash
-bd update <id> --add-label needs-ui-decision --add-label human --remove-label planning:<your-name> \
+bd update <id> --add-label needs-ui-decision --add-label human --assignee "" \
   --append-notes "<the question>" \
   --set-metadata paused_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 bd dolt push
@@ -973,23 +655,23 @@ bd dolt push
 parked without it reads as parked just now, for ever (cb-wfb).
 
 Both labels, because `bd human list` matches `human` and nothing else, so `needs-ui-decision` alone
-would sit in nobody's queue. `--remove-label planning:<your-name>`, because you are no longer planning it and a
-later session must be free to pick it up once the navigator has answered. And the push, or no other
+would sit in nobody's queue. `--assignee ""`, because you are no longer planning it and the bead
+must not stay assigned to a session that has ended; a later session is handed it once the navigator has answered. And the push, or no other
 machine learns it was parked.
 
 The appended note is what the orchestrator puts in front of the navigator when it walks the parked
 beads, quoted as it stands. So write it as you would have asked it: the question, and the options
 you would have offered.
 
-Then take the next bead. A parked one still counts against nothing — it is excluded from the buffer
-precisely because an implementer cannot pick it up — so parking one means the buffer is short by one
-and you keep going.
+Then end the pass. A parked one still counts against nothing — it is excluded from the buffer
+precisely because an implementer cannot pick it up — so parking one leaves the buffer short by one,
+and the fleet view hands the next bead to the next session.
 
 **A bead that reaches you carrying `needs-ui-decision` is yours to take the label off.** Parked by
 you or by another planner, or handed back by the orchestrator with `human` already removed because
 the navigator is here to be interviewed — either way the shape question is still open. Interview
 them, record the answer under *Agreed with the navigator*, and remove the label in the same
-`bd update` that swaps your `planning:` for `planned`. Nothing else clears it on this route: a bead
+`bd update` that adds `planned` and clears your assignee. Nothing else clears it on this route: a bead
 planned with it still on reads as waiting on a UI answer for the rest of its life.
 
 **Only the navigator's bucket is ever parked.** A detail is never parked for an absent navigator —
@@ -1007,37 +689,29 @@ is about work nobody has weighed yet, and a split epic has already been ranked b
 `bd create --parent <id> -p <the parent's priority>`, and if the parent is itself still P4 the
 children are P4 with it, and the whole family gets ranked in one question at Cerebro's next triage.
 
-**Take your hold off every child as you create them, and put a `planner:` label on the new parent.** `bd create --parent` inherits the parent's
-labels, and you are holding the parent — so each child arrives carrying a `planning` label nobody
-chose. That excludes it from every candidate query, including your own, and makes it look abandoned
-to the other planner, whose reclaim check names only the child you happen to be planning right now
-(seen twice in one session).
+**Splitting is the pass.** Wire the order with `bd dep add`, and write into each child's description
+which part of the family it is and the decisions you already reached while splitting — the planner
+who plans that child is a fresh session and has only the board. Then clear the assignee on every
+child and on the parent, retype the parent as an epic, push, and end the pass without planning a
+child:
 
 ```bash
-bd update <child> <child> ... --remove-label planning:<your-name>
-bd update <id> --add-label planner:<your-name>       # the new parent: this family is yours
+bd update <child> <child> ... --assignee ""
+bd update <id> --type epic --assignee ""
 bd dolt push
 ```
 
-In the same breath as the `bd dep add` edges, before you plan any of them. `bd update` takes several
-ids at once, so it is one call and cannot be half-done. The parent keeps *your hold* until you retype
-it as an epic and drop it with the rest. Its `planner:` label is a different thing and stays: it says
-who plans this family, and comes off only once every child is planned.
+The first line is defensive: `bd create` has an `--assignee` flag, and a child that inherited one
+would be hidden from every queue as work somebody is already doing. `bd update` takes several ids at
+once, so it is one call and cannot be half-done.
 
-The children then queue like anything else, by priority, and a later one may be planned before its
-sibling has been **built** — but never before that sibling has been **planned**, which the `bd dep`
-edges you just wired enforce for you. Same care as any blocked bead: read the sibling's plan, name it
-in *Context*, and describe the seam rather than a signature that does not exist yet.
+The children are then handed out one per pass, by priority, and a later one may be planned before its
+sibling has been **built** — but never before that sibling has been **planned**: the queue does not
+offer a bead whose blocker has no plan, and the `bd dep` edges you just wired are what it reads. Same
+care as any blocked bead: read the sibling's plan, name it in *Context*, and describe the seam rather
+than a signature that does not exist yet.
 
-Do not plan the whole family in one sitting just because you have the context loaded; the buffer
-decides how many get planned, and a child planned weeks before it is built is a plan written against
-a codebase nobody can predict.
-
-Then **retype the parent as an epic**:
-
-```bash
-bd update <id> --type epic
-```
+The parent is retyped as an epic in that same call for this reason:
 
 Parent links do not block anything, and a parent cannot be blocked by its own child — bd refuses
 that outright, since the block would cascade to the child and neither could ever close. So without
@@ -1250,31 +924,12 @@ whether Sonnet could finish without asking.
 
 ## Finishing one, and the session
 
-Add `planned`, remove your `planning:<your-name>` (and `needs-ui-decision`, if the bead carried
-one), `bd dolt push`, and say which bead you planned, what the navigator
-decided, and — if you rewrote it — what the title now says and why. A bead left carrying `planning`
-is one no later session will consider, so check that nothing behind you still has it:
+Add `planned`, clear your assignee (and remove `needs-ui-decision`, if the bead carried one) in
+one `bd update`, `bd dolt push`, and say which bead you planned, what the navigator decided, and — if
+you rewrote it — what the title now says and why. A bead left assigned to you after your session ends
+is one the fleet view has to give back for you.
 
-```bash
-bd list --status open --json \
-  | jq -r '.[] | select((.labels // []) | any(. == "planning" or startswith("planning:")))
-              | "\(.id)\t\(.title)\t\((.labels // []) | join(","))"'
-```
-
-**What this list shows is not all yours.** The other planner's current candidate is on it too, and
-taking a *held* label off is how two sessions end up planning one bead. Yours to clear are the one
-you just planned and any the state files show nobody holding — the test, and the reason it is safe,
-are in *Reclaiming a hold nobody is holding*. Anything held by a live planner is theirs, whatever
-it looks like from here — and so is **a child of a bead the other planner is holding**, which is
-mid-split work whatever the state files say, since a splitting planner names only one child at a
-time.
-
-Then end the pass. **One bead is a pass** — say what you planned, write `waiting`, and stop; if the
-buffer is still short the fleet view starts your next session within seconds of this one ending, and
-that session re-reads a board that has moved rather than working from what you remember of it. This
-is the one thing that changed when the planners lost their wake interval: a pass used to have to keep
-planning, because the alternative was ten minutes of an idle implementer, and it no longer is.
-
-The exception is an unplanned P0, which is planned in the same pass however many there are (see *P0
-pre-empts the buffer*) — the fleet is blocked behind each of them, and a fresh session per P0 is
-latency for no gain.
+Then end the pass. **One bead is a pass** — a P0 included — say what you planned, write `waiting`,
+and stop; if the buffer is still short or another P0 is waiting, the fleet view starts the next
+session within seconds of this one ending and hands it the next bead, and that session re-reads a
+board that has moved rather than working from what you remember of it.

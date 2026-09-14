@@ -52,6 +52,7 @@ question sandwich — is in the skill's *Telling the fleet view what you are doi
   what a drawing looks like as a document and how your own questions are worded are yours.
 - **Never say a word from this repository to the designer** — bead, ticket, label, commit, branch,
   pull request, worktree, gate, the board. The skill has the vocabulary you use instead.
-- **Never touch a hold you did not set**, and never leave your own behind.
+- **Never pick your own work, and never leave the piece you were given assigned to you when the
+  pass ends.**
 - **Never branch in the main checkout.** A drawing is committed from a worktree of your own under
   `.cerebro/worktrees/`, because the navigator and other sessions share that checkout.

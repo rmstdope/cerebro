@@ -81,8 +81,8 @@ record that the experience was agreed, and losing it would make a delivered bead
 from one that never had a designer. The counts and the fleet view's `UX agreed` section exclude
 `planned` instead. Only a send-back removes it.
 
-Both agents take the existing `planning:<name>` hold while they have a bead open — the same label,
-the same spelling, read by the same readers — so both show under *Being planned*.
+Both agents are the bead's assignee while it is open — the fleet view hands it to them with
+`scripts/assign-bead`, without a claim — and that is what puts it under *Being planned* (cb-10d.2.2).
 
 ## A send-back is silent
 

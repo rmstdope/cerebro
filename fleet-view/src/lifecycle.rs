@@ -499,13 +499,12 @@ pub const SWEEP_INTERVAL_SECONDS: i64 = 7200;
 ///
 /// Byte-identical to `cerebro--sweep-message` (`emacs/cerebro.el`), which is what Cerebro
 /// actually reads; two literal-pinning tests are what keep them so, exactly as
-/// `triage_message`'s pair does. It names the pass rather than any ids, because there are none,
-/// and "the two sweeps that are yours" is `agents/orchestrator.md`'s own phrase, so the agent
-/// finds the section it means.
-pub const SWEEP_MESSAGE: &str = "[cerebro] Two hours since your last sweep. Run the two sweeps \
-                                 that are yours - the claims, and the worktrees the pruner \
-                                 declined - and bring the navigator anything that needs a \
-                                 judgement.";
+/// `triage_message`'s pair does. The line names the pass rather than any ids, and "the work the
+/// view kept" is `agents/orchestrator.md`'s own heading, so the agent finds the section it means
+/// (cb-10d.4).
+pub const SWEEP_MESSAGE: &str = "[cerebro] Two hours since your last sweep. Look at the work the \
+                                 view kept rather than throw away, and bring the navigator \
+                                 anything that needs a judgement.";
 
 /// Type it, queue it, drop the clock, or start it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -818,8 +817,19 @@ pub enum ReleaseOutcome {
     Returned { text: String },
     /// `elsewhere` or `running`: nothing to say.
     Elsewhere,
-    /// Non-zero exit, a timeout, or a word this crate does not know.
+    /// `closed`: a gone implementer's delivered bead was closed (cb-10d.4). Nothing is said.
+    Closed,
+    /// `kept <reason>`: nothing was written, and the claim is Cerebro's to judge. Nothing is said.
+    Kept { reason: String },
+    /// `retry`: the git remote did not answer. Retried like a failure, never said on screen.
+    Retry,
+    /// Non-zero exit, a timeout, or a word this crate does not know. TEXT is `release_failure`.
     Failed { text: String },
+}
+
+/// The agreed red line for a take-back the board refused, exactly (cb-10d.4).
+pub fn release_failure(name: &str, bead: &str) -> String {
+    format!("Could not take {bead} back from {name}: the task list did not answer.")
 }
 
 /// One `bd show`, one `bd unclaim` and one `bd dolt push`, each bounded like `WRITE_TIMEOUT`.
@@ -829,8 +839,8 @@ const RELEASE_TIMEOUT: Duration = Duration::from_secs(45);
 /// hand-typed launch is still in its preflight for some seconds before the agent process exists.
 pub const HANDOVER_GRACE_SECONDS: i64 = 60;
 
-/// Run `<scripts_dir>/release-bead NAME BEAD` in the shared root on `RELEASE_TIMEOUT`, and read
-/// its one word.
+/// Run `<scripts_dir>/release-bead NAME BEAD` - or `--ended NAME BEAD` for `GiveBack::Ended`
+/// (cb-10d.4) - in the shared root on `RELEASE_TIMEOUT`, and read its one line.
 pub fn release_bead(
     paths: &ReaderPaths,
     commands: &dyn CommandRunner,
@@ -839,14 +849,22 @@ pub fn release_bead(
     cause: GiveBack,
 ) -> ReleaseOutcome {
     let program = paths.scripts_dir.join("release-bead");
-    let failed = || ReleaseOutcome::Failed {
-        text: format!("{bead} could not be given back from {name} \u{2014} release-bead failed"),
+    let failed = || ReleaseOutcome::Failed { text: release_failure(name, bead) };
+    let args: Vec<&str> = match cause {
+        GiveBack::Ended => vec!["--ended", name, bead],
+        _ => vec![name, bead],
     };
-    match commands.run(&program, &[name, bead], Some(&paths.shared_root), RELEASE_TIMEOUT) {
+    match commands.run(&program, &args, Some(&paths.shared_root), RELEASE_TIMEOUT) {
         Ok(stdout) => match String::from_utf8_lossy(&stdout).trim() {
             "released" | "free" => ReleaseOutcome::Returned { text: cause.notice(name, bead) },
             "elsewhere" | "running" => ReleaseOutcome::Elsewhere,
-            _ => failed(),
+            "closed" => ReleaseOutcome::Closed,
+            "retry" => ReleaseOutcome::Retry,
+            "kept" => ReleaseOutcome::Kept { reason: String::new() },
+            line => match line.split_once(' ') {
+                Some(("kept", reason)) => ReleaseOutcome::Kept { reason: reason.to_string() },
+                _ => failed(),
+            },
         },
         Err(_) => failed(),
     }
@@ -996,8 +1014,30 @@ pub enum TidyOutcome {
     Kept { reason: String },
     Gone,
     Running,
-    /// `retry`, a non-zero exit, a timeout or a line this crate does not know.
-    Failed { text: String },
+    /// `retry`: the git remote did not answer. Retried, recorded, never drawn (cb-10d.4).
+    Retry,
+    /// A non-zero exit, a timeout or a line this crate does not know. CAUSE is what the agreed
+    /// red line prints after its colon (`command_cause`).
+    Failed { cause: String },
+}
+
+/// The agreed red line for a tree removal that failed, exactly (cb-10d.4).
+pub fn tidy_failure(name: &str, bead: &str, cause: &str) -> String {
+    format!("Could not remove {name}'s copy for {bead}: {cause}")
+}
+
+/// What a command said went wrong, in the words the agreed tidy line prints after its colon:
+/// `exit status 2` | `killed by a signal` | `did not answer within 300s` | the spawn message.
+/// No second colon, so the line reads as one sentence. Pure over `ReadError`.
+pub fn command_cause(error: &crate::readers::ReadError) -> String {
+    use crate::readers::ReadError;
+    match error {
+        ReadError::Exit { status: Some(status), .. } => format!("exit status {status}"),
+        ReadError::Exit { status: None, .. } => "killed by a signal".to_string(),
+        ReadError::Timeout { seconds, .. } => format!("did not answer within {seconds}s"),
+        ReadError::Spawn { message, .. } | ReadError::Invalid { message, .. } => message.clone(),
+        ReadError::Sweep { cause, .. } => cause.clone(),
+    }
 }
 
 impl TidyOutcome {
@@ -1008,6 +1048,7 @@ impl TidyOutcome {
             Self::Kept { .. } => "kept",
             Self::Gone => "gone",
             Self::Running => "running",
+            Self::Retry => "retry",
             Self::Failed { .. } => "failed",
         }
     }
@@ -1024,21 +1065,19 @@ pub fn tidy_worktree(
     bead: &str,
 ) -> TidyOutcome {
     let program = paths.scripts_dir.join("release-bead");
-    let failed = || TidyOutcome::Failed {
-        text: format!("release-bead --worktree {name} {bead} failed"),
-    };
     match commands.run(&program, &["--worktree", name, bead], Some(&paths.shared_root), TIDY_TIMEOUT) {
         Ok(stdout) => match String::from_utf8_lossy(&stdout).trim() {
             "removed" => TidyOutcome::Removed,
             "gone" => TidyOutcome::Gone,
             "running" => TidyOutcome::Running,
+            "retry" => TidyOutcome::Retry,
             "kept" => TidyOutcome::Kept { reason: String::new() },
             line => match line.split_once(' ') {
                 Some(("kept", reason)) => TidyOutcome::Kept { reason: reason.to_string() },
-                _ => failed(),
+                _ => TidyOutcome::Failed { cause: format!("answered {line:?}") },
             },
         },
-        Err(_) => failed(),
+        Err(error) => TidyOutcome::Failed { cause: command_cause(&error) },
     }
 }
 
@@ -1063,6 +1102,35 @@ pub fn ended_holding<'a>(
         .iter()
         .find(|bead| bead.assignee.as_deref() == Some(name))
         .map(|bead| bead.id.as_str())
+}
+
+/// The claim an implementer that is no longer on it still holds, if any: the first bead in
+/// `buckets.claimed` whose `assignee` is NAME, unless -
+///   RELEASING (something of NAME's is already being given back),
+///   HANDOVER is that bead (cb-10d.1's never-started give-back owns it),
+///   (NAME, bead) is in KEPT (already judged and kept this run), or
+///   OWNER_ALIVE and OWNER_CURRENT is None or that bead (NAME is still on it).
+/// A name restarted on a different bead does NOT keep its old claim (cb-10d.4). Pure.
+pub fn ended_claim<'a>(
+    name: &str,
+    owner_alive: bool,
+    owner_current: Option<&str>,
+    handover: Option<&str>,
+    releasing: bool,
+    kept: &std::collections::BTreeSet<(String, String)>,
+    buckets: &'a crate::model::WorkBuckets,
+) -> Option<&'a str> {
+    if releasing {
+        return None;
+    }
+    buckets
+        .claimed
+        .iter()
+        .find(|bead| bead.assignee.as_deref() == Some(name))
+        .map(|bead| bead.id.as_str())
+        .filter(|id| handover != Some(*id))
+        .filter(|id| !kept.contains(&(name.to_string(), id.to_string())))
+        .filter(|id| !(owner_alive && owner_current.map_or(true, |current| current == *id)))
 }
 
 /// What the header says when a handover empties the armed set (cb-nc8).
@@ -1410,7 +1478,7 @@ mod tests {
             ("kept\n", Some(TidyOutcome::Kept { reason: String::new() })),
             ("gone\n", Some(TidyOutcome::Gone)),
             ("running\n", Some(TidyOutcome::Running)),
-            ("retry\n", None),
+            ("retry\n", Some(TidyOutcome::Retry)),
             ("nonsense\n", None),
         ] {
             let fake = FakeCommands::new(move |_| Ok(answer.as_bytes().to_vec()));
@@ -1495,7 +1563,7 @@ mod tests {
         assert_eq!(
             release_bead(&paths(Path::new("/c")), &fake, "Rogue", "cb-4xz", GiveBack::Stopped),
             ReleaseOutcome::Failed {
-                text: "cb-4xz could not be given back from Rogue \u{2014} release-bead failed".into()
+                text: "Could not take cb-4xz back from Rogue: the task list did not answer.".into()
             }
         );
         assert_eq!(GiveBack::DidNotStart.word(), "did-not-start");
@@ -1568,6 +1636,123 @@ mod tests {
             external_ref: None,
         };
         crate::model::partition_beads(vec![bead])
+    }
+
+    #[test]
+    fn release_bead_reads_the_ended_answers() {
+        let paths = paths(Path::new("/consumer"));
+        for (answer, expected) in [
+            ("closed\n", ReleaseOutcome::Closed),
+            ("kept its work is not on main\n", ReleaseOutcome::Kept { reason: "its work is not on main".into() }),
+            ("kept\n", ReleaseOutcome::Kept { reason: String::new() }),
+            ("released\n", ReleaseOutcome::Returned { text: String::new() }),
+            ("elsewhere\n", ReleaseOutcome::Elsewhere),
+            ("running\n", ReleaseOutcome::Elsewhere),
+            ("retry\n", ReleaseOutcome::Retry),
+            ("nonsense\n", ReleaseOutcome::Failed { text: release_failure("Rogue", "cb-x") }),
+        ] {
+            let fake = FakeCommands::new(move |_| Ok(answer.as_bytes().to_vec()));
+            assert_eq!(release_bead(&paths, &fake, "Rogue", "cb-x", GiveBack::Ended), expected, "{answer}");
+            assert_eq!(fake.calls()[0].args, ["--ended", "Rogue", "cb-x"]);
+        }
+        let failing = FakeCommands::failing(|| ReadError::Exit {
+            source: "release-bead".into(),
+            status: Some(1),
+            stderr: String::new(),
+        });
+        assert!(matches!(
+            release_bead(&paths, &failing, "Rogue", "cb-x", GiveBack::Ended),
+            ReleaseOutcome::Failed { .. }
+        ));
+        let fake = FakeCommands::new(|_| Ok(b"released\n".to_vec()));
+        release_bead(&paths, &fake, "Rogue", "cb-x", GiveBack::DidNotStart);
+        assert_eq!(fake.calls()[0].args, ["Rogue", "cb-x"]);
+    }
+
+    #[test]
+    fn the_release_and_tidy_failure_lines_are_exact() {
+        assert_eq!(
+            release_failure("Rogue", "cb-4xz"),
+            "Could not take cb-4xz back from Rogue: the task list did not answer."
+        );
+        assert_eq!(
+            tidy_failure("Rogue", "cb-4xz", "exit status 2"),
+            "Could not remove Rogue's copy for cb-4xz: exit status 2"
+        );
+    }
+
+    #[test]
+    fn a_command_cause_reads_without_a_second_colon() {
+        let exit = |status| ReadError::Exit { source: "release-bead".into(), status, stderr: "x".into() };
+        assert_eq!(command_cause(&exit(Some(2))), "exit status 2");
+        assert_eq!(command_cause(&exit(None)), "killed by a signal");
+        assert_eq!(
+            command_cause(&ReadError::Timeout { source: "release-bead".into(), seconds: 300 }),
+            "did not answer within 300s"
+        );
+        assert_eq!(
+            command_cause(&ReadError::Spawn {
+                source: "release-bead".into(),
+                message: "No such file or directory (os error 2)".into(),
+            }),
+            "No such file or directory (os error 2)"
+        );
+    }
+
+    #[test]
+    fn tidy_reads_retry_and_failure_apart() {
+        let paths = paths(Path::new("/consumer"));
+        let fake = FakeCommands::new(|_| Ok(b"retry\n".to_vec()));
+        assert_eq!(tidy_worktree(&paths, &fake, "Rogue", "cb-x"), TidyOutcome::Retry);
+        let fake = FakeCommands::new(|_| Ok(b"nonsense\n".to_vec()));
+        assert_eq!(
+            tidy_worktree(&paths, &fake, "Rogue", "cb-x"),
+            TidyOutcome::Failed { cause: "answered \"nonsense\"".into() }
+        );
+        let failing = FakeCommands::failing(|| ReadError::Exit {
+            source: "release-bead".into(),
+            status: Some(2),
+            stderr: String::new(),
+        });
+        assert_eq!(
+            tidy_worktree(&paths, &failing, "Rogue", "cb-x"),
+            TidyOutcome::Failed { cause: "exit status 2".into() }
+        );
+    }
+
+    fn claimed(beads: &[(&str, &str)]) -> crate::model::WorkBuckets {
+        let beads = beads
+            .iter()
+            .map(|(id, assignee)| crate::model::Bead {
+                id: (*id).into(),
+                title: (*id).into(),
+                status: "in_progress".into(),
+                issue_type: "task".into(),
+                labels: vec!["planned".into()],
+                priority: Some(2),
+                updated_at: None,
+                assignee: Some((*assignee).into()),
+                metadata: serde_json::Value::Null,
+                external_ref: None,
+            })
+            .collect();
+        crate::model::partition_beads(beads)
+    }
+
+    #[test]
+    fn a_gone_implementers_claim_is_found_once_its_owner_has_left_it() {
+        let buckets = claimed(&[("cb-x", "Rogue"), ("cb-z", "Storm")]);
+        assert_eq!(buckets.claimed.len(), 2, "the fixture is claimed");
+        let none = std::collections::BTreeSet::new();
+        assert_eq!(ended_claim("Rogue", false, None, None, false, &none, &buckets), Some("cb-x"));
+        assert_eq!(ended_claim("Rogue", true, None, None, false, &none, &buckets), None, "alive, no bead");
+        assert_eq!(ended_claim("Rogue", true, Some("cb-x"), None, false, &none, &buckets), None, "on it");
+        assert_eq!(ended_claim("Rogue", true, Some("cb-y"), None, false, &none, &buckets), Some("cb-x"));
+        assert_eq!(ended_claim("Rogue", false, None, Some("cb-x"), false, &none, &buckets), None, "handover");
+        assert_eq!(ended_claim("Rogue", false, None, None, true, &none, &buckets), None, "releasing");
+        let kept = std::collections::BTreeSet::from([("Rogue".to_string(), "cb-x".to_string())]);
+        assert_eq!(ended_claim("Rogue", false, None, None, false, &kept, &buckets), None, "kept");
+        assert_eq!(ended_claim("Cyclops", false, None, None, false, &none, &buckets), None, "holds nothing");
     }
 
     #[test]
@@ -2584,9 +2769,8 @@ mod tests {
     fn the_sweep_line_says_what_cerebro_reads() {
         assert_eq!(
             SWEEP_MESSAGE,
-            "[cerebro] Two hours since your last sweep. Run the two sweeps that are yours - the \
-             claims, and the worktrees the pruner declined - and bring the navigator anything \
-             that needs a judgement."
+            "[cerebro] Two hours since your last sweep. Look at the work the view kept rather than \
+             throw away, and bring the navigator anything that needs a judgement."
         );
     }
 

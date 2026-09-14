@@ -816,8 +816,12 @@ impl GiveBack {
 pub enum ReleaseOutcome {
     /// `released` or `free`: TEXT is `GiveBack::notice`.
     Returned { text: String },
-    /// `elsewhere` or `running`: nothing to say.
+    /// `elsewhere`: nothing to say.
     Elsewhere,
+    /// `running`: the script found the agent alive on the bead. Nothing to say, but asked again
+    /// only after `RELEASE_RETRY_SECONDS`, like a retry: the view's liveness test and the
+    /// script's can disagree, and without the backoff the view would ask on every tick.
+    Running,
     /// `closed`: a gone implementer's delivered bead was closed (cb-10d.4). Nothing is said.
     Closed,
     /// `kept <reason>`: nothing was written, and the claim is Cerebro's to judge. Nothing is said.
@@ -858,7 +862,8 @@ pub fn release_bead(
     match commands.run(&program, &args, Some(&paths.shared_root), RELEASE_TIMEOUT) {
         Ok(stdout) => match String::from_utf8_lossy(&stdout).trim() {
             "released" | "free" => ReleaseOutcome::Returned { text: cause.notice(name, bead) },
-            "elsewhere" | "running" => ReleaseOutcome::Elsewhere,
+            "elsewhere" => ReleaseOutcome::Elsewhere,
+            "running" => ReleaseOutcome::Running,
             "closed" => ReleaseOutcome::Closed,
             "retry" => ReleaseOutcome::Retry,
             "kept" => ReleaseOutcome::Kept { reason: String::new() },
@@ -1522,7 +1527,7 @@ mod tests {
                 text: "Rogue did not start; cb-x is back with the planned work.".into(),
             })),
             ("elsewhere\n", Some(ReleaseOutcome::Elsewhere)),
-            ("running\n", Some(ReleaseOutcome::Elsewhere)),
+            ("running\n", Some(ReleaseOutcome::Running)),
             ("nonsense\n", None),
         ] {
             let fake = FakeCommands::new(move |_| Ok(answer.as_bytes().to_vec()));
@@ -1648,7 +1653,7 @@ mod tests {
             ("kept\n", ReleaseOutcome::Kept { reason: String::new() }),
             ("released\n", ReleaseOutcome::Returned { text: String::new() }),
             ("elsewhere\n", ReleaseOutcome::Elsewhere),
-            ("running\n", ReleaseOutcome::Elsewhere),
+            ("running\n", ReleaseOutcome::Running),
             ("retry\n", ReleaseOutcome::Retry),
             ("nonsense\n", ReleaseOutcome::Failed { text: release_failure("Rogue", "cb-x") }),
         ] {

@@ -2433,6 +2433,8 @@ fn settle_release(app: &mut App, logger: &mut Logger, answer: &app::WriteAnswer,
     };
     match outcome {
         lifecycle::ReleaseOutcome::Failed { text } => release_refused(app, name, bead, text, now),
+        // Still on it by the script's test: nothing to record, but not asked again for a minute.
+        lifecycle::ReleaseOutcome::Running => app.note_release_failed(name, now),
         lifecycle::ReleaseOutcome::Retry => {
             app.note_release_failed(name, now);
             logger.error(
@@ -5783,6 +5785,34 @@ mod main_tests {
         app.notice = None;
         settle_release(&mut app, &mut logger, &refused, t0 + chrono::Duration::seconds(60));
         assert_eq!(app.notice, None, "not again inside ten minutes");
+    }
+
+    /// Review finding 1: the script's `running` holds the name back for a minute, so a view whose
+    /// liveness test disagrees with the script's does not ask on every tick.
+    #[test]
+    fn a_running_answer_is_not_asked_again_for_a_minute() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "exit 0");
+        let mut logger = logging(dir.path());
+        let now = Utc::now();
+        let roster = implementer_roster(&["Rogue"]);
+        let mut app = standby_app(
+            supervising(),
+            vec![implementer_row("Rogue", RowState::Standby)],
+            Some(claimed_by_rogue(&["cb-x"])),
+            now,
+        );
+        give_back(&mut app, &SessionHost::default(), &mut logger, &paths, &roster, now);
+        let request = app.take_outbox().pop().expect("a take-back");
+        app.begin_write(&request, std::path::Path::new("bd"));
+        let answer = release_answer_for(lifecycle::ReleaseOutcome::Running);
+        settle_release(&mut app, &mut logger, &answer, now);
+        app.finish_write(answer);
+        give_back(&mut app, &SessionHost::default(), &mut logger, &paths, &roster, now + chrono::Duration::seconds(5));
+        assert!(app.take_outbox().is_empty(), "not on the next tick");
+        assert_eq!(app.notice, None, "and nothing is said");
+        give_back(&mut app, &SessionHost::default(), &mut logger, &paths, &roster, now + chrono::Duration::seconds(61));
+        assert_eq!(app.take_outbox().len(), 1, "asked again after a minute");
     }
 
     #[test]

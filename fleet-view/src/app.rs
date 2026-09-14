@@ -3763,6 +3763,7 @@ impl App {
                     | crate::lifecycle::ReleaseOutcome::Closed
                     | crate::lifecycle::ReleaseOutcome::Kept { .. }
                     | crate::lifecycle::ReleaseOutcome::Retry
+                    | crate::lifecycle::ReleaseOutcome::Running
                     | crate::lifecycle::ReleaseOutcome::Failed { .. },
                 ..
             }
@@ -3831,6 +3832,7 @@ impl App {
                     // The entry stays, so its bead is still spoken for; the loop stamps
                     // `failed_at`.
                     crate::lifecycle::ReleaseOutcome::Retry
+                    | crate::lifecycle::ReleaseOutcome::Running
                     | crate::lifecycle::ReleaseOutcome::Failed { .. } => AppAction::None,
                 };
                 self.prune_given();
@@ -4195,7 +4197,8 @@ impl WriteAnswer {
                 crate::lifecycle::ReleaseOutcome::Elsewhere
                 | crate::lifecycle::ReleaseOutcome::Closed
                 | crate::lifecycle::ReleaseOutcome::Kept { .. }
-                | crate::lifecycle::ReleaseOutcome::Retry => "",
+                | crate::lifecycle::ReleaseOutcome::Retry
+                | crate::lifecycle::ReleaseOutcome::Running => "",
             },
             WriteAnswer::Give { outcome, .. } => match outcome {
                 crate::lifecycle::GiveOutcome::Ran { text }

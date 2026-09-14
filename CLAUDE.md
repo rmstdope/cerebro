@@ -1,43 +1,36 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for developing cerebro. How the fleet *behaves* is written in `agents/` and `skills/`;
+how a person *operates* it is `docs/agent-workflow.md`. Neither is repeated here.
 
 ## What this repository is
 
-Cerebro is an **AI harness**, not an application: agent definitions, skills, docs, a sync script, and
-a terminal fleet viewer. It is consumed by other repositories as a git submodule at `.claude/cerebro`,
-whose `scripts/sync-symlinks.sh` symlinks the skills and agents into the consumer's discovery paths,
-and `scripts/cerebro-tui` opens the fleet view for everyone working in that repository.
+Cerebro is an **AI harness**, not an application: agent definitions (`agents/`), skills
+(`skills/`), the bash scripts the agents and the fleet view call (`scripts/`), a terminal fleet
+viewer (`fleet-view/`, the `cerebro-tui` binary), docs and templates. A consumer repository mounts
+it as a git submodule at `.claude/cerebro`; `scripts/sync-symlinks.sh` links the skills, agents
+and hooks into the consumer's discovery paths (`.claude/` and `.github/`).
 
-Almost nothing here executes in this repository. The agents and skills describe a workflow that runs
-in a *consumer* repo, and the launchers in `scripts/` only make sense from a consumer root, where
-this repo is mounted at `.claude/cerebro`. So a change here is generally not testable by running it
-in this tree.
+Almost nothing here executes in this repository. The scripts only make sense from a consumer root,
+so a change to one is tested by building a throwaway consumer (`tests/lib/consumer.sh`), never by
+running it in this tree. `fleet-view/` is the exception: `cerebro-tui` runs here.
 
-The one exception, since the `cb-vyp` family, is `fleet-view/` — a Rust workspace whose
-`cerebro-tui` binary **does** run here, and is the one thing in this repository a person can start
-and look at. It draws the fleet and the bead panel, and it is the one view that operates a
-fleet.
-
-Every project-specific fact is read from `<consumer>/.cerebro/project.conf`
-(`scripts/project-conf`), and the fleet's names from `<consumer>/.cerebro/roster.conf`
-(`scripts/roster`). Nothing in this repository names a consumer.
+Every project-specific fact is read from the consumer's `.cerebro/project.conf` and its fleet from
+`.cerebro/roster.conf`. Nothing in this repository names a consumer.
 
 ## This repository is also a consumer
 
-Since cb-i3l.1 cerebro is mounted in itself, so the fleet works on its own source and this file has
-two readers. Everything above is the harness a contributor reads; everything under the four headings
-below is what an agent working here reads, and it is the same declaration
-`templates/consumer-CLAUDE.md` asks of every other project. The template's own "The project"
-section is the one thing not repeated: **What this repository is**, above, already is it.
+Cerebro is mounted in itself: `.claude/cerebro` is a committed symlink back to the checkout, so the
+fleet works on its own source and runs the *working tree* rather than a pinned sha. The four
+sections below are the same declaration `templates/consumer-CLAUDE.md` asks of every consumer;
+its "The project" section is *What this repository is*, above.
 
 ## Four Eye Principle
 
-*Read by `skills/implement-bead` and `skills/plan-bead` by this exact heading. In a project that
-uses cerebro this lives in the consumer's root CLAUDE.md; here that file is this one. An
-implementer's standing approval to merge without asking comes from this section and from nowhere
-else — delete it and every implementer in this repository builds, opens its pull request, and then
-stops.*
+*Read by `skills/implement-bead` and `skills/plan-bead` by this exact heading; it is the
+implementer's whole standing approval to merge without asking. The block between the markers is
+synced from `templates/four-eye-principle.md` by `scripts/four-eye-sync` — edit the template, not
+this copy.*
 
 <!-- four-eye:begin -->
 
@@ -89,1111 +82,217 @@ merge.
 
 ## Work tracking
 
-Planned work is tracked in **beads** (`bd`), with the prefix `cb`; `skills/beads-workflow` carries
-the commands. GitHub issues are the external inbox only. Every bead is created unranked at P4 and
-ranked later with the navigator; a bead is planned in one session and implemented in another.
+Work is tracked in **beads** (`bd`), prefix `cb`; `skills/beads-workflow` carries the commands.
+GitHub issues are the external inbox only. Every bead is created unranked at P4 and ranked with
+the navigator; it is planned in one session and implemented in another.
 
-The board syncs through the Dolt remote rather than through git — a clone gets the code, `bd`
-gets the work. That is deliberate, not an omission (cb-4yo): no `.beads/*.jsonl` snapshot is
-tracked, and the root `.gitignore` keeps a stray `bd export` out of every commit. Reading the
-board means asking `bd`, never browsing git.
-
-**A fresh clone runs `bd bootstrap`**, which reads `sync.remote` from `.beads/config.yaml` and
-clones the board from `refs/dolt/data` on the git remote; after that it is `bd dolt pull` and
-`bd dolt push`. There is no `bd sync` — this file said there was until somebody installed bd and
-found out, which cost an afternoon of "the board is empty". `bd bootstrap` refuses if a database
-already exists, so a `bd list` run before the bootstrap leaves an empty `cb` that has to be moved
-aside first.
+The board syncs through the Dolt remote, not git: no `.beads/*.jsonl` is tracked. A fresh clone
+runs `bd bootstrap` (which refuses if a database already exists, so do not run `bd list` first);
+after that it is `bd dolt pull` and `bd dolt push`. There is no `bd sync`.
 
 ## Development practices
 
 - Work is delivered in small increments that stand on their own.
-- Code is written test-first. That is not a style preference here: the suites are the only thing
-  that can tell a change to this harness from a change that quietly breaks every consumer, since
-  almost nothing in this repository executes in this repository. `fleet-view/` is held to the same
-  rule by `cargo test`, and more strictly: it is the one part that *does* run here, so a test that
-  fails is a screen a navigator would have seen.
-- **Tests assert behaviour, and nothing else is checked mechanically.** A test here exercises the
-  code this repository ships — the bash in `scripts/` and the Rust in `fleet-view/`. Prose and
-  configuration are not code: an agent file, a skill file, a declaration file gets no test, because
-  a suite that greps prose fails on the day somebody changes their mind rather than on the day
-  something breaks (cb-194 — one line added to the roster turned the gate red in three places).
-  These decisions were guarded by an advisory `scripts/lint` for a while, and that is gone too: over
-  its whole life it fired on no tree and in no CI run, while a quarter of the commits in that period
-  edited it. **So the invariants in this file are kept by reading it, not by a grep.** Anything
-  that matters enough to guard mechanically is worth restating as behaviour, in a suite, over code —
-  and a class of defect earns a check the *second* time it happens, not the first.
-- A change to a role's agent file or skill changes how the fleet behaves in every consumer. Say so
-  in the bead, and keep the invariants above consistent with each other.
+- Code is written test-first, and the work continues without pausing for approval between
+  phases until it is done and ready to commit. The suites are the only thing that tells a change
+  to this harness from one that quietly breaks every consumer.
+- **Tests assert behaviour of code** — the bash in `scripts/` and the Rust in `fleet-view/`. Prose
+  and configuration get no test: a suite that greps an agent file or a declaration fails on the day
+  somebody changes their mind, not on the day something breaks. The invariants in this file are
+  kept by reading it. A class of defect earns a mechanical check the *second* time it happens.
+- A change under `agents/` or `skills/` changes how the fleet behaves in every consumer. Say so
+  in the bead, and keep the invariants below consistent with each other.
 - Prefer the simple design; say so when you decline a more general one.
 
 ## Where the project declares its facts
 
-Not prose — files, each tracked so that every clone has it.
+Tracked files under `.cerebro/`, one per fact, so every clone has them:
 
-- `.cerebro/project.conf` — this project's name, default branch, audience, which paths are
-  the application,   which tool each session runs on (`agents.conf`, answered by
-  `scripts/agent-cli` — `claude` or, since cb-d59.6, `copilot`, both runnable rather than one
-  planned; absent means `claude`), and the gate. Both gates name `tests/gate`, which runs exactly what
-  `.github/workflows/ci.yml` runs (cb-i3l.2). Since the `cb-vyp` family it also declares the Rust
-  build — `rust_paths` (what `scripts/build-workload --classify` calls a Cargo workload),
-  `install`, `prewarm`, `disk_floor_gb`, `reclaim_dirs` and `cargo_reclaim_packages` — and one
-  launch target, `launch_tui` → `.claude/cerebro/scripts/cerebro-tui`, which is the one thing here
-  a navigator can start and look at. `verification none` is gone with it: a merged bead that
-  touched the fleet view is verified by running it.
-- `.cerebro/roster.conf` — which agents this project runs, and in what order. Absent means the
-  built-in fleet. An optional third word, one of two: `autostart` makes the fleet view start that
-  agent as it comes up (cb-0r6), `standby` **arms** it without starting it (cb-98u) — its row reads
-  `standby` and its role's own trigger is what starts it. `standby` on an implementer row arms it
-  the same way (cb-1or.2); its trigger is a planned, unclaimed bead.
-- `.cerebro/traps.md` — the traps this project has already paid for, read by planners and
-  implementers before they start. Absent means it has paid for none yet, which is where every
-  project starts.
+- `project.conf` — name, default branch, audience, application paths, gate, Rust build settings,
+  launch target. Read by `scripts/project-conf`.
+- `roster.conf` — which agents run here, in what order, and `autostart`/`standby` per row. Read by
+  `scripts/roster`; absent means the built-in fleet.
+- `traps.md` — traps this project has paid for, read by planners and implementers.
+- `agents.conf` — which model, effort and CLI each session runs on. Committed here so every clone
+  runs the same models; `agents.conf.example` is the documented copy.
 
 ## Commands
 
-The whole gate, which is what an implementer runs before it opens a pull request and what CI runs
-on it (cb-i3l.2) — every `tests/*.sh` and the locked Cargo tests:
+The whole gate — every `tests/*.sh` plus the locked Cargo tests — is what an implementer runs
+before opening a pull request and exactly what CI runs:
 
 ```bash
 bash tests/gate
-```
-
-Its two parts, for when only one of them is the question. The scripts, in plain bash (no framework; each file exits non-zero at its first failed
-assertion), run from this repository's root:
-
-```bash
-bash scripts/suite-runner tests             # all of them, each named as it starts
+bash scripts/suite-runner tests             # the bash half; suites run in parallel
 bash tests/launchers.sh                     # one suite
+cargo test --workspace --all-targets --locked
+cargo test --workspace --locked work_reader # one test, or a substring
 ```
 
-And the Rust workspace (`fleet-view/`, the `cerebro-tui` binary), from this repository's root:
+`--locked` always, so the gate never re-resolves a dependency; `--all-targets` so a test-only
+compile error cannot hide behind a green build. Run `scripts/disk-preflight --workload rust`
+before a Rust change: a full disk shows up as a linker fault.
 
-```bash
-cargo test --workspace --all-targets --locked          # model, readers, app, renderer, binary
-cargo test --workspace --locked work_reader            # one test, or a substring of one
-```
+Writing a suite:
 
-`--locked` everywhere, including in `scripts/cerebro-tui`: a gate that re-resolved a dependency
-would run something no gate has ever seen. `--all-targets` because a test-only compile error
-otherwise hides behind a green `cargo build`. `/target` is gitignored, and a Rust change needs
-`scripts/disk-preflight --workload rust` before it starts — several worktrees each keep a build
-tree, and running out of disk announces itself as a linker fault rather than as a full disk.
+- Plain bash, no framework. Source `tests/lib/consumer.sh` for `fail`/`pass`, `git_q`,
+  `$work_dir` and the throwaway consumers (`consumer_new`, `consumer_with_submodule`).
+- Build every fixture under `$work_dir`. Suites run in parallel, so one that reaches outside its
+  own directory breaks the whole gate. A write into the live `.cerebro/state` logs is refused and
+  turns the run red (`CEREBRO_PROTECTED_STATE_DIR`, set by `suite-runner` alone).
+- The library installs the one EXIT trap; add to it with `cleanup_add`, never a `trap` of your own.
+- End with `suite_passed`. A suite that dies under `set -e` can reach the trap with `$?` at 0, so
+  the trap refuses green unless that line ran.
+- A rule whose grep or awk fails is an advisory naming the step, never an `ok` line.
+- `scripts/ci-needed` skips CI for pull requests touching only `docs/`, `README.md`, `LICENSE` and
+  `agents.conf.example`. Nothing checks that list against what suites read, so a suite that starts
+  reading one of those paths must edit `scripts/ci-needed` in the same pull request.
+- CI runs on ubuntu-latest. A suite or Rust test that only passes on macOS, or only against the
+  developer's own `bd`, is a red PR.
 
-`scripts/suite-runner` names each suite before it runs it and replays a failing suite's output, so a
-stalled suite is identifiable by name; both `tests/gate` and CI call it, which is what keeps the one
-loop from being written twice (cb-8cn). Suites run **in parallel, one per processor** by default
-(`--jobs N` to change it, `--jobs 1` for one at a time — the same output either way); on the
-navigator's ten-core machine that took the bash half of the gate from 185s to 83s (cb-x05). Results
-therefore arrive in completion order, and each failing suite's output is replayed after every suite
-has ended rather than inline. What makes it safe is that every suite builds its fixtures under its
-own `$work_dir` — a new suite that reaches outside it breaks the whole gate, not just itself.
+Each run keeps every suite's output under `.cerebro/state/suite-logs/<run>/<suite>.log`, last
+three runs; a red run names its directory on stderr.
 
-Every run also keeps each suite's full output — passing and failing alike — under
-`.cerebro/state/suite-logs/<YYYYmmdd>-<HHMMSS>-<pid>/<suite>.log`, the last three runs, pruned at
-the start of a run; `--log-dir DIR` moves the root, and a red run names its directory on stderr
-(cb-kf8) — written relative to the caller's working directory, reported as an absolute path
-(cb-wxr), since the line outlives the directory it was printed from. A run never prunes its own
-directory, whatever else is in the root (cb-1h8): the names sort lexically and two runs inside one
-second are ordered by pid as a string, so a run that sorted first used to delete the directory it
-was writing into and fail every suite with a missing log. The path is already
-gitignored, here and in every consumer. Before it, the only record of
-a red gate was terminal scrollback, and the re-run an implementer does first is what destroyed it.
+## The agent fleet
 
-Every suite sources `tests/lib/consumer.sh` for `fail`/`pass`, `git_q`, its work directory and the
-two throwaway-consumer shapes (`consumer_new`, `consumer_with_submodule`); `tests/lib/` is a
-directory precisely so the gate's `tests/*.sh` glob never runs it as a suite (cb-dul). A suite keeps
-its own assertions and any fixture that is not a consumer — a worktree fabricator, a corpus
-directory. The library installs the one EXIT trap, so a suite adds to it with
-`cleanup_add` rather than writing a `trap` that would silently replace it, and does its own killing
-in a `suite_cleanup` the trap calls first. `tests/consumer-lib.sh` is the library's own suite.
+One agent definition per role in `agents/`, and a skill in `skills/` where the role loads one.
+`docs/agent-workflow.md` is the operating guide and documents the observed behaviour the roles
+were tuned against — read it before changing any role. Which names run which roles here is
+`.cerebro/roster.conf`.
 
-Every suite's last line is `suite_passed`, and that is not decoration: a suite that dies partway
-through under `set -euo pipefail` can reach the EXIT trap with `$?` already 0 and be reported
-green, so the trap refuses to exit 0 unless the suite reached its end or failed an assertion. A
-new suite that forgets the line is red, which is the safe direction.
+| role            | agent file              | skill                | job                                     |
+|-----------------|-------------------------|----------------------|-----------------------------------------|
+| `ux`            | `agents/ux.md`          | `agree-experience`   | agrees what a person will see           |
+| `build-design`  | `agents/build-design.md`| `design-the-build`   | plans the build of an agreed experience |
+| `implementer`   | `agents/implementer.md` | `implement-bead`     | builds one planned bead, reviews, merges|
+| `orchestrator`  | `agents/orchestrator.md`| `write-bead`         | ranks, files beads, stops implementers  |
+| `verifier`      | `agents/verifier.md`    | —                    | verifies merged beads with the navigator|
+| `reviewer`      | `agents/reviewer.md`    | —                    | reviews external PRs; review sub-agent  |
+| `user-feedback` | `agents/user-feedback.md`| —                   | owns GitHub issues                      |
+| `architect`     | `agents/architect.md`   | —                    | files refactoring beads, never fixes    |
 
-A rule whose grep or awk fails is itself an advisory naming the rule and the step, never an `ok`
-line — `|| true` could not tell a no-match from a grep that never ran (cb-u5e).
-
-CI (`.github/workflows/ci.yml`) runs all of it: every `tests/*.sh` on ubuntu-latest, and
-`cargo test --workspace --all-targets --locked`. A suite that only passes on
-macOS is a red PR, and so is a Rust test that only passes on the developer's own `bd`.
-
-A pull request that touches only `docs/` (except `docs/agent-workflow.md`, which a suite reads),
-`README.md`, `LICENSE` or `agents.conf.example` runs none of that: `scripts/ci-needed` is the one
-place that list lives, with the reason beside each entry, and the required checks report
-*skipped*, which GitHub counts as green (cb-ypx). The predicate answers on stdout, in
-`$GITHUB_OUTPUT`'s own `run=true|false` shape, so the workflow appends it unread and a crashed
-predicate is a red step rather than a skipped one. Anything else runs the whole matrix, and a push
-to `main` always does. **Nothing checks that list against what the suites actually open** — a new
-suite that starts reading a path on it makes a green pull request that should have been red, so a
-suite that reads `docs/`, `README.md`, `LICENSE` or `agents.conf.example` must edit
-`scripts/ci-needed` in the same pull request. Every job is literal, not a matrix, because a skipped
-matrix job never expands into the check names branch protection requires.
-
-What the fleet's own logs say is stuck — starts per name, passes that held no bead, what is
-running now and what has been disarmed, over `decisions*.jsonl` and `transitions*.jsonl`. It reads
-and reports; it writes, starts and stops nothing, and exits 0 always:
-
-```bash
-scripts/fleet-health                       # the four-section report, last 24h
-scripts/fleet-health --since 7d --json     # the same facts as one object, for cerebro-tui
-```
-
-Sync symlinks into a consumer repo (run from that repo, not this one):
-
-```bash
-.claude/cerebro/scripts/sync-symlinks.sh
-```
-
-## The agent fleet these files describe
-
-Seven roles, each an agent definition in `agents/`; most are backed by a skill in `skills/`. A role is
-not a session count — **`planner` is held by two agents, Xavier and Beast** (`scripts/roster --role
-planner`), which is the one place a name and a role stop being interchangeable:
-
-- **Xavier** and **Beast** (`planner`, Opus/high) — load `plan-bead`. Turn unplanned beads into
-  plans a Sonnet agent could build unattended. Decide architecture themselves, and the detail inside an interaction the human ("the navigator") has
-  already agreed — recorded in the plan's *Decided by me* — while the shape of every new interaction
-  goes to them. Keep a buffer of planned beads ahead of the
-  builders, sized from the roster's implementers minus any told to finish (`planner_buffer_multiple`
-  each — absent means one each — and never fewer than two) and refilled one bead per pass, with no wake interval to wait out — the rule itself lives in `scripts/planner-buffer`,
-  which the skill calls and `cerebro-test/the-trigger-counts-what-planner-buffer-counts` holds the
-  fleet view to. The fleet view hands each its bead (`scripts/assign-bead`, cb-10d.2.2), so
-  nothing divides the work but that. The buffer counts `planned` beads, never assigned ones
-  (ah-2p.1).
-- **Cerebro** (`orchestrator`, Opus/medium) — stops implementers on request by writing their stop
-  flag; it cannot start one, since that means starting a session. Ranks the P4 backlog with the
-  navigator (the triage pass that was the first planner's until cb-5lx.1). **Starts nothing on its
-  own** — and is itself started by the fleet view for one thing, an unranked bead (cb-5lx.2), and
-  typed a line by it for two: that same unranked bead, and, since cb-7nx, a two-hourly reminder to
-  run the two sweeps that need a judgement no decision table makes. The
-  worktree, claims and epics sweeps it used to run on a timer now run from the fleet view itself
-  (`ah-4ao`; see `docs/cerebro-jobs.md` for the decision and `docs/cerebro-sweeps.md` for what each
-  sweep looks for and the guards it runs under); what is left for a Cerebro session is the claims
-  sweep, the beads parked on the navigator, and the worktrees the watcher declined, each of which
-  needs a judgement no table makes,
-  filing the beads the navigator asks for, by interview, through `write-bead`,
-  handing a release
-  request to the project's own release skill, diagnosing a stuck implementer, and anything needing a forced reassignment.
-- **implementer** (Sonnet) — loads `implement-bead`. One bead per session: given its bead by the fleet view, build test-first in
-  the git worktree the fleet view made for it, PR, spawn a `reviewer` sub-agent and answer what it finds, merge, close, end
-  its pass with `waiting`.
-  Interactive, so it cannot end itself — the fleet view ends it and starts a fresh session when
-  a planned bead exists, which is what keeps a session's context one bead deep.
-- **Moira** (`user-feedback`, Sonnet) — owns GitHub issues: acknowledges, triages into beads, keeps
-  the issue's status comments in step with its bead.
-- **Psylocke** (`verifier`, Sonnet) — loads no separate skill; her whole job lives in
-  `agents/verifier.md`. Walks beads merged since her last pass, judges which touched the application,
-  prepares each verification before ever asking for the navigator's time, then briefs, launches and
-  records their verdict. A failed verdict reopens the bead at P0 and sends it back to the fleet.
-- **Cypher** (`reviewer`, Opus/high) — loads no separate skill; its whole job lives in
-  `agents/reviewer.md`. Reviews **pull requests from outside the fleet** — anyone may open one — on
-  five questions: does it do what it says, does it fit the architecture, are the regression tests
-  enough, what does it cost the application and CI, and everything else a reviewer owes a project
-  (dependencies, secrets, error handling, docs, scope). Interactive by design: **every piece of user
-  experience the PR touches is looked at by the navigator, in the running application, before Cypher
-  recommends anything.** It comments and recommends; merging, approving and closing stay the
-  navigator's. It reviews a PR again when the head sha changes, and never touches the fleet's own
-  PRs **as a session** — those are reviewed at merge time by a sub-agent loading `agents/reviewer.md`
-  in its second mode, which is the one part of Cypher every fleet change now passes through.
-- **Forge** (`architect`, Opus/xhigh) — loads no separate skill either; its whole job lives
-  in `agents/architect.md`. One sweep per session: reads what merged since its watermark (daily) or
-  the whole codebase (weekly), and files a `Refactoring:` bead at P4 for each smell that names a cost
-  already being paid, never a fix. Watermark kept in bd memory, and it is the only gate: woken hourly
-  by the fleet view, every session reads every commit and retrospective added since it, and an empty
-  range costs a `git log` and a line. Ends its own turn when the sweep is
-  reported — the one role here that does not loop, because it holds no claim, lease or PR to strand.
-
-`skills/project-definition` is the one skill no role loads. The navigator invokes it by hand as
-`/project-definition`, once, in a consumer that holds nothing but a README and the harness: it
-interviews them about the software as a whole, writes the declarations, the root `CLAUDE.md` and the
-board with its Dolt remote, and files the opening epics and their obvious children. Everything it
-files is unplanned, because a planner plans against code that by then exists.
-
-`skills/beads-workflow/SKILL.md` is the shared substrate all of them read: work is tracked in **beads**
-(`bd`), not GitHub issues; GitHub issues are the external inbox only. The planner/builder handover is
-a single `planned` label; anything needing the human gets a `human` label and surfaces in `bd human list`.
-
-`docs/agent-workflow.md` is the human's operating guide — read it before changing any role, because
-it documents the observed behaviour and costs the roles were tuned against.
+`skills/beads-workflow` is the substrate every role reads. `skills/project-definition` is loaded
+by no role; the navigator runs it by hand once in a blank consumer.
 
 ### Invariants the agent files encode
 
-These are load-bearing; changing them changes how the fleet behaves in every consumer repo.
+Load-bearing across files: a change to one must keep the others consistent with it.
 
-- **Wait by blocking inside a tool call, never by ending a turn** — with one measured exception,
-  below. `Monitor` and background `Bash` promise a re-invocation that nothing delivers; this
-  stranded a claimed bead, an open PR and unanswered review comments. Implementers are interactive
-  now, so an ended turn no longer kills the process — it just sits there until a human types
-  something, which is not better. The exception is **a `reviewer` sub-agent the session spawned
-  itself**, whose result *is* delivered and has been every time in this repository, including to a
-  parent whose turn had ended: that one is waited for by being told, never by a fixed `sleep`, which
-  cost cb-sxf ten of its twenty-two minutes. Ending a *turn* there is not ending a *pass* — the
-  state file stays `working --phase review`, and `waiting` with a review outstanding is still the
-  stranding this bullet is about.
-- **The state file is the contract, for every agent.** `.cerebro/state/<name>.state.json`
-  carries `idle`/`working`/`asking`/`waiting`; every agent in the fleet writes it, and
-  the fleet view acts on it. Since ah-u3i it also carries `phase` (an implementer's `build`/`gate`/`review`/`ci`/`rebase`/
-  `merge`, or a role word for the interactive agents since ah-2n3.2, or null) and `phase_since`; `standby` is
-  the one state no file ever carries, being derived from what this view armed and has not seen die
-  abnormally since (cb-5yr, cb-eat) — a refused launch is `dead` with its last line on the row,
-  never `standby`, and since cb-ccl that line comes from the launcher's own `errors.jsonl` entry
-  (`scripts/launch-refused`) when vterm has not drawn it yet; a name that died silently
-  `cerebro-give-up-after` times running is `dead` too, and only `s` brings it back —
-  supervision (`cerebro--supervise-action`) reads `state` alone, never `phase`, so a typo in the
-  phase vocabulary can only mislabel a column, never break the supervision loop. An unrecognised `state`
-  string shows its raw word in yellow rather than reading as `idle`, which used to mean "fine" when
-  it meant "an error". **`waiting` is every agent's end-of-pass state** (ah-hiib.3, cb-5yr,
-  cb-1or.1), meaning *this pass is over and my turn has ended* — an implementer's bead merged and
-  closed, one handed back, or nothing to claim. The fleet view ends that session half a minute later
-  (`cerebro-end-grace`), keeps its buffer as the record of the pass, and starts a fresh one on the
-  agent's own trigger (`cerebro--trigger`) — for an implementer, a planned, unclaimed bead — so a
-  session's context is one pass deep the way an implementer's is one bead deep.
-  `cerebro-wake-intervals` survives it as the minimum gap between two *starts* of one role. A stop
-  flag on a waiting agent ends it and disarms it. **`done`, the implementer's older spelling of it,
-  is retired (cb-1or.2)**: `scripts/agent-state` refuses it like any unknown word, and a live file
-  that carries it anyway maps to `'unknown` and is never acted on. **`asking` has a hook behind it**:
-  `hooks/session-state.settings.json` + `scripts/agent-asking`, wired into the whole fleet by the
-  two lines `scripts/launch` gives every session (`agent-hooks-env`, `--settings`), flip the file
-  for the lifetime of a question tool call, because telling an agent three ways did not make it so.
-  The agent files still describe the transitions and must keep doing so — the hook covers the
-  question tool, not a question asked in prose, and knows nothing about `idle` versus `working`.
-  **That same settings file carries two more hooks since cb-ykz.1**: a `Stop` hook and a
-  `UserPromptSubmit` hook running `scripts/agent-turn`, which stamps `turn_ended` into the state
-  file when a session's turn ends and clears it when one begins — and every `scripts/agent-state`
-  write clears it too, an agent writing its own state being a session still running turns. Both
-  readers parse the field and carry it on the row, and since cb-ykz.2 both **derive "stuck"** from
-  it — a `working` row whose turn ended more than `cerebro-stuck-ceiling` /
-  `STUCK_CEILING_SECONDS` (1800, a literal pair) ago. Acting on one is cb-ykz.3; today it is drawn
-  and recorded and no more.   A fleet with an agent whose `agents.conf` line names copilot gets no
-  `turn_ended` at all: no measured Copilot event corresponds to `Stop`, and a guessed one would be
-  a hook that silently never fires.
-- **Nothing merges unreviewed, red, or stale.** The implementer's standing approval to merge without
-  asking comes from the consumer repo's CLAUDE.md ("Four Eye Principle") and applies only to a
-  planned bead.
-- **A session is started only with a bead nobody holds.** The view picks the bead for an
-  implementer (cb-10d.1) and for the three planning roles (cb-10d.2.2), and never one a row's state
-  file names, one `App::handed` holds, or one a give-back is carrying (`triggers::spoken_for`); it
-  launches the session with `scripts/launch <Name> --bead <id>`, and a bead handed out earlier in a
-  tick is taken out of the rest of that tick (`TriggerFacts::take`), since the fleet read that would
-  show the start up is five seconds away. Start headroom and its table are gone with cb-10d.2.2.
-- **A role more than one agent holds is started one at a time.** The planners answer the same buffer
-  rule off the same panel, so a tick where it is true is true for both, and the view started Xavier and
-  Beast in one breath; each start is now an `assign-bead` push and a session boot, and the spacing
-  paces those. The implementers are the same shape since cb-1or.1: a queue that
-  fills is a condition true for every standby builder on one tick.
-  `cerebro-role-start-spacing` holds the second for 30s; it counts
-  peers only, so a role is never held by its own restart.
-- **Agents never decide the shape of what a user sees** — a new surface, a key or gesture, what a
-  control does — and **only the planner** decides the detail inside a shape the navigator has
-  already agreed, writing every one of them into the plan's *Decided by me* where the navigator can
-  overrule it. No agent takes work off another (except the documented crashed-agent recovery), and
-  none acts outside a planned bead.
-- Each agent announces its own name in its first message — the human watches several sessions at once.
-- **Closed is not terminal.** A failed verification reopens a bead at P0, and every role above
-  describes what it does when one comes back — Psylocke reopens it, a planner amends the plan if the
-  plan was wrong, an implementer picks it up like any other P0, and Moira tells the reporter it was
-  taken back. A change to any one of those has to keep the others consistent with it.
-- **An external PR is untrusted code, and reviewing it by building it runs it.** `agents/reviewer.md`
-  makes Cypher read the diff — `package.json` scripts, lockfiles, `build.rs`, `.github/`, test files
-  — *before* it builds or tests anything, ask the navigator when the PR changes any of them, and run
-  only in `.cerebro/worktrees/cypher`, never the shared checkout. It never pushes to a contributor's
-  branch and never commits in that worktree.
-- **The reviewer gates nothing by itself.** Cypher's review is a recommendation on somebody else's
-  PR; the navigator merges. Implementers are unaffected — their path is a `reviewer` sub-agent they
-  spawn for themselves plus the standing approval in the consumer's CLAUDE.md.
-- **Forge files, never fixes.** If you are editing the project's application paths
-  (`scripts/app-paths`), you have taken the wrong job. A
-  finding that cannot name a cost already being paid — a repeated fix, a change that touched several
-  files, a retrospective, a misread module — is not filed at all.
+- **Wait by blocking inside a tool call, never by ending a turn.** The one exception is a
+  `reviewer` sub-agent the session spawned, whose result is delivered.
+- **The state file is the contract.** `.cerebro/state/<name>.state.json` carries one of
+  `idle`/`working`/`asking`/`waiting`, plus `phase`, `phase_since` and `turn_ended`; every agent
+  writes it through `scripts/agent-state` and the fleet view acts on it. `waiting` is every agent's
+  end-of-pass state; `done` is retired and refused. The `asking` transition and `turn_ended` are
+  set by hooks in `hooks/`, not by prose. The contract's text is synced into the role documents
+  from `templates/state-file-contract.md` by `scripts/state-contract-sync`.
+- **A session is started only with a bead nobody holds**, handed to it by the fleet view through
+  `scripts/launch <Name> --bead <id>`; one bead per session.
+- **Nothing merges unreviewed, red or stale**, and the standing approval covers a planned bead
+  only (Four Eye Principle, above).
+- **Agents never decide the shape of what a user sees**; only a planner decides the detail inside a
+  shape the navigator has agreed, recorded in the plan's *Decided by me*.
+- **No agent takes work off another**, and none acts outside a planned bead.
+- **Closed is not terminal.** A failed verification reopens a bead at P0, and every role describes
+  what it does when one comes back.
+- **An external PR is untrusted code**: Cypher reads the diff before building it, and only in its
+  own worktree. Its review is a recommendation; the navigator merges.
+- **Forge files, never fixes.**
 
-## fleet-view/ — the standalone terminal view
+## fleet-view/
 
-`.claude/cerebro/scripts/cerebro-tui` opens `cerebro-tui`, a Rust/Ratatui program that draws the
-the fleet and the work queues - seven of them since cb-lz5.1, which
-added a `UX agreed {n}` section between `Being planned` and `Unplanned` for beads carrying the
-`ux:agreed` stage label, hidden entirely when empty, and which starts the two cb-lz5 roles `ux`
-and `build-design` off queues of their own; the combined `planner` role reads the union of the
-two buckets and is unaffected. **Since cb-kcs.1 what it may do at all is
-a consequence of what the project declares rather than of what the program can do.** Since cb-kcs.3 it acts unattended on
-the sessions it hosts where a project declares it the supervisor: it ends one whose pass is over
-after `END_GRACE_SECONDS`, retires one under a stop flag and clears the flag with it, deletes the
-state file of every session it ends, and types one line into a session that has gone quiet mid-work
-(`stuck_for`, and the resume beside it). **Never into one that is waiting for an answer**: since
-cb-0q1 a question waits until it is answered, so no elapsed time acts on an `asking` row for either
-kind and whatever the flag — the two answer timeouts, `Supervision::Nudge` and both nudge messages
-are gone, and `tests/lib/supervise.cases` keeps its twelve `asking` rows answering `none` so the
-table asserts that promise rather than merely not contradicting it. `scripts/fleet-health` drops an
-`asking` interval from `$running` and `model::history_line` answers `None` for one, so neither
-self-report counts a waiting session as the fleet running slowly. A stop flag on an idle session
-still retires it — that is the flag's arm, and the navigator's hand is what still ends a waiting
-one.
-Since cb-kcs.4.1 it also **starts** sessions on its own: the roster's `autostart`/`standby`
-declaration is honoured as the view comes up, and the board-backed triggers for the planner,
-implementer, verifier and orchestrator roles bring a blue `standby` row back — held back by a
-per-role wake floor, the unchanged-work fingerprint, role-start spacing and, since
-cb-10d.1 for builders and cb-10d.2.2 for the planning roles, a bead: a start is made only with a bead
-no row, handed record or give-back holds, and the session is handed that bead: its row reads a blue `starting <id>` until its session reports, and a start that
-goes away unreported gives the bead back with a gold line in the header. A bead handed inside one tick is taken out of the rest of that tick — the fleet read that would
-show the first start up is five seconds away. Every successful
-launch arms, whoever asked for it — `s`, an autostart and a trigger alike — and a retire, a `k`
-(at every row state, not only standby), a give-up and a tick on which somebody else has or is
-taking the checkout all disarm; a pass that merely ends does not, which is the whole point of the
-set (cb-op0), and neither does a tick on which this view could not tell who supervises — a
-declaration it could not read is an outage, not a handover (cb-nc8).
-`docs/ui/cb-op0-arming.html` §6 is where that whole rule is written down, for both views. Since
-cb-kcs.4.2 a start that keeps failing backs off on `0/30s/2m/10m` — the row counts the wait down
-in place of its condition — and is abandoned after five consecutive starts
-that produced no pass, which disarms the name and leaves `s` as the only way back; a launcher
-refusal is parked from the first failure, where a silent crash is retried. Since cb-kcs.4.3 the
-three roles whose work arrives from outside the fleet start too, off a `gh` reader on its own
-cadence and an hourly floor each. Since cb-kcs.4.4 all of it is written down, in the same three
-append-only files under `.cerebro/state/`: `decisions.jsonl` — a line per start (with the trigger that
-fired), end, retire, resume, stuck, arm, disarm, exit and give-up, and since cb-xhu.2 nothing else, which is why it
-keeps months; `evaluations.jsonl` — at the verbosity this view compiles in, a
-line per trigger evaluation per armed row per tick carrying what the trigger read and which guard
-held it; and `errors.jsonl`, one line per outage rather than per failed read, naming the pane or
-the name it came from. One policy rotates all three; the writer is silent and unable to fail; and a
-read-only view writes none of them, since it decides nothing.
+`cerebro-tui` is a Rust/Ratatui program that draws the fleet and the work queues, hosts agent
+sessions in ptys, and, when it holds the supervision lease, starts, ends and nudges them. What it
+does key by key, and the record of how it got there, is `docs/fleet-view.md`.
 
-Since cb-hjf every Fleet row carries the agent's **role** at every width, in the roster's own word
-and faded against the name beside it. The column is paid for out of `AGENT_FLOOR`'s and
-`STATE_FLOOR`'s unused cells and never out of the work cell, cut with a trailing `…` when the word
-does not fit, and given up whole below `ui::ROLE_MIN` — a pane too narrow for it draws exactly the
-row it drew before, with nothing else shortened. `ui::default_left_column` is the one place the
-left column's starting width lives: `LEFT_COLUMN` (40), or `WIDE_LEFT_COLUMN` (52) on a window at
-least `WIDE_LEFT_COLUMN_SCREEN` (134) wide, which is 52 plus two borders plus the eighty columns
-agents print to. It picks the *starting* width alone — a width the navigator dragged or keyed is
-theirs and survives every resize, and `Shift-Home` hands it back to this rule, saying what it has
-always said (`panes back to their default sizes`, with no number); the double-click reset, which
-does name a number, now names the one the reset actually produces. Like cb-bch.1's chords and
-cb-xhu.4.2's health section, it has no `tests/lib/` table: one view, one implementation.
+The crate is a pure core over a small impure edge, so the tests exercise the core with plain data:
 
-Since cb-ykz.2 its Fleet rows carry a **stuck** signal, off
-`lifecycle::stuck_for` and a 1800-second ceiling: a red `✗` glyph, and `stuck 8h49`
-in red. Which cell carries the text is the one divergence, and it is the pane's own shape: in the
-wide layout it replaces the FOR column's elapsed pair, and **below `WIDE_COLUMNS` — which is the
-ordinary split layout, where the Fleet pane is 40 cells — or 52 on a window at least 134 wide
-(cb-hjf) — unless the navigator has widened it
-(cb-bch.1) — the BEAD cell carries it**
-instead, standing aside as it already does for a standby label and a dead row's verdict, with
-`columns` sizing that column from the same `bead_cell` so the text is never cut. The STATE cell is
-untouched in both. One `stuck` line per occurrence goes into `decisions.jsonl`, gated on
-supervision like the resume beside it. Since cb-ykz.3 it also **acts**, off the same rule and the same
-memory it keeps: one `resume` line typed into the session, then — if it is stuck again
-with its `(since, phase_since)` pair unmoved — the interactive role's session ended, or retired
-under a stop flag, and an implementer's left to `sweep-stalled`. A stuck row this view hosts
-therefore writes two lines per occurrence, `stuck` and `resume`: the observation and what was done
-about it.
+- `model.rs` — parsing and derivation: roster, state files, the marker sentence, the process tree,
+  `partition_beads`.
+- `sweeps.rs`, `give.rs` — pure decisions: what the six sweeps find (held to
+  `tests/lib/sweep-findings.json`) and the `a` key's agent list. `probe.rs` is test support.
+- `app.rs` — display state, pane sizes, the resize decision, the per-pane cadences and workers.
+- `ui.rs` — pure over `App` plus an injected clock; widths are terminal cells, never bytes.
+- `lifecycle.rs`, `triggers.rs`, `supervisor.rs` — what to do about a row, when to start one, and
+  the lease (`reconcile_supervision`, one bool in, one mode out).
+- `readers.rs` — every file and subprocess, behind `CommandRunner`; tests pass `FakeCommands`.
+- `session.rs`, `pruner.rs` — the hosted pty child and the `prune-worktrees.sh --watch` child;
+  each owns a process and kills it on `Drop`.
+- `log.rs` — the only writer of `decisions.jsonl`, `evaluations.jsonl` and `errors.jsonl`; its
+  root is a constructor parameter, never resolved.
+- `main.rs` — the terminal and the event loop, under an RAII guard.
 
-Since cb-kcs.5.1 it runs **the six sweeps** as well, on their own ten-minute cadence and their own
-in-flight slot, and draws what they found as the Work pane's **first** section — `Sweeps {n}`, one
-truncated line per finding, a gold line for a stranded P0, and the failed script named beside the
-header in red when one did not answer (`sweep-claims failed`), because three of the six `git fetch`
-and a stale section that reads like a current one is what silence costs. The chain
-stops at the first script that did not answer, which is what lets the header name exactly one. Under
-Work the arrow and page keys move a **cursor over the findings** while there are any and scroll the
-pane when there are none (widened to bead rows by cb-kcs.5.4, below) — and `x`, from any focus, shows the exact `bd` and runs
-it only on `y`, followed by `bd dolt push` on the same keystroke — since cb-21g both of those run
-on the **write worker** rather than on the drawing thread, so the keystroke returns at once and the
-header's sentence arrives when the write answers. That was **the one write in this
-crate that does not pass `--readonly`** until cb-kcs.5.4 added the priority keys beside it; it lives
-in `lifecycle::run_finding` beside every other
-write and spawns through `readers::CommandRunner` like every other command
-(cb-i1w), and it is deliberately **outside the lease**: the board is shared, so a view that may start
-nothing may still close a delivered bead. `tests/lib/sweep-findings.json` is the table both
-implementations answer — every finding, every label and every command — for `supervise.cases`'
-reason: both views go on sweeping after the cutover, so one decision has two implementations in two
-languages. The header now renders **whichever** `Prompt` is up, through the enum's own `text`
-(cb-4cn): matching one variant by name is how cb-kcs.4.1's disarm confirmation came to be built and
-never drawn.
+Rules a change must keep:
 
-Since cb-kcs.5.2 it runs the supervisor's last two unattended jobs as well. It keeps one
-`prune-worktrees.sh --watch` child alive beside itself on a five-second clock while it may act,
-kills it when it may not — the pruner is a writer — and says
-`Worktree pruning stopped: <cause>` in **red** in the header's notice slot when the child will not
-start or has died, once and then again every ten minutes while it stays broken (the cost of
-swallowing it is worktrees quietly not being pruned). And it types the triage line into an
-idle orchestrator this view hosts when unranked beads are waiting for a ranking — the same bytes
-Cerebro already reads — saying `Cerebro was asked to rank 3 unranked beads.` in gold beside the
-resume's own line, and repeating the same set every ten minutes while Cerebro stays idle. The line
-is typed, recorded and throttled **only when it went into a session this view hosts**, which is a
-deliberate divergence from `cerebro--triage-tell`: that one records and logs even when no buffer
-took the string, so its throttle then holds for a line that never left the building.
-`tests/lib/triage.cases` is the table both implementations answer, for `supervise.cases`' reason —
-both views go on triaging until the declaration moves.
+- **A failed read is never an empty answer.** `Ok(vec![])` draws a dead fleet and
+  `Ok(WorkBuckets::default())` an empty board.
+- **A failed refresh never destroys a snapshot still worth reading** (`Unavailable`, then `Stale`
+  with the original `read_at`), and **the panes fail apart**: `bd` being unreadable says nothing
+  about the fleet.
+- **Every child process has a wall-clock bound**, is killed and reaped on it, and has both pipes
+  drained on their own threads before anything waits.
+- **The lease is a bound loopback listener and nothing else** — no pid file, no heartbeat, no
+  timeout. `.cerebro/state/supervisor.json` is diagnosis only.
+- **Only a supervising view writes anything**: session starts and ends, the triage and sweep
+  lines, the pruner, the logs. Board writes (`x`, the priority keys, `a`) are the navigator's own
+  act, run on the one write worker in the order pressed, and are deliberately outside the lease.
+- `ui::draw` reads no file, runs no program and asks no clock, so a `TestBackend` case is an
+  assertion about the screen and not about the machine.
+- A decision that also has a bash implementation is held to a shared table under `tests/lib/`
+  (`session-args.cases`, `sweep-findings.json`, `triage.cases`, `sweep-tell.cases`).
+- Const thresholds in Rust (`END_GRACE_SECONDS`, `STUCK_CEILING_SECONDS`, …) have a literal twin
+  in the scripts; change both.
 
-Since cb-7nx a **second** line goes into an idle orchestrator on the same mechanism: every two hours
-(`cerebro-sweep-interval` / `SWEEP_INTERVAL_SECONDS`, both 7200) it is asked to run the claims sweep
-and the worktrees the pruner declined, the two that need a judgement no table makes — an orchestrator
-has no cadence of its own, so without it Cerebro sweeps once at startup and never again.
-`tests/lib/sweep-tell.cases` is its own table, answered by both implementations, and it is separate
-from `triage.cases` for the reason its header gives: triage's trigger is a condition that stays true,
-so a busy Cerebro needs no queue, while a two-hour mark is an **edge** that passes — one falling
-mid-pass is queued and typed at the first idle tick after it, at most one at a time, so six hours of
-work is followed by one sweep. The clock resets when the line is typed rather than when a sweep
-completes (the navigator's choice: the alternative needs a new signal from the agent back to the
-view), and it is dropped entirely for a name this view holds no session for, which is what keeps a
-restarted Cerebro from being told to sweep seconds after its own startup sweep. The event is
-`sweep-tell` in both writers, `sweep` being the `x`-on-a-finding decision. `triggers::cadence` is
-deliberately untouched: an orchestrator gets no wake trigger, since a two-hour *cadence* would have
-the view starting Opus sessions round the clock. The pruner writes **no** decision event:
-starting and stopping a watcher is not a fleet decision, and its failures reach `errors.jsonl`
-under the context `prune` and nowhere else. Its surface was approved over three interview rounds
-on 2026-09-02 and arrives, like cb-kcs.2's, in a docs-only pull request of its own — so no path
-for it is written here, for the reason the paragraph above gives.
+## Where each rule lives
 
-Since cb-kcs.5.4 it carries two things that are the navigator's own hands rather than the
-supervisor's. **The priority keys** — `0`-`4`, `+`
-(more urgent, so the *number* goes down), `-` and `u` — write a bead's priority to the shared board
-with no confirmation and `bd dolt push` on the same keystroke, saying what they did in the header
-(`cb-x: P1 → P0`, `cb-x is already P0`, `cb-x: back to P1`, and the push failure in the same line).
-Since cb-21g the write itself runs on the **write worker**: the keystroke leaves a dim provisional
-line (`cb-x: P1 → P0…`) that no other keystroke clears, the row shows the priority it was asked to
-have until a board read that began after the write settled lands, and the sentence above arrives
-when the write answers — a refused one in red, and in `errors.jsonl` under the context `write`.
-`u` is one step, spent only by using it, surviving a refresh and overwritten by the next change.
-They are the second write in this crate that does not pass `--readonly`, beside `x`, and the one key
-set in this view that is **not** "from any focus": Work focus only, because a
-digit is far more ordinary than `x` and from Fleet focus `3` would silently rerank a bead in a pane
-nobody was looking at. And **the History section**, last in the Work pane — one line per agent running something right now, gold when it has run past twice its own
-median (`Psylocke asking 537m - long, median 2m`), on its own five-minute reader; a state nothing
-has finished in has no median and is never called long. A failed run keeps the rows it had and says
-`History 4  fleet-history failed` in red, and a *first* failure draws no section at all, which is
-the ordinary state of a machine that has never run the fleet. Both are **outside the supervision
-lease**, exactly as `x` is, and both hint clauses are shown on a read-only view where `s`/`f`/`k`
-are not. Since cb-10d.5 **`a`** on a Work bead opens a live list of the agents who take work from
-the board, directly beneath that row, and **Enter** gives the bead to one through
-`scripts/assign-bead --given`, on the write worker, Work focus only and outside the supervision
-lease; the supervising window starts the agent.
+Each of these answers one question in one place. Add a caller, never a second copy.
 
-Since cb-xhu.4.2 the Work pane's **first** section — above Sweeps — is `Health {n}`, one line per
-thing `scripts/fleet-health` says is stuck right now: a name running long (red), a name started more
-often than the script's own ceiling, and a name more than half of whose completed passes held no
-bead (both gold). Findings only, hidden entirely when there is nothing to report, on its own
-five-minute reader and its own in-flight slot, with `h report` dim beside the header. It follows
-**History's** failure rule and not the Sweeps': a run that fails with rows worth keeping says
-`Health 4  fleet-health failed` in red beside the header, and a *first* failure draws no section at
-all, which is the ordinary state of a machine that has never run the fleet. A Health row is never
-selectable — no key acts on one — so the cursor walks past them exactly as it walks past History
-rows. **`h`** pins the whole four-section report in the Session pane, titled `Fleet health`, from
-any focus; `h` again unpins and leaves focus where it is; a pinned bead replaces it and it replaces
-a pinned bead, `App::pin` holding exactly one tenant by construction; and arriving at Fleet by
-`Tab` or `F1` drops it exactly as a pinned bead is dropped (cb-lor), while `F2` and
-`F3` leave it alone; `s` drops it too, by the same rule that already drops a pinned bead — the pane
-is the agent's again — where `f` and `k` leave either alone. `h` starts no read: the report is
-whatever the five-minute reader last got, so it can never fail and never blocks, and `g` is what
-refreshes it. All of it is **outside the supervision lease**, as `x` and the priority keys are: it
-reads logs and decides nothing, so a read-only view shows it. The hint clause `h health` is offered
-unconditionally, at a rank (`HintRank::Optional`) below the movement hints and dropped first and
-alone — the ordinary hundred-column screen has one cell of slack, so an unconditional clause at any
-higher rank drops a whole tier of hints the navigator asked by name to keep.
-There is no `tests/lib/` table here and no second implementation.
-
-With it the Work **cursor** widened from findings to findings, bead rows and `+N more` rows —
-never a header, a blank, `(none)` or a History row, so a grey row always means a key will do
-something here — and it is on the first selectable row from the first frame. `Enter` on a `+N more`
-row opens that one section (`all 23 shown — Enter`) and closes it again, which is the only way a
-bead in the P4 backlog can be reranked at all; an open section survives the thirty-second refresh
-and `g`. That widening is what moved the whole Work document into `app::work_body`: it now owns
-every drawn line — headers, bead rows, notices, `+N more`, History and all — and `ui::work_document`
-renders one arm per variant and computes no structure of its own, so the row the cursor is on and
-the row that is drawn cannot come from two pieces of arithmetic. `sorted_by_priority`,
-`sorted_by_recency`, `paused_age`, `SectionKind` and `WORK_ROWS_PER_SECTION` live in `app.rs` for
-that reason.
-
-**Exactly one window supervises, and the lease is the whole of the rule** (cb-abs.2). There is
-nothing to declare: `fleet_supervisor` is gone, and so is every answer that named one of two
-implementations. `scripts/fleet-supervisor` keeps its name and is the one place the lease's address
-is computed — a port derived from the *shared* root, so every worktree of a checkout contends for
-one lease; a bare invocation is now a usage error, since every remaining question is an explicit
-flag. `supervisor::reconcile_supervision` is a function of one bool — hold the listener and this
-window supervises, otherwise try to take it — and there is no third answer.
-
-**The lease is a bound loopback listener and nothing else.** No pid file, no timestamp, no
-heartbeat, no lease duration, no stale-entry sweep: the kernel closes a listener when its holder
-dies, so a crashed owner releases immediately and nobody has to decide it had crashed. Every
-timeout scheme has a window in which a live owner looks dead; this one has none.
-`.cerebro/state/supervisor.json` beside it is **diagnosis only** — it names who to put on the
-header or the mode line, and a missing, malformed or foreign record on a bound port is a visible
-lock error, never permission to take over. The rule it gates is one boolean, asserted beside
-`reconcile_supervision` itself: `tests/lib/supervisor.cases` is gone with the second
-implementation it existed to hold to the same table (cb-abs.2).
-
-A view that does not own the checkout starts, resumes, arms, triages and prunes nothing — the
-**session lifecycle** is what the lease gates. The bead panel's own keys are deliberately outside
-it: `x` on a sweep finding and the priority keys write to the shared board rather than to this
-checkout's sessions, they are the navigator's own act and each asks first, and a board `bd` runs
-the same from any machine whether or not this view supervises anything. **There is no drain**
-(cb-abs.2): with one window there is nobody to hand over to gracefully, so a view that does not
-hold the lease releases it at once, hosted sessions or not. Ownership shows in the header line and
-nowhere else, which is the navigator's choice: it takes neither a row nor a Tab stop from Fleet and
-Work, and the header says one of exactly four things — `Cerebro — starting`,
-`Cerebro — supervising`, `Cerebro — read-only; another window is driving this fleet` and
-`Cerebro — read-only; this window could not take charge of the fleet`.
-
-**The family is complete.** `cb-kcs.1` brought ownership, `.2` the PTYs, `.3` retirement, `.4` the
-triggers and `.5` the sweeps, the pruner, the triage line and the cutover itself; `cb-abs` removed
-the second window and, with it, everything that existed to choose between two.
-
-One screen, **three** independently bordered, independently scrolling widgets since cb-kcs.2.1:
-Fleet, Work and Session, each with its own title, focus and scroll offset rather than one shared
-document. At `SPLIT_COLUMNS` (100) or wider the screen is a `LEFT_COLUMN` (40) holding Fleet
-over Work, with Session taking every remaining cell beside them; below that width all three stack.
-Neither divider is fixed any more - see the resize chords below.
-`Tab` cycles Fleet → Work → Session, and since cb-5kk `F1`/`F2`/`F3`
-jump straight to those three panes from any focus (held back from a focused live session; `F4` and
-above still reach the agent) — the focused one draws a
-bright-blue thick-line border and a bold title. `Shift-Tab` is the hosted agent's and does nothing
-in the view at any focus. From a focused **live** session `Tab` and `Shift-Tab` both reach the
-agent, and `F1`/`F2`/`F3` are the only way out (cb-lmk, narrowing cb-3v5). Since cb-lor **arriving
-at the Fleet pane by `Tab` or `F1` drops a bead pinned in the Session pane** by `Enter` on a Work row
-(cb-41r), so that pane goes back to drawing the selected agent, at its top; `F2` and `F3` leave a
-pinned bead alone, and `Enter` on the same Work row re-opens it. `↑`/`↓`/`PgUp`/`PgDn` move only the focused widget:
-under Work and Session that is its own scroll offset, and **under Fleet it is the selection**, which
-the pane then scrolls to follow. Since cb-d31 **`Enter` under Fleet focus is `Tab` twice in one
-key**: it moves focus straight to the selected agent's Session pane, and only while that pane is
-holding something — a live child, one starting, a retained pass or a refused launch. An empty pane
-refuses in gold (`Rogue has no session`) and leaves the focus where it was, so walking the roster
-with `↓` never throws the navigator into an empty pane; nothing selected is silent. It moves focus
-and nothing else, so it is **outside the supervision lease** exactly as `x` and the priority keys
-are, and it behaves identically on a read-only view. `g` refreshes both readers regardless of focus,
-`q`/`Esc`/`Ctrl-C` quits. A pane whose content outgrows its inner height reserves its last row for a dim
-`Rows n–m of total` cue.
-
-Since cb-bch.1 those dividers move from the keyboard: `Shift-←`/`Shift-→` widen and narrow the left
-column a cell at a time, `Shift-↑`/`Shift-↓` move a horizontal divider a row at a time - in the
-stacked layout the one **below the focused pane**, so Session focus has none to move - and
-`Shift-Home` puts every divider back, each saying what it did in the header's notice slot, including
-when it moved nothing (a silently dead key is what the whole vocabulary exists to prevent). They are
-`Shift` keys and not `Ctrl` ones because the `Ctrl` chords shipped first and never arrived: macOS
-binds all four `Ctrl`-arrows by default - Spaces on left and right, Mission Control and Application
-Windows on up and down - and takes them before any terminal sees them, so verification found a
-feature that compiled, tested green and could not be pressed. The five `Shift` keys were probed in
-the navigator's own terminal before they were agreed, and `Ctrl`-arrows are nobody's again and reach
-a hosted agent. The
-reset is `Shift-Home` and never `Ctrl-=`, which is neither a control byte nor a CSI sequence and
-which macOS Terminal.app and iTerm2 send nothing at all for. `app::resize_action` is the ONE place
-a chord's meaning is decided, pure over the sizes, the focus and `LayoutFacts` - what
-`ui::layout_facts` says the drawn frame actually came to, off the same `split`, so a chord and a
-border can never disagree - and `ui::clamp_*` is the one place a floor (`MIN_PANE_COLUMNS` 24,
-`MIN_PANE_ROWS` 3) or a ceiling is decided, asked by both. `app::is_view_key` is the one place the
-set held back from a hosted agent is named: the pane keys plus these five. **The sizes are memory
-only** (`App::panes`), on the navigator's own choice - no file is read and none is written, since
-this crate has no on-disk UI preference and a size takes two seconds to set again - stored
-unclamped and clamped where used, so a narrow spell never overwrites what was set on a wide screen,
-and split and stacked keep separate heights for the same reason. The chords are outside the
-supervision lease, as `x` and the priority keys are: moving a divider changes this screen and
-nothing else. Like cb-xhu.4.2's health section it has no `tests/lib/` table: one implementation.
-
-Since cb-bch.2 the **mouse** drives exactly that state: capture is on for the whole run, with no
-key to turn it off, so the terminal's own click-drag selection and scroll wheel are given up over
-the whole window - a cost the navigator took knowingly, bearable because most terminals give both
-back while a modifier is held (Option on macOS Terminal and iTerm2, Shift elsewhere), which is the
-terminal's behaviour and not something this program promises. A left drag on either divider's two
-border cells moves it, saying `left column 56 cells` / `Fleet 16 rows` through `app::size_notice` -
-the one place a chord and a drag word the same event - and a double-click within
-`DOUBLE_CLICK_MS` resets **that divider alone** (`left column back to 40 cells`, or `panes are
-already at their default sizes` when it had not moved), which is what makes it different from
-`Shift-Home`. The wheel acts on the pane under the **pointer** and never moves focus: one row of
-the Fleet selection or the Work cursor per notch, `WHEEL_LINES` of the Session transcript. A click
-selects a Fleet row or a selectable Work row and focuses that pane through `App::set_focus`, so
-arriving at Fleet drops a pinned bead (cb-lor); on a heading, a blank or the range cue row it
-focuses and changes nothing else, and on the Session pane it never refuses the way `Enter` under
-Fleet does. `ui::mouse_target` is the ONE place a screen position becomes a divider or a pane,
-pure over the `LayoutFacts` rects the drawn frame came from, and dividers win over panes because a
-divider cell IS a border cell. **No mouse event ever reaches a hosted agent** - `session::key_bytes`
-has no mouse path - and all of it is outside the supervision lease, as the chords are. The surface
-itself is written down at `docs/ui/cb-bch-resizable-panes.html`.
-
-**The selection is a name, never an index** (`App::selected`, `App::selected_index`): the roster can
-shrink under the navigator, and an index would silently come to mean a different agent. A selected
-agent that leaves the roster moves the selection to the row at its old index, clamped, and says so
-in the header in gold until the next keystroke (`App::notice`) — and only ever on a **successful**
-fleet read, so a five-second `ps` hiccup can never reselect anybody. The fleet body is not one line
-per row (a heading, plus a diagnostic line per invalid row), so `model::row_document_line` is the
-one place a row index becomes a document line and the renderer calls it rather than keeping a
-second copy.
-
-Session can hold a real child since cb-kcs.2.2: `scripts/launch <Name>` in a pty (`portable-pty`),
-its screen drawn from a `vt100::Parser` this crate owns — which is why a killed child's screen is
-still drawable — and every key of a focused live session forwarded to it, `Tab` and `Shift-Tab`
-included, with `F1`/`F2`/`F3` held back as the way out (cb-lmk). A pass that ends is kept as a scrollable transcript of at most ten thousand
-lines, until that agent starts again. **Nothing a navigator can press starts one**: `SessionHost::spawn`
-is reached by test code alone, and `s`/`f`/`k` are cb-kcs.2.3's, so the pane still says why there is
-no session in it and the header hint still names no key that does not exist. The rule that pays for
-all of it is that `SessionHost::sync` materialises the child's screen into a `SessionView` **before**
-the frame: `App` holds no pty, no thread and no child, and `ui::draw` stays pure over `App` while a
-reader thread writes into a parser continuously. That reader thread drains the master
-unconditionally, focused or not — a pipe nobody drains is a deadlock — and `Session`'s `Drop` kills
-its child, because a pane the navigator can no longer see must not leave an agent running against a
-bead nobody is watching. The surface the navigator approved for the
-whole `cb-kcs.2` family is the split console, interviewed over three rounds on 2026-09-01. It
-refines `docs/ui/cb-kcs-supervisor.html`, which the epic's own interview approved, and supersedes
-`docs/ui/cb-42k-independent-widgets.html` and the original single-document
-`docs/ui/cb-vyp-read-only-view.html`. **Its own mockup file arrives with its own docs-only pull
-request rather than with any of the three children**, so this paragraph deliberately names no path
-for it: a pointer that resolves on one merge order and not the other is worse than none, and
-nothing checks a path written in prose the way `scripts/tracked-links` checks a link.
-
-The crate is split into a pure core and a small set of impure readers, so the tests exercise the
-pure half with plain data:
-
-- `sweeps.rs` — pure throughout: what the six sweeps decide (`Sweep::judge`), the seven `Finding`
-  shapes, the Sweeps line, the exact argv and the header's question. The Rust copy of
-  `cerebro--sweeps` and its neighbours, held to `tests/lib/sweep-findings.json` the way `model.rs`
-  is held to its own table. The four thresholds are `const`s here and defcustoms there, exactly as
-  `lifecycle::END_GRACE_SECONDS` is.
-- `pruner.rs` — the `prune-worktrees.sh --watch` child and its one pure decision
-  (`prune_action`), its own module for `session.rs`'s reason: it owns a child process with a
-  lifetime longer than any call. Its `Drop` kills the child, and the `Pruner` is constructed
-  **before** the `TerminalGuard` so it drops after it. Both pipes are `Stdio::null()` — a pipe
-  nobody drains is a deadlock — and `Child::try_wait` is what keeps a dead watcher from being a
-  zombie that reads as live for ever.
-- `model.rs` — pure parsing and derivation (roster, state files, the marker sentence, the process
-  tree, `partition_beads` — which since cb-hzl skips an epic only while it HAS a direct child,
-  answered from the ids the one board read already holds, so a childless epic partitions like any
-  other bead; `scripts/work-beads`, whose list is scoped to one status, asks `bd children` instead). It is the Rust copy of the elisp rules, held to the same
-  `tests/lib/session-args.cases` table as every other reader of the marker sentence.
-- `supervisor.rs` — ownership: the pure `reconcile_supervision`, one bool in and one mode out,
-  and `SupervisorLease`, the bound listener that IS the lock.
-- `readers.rs` — every file and subprocess: `scripts/roster`, `ps -axo pid=,ppid=,args=`, and one
-  `bd --readonly -C <shared root> list --status open,in_progress,blocked,deferred,closed --json
-  --brief`. Each child has a wall-clock bound - five seconds, or `BD_TIMEOUT`'s thirty for the two `bd` reads,
-  which wait behind the fleet's Dolt traffic - is killed **and reaped** on it, and has
-  both pipes drained on their own threads before anything waits — a child that fills a pipe while
-  the parent waits is a deadlock no timeout can see. `read_fleet` and `read_work` are the two
-  aggregate reads, and **a failure is never an empty answer**: `Ok(vec![])` would draw a fleet in
-  which every agent is dead, and `Ok(WorkBuckets::default())` a board with nothing on it. Since
-  cb-x3u the spawning itself is behind `CommandRunner`: production passes `RealCommands`, which is
-  the only implementation that starts a process, and a test about parsing passes
-  `readers::testing::FakeCommands`, which answers from a table and records the argv. Spawning is
-  proved once, in `fleet-view/tests/command_runner.rs`, against **tracked** fixture scripts under
-  `fleet-view/tests/fixtures/` — a file no test writes cannot be `ETXTBSY`, which is what four
-  patches in this module had been working around. Since
-  cb-kcs.4.3 `read_gh` is a third reader — three `gh` calls on their own ten-minute cadence, each
-  bounded at thirty seconds because these are network calls — and it is what starts the roles whose
-  work arrives from outside the fleet. Its pane is never drawn: its four content states are exactly
-  what tells a trigger "no answer yet" (no suffix) from "the last request failed" (`gh?` on Moira's
-  and Cypher's rows, and their hourly floor alone). Since cb-xhu.4.2 `read_health` is the ninth —
-  `scripts/fleet-health --json` on a thirty-second bound, `read_history`'s shape and its reason: a
-  `jq` walk over logs that grow without limit, and not a network call. `Ok(FleetHealth::default())`
-  would draw a fleet in perfect health that nobody could look at, so a failure is never an empty
-  answer here either.
-- `log.rs` — the three JSONL files, split the same way: the pure half (`Event::basename`,
-  `log_event_p`, `log_evaluation_p`, `log_rotate_p`, `log_line`, `log_file`, `reader_context`) and
-  one impure `Logger` that owns them. It is the ONLY thing in the crate that writes any of them, its
-  root is a constructor parameter and never resolved — a logger that found its own root would make
-  every test append to the navigator's live log — and it starts disabled, so a view that comes up
-  read-only has written nothing by its first frame.
-- `app.rs` — the display state, the pane sizes and the resize decision (`PaneSizes`,
-  `LayoutFacts`, `resize_action` - where the geometry `App` holds begins and ends, and the one
-  place this module reaches INTO `ui`, for the floors and ceilings `ui::split` lays out with), the
-  two
-  independent cadences (fleet every 5s, work every 30s) and
-  one worker thread per pane. The panes are independent all the way down: one in-flight slot each,
-  one clock each, one `Pane<T>` state machine each. A global busy bit would let the five-second
-  fleet read starve the thirty-second work read, and a busy fleet would swallow the retry a
-  navigator pressed `g` for. Since cb-21g the two board **writes** have a worker of their own — the
-  eighth — for the reason the seven readers have theirs: a `bd dolt push` is a network call bounded
-  at thirty seconds, and running it on the drawing thread froze the screen, keys and all, for as
-  long as the remote took. **One** worker and one write at a time, deliberately: writes to the
-  shared board must run in the order the navigator pressed them, and a pool would let `3` overtake
-  `0` on the same bead. The UI thread decides (`lifecycle::priority_action`), records
-  (`App::begin_write`) and looks (`App::finish_write`); it starts nothing. A write the worker
-  never received is answered by `WriteAnswer::undeliverable`, and one it received and can no
-  longer answer — its thread gone — by `App::abandon_outstanding_writes`, because `Worker::poll`
-  answers `None` for "nothing yet" and for "never" alike and only the second is news
-  (`Worker::is_dead`).
-  Since cb-10d.3 worktree tidies have a worker of their own too, `TidyWorker`, and deliberately not
-  the write worker: a tree removal deletes a build directory and fetches, and on the write worker it
-  would hold the priority keys behind it on every pass.
-- `ui.rs` — pure over `App` plus an injected `DateTime<Utc>`. It never reads a file, runs a
-  program or asks the clock, which is what makes its `TestBackend` cases assertions about the
-  screen rather than about the machine. Widths are **terminal cells** (`unicode-width`), never
-  bytes or `char`s.
-- `main.rs` — the terminal, the event loop and nothing else. Raw mode and the alternate screen are
-  entered under an RAII guard, because `?`, an early return and a panic all skip a cleanup call
-  and none of them skips a drop.
-
-Two rules a change here must keep. **A failed refresh never destroys a snapshot still worth
-reading**: a first failure is `Unavailable`, a later one is `Stale` carrying the original
-`read_at`, and a success clears the error with the value. And **the two panes fail apart**: `bd`
-being unreadable says nothing about the fleet. The header is the one place they meet — while
-either pane is retrying it says `refreshing...`, otherwise it carries the newest failure's time,
-and the key hint stays `g retry` until both panes are fresh.
+- `scripts/consumer-root` — where the consumer root is (`--shared`, `--hints`, `--mount`,
+  `--self-mounted`). `scripts/root-hints.sh` validates a hinted root; a hint is never trusted.
+- `scripts/roster` — the fleet: built-in table, replaced whole by `.cerebro/roster.conf`.
+- `scripts/project-conf`, `scripts/app-paths` (which fails rather than guesses),
+  `scripts/agents-conf`, `scripts/agent-cli` — the project's declarations.
+- `scripts/launch <Name>` — the only way a session is started; runs `launch-preflight`, reads
+  `agents.conf`, passes `hooks/` through `agent-hooks-env` and `--settings`.
+- `scripts/agent-state` — the only writer of a state file; `scripts/end-pass` is its one caller
+  for ending a pass; `scripts/agent-alive` is the predicate.
+- `scripts/plan-candidates`, `scripts/stage-candidates`, `scripts/assignable-beads` — which
+  beads a planner, a ux/build-design agent, or an implementer may be given.
+  `scripts/assign-bead` and `scripts/release-bead` are the two writers.
+- `scripts/planner-buffer` — how many planned beads to keep ahead of the implementers.
+- `scripts/work-beads` — the board read, and the epic rule.
+- `scripts/worktree-safety.sh` — whether a worktree can go without losing anything.
+- `scripts/session-marker.sh` — the marker sentence; `scripts/marker-readers` checks every
+  reader subscribes to `tests/lib/session-args.cases`.
+- `scripts/jsonl-log.sh` — appending to a JSONL log, and refusing under the protected dir.
+- `scripts/cargo-env.sh` — which cargo variables `launch` strips before spawning a session.
+- `scripts/block-sync.sh` — marker-block parsing for `four-eye-sync` and `state-contract-sync`.
+- `scripts/tracked-links`, `scripts/four-eye-sync`, `scripts/state-contract-sync`,
+  `scripts/marker-readers`, `scripts/portable-snippets` — gate predicates. None of them may join
+  `launch-preflight`: a check that refuses there is a fleet that cannot start.
+- `scripts/ci-needed` — which paths skip CI.
 
 ## Gotchas
 
-- `.cerebro/` is the harness's own directory in the consumer — agent state files, stop flags and
-  agent worktrees (ah-v82), **and since cb-epr the project's own declarations** (`project.conf`,
-  `roster.conf`, `traps.md`). So the consumer's `.gitignore` names the
-  three things the fleet writes while it runs — `.cerebro/worktrees`, `.cerebro/state` and
-  `.cerebro/scratch`, the planners' drafts (cb-27g) — and
-  tracks the rest: the declarations, and   `agents.conf`, which this project commits so every clone
-  runs the same models (`eb6ffdb`; a project that wants it personal ignores it). A deny-list rather
-  than everything-except: the price is that a new runtime artifact has to be added to it, and that
-  price was taken so agents.conf could be tracked without a negation per tracked file. `.claude/` holds only what Claude
-  Code itself discovers (`agents/`, `skills/`, `settings.json`) plus this repository's own
-  submodule mount. Since cb-d59.4 `.github/agents/<role>.agent.md` and `.github/skills/<name>` hold
-  the same links under the names GitHub Copilot discovers, written by the same sync — **both
-  layouts, always, whatever   any `agents.conf` line names**, so switching provider is one line in
-  `.cerebro/project.conf` and nothing else. They are tracked here, and produced by running the
-  script rather than written by hand.
-- **This repository is a consumer of itself** (cb-i3l.1). `.claude/cerebro` is a committed symlink
-  back to the checkout, so every path the harness assumes — `.claude/cerebro/scripts/launch`, the
-  `../cerebro/...` links the sync writes — is literally true here, and the fleet runs the *working
-  tree* rather than a pinned sha. A submodule of the repository inside itself would have satisfied
-  `consumer-root` with no code at all, and was rejected for a different reason: `git submodule
-  update --init --recursive`, which `launch-preflight` runs, has no fixed point on a repository that
-  contains itself. **One function knows about the mount**: `cerebro_mount_resolves_to` in
-  `scripts/root-hints.sh`, which `consumer-root` sources and exposes as `--self-mounted` and
-  `--mount`; `roster` and `sync-symlinks.sh` ask it (cb-akc), and nothing else spells the round
-  trip. Since cb-ue0 the same round trip is what authenticates a root hint, which is why it moved
-  out of `consumer-root` into a library the hint readers can source without forking it.
-  `prune-worktrees.sh` is the documented exception and keeps its git-dir
-  comparison: it asks whether the mount and the consumer are **one repository**, so that one
-  `git worktree list` covers both, and that parts company with the round trip for a vendored plain
-  copy at the standard mount — where the mount is an ordinary directory of the consumer's own repo. A worktree carries the same committed
-  symlink, which resolves to the worktree, so an implementer reads its own branch's skills.
-- `scripts/agent-alive <Name>` is the one place bash answers "is this agent up" (see above). A
-  predicate, not a writer, so it is its own script rather than a mode of `scripts/agent-state`: it
-  prints nothing and the exit status is the whole answer, since it runs once per agent on every
-  planner pass.
-- `scripts/end-pass <Name> --pid <pid>` is the one place a pass is ended (cb-3tk). It is a
-  **caller** of `scripts/agent-state`, not a second writer — it runs
-  `agent-state <name> waiting --pid <pid>` as its last command, so the two cannot drift and a
-  refusal from the writer is its own exit status. Its whole argument list is a name and a pid:
-  there is no state word and no number for prose to get wrong, which is what six different
-  spellings of the same call in six role documents had been, and what left every Forge sweep for
-  two days unable to end its pass. `--wake-in` and `wake_at` went with it — the field was written
-  and read by nothing, and cadence is `cerebro-wake-interval`/`cerebro-wake-intervals`, which have
-  never read the state file.
-- `scripts/planner-buffer` is the one place the planner buffer rule is answered for the shell —
-  the excluded labels, the floor, the planned count and the wanted number. The elisp trigger keeps a
-  pure copy of the predicate (`cerebro-parked-labels`, `cerebro-planner-buffer-floor`,
-  `cerebro--planner-want`) because it runs every five seconds and may not spawn a process; the ERT
-  contract test is what keeps the copy honest. It counts an implementer told to finish as not
-  running — it takes no further bead — which is one of the two drifts the split had already caused.
-  Since cb-1or.3 it counts the roster's implementers rather than running sessions — a builder
-  between beads has no session (cb-1or.1) — so `agent-alive` is no longer part of the rule.
-- **`scripts/plan-candidates` is the one place "which beads may a planner take at all" is answered**
-  (cb-391). It is `work-beads --status open` plus its label and hold rules — not `planned`, not `human`, not
-  held by an assignee, `verification:failed` only with
-  `plan:revise`, never `verdict:stale`, not a bead whose parent is assigned, not a bead whose
-  `blocks` blocker is open and unplanned (cb-10d.2.1) — and a sort by priority then id. It takes no arguments: one question, and
-  its name is the question. It owns **no epic logic of its own**, because `work-beads` has owned
-  that since cb-hzl, and a second copy of that rule is what it exists to end. It exists because
-  those rules lived only in `skills/plan-bead/SKILL.md`, as two hand-written `jq` blocks, and they
-  drifted from cb-hzl inside a day of it merging: the fleet view started a planner for a childless
-  epic that the planner's own `--exclude-type epic` then excluded, so the planner reported nothing
-  to plan and was woken again by the same bead. Priority stays at the two call sites, because
-  *which* candidate and in what order is policy the skill explains at length. `tests/plan-candidates.sh`
-  is its suite.
-- **`scripts/assignable-beads` is the one place "which beads may an implementer be given" is
-  answered** (cb-10d.1) — `bd ready --label planned`, excluding `human`, `verdict:stale` and epics,
-  sorted by priority then id; `bd ready` because it hides a bead with an open blocker. The fleet
-  view's work reader and `scripts/assign-bead` both call it, so they cannot disagree.
-  `scripts/assign-bead <Name> <id>` (called by `scripts/launch --bead`, after the preflight and
-  before exec) and `scripts/release-bead <Name> <id>` are its two writers: the first claims **as
-  the agent** (`--actor`) and exits 3 rather than 2 for a bead somebody took meanwhile, so losing a
-  race costs a retry and not a parked name; the second answers one word and exits 0 for all four,
-  because the view's command runner throws stdout away on a non-zero exit. Between them sits
-  `.cerebro/state/<Name>.handover` — written by `assign-bead`, removed by `agent-state` on the
-  agent's first write and by `release-bead` — which is what lets a view that died between handing
-  and starting give the bead back after `HANDOVER_GRACE_SECONDS`. Since cb-10d.2.1 `assign-bead` also
-  serves the three planning roles, each from its own candidate script (`plan-candidates`,
-  `stage-candidates ux`, `stage-candidates build-design`), by **assignee without a claim** —
-  `in_progress` means "being built" — and `release-bead` clears that assignee again. Since cb-10d.5 `assign-bead --given` writes the handover with a
-  second line, `given`, and prints `pushed` or `unpushed` on stdout (nothing without the flag, since
-  `launch` runs it in the session's pty); a supervising view starts the named agent for such a
-  handover instead of giving it back. Since
-  cb-10d.3, for an implementer `assign-bead` also runs `disk-preflight` (the plan's workload) and
-  `prepare-worktree`, and records the tree in `.cerebro/state/worktrees/<id>`; exit 4 when it cannot.
-- **`scripts/worktree-safety.sh` is the one place bash answers "can this worktree go without losing
-  anything"** (cb-10d.3) — `cerebro_worktree_landed`, `cerebro_worktree_keep_reason` and
-  `cerebro_worktree_remove`, sourced never executed, relying on neither `set -e` nor its absence.
-  Its two callers are `prune-worktrees.sh` and `release-bead --worktree`; the pruner's other rules
-  (the path, the verifier's tree, the stale minutes) stay in the pruner because they are about trees
-  nobody vouches for. `release-bead --worktree <Name> <id>` touches only a tree recorded for that
-  agent, and the fleet view's `tidy_worktrees` hands it every record whose owner is no longer on
-  that bead, on a tidy worker of its own.
-- `scripts/app-paths` is the one place "which paths are this project's application" is answered
-  (ah-qled.6) — the `app_paths` key, and `--classify <path>...` over changed paths. Unlike every
-  other reader here it **fails when it does not know**: no declaration means exit 3 and a line on
-  stderr, never a guess. A default either way was the defect — "matches nothing" gave a consumer
-  empty release notes and no verifications with nothing on stderr, and "matches everything" sends
-  the navigator to verify docs changes. A caller that cannot classify says so.
-- `scripts/tracked-links` is the one place "are this repository's tracked links whole" is answered
-  (cb-8rz). This repository is a consumer of itself, so the links the sync writes are tracked files
-  here, and a broken one shipped through three merges with a green gate (cb-7v2, `d7a76fa`). It
-  answers both directions — a tracked link under `.claude/` or `.github/` that no longer resolves,
-  and a skill, agent or provider hook the mount ships that no layout has a tracked link for — with
-  findings on stdout, exit 1, and `tests/tracked-links.sh` as its suite. It scans **only** those two
-  directories, deliberately: a wider pathspec would make the suite read `docs/`, `README.md`,
-  `LICENSE` or `agents.conf.example` and quietly break `scripts/ci-needed`'s skip list, which needs
-  no edit as it stands. It never checks **where** a link points — `.github/copilot-instructions.md`
-  and `.claude/cerebro` are tracked links the sync does not write. It is a gate predicate and must
-  never join `launch-preflight`'s hot path: a check that refuses there is a fleet that cannot start.
-- **`scripts/session-marker.sh` is the one place bash spells the marker sentence** (cb-9su) —
-  `cerebro_marker_sentence`, `cerebro_marker_name_needle`, `cerebro_marker_root_needle` and
-  `cerebro_marker_infix`, sourced never executed, builtins alone for the narrowed PATH, in the shape
-  of `scripts/root-hints.sh` beside it. Its two callers are the writer (`scripts/launch`) and a
-  reader (`scripts/agent-alive`), which is what took four hand-tuned parsers of one sentence down to
-  three: those two can no longer disagree at all. Three properties are load-bearing and each was
-  already paid for — the name needle ends at the space after `rooted at ` (so `Cyclops` never
-  matches `Cyclopsly`), the root needle carries exactly one trailing slash (so `/repos/x` never
-  matches `/repos/x-hud`), and the sentence carries no apostrophe (`launch`'s bash-3.2 convention,
-  and `tests/fleet-cost.sh` interpolates the field into a `sqlite3` string literal).
-  `scripts/fleet-cost`'s SQL/jq stays a copy for the reasons above; what changed is that a copy
-  can no longer exist *undeclared*. `tests/session-marker.sh` pins the four functions against
-  literals on purpose — a test that re-derived the sentence from the library would prove nothing.
-- **`scripts/four-eye-sync` is the one place "do this repository's copies of the merge-review rule
-  agree" is answered** (cb-m7u). The Four Eye Principle is the implementer's whole standing approval
-  to merge, and it used to be written out twice — the *Four Eye Principle* section above, and
-  `templates/consumer-CLAUDE.md` — with nothing checking that the two agreed. They had already
-  drifted: the closing sentence above, *"That is the whole standing approval, and it covers a
-  planned bead only"*, had never been in the template. The rule now lives once, in
-  `templates/four-eye-principle.md`, and each carrier wraps its copy in `<!-- four-eye:begin -->` /
-  `<!-- four-eye:end -->`; the blank lines inside those markers are load-bearing, because CommonMark
-  ends an HTML block at a blank line and a marker followed straight by prose swallows the paragraph.
-  Findings on stdout, exit 1, in `tracked-links`'s house format — `drifted:`, `unmarked:`,
-  `missing:` — with `tests/four-eye-sync.sh` as its suite. The carrier list is a decision, literal
-  in the script: a **consumer's** own `CLAUDE.md` is theirs to edit and is never read. What the
-  block *says* is deliberately not asserted, for the reason *Development practices* gives about
-  grepping prose. Like `tracked-links` and `marker-readers` it is a gate predicate and must never
-  join `launch-preflight`'s hot path: a check that refuses there is a fleet that cannot start. Its
-  marker parsing now lives in `scripts/block-sync.sh`, shared with `scripts/state-contract-sync`
-  (cb-mqa); its own output, exit codes and suite are unchanged, and `tests/four-eye-sync.sh` passing
-  unedited is what proved that extraction behaviour-preserving.
-- **`scripts/state-contract-sync` is the one place "do this repository's copies of the state-file
-  contract agree" is answered** (cb-mqa). The contract — how to call `scripts/agent-state`, what the
-  four state words mean, what `--pid $PPID` is, the question sandwich, the hook behind `asking` —
-  was written out in seven role documents, and it drifted in the direction that makes an agent write
-  a wrong state: one sentence was corrected in `agents/implementer.md` and re-corrected across five
-  more files the same day (`5c12795`, `1f09133`), and `agents/verifier.md` still told Psylocke to
-  write `idle` at the end of a pass directly under the bullet forbidding it. It now lives once, in
-  `templates/state-file-contract.md`, and each carrier wraps its copy in
-  `<!-- state-contract:begin -->` / `<!-- state-contract:end -->`; the blank lines inside those
-  markers are load-bearing, for the same CommonMark reason. Findings on stdout, exit 1, in
-  `tracked-links`'s house format, with `tests/state-contract-sync.sh` as its suite. The carrier list
-  is a decision, literal in the script: the seven documents a session actually **loads**.
-  `agents/implementer.md` and `agents/planner.md` are deliberately not on it — both are thin role
-  files that defer to their skill, and both sessions load that skill, so a copy there would be read
-  twice per session and kept in step for nothing; each points at its skill's section instead. What
-  the block *says* is deliberately not asserted. Like `four-eye-sync` it is a gate predicate and
-  must never join `launch-preflight`'s hot path.
-- **`scripts/marker-readers` is the one place "is every reader of the session marker a subscriber"
-  is answered** (cb-9su). `tests/lib/session-args.cases` is a test fixture, so it only ever caught
-  drift between readers that opt in; a reader that never subscribed was not red but silently wrong,
-  and cb-akt's was a **zero**, which reads as a fleet that has never run rather than as a failure.
-  This scans `scripts`, `tests`, `hooks`, `githooks` and `fleet-view` — those five and no others, for
-  `scripts/tracked-links`'s reason: a wider pathspec would make the suite read `docs/`, `README.md`,
-  `LICENSE` or `agents.conf.example` and quietly break `scripts/ci-needed`'s skip list, which needs
-  no edit as it stands. `--cached --others --exclude-standard`, so a new reader written but not yet
-  `git add`ed is caught at exactly the moment the check exists for. Findings on stdout, exit 1,
-  in `tracked-links`'s house format — `unsubscribed:`, `stale:`, `unpinned:` — with
-  `tests/marker-readers.sh` as its suite. **It is not itself a reader**: it sources
-  `scripts/session-marker.sh` and greps for `cerebro_marker_infix`, which is the rule rather than a
-  way round it. Like `tracked-links` it is a gate predicate and must never join
-  `launch-preflight`'s hot path: a check that refuses there is a fleet that cannot start.
-- **`scripts/portable-snippets` is the one place "does a skill or agent snippet only word-split
-  under bash" is answered** (cb-7ft). An agent pastes the snippets in `skills/` and `agents/` into
-  whatever shell its tool provides, and an alternate-value expansion means two different things
-  across them: bash splits an unquoted one into several arguments, zsh does not word-split a
-  parameter expansion at all, so the command receives a flag glued to its value and answers with its
-  usage line. Two implementers hit that at the same line of the same file and wrote the same
-  prevention (cb-i1w, cb-hz4) while the snippet stayed byte-identical, which is the second sighting
-  a check is earned on. Findings on stdout, exit 1, in `tracked-links`' house format —
-  `unportable: <path>:<line>` — with `tests/portable-snippets.sh` as its suite. It scans `skills/`
-  and `agents/` and nothing else, for `tracked-links`' reason: those are the two directories the
-  sync links into a consumer's discovery paths, and a wider pathspec would make the suite read
-  `docs/`, `README.md`, `LICENSE` or `agents.conf.example` and quietly break `scripts/ci-needed`'s
-  skip list. Only the alternate-value form is matched, never the default-value one — `"${BD_TIMEOUT:-30}"`
-  is portable and quoted, and flagging it would push authors toward uglier code for no defect. It is
-  **not itself scanned**, living in `scripts/`, the way `marker-readers` is not itself a reader of
-  the marker sentence — which is what lets its header spell the construct out where a skill may not.
-  Like its siblings it is a gate predicate and must never join `launch-preflight`'s hot path.
-- `scripts/consumer-root` is the one place "where is the consumer root" is answered (ah-e0w). Every
-  other script that needs it asks this one rather than deriving it itself — `consumer-root` (no
-  argument) for the enclosing working tree (main checkout, or a bead worktree when this copy is the
-  worktree's own submodule) and `consumer-root --shared` for the main working tree every worktree of
-  the repository shares, which is where the fleet view reads state files and where the sweeps look.
-  Both start from `${BASH_SOURCE[0]}`: first the validated `../../..` climb, which needs no git and
-  keeps the launchers' narrowed-PATH guarantee true at the standard mount, then — only if that fails
-  — asking git which working tree holds this checkout as a submodule
-  (`--show-superproject-working-tree`, which answers at any mount — ah-ohc2). That order matters: the
-  probe answers about whatever repository the checkout belongs to, so for a plain *copy* at the
-  standard mount inside a consumer that is itself a submodule it would name the grandparent.
-  `scripts/roster` asks this script for its root rather than resolving one of its own (cb-akc). So
-  `.claude/cerebro/scripts` is load-bearing only for a consumer that vendors cerebro as a plain copy;
-  a submodule may be mounted anywhere. To test a change, build a throwaway consumer repo rather than running
-  the script here (it will refuse: there is no `.claude/` above this tree). Since cb-akc it is also
-  the one place "how is this checkout mounted in it" is answered — `--self-mounted` and `--mount`.
-  Since cb-ue0 it also answers all three at once: `consumer-root --hints` prints the enclosing root,
-  the shared root (empty when git cannot say) and the mount, on three lines, so one fork can do what
-  three used to.
-- **`scripts/cargo-env.sh` is the one place bash answers which variables cargo put in this
-  process's environment** (cb-6fu) — `cerebro_cargo_injected_name_p`,
-  `cerebro_cargo_config_env_names`, `cerebro_cargo_protected_name_p` and `cerebro_strip_cargo_env`,
-  sourced never executed, builtins alone for the narrowed PATH, in the shape of
-  `scripts/session-marker.sh` and `scripts/root-hints.sh` beside it. Its one caller is
-  `scripts/launch`, its suite is `tests/cargo-env.sh`, and the launch path's own cases are in
-  `tests/launchers.sh`. It exists because `scripts/cerebro-tui` execs `cargo run`, so the fleet view
-  is a **child of cargo** and hands its environment to every session it spawns — cargo's eighteen
-  injected variables plus every key of the `[env]` table in the **consumer's** `.cargo/config.toml`.
-  In atlantis-hud that meant `TS_RS_EXPORT_DIR` pointing at the navigator's shared checkout, so
-  every agent's `cargo test` wrote its generated bindings there with no cwd mistake required
-  (ah-79ca, ah-16pb). It is a **denylist and deliberately not the prefix `CARGO_*`**: `CARGO_HOME`
-  and `CARGO_TARGET_DIR` are the navigator's own settings, and clearing the second costs a full
-  rebuild per session. `PATH`, `HOME`, `CEREBRO_*`, `BEADS_*` and the shell's own bookkeeping names
-  are protected against an `[env]` table that names them. **`unset` takes effect in the shell that
-  runs it**, so `cerebro_strip_cargo_env` reports through two arrays as well as stdout: a caller
-  reading its printed lines through `$(...)` or `< <(...)` strips nothing at all and prints a
-  convincing list of what it did not do.
-- **`scripts/jsonl-log.sh` is the one place bash appends a line to an append-only JSONL log**
-  (cb-ge0) — `cerebro_jsonl_append <path> <line>`, builtins only for the narrowed PATH, refusing a
-  line that is empty or does not begin with `{` rather than trusting its caller to have checked one.
-  Its two callers are `scripts/agent-state` (`transitions.jsonl`) and `scripts/launch-refused`
-  (`errors.jsonl`), and both append from inside a `{ ... } || true` group, which is the whole reason
-  the library exists: **`|| true` on a group turns errexit off inside the group**, so a
-  `line="$(jq ...)"` in a "cannot fail" block does not abort it when `jq` fails — it leaves `line`
-  empty and appends a blank line. That sentence had been learned twice from scratch, once per bead,
-  because it lived in a comment in one copy of the idiom; it lives in the library's header now.
-  The fleet view's own writer (`log.rs`) is a second implementation in a different language rather
-  than a copy that was missed — Rust cannot source a bash library, and shelling out would be a fork
-  per evaluation in a loop that runs every five seconds.
-  Since cb-xhu.1 it is **also the one place a write to the fleet's live logs is refused**.
-  `CEREBRO_PROTECTED_STATE_DIR` names a directory nothing may append into; a write at or under it
-  returns non-zero, writes nothing, and records `<suite>\t<path>` in
-  `$CEREBRO_PROTECTED_STATE_REPORT` when one is named. `scripts/suite-runner` is the only thing
-  that sets either — it resolves `consumer-root --shared` once per run, names each suite in
-  `CEREBRO_SUITE_NAME`, and turns any recorded attempt into a red run naming the suite and the path
-  (an explicitly empty value is *guard off*, which is why it tests `${VAR+set}`). Production never
-  sets it, so no launcher, session or fleet-view child changes behaviour at all.
-  `scripts/agent-state` skips its whole log block, rotation included, when its own log is protected:
-  the `mv` is outside the library, so a suite that reached the shared root would rotate the
-  navigator's live log. **It is a refusal at the writer and not a before/after snapshot of the
-  files**, because the live fleet appends to `decisions.jsonl` every five seconds and to
-  `transitions.jsonl` on every transition while an implementer's gate runs in a worktree, so a
-  size comparison would be red on essentially every local run. The guard covers the two bash-written
-  `*.jsonl` logs only — a suite that wrote a `<name>.state.json` into the live directory would still
-  not be caught, deliberately, since that write is `agent-state`'s primary job and no suite has ever
-  done it. cb-xhu.1: 249 of the 437 lines of this checkout's `errors.jsonl` were one fixture, in the
-  file the navigator is sent to by name.
-- **`scripts/root-hints.sh` is the root-hint contract**, and the one place the mount round trip
-  lives (cb-ue0). `scripts/launch` resolves `consumer-root --hints` once per session start and
-  exports `CEREBRO_CONSUMER_ROOT`, `CEREBRO_CONSUMER_SHARED_ROOT` and `CEREBRO_CONSUMER_MOUNT`;
-  `project-conf`, `default-branch`, `sync-symlinks.sh`, `launch-preflight`, `roster` and
-  `agent-alive` source the library and prefer the hint, which took a launch from **16**
-  `consumer-root` forks to **one**. A hint is **never trusted, always validated**: an environment
-  variable is inherited, and `consumer-root` deliberately answers about the checkout its own
-  `${BASH_SOURCE[0]}` lives in, so a hint from a parent in the main checkout must not answer for a
-  copy inside a bead worktree. `cerebro_hinted_root` therefore checks `<hinted root>/<hinted mount>`
-  physically resolves to the caller's own checkout — which cannot be true of two checkouts at once —
-  and returns non-zero otherwise, so every caller keeps its original fork as the fallback and
-  behaves exactly as it did before when the hint is absent or foreign. **A fixture that hand-places
-  `scripts/consumer-root` must place `scripts/root-hints.sh` beside it**, or it dies at the source
-  line; `link_scripts` in `tests/lib/consumer.sh` does this for every consumer it builds.
-- `scripts/sync-symlinks.sh` and `githooks/` only ever run in a **consumer** repo. `sync-symlinks.sh`
-  asks `consumer-root` for the enclosing tree — a worktree syncs its own links, which is what lets a
-  submodule-bump PR commit them (ah-cuc). It writes into every discovery path
-  `scripts/agent-cli --layouts` names — `.claude/` and, since cb-d59.4, `.github/` — and mirrors a
-  project's own definitions from `.claude/` into the others, one way only. cb-pq4's actual rule is
-  intact: the consumer **root** is the project's alone, the `.dir-locals.el` it used to install is
-  gone, and the one thing it does there is remove a link to the retired template, out loud.
-  The two git hooks ask git directly (`--show-toplevel`) rather than `consumer-root`: a hook's cwd
-  is already inside the tree it fires in, so the enclosing tree is `--show-toplevel` by definition.
-- `githooks/install.sh` sets `core.hooksPath`, which is repository-wide and replaces `.git/hooks`
-  entirely. It refuses rather than clobbering a `core.hooksPath` already pointing elsewhere.
-- **`hooks/` and `githooks/` are different mechanisms.** `githooks/` is git; `hooks/` holds Claude
-  Code hook settings `scripts/launch` passes to `claude --settings` (see `hooks/README.md`). The settings
-  file names no paths of its own — it runs `"$CEREBRO_SCRIPTS/agent-asking"`, and sourcing
-  `scripts/agent-hooks-env <Name>` exports `CEREBRO_SCRIPTS` and `CEREBRO_AGENT_NAME` (which the
-  hook subprocess inherits through `claude`) and sets `CEREBRO_HOOK_SETTINGS` for the `--settings`
-  flag. Source it *and* pass the flag: doing one without the other gets hooks that silently do
-  nothing, which is by design — `agent-asking` exits 0 rather than failing a question.
-  `hooks/copilot/` holds the same behaviour in GitHub Copilot's schema. Copilot has no `--settings`
-  and discovers its hooks from the consumer's `.github/hooks/`, so `scripts/sync-symlinks.sh` links
-  it there — in every consumer, whatever any `agents.conf` line names, the same rule the layouts follow —
-  and `scripts/agent-cli --hooks` is the one place those two paths are written down.
-- **The model an agent runs on is the agent definition's `model:`, unless the consumer overrides it —
-  and on any CLI but Claude Code the definition does not answer at all.**
-  `scripts/launch` reads `<consumer>/.cerebro/agents.conf` if it exists — `<name|role|default>[@provider]
-  <model|-> [effort]`, most specific key wins, `-` meaning "pass no `--model`" — and says on stderr
-  which key it matched, so an unexpected model is traceable to the file nobody remembers editing. A
-  `--model` on the command line still wins, since it is appended after. `agents.conf.example` is the
-  documented copy; the live file is consumer-side and uncommitted, which is what makes switching the
-  fleet between Opus and Fable a one-line edit rather than a submodule change every consumer shares.
-  Since cb-d59.6 a key may carry `@<provider>`, and the six probed keys are most-specific-first with
-  the provider-scoped key beating the plain one within each: `<Name>@<p>`, `<Name>`, `<role>@<p>`,
-  `<role>`, `default@<p>`, `default`. A key naming a CLI cerebro does not know is warned about
-  **once** and ignored — which is why the file is read in one pass into parallel arrays and then
-  probed, rather than re-read per key. The agent files' `model:` and `effort:` are **Claude Code's
-  words** (agent definitions carry no model or effort frontmatter), so each agent's `agents.conf`
-  line controls those settings: a Copilot agent with neither passes no `--model` and no `--effort` at all, runs on the
-  CLI's own defaults, and says so on stderr rather than looking deliberate.
-- `scripts/launch-preflight <role> <name>` runs before every launch. It refuses (exit 2, one line on
-  stderr) if `claude` is not on `PATH`; the symlink sync it runs is consumer-only, same as
-  `sync-symlinks.sh` — it does nothing beyond the `claude` check unless it is sitting inside a
-  consumer's `.claude/cerebro`. Inside a consumer it also refuses if the submodule never brought that
-  role's `agents/<role>.md` in, before ever syncing — a launcher used to go `up` for a moment and
-  then silently `dead` when the file was missing (ah-bri). Every launcher calls it right before
-  `exec claude`, so a submodule bump is usable the moment something is started rather than only after
-  someone runs `sync-symlinks.sh` by hand (ah-cuc); this is what the git hooks in `githooks/` would
-  otherwise be for, and why they stay optional. Since cb-4qq a **dirty** checkout is refused only
-  when the incoming commits change a file that has uncommitted changes — `git merge --ff-only` keeps
-  every other local edit, and refusing on all of them closed a loop where each merged bead left the
-  shared checkout one commit behind and one edited file then refused every launch of every name —
-  and a merge or submodule update that cannot be done is a **refusal** (exit 2, naming the paths)
-  rather than a bare exit 1 the fleet view reads as a crash.
-- **`.claude/cerebro/scripts/` is a hard-coded path in two places that must agree**:
-  the fleet view's own script directory, and every doc that tells someone what to type. The
-  launchers themselves take no view — they are `exec claude …` and work from anywhere — so a wrong
-  path here fails at `s` in the fleet view, not at the script.
-- `scripts/launch <Name>` starts **one interactive session**, and is the only way one is started
-  (ah-qled.5.3 removed the seven `run-*` shims that used to name it). Nothing loops, nothing polls
-  a flag, nothing writes a state file: the agent writes its own state, and `cerebro--supervise`
-  owns the cadence. Adding a loop back to `launch` would put two
-  supervisors on one session. The one file it does touch is the symlinks, via
-  `scripts/launch-preflight`, right before it execs — see above.
-- The state directory was `.claude/implementers/` until ah-2n3.1, and its writer was
-  `scripts/implementer-state`. Both names are gone: `scripts/agent-state` is the writer, and the
-  rename shim was removed once a release of the consumer had carried it (ah-qled.5.3).
-- **A consumer declares its own fleet in `<consumer>/.cerebro/roster.conf`** (ah-qled.5.1) — same
-  `NAME  ROLE` shape as the `TABLE=` heredoc in `scripts/roster`, `#` comments and blank lines
-  ignored, `KIND` still derived, and an optional third word — `autostart`, read by
-  `roster --autostart`, or `standby`, read by `roster --standby` (cb-98u) — the three default
-  columns never change, since `launch`, `agent-state` and
-  `model::parse_roster` all take the last field as the KIND; any other third word, or a fourth,
-  refuses with exit 2 naming the file, line and word, and the fleet view shows that refusal rather
-  than an empty fleet (cb-0r6). When it exists and is non-empty it **replaces** the built-in table
-  rather than merging with it, because file order is load-bearing (Cerebro takes implementer names
-  in file order). It is **tracked**, beside `.cerebro/project.conf`, by a
-  `.gitignore` negation inside the otherwise-ignored `.cerebro/` (cb-epr): which agents exist is a
-  fact every clone needs, and an ignored declaration vanishes on a fresh clone. `roster`
-  asks `consumer-root` for the root (cb-akc) — the one resolver, whose git step is optional and
-  whose failure is swallowed, so the launchers' narrowed-PATH guarantee (`dirname` and `bash`
-  alone, `tests/launchers.sh`) still holds and is what guards it; a submodule mounted elsewhere
-  (`vendor/cerebro`, ah-ohc2) is found through git when git is there. At that root a file still at
-  the retired `.claude/cerebro-roster`
-  with none at the new path **exits 2 naming the `mv`** rather than falling back: absence is the
-  documented "run the built-in fleet" signal, and a stale path borrowing it would silently give a
-  consumer nineteen names it never declared. `project-conf` and `launch-preflight` refuse the same
-  way, and the reader-level refusal is the load-bearing one — the fleet view reaches `roster`
-  without ever passing through a preflight. A role only the
-  consumer declares needs `<consumer>/.claude/agents/<role>.md`; `scripts/launch` prefers that
-  directory over the submodule's, and `launch-preflight` says which of the two causes is missing
-  rather than always blaming the submodule.
-- **The fleet is declared once, in `scripts/roster`.** Adding a role is one line there plus
-  `agents/<role>.md` (and a skill if it has one); `launch`, `agent-state`, the fleet view and the
-  tests read the roster, and the model and effort come from the agent file's frontmatter. The only
-  per-role facts still written by hand are the phase words in `scripts/agent-state`'s own header
-  (the script accepts any well-formed word since ah-qled.5.2, so the list lives in one place).
-
-# Test driven development
-
-Develop the code using test driven development, but do not stop after each phase and ask for user approval.
-Instead, continue running until done and ready to commit.
+- **`|| true` on a group turns errexit off inside it.** A `line="$(jq …)"` inside
+  `{ …; } || true` leaves `line` empty on failure instead of aborting. Append through
+  `scripts/jsonl-log.sh`, which refuses an empty line.
+- **`unset` takes effect in the shell that runs it.** A library that strips the environment reports
+  through arrays; a caller that reads it through `$(...)` strips nothing.
+- **`hooks/` and `githooks/` are different mechanisms.** `githooks/` is git (`core.hooksPath`,
+  repository-wide). `hooks/` is Claude Code hook settings passed by `launch --settings`; source
+  `agent-hooks-env` *and* pass the flag, or the hooks silently do nothing. `hooks/copilot/` is the
+  same behaviour in Copilot's schema.
+- **The fleet view is a child of cargo** (`scripts/cerebro-tui` execs `cargo run`), so every
+  session inherits cargo's environment plus the consumer's `[env]` table unless `launch` strips it.
+- **Scripts only work from a consumer root.** Run here they refuse, since there is no `.claude/`
+  above the tree. Sync links are consumer-only too, and the links tracked here are checked by
+  `scripts/tracked-links`.
+- **`.cerebro/` is deny-listed, not allow-listed.** The consumer ignores `worktrees`, `state` and
+  `scratch` and tracks the rest, so a new runtime artifact must be added to `.gitignore`.
+- **`.claude/cerebro/scripts/` is hard-coded in two places that must agree**: the fleet view's
+  script directory and the docs. The launchers themselves work from anywhere.
+- **Snippets in `skills/` and `agents/` are pasted into whatever shell an agent has.** An unquoted
+  `${X:+--flag $X}` word-splits in bash and not in zsh; `scripts/portable-snippets` catches it.
+- The marker blocks synced by `four-eye-sync` and `state-contract-sync` need the blank lines inside
+  the markers: CommonMark ends an HTML block at a blank line.

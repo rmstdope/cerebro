@@ -3363,7 +3363,7 @@ impl App {
     pub fn queue_release(&mut self, name: &str, bead: &str, cause: crate::lifecycle::GiveBack) {
         self.releasing.insert(
             name.to_string(),
-            model::Releasing { bead: bead.to_string(), failed_at: None },
+            model::Releasing { bead: bead.to_string(), failed_at: None, cause },
         );
         self.outbox.push(WriteRequest::Release {
             name: name.to_string(),

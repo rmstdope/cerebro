@@ -1268,8 +1268,20 @@ fn give_back(
             }
         }
     }
+    // A give-back whose write failed is retried from its own record once a minute has passed,
+    // with the cause it started with - never from a handover file, which may not exist (a claim
+    // that failed wrote none) and would name the wrong cause if it did.
+    let retries: Vec<(String, cerebro_tui::model::Releasing)> = app
+        .releasing
+        .iter()
+        .filter(|(name, entry)| entry.failed_at.is_some() && app.may_release(name, now))
+        .map(|(name, entry)| (name.clone(), entry.clone()))
+        .collect();
+    for (name, entry) in retries {
+        queue_give_back(app, logger, &name, &entry.bead, entry.cause, now);
+    }
     for entry in roster.iter().filter(|entry| entry.kind == cerebro_tui::model::AgentKind::Implementer) {
-        if app.handed.contains_key(&entry.name) {
+        if app.handed.contains_key(&entry.name) || app.releasing.contains_key(&entry.name) {
             continue;
         }
         let Some((bead, age)) =
@@ -1908,6 +1920,9 @@ fn route_key(
                 // bead stays claimed - so the view's record goes, and `give_back` has nothing to
                 // undo (cb-10d.1).
                 app.handed.remove(&name);
+                // And its handover file, or the orphan path would give the bead back a minute
+                // later under a session the navigator killed on purpose.
+                let _ = std::fs::remove_file(lifecycle::handover_path(&config.paths, &name));
                 state.host.kill(&config.paths, &name);
                 // A killed agent must not wait up to five seconds to disappear from the fleet.
                 AppAction::RefreshFleet
@@ -5431,6 +5446,8 @@ mod main_tests {
         );
         app.handed.insert("Rogue".into(), "cb-x".into());
         app.selected = Some("Rogue".to_string());
+        let handover = cerebro_tui::lifecycle::handover_path(&paths, "Rogue");
+        std::fs::write(&handover, "cb-x\n").unwrap();
         let mut host = SessionHost::default();
         host.insert("Rogue", forever());
 
@@ -5444,7 +5461,38 @@ mod main_tests {
 
         assert!(app.handed.is_empty(), "the view's record goes with the session");
         assert!(app.take_outbox().is_empty(), "and the claim stays, as the prompt promised");
+        assert!(!handover.exists(), "so no orphan path can give it back later");
         settle_gone(&mut host, "Rogue");
+    }
+
+    #[test]
+    fn a_failed_give_back_is_retried_from_its_record_with_its_cause() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "exit 0");
+        let now = Utc::now();
+        let roster = implementer_roster(&["Rogue"]);
+        let mut app = standby_app(supervising(), vec![implementer_row("Rogue", RowState::Dead)], None, now);
+        // No handover file: the claim itself failed.
+        app.queue_release("Rogue", "cb-x", cerebro_tui::lifecycle::GiveBack::Stopped);
+        app.take_outbox();
+        app.note_release_failed("Rogue", now);
+
+        give_back(&mut app, &SessionHost::default(), &mut test_logger(), &paths, &roster, now + chrono::Duration::seconds(30));
+        assert!(app.take_outbox().is_empty(), "not before a minute");
+
+        give_back(&mut app, &SessionHost::default(), &mut test_logger(), &paths, &roster, now + chrono::Duration::seconds(61));
+        let out = app.take_outbox();
+        assert!(
+            matches!(
+                out.as_slice(),
+                [cerebro_tui::app::WriteRequest::Release {
+                    cause: cerebro_tui::lifecycle::GiveBack::Stopped,
+                    ..
+                }]
+            ),
+            "{out:?}"
+        );
+        assert_eq!(app.releasing["Rogue"].failed_at, None, "the retry is running");
     }
 
     #[test]

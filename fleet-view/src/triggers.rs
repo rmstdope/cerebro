@@ -1523,7 +1523,11 @@ mod tests {
             [("Storm".to_string(), "cb-2".to_string())].into_iter().collect();
         let releasing: BTreeMap<String, crate::model::Releasing> = [(
             "Rogue".to_string(),
-            crate::model::Releasing { bead: "cb-3".to_string(), failed_at: None },
+            crate::model::Releasing {
+                bead: "cb-3".to_string(),
+                failed_at: None,
+                cause: crate::lifecycle::GiveBack::DidNotStart,
+            },
         )]
         .into_iter()
         .collect();

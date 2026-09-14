@@ -38,12 +38,13 @@
 #   user-feedback   sweep
 #   orchestrator    sweep release triage bead
 #   architect       daily weekly
+#   reviewer        read check walk report
 #
 # THE HANDOVER FILE (cb-10d.1). Every write removes `.cerebro/state/<name>.handover`, which
 # `scripts/assign-bead` writes when the fleet view hands an implementer its bead and
 # `scripts/release-bead` removes when that bead is given back. A write here means the session ran,
 # so the handover is over.
-#   reviewer        read check walk report
+#
 # --pid is required and is never defaulted from this script's own parentage: pass the caller's
 # $PPID (the claude process), not $$ (this script's own shell) - a guessed pid shows an agent
 # as dead and starts a second session over it.

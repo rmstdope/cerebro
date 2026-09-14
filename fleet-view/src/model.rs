@@ -873,6 +873,8 @@ pub struct WorkBuckets {
 pub struct Releasing {
     pub bead: String,
     pub failed_at: Option<DateTime<Utc>>,
+    /// Why it is being given back, so a retry says the same sentence the first attempt would.
+    pub cause: crate::lifecycle::GiveBack,
 }
 
 /// The issue types that are bookkeeping rather than work. Every one is skipped outright EXCEPT

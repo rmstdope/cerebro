@@ -165,8 +165,8 @@ said `asking`; corrected").
 
 | Where in this skill | Call |
 |---|---|
-| *Picking up*, nothing to claim | `.claude/cerebro/scripts/end-pass <name> --pid $PPID` |
-| *Picking up*, right after `bd ready … --claim` | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase build --pid $PPID` |
+| *Picking up*, no bead named in the prompt that started you | `.claude/cerebro/scripts/end-pass <name> --pid $PPID` |
+| *Picking up*, once the bead you were given is confirmed yours | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase build --pid $PPID` |
 | *Building*, before the fast gate | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase gate --pid $PPID` |
 | *The review loop*, before spawning the review sub-agent | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase review --pid $PPID` |
 | *The review loop*, once every finding is answered | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase ci --pid $PPID` |
@@ -208,38 +208,34 @@ end the pass exactly the same way.
 **This is your first turn's work.** Nothing gates it: a running implementer is a working one, and
 there is no flag to wait for.
 
+**You do not pick your bead, and you do not claim it.** The fleet view chose it and claimed it for
+you before your session started, and the prompt that started you names it in one sentence:
+*Your bead is `<id>`; it is already claimed for you.* Confirm it is yours, then write your state:
+
 ```bash
 bd dolt pull
-bd ready --label planned --exclude-label human --exclude-label verdict:stale \
-        --exclude-type epic --claim --json
+bd show <id> --json          # assignee must be your own name, status must be in_progress
 .claude/cerebro/scripts/agent-state <name> working --bead <id> --phase build --pid $PPID
-bd dolt push                               # so other machines see the claim
+bd dolt push
 ```
 
-One bead. `--claim` takes the first ready one; take that and no other.
+**Never run `bd ready`, never pass `--claim`, and never take a different bead** — not even one that
+looks more urgent. Which bead a builder takes, and when, is the fleet view's decision
+(`scripts/assignable-beads` is the rule it uses), and a second builder choosing for itself is how
+two sessions end up on one bead.
 
-`human` is work already waiting on the navigator; `epic` is a split parent, which has children
-rather than a plan. Claiming either means refusing it a minute later.
+**If it is not yours** — another assignee, not `in_progress`, or a bead that does not exist — hand
+it back with the hand-back block below, the `--add-label human` form, naming in the note exactly
+what you found, and end the pass.
 
-`verdict:stale` is the third, and it is the one that looks most like ordinary work: an open,
-`planned`, P0 bead exactly like a reopened one, except that the fleet view has found main has moved
-past the commit its verdict was formed against. **Building against a stale verdict is the no-op this
-label exists to prevent**: on the day this was filed, one such bead asked for something a sibling
-had already shipped two merges later, and another for wording a bead in flight was already carrying
-when the verdict was written. The bead is waiting for Psylocke to look again, not for you; she either clears the label,
-and it comes back to this queue unchanged, or she records a fresh verdict against current main, and
-then it is worth building.
+**If the prompt names no bead**, say "no bead was given, ending the pass" in one line, run `end-pass`
+as *Ending a pass* describes, and stop producing output. The view starts a fresh session under your
+name, on a bead, when there is one to give; a session that sits polling is one it cannot tell from a
+session that has hung.
 
 `bd heartbeat <id>` at every phase gate and before anything long — a full gate run, a CI watch. The
 lease is short, about five minutes, and a cycle is an hour; the exact TTL is bd's and not
 configurable here, so heartbeat on every boundary rather than on a timer.
-
-**Nothing to claim? End the pass — do not poll.** The planner has not got there yet, or another
-implementer took the last one first; the view may have started you for a bead a peer claimed a
-moment ago. Say "queue empty, ending the pass" in one line, run `end-pass` as *Ending a pass*
-describes, and stop producing output. The view starts a fresh session under your name the moment a
-planned bead exists, and a session that sits polling is one it cannot tell from a session that has
-hung.
 
 **Read the plan with `bd show <id> --json`.** The pretty renderer mangles it.
 

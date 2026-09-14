@@ -32,19 +32,19 @@ bd dolt push                   # back the bead database up to the remote
 
 Two ways to pick work, and they are different mechanisms rather than two spellings of one. Reading
 `bd ready` and then claiming by id is the one to use when a human or an agent is *choosing* — it
-allows `bd show` first. `bd ready --claim` takes the **first** match itself, which is what the agent
-roles below want, since they take whatever is next rather than choosing:
+allows `bd show` first. `bd ready --claim` takes the **first** match itself. A builder does neither
+any more: the fleet view gives each implementer its bead through `scripts/assign-bead`, which claims
+it as that agent before the session starts, choosing from:
 
 ```bash
-bd ready --label planned --exclude-label human --exclude-label verdict:stale \
-        --exclude-type epic --claim --json                                       # builder
+.claude/cerebro/scripts/assignable-beads            # what a builder may be given
 ```
 
 `human` is already waiting on the navigator, and re-claiming it just re-asks a question nobody is
 there to answer. `epic` is a split parent: it has children rather than a plan. `verdict:stale` is a
 bead waiting for the verifier to look again, not for a builder — `implement-bead` has why.
 
-**Claiming belongs to the implementer, and to nobody else.** A claim says *this is being built
+**Claiming belongs to the implementer, and the fleet view does it on the implementer's behalf.** A claim says *this is being built
 right now*, which is why it takes the bead off `bd ready` and holds a lease that has to be
 heartbeated. No other role runs `bd update --claim`, `bd ready --claim` or `bd unclaim` — not the
 planner, not user feedback, not the orchestrator, not a session the navigator is driving by hand.

@@ -345,6 +345,9 @@ pub enum RowState {
     /// state file was deleted when the view ended the session, so a name with no file and no
     /// process is what a derivation calls `Dead`, and only the armed set can say otherwise.
     Standby,
+    /// Handed a bead by this view, session not reported yet (cb-10d.1). Never a state file's
+    /// word; the only producer is `apply_starting`.
+    Starting,
     Unknown(String),
     Invalid,
 }
@@ -364,6 +367,7 @@ impl RowState {
             Self::Up => "up",
             Self::Dead => "dead",
             Self::Standby => "standby",
+            Self::Starting => "starting",
             Self::Invalid => "invalid",
             Self::Unknown(raw) => raw,
         }
@@ -405,6 +409,81 @@ pub fn apply_standby(
             row
         })
         .collect()
+}
+
+/// Restate a row this view has handed a bead and that has not reported as `Starting`, and a
+/// `Starting` row no longer handed as `Dead` - both directions, for `apply_standby`'s reason.
+/// Runs BEFORE `apply_standby`, so a Dead row no longer handed can still become `Standby`.
+///
+/// It never writes `FleetRow::bead`: that field stays the state file's word, and the renderer
+/// takes the handed id from `App::handed` (cb-10d.1).
+pub fn apply_starting(rows: Vec<FleetRow>, handed: &BTreeMap<String, String>) -> Vec<FleetRow> {
+    rows.into_iter()
+        .map(|mut row| {
+            let is_handed = handed.contains_key(&row.name);
+            match row.state {
+                RowState::Dead | RowState::Standby if is_handed => row.state = RowState::Starting,
+                RowState::Starting if !is_handed => row.state = RowState::Dead,
+                _ => {}
+            }
+            row
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod starting_tests {
+    use super::*;
+
+    fn row(name: &str, state: RowState) -> FleetRow {
+        FleetRow {
+            name: name.into(),
+            role: "implementer".into(),
+            kind: AgentKind::Implementer,
+            state,
+            phase: None,
+            bead: None,
+            since: None,
+            phase_since: None,
+            turn_ended: None,
+            pid: None,
+            sessions: 0,
+            diagnostic: None,
+        }
+    }
+
+    fn handed(names: &[&str]) -> BTreeMap<String, String> {
+        names.iter().map(|n| (n.to_string(), "cb-x".to_string())).collect()
+    }
+
+    #[test]
+    fn a_handed_row_that_has_not_reported_reads_starting() {
+        let mut working = row("Gambit", RowState::Working);
+        working.bead = Some("cb-w".into());
+        let rows = vec![
+            row("Rogue", RowState::Dead),
+            row("Storm", RowState::Standby),
+            row("Cyclops", RowState::Up),
+            working,
+        ];
+        let out = apply_starting(rows, &handed(&["Rogue", "Storm", "Cyclops", "Gambit"]));
+        let states: Vec<_> = out.iter().map(|r| r.state.clone()).collect();
+        assert_eq!(
+            states,
+            [RowState::Starting, RowState::Starting, RowState::Up, RowState::Working]
+        );
+        assert_eq!(out[0].bead, None, "the bead field is the state file's alone");
+        assert_eq!(out[3].bead.as_deref(), Some("cb-w"));
+    }
+
+    #[test]
+    fn a_starting_row_no_longer_handed_goes_back_to_dead() {
+        let out = apply_starting(vec![row("Rogue", RowState::Starting)], &BTreeMap::new());
+        assert_eq!(out[0].state, RowState::Dead);
+        let armed: BTreeSet<String> = ["Rogue".to_string()].into_iter().collect();
+        let standby = apply_standby(out, &armed, &BTreeSet::new());
+        assert_eq!(standby[0].state, RowState::Standby);
+    }
 }
 
 /// Hold each closing row's last word instead of the `Up` the process scan alone produces.
@@ -782,6 +861,18 @@ pub struct WorkBuckets {
     /// against her own last pass. It must come off the raw list: a bead whose verification has
     /// settled appears in NO bucket, and a RELEASED comment is still owed on its issue.
     pub linked: Vec<LinkedBead>,
+    /// The ids an implementer may be handed, in `scripts/assignable-beads`' order (priority, then
+    /// id). `partition_beads` leaves it empty; `readers::read_work` fills it (cb-10d.1).
+    pub assignable: Vec<String>,
+}
+
+/// A give-back this view has asked for (cb-10d.1): the bead, and when its write failed if it did.
+/// Its bead is spoken for until the entry goes. Lives here because both `app` and `triggers`
+/// already import `model` and neither imports the other.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Releasing {
+    pub bead: String,
+    pub failed_at: Option<DateTime<Utc>>,
 }
 
 /// The issue types that are bookkeeping rather than work. Every one is skipped outright EXCEPT

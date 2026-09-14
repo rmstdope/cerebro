@@ -611,7 +611,32 @@ pub fn read_work(
     programs: &Programs,
     commands: &dyn CommandRunner,
 ) -> Result<WorkBuckets, ReadError> {
-    Ok(model::partition_beads(read_beads(paths, programs, commands)?))
+    let mut buckets = model::partition_beads(read_beads(paths, programs, commands)?);
+    buckets.assignable = read_assignable(paths, commands)?;
+    Ok(buckets)
+}
+
+/// The beads an implementer may be handed, via `<scripts_dir>/assignable-beads` - the one place
+/// that rule lives (cb-10d.1). Ids in the script's order. A failure is returned as itself: an empty
+/// list would say there is nothing to build.
+pub fn read_assignable(
+    paths: &ReaderPaths,
+    commands: &dyn CommandRunner,
+) -> Result<Vec<String>, ReadError> {
+    #[derive(serde::Deserialize)]
+    struct Assignable {
+        id: String,
+        #[allow(dead_code)]
+        priority: Option<u8>,
+    }
+    let program = paths.scripts_dir.join("assignable-beads");
+    let args: [&str; 0] = [];
+    let stdout = commands.run(&program, &args, None, BD_TIMEOUT)?;
+    let parsed: Vec<Assignable> = serde_json::from_slice(&stdout).map_err(|e| ReadError::Invalid {
+        source: Invocation::new(&program, &args),
+        message: e.to_string(),
+    })?;
+    Ok(parsed.into_iter().map(|bead| bead.id).collect())
 }
 
 /// How long each `gh` child may run. Thirty seconds, not `COMMAND_TIMEOUT`'s five: these are
@@ -1441,9 +1466,44 @@ mod tests {
 
         // Exactly one `bd` run, with the panel's whole argv - the shared root, every status,
         // `--readonly` and `--brief`.
+        // Exactly one `bd list`, plus the assignable-beads script (cb-10d.1).
         let calls = fake.calls();
-        assert_eq!(calls.len(), 1, "one `bd` answer, not one per bucket");
+        assert_eq!(calls.len(), 2, "one `bd` answer, not one per bucket, and one assignable read");
         assert_eq!(calls[0].args, bd_argv(&paths.shared_root));
+    }
+
+    #[test]
+    fn read_work_carries_the_assignable_beads_in_the_scripts_order() {
+        let paths = paths_at(Path::new("/consumer"));
+        let script = paths.scripts_dir.join("assignable-beads");
+        let answers = script.clone();
+        let fake = FakeCommands::new(move |call: &Call| {
+            if call.program == answers {
+                Ok(br#"[{"id":"cb-b","priority":0},{"id":"cb-a","priority":1}]"#.to_vec())
+            } else {
+                Ok(BUCKETED_BEADS.as_bytes().to_vec())
+            }
+        });
+
+        let work = read_work(&paths, &Programs::default(), &fake).unwrap();
+        assert_eq!(work.assignable, ["cb-b", "cb-a"]);
+        let calls = fake.calls();
+        let call = calls.iter().find(|c| c.program == script).expect("assignable-beads was run");
+        assert!(call.args.is_empty(), "no arguments, got {:?}", call.args);
+    }
+
+    #[test]
+    fn a_failed_assignable_read_fails_the_work_read() {
+        let paths = paths_at(Path::new("/consumer"));
+        let script = paths.scripts_dir.join("assignable-beads");
+        let fake = FakeCommands::new(move |call: &Call| {
+            if call.program == script {
+                Err(exit(1, "assignable-beads: bd ready failed"))
+            } else {
+                Ok(BUCKETED_BEADS.as_bytes().to_vec())
+            }
+        });
+        assert!(read_work(&paths, &Programs::default(), &fake).is_err());
     }
 
     /// A `bd` that exits non-zero is a failure, not a set of empty queues: an empty board and an

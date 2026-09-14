@@ -1260,7 +1260,11 @@ fn session_title(app: &App, focused: bool) -> Line<'static> {
     let (title, hint) = match &app.session.view {
         SessionView::None => (name, None),
         SessionView::Live { .. } | SessionView::Starting => (
-            live_title(app, &name),
+            if starting_row(app, &name) {
+                format!("{name} — starting")
+            } else {
+                live_title(app, &name)
+            },
             Some(if focused { "[F1/F2/F3 leave]" } else { "[Tab to focus]" }),
         ),
         SessionView::Ended { at, .. } => (
@@ -1294,6 +1298,15 @@ fn standby_row(app: &App, name: &str) -> bool {
         .value()
         .and_then(|rows| rows.iter().find(|row| row.name == name))
         .is_some_and(|row| row.state == RowState::Standby)
+}
+
+/// Is NAME's fleet row starting - handed a bead, session not reported (cb-10d.1)?
+fn starting_row(app: &App, name: &str) -> bool {
+    app.fleet
+        .content
+        .value()
+        .and_then(|rows| rows.iter().find(|row| row.name == name))
+        .is_some_and(|row| row.state == RowState::Starting)
 }
 
 /// `<Name> — <phase> <bead>`, `<Name> — <phase>`, or `<Name>`, from the selected fleet row.
@@ -1405,7 +1418,11 @@ fn session_document(app: &App, width: usize) -> std::borrow::Cow<'_, [Line<'stat
         SessionView::Refused { lines, .. } => return std::borrow::Cow::Borrowed(lines.as_slice()),
         SessionView::Starting => {
             let name = app.selected.clone().unwrap_or_else(|| "the session".to_string());
-            return std::borrow::Cow::Owned(vec![line(&format!("Starting {name}…"))]);
+            let text = match app.handed.get(&name) {
+                Some(bead) => format!("Starting {name} on {bead}…"),
+                None => format!("Starting {name}…"),
+            };
+            return std::borrow::Cow::Owned(vec![line(&text)]);
         }
         SessionView::None => {}
     }
@@ -1443,7 +1460,7 @@ fn fleet_document(
     let body = crate::app::fleet_body(&app.fleet.content);
     let empty: Vec<FleetRow> = Vec::new();
     let rows = app.fleet.content.value().unwrap_or(&empty);
-    let columns = columns(rows, width, &app.standby_labels, &app.exits, &app.flagged, now);
+    let columns = columns(rows, width, &app.standby_labels, &app.exits, &app.flagged, now, &app.handed);
     let inner_width = (width as usize).saturating_sub(2);
     body.iter()
         .map(|entry| {
@@ -1457,6 +1474,7 @@ fn fleet_document(
                 &app.exits,
                 &app.standby_labels,
                 &app.flagged,
+                &app.handed,
             )
         })
         .collect()
@@ -1474,6 +1492,7 @@ fn fleet_body_line(
     exits: &BTreeMap<String, LastExit>,
     standby_labels: &BTreeMap<String, String>,
     flagged: &BTreeSet<String>,
+    handed: &BTreeMap<String, String>,
 ) -> Line<'static> {
     match entry {
         FleetBodyLine::Loading => Line::from(Span::styled("Loading fleet...", dim())),
@@ -1502,6 +1521,7 @@ fn fleet_body_line(
                     .then(|| standby_labels.get(&row.name).map(String::as_str))
                     .flatten(),
                 flagged.contains(&row.name),
+                handed.get(&row.name).map(String::as_str),
             );
             if selected == Some(*index) {
                 // Padded across the pane's whole inner width so the highlight is a band rather
@@ -1755,6 +1775,7 @@ fn columns(
     exits: &BTreeMap<String, LastExit>,
     flagged: &BTreeSet<String>,
     now: DateTime<Utc>,
+    handed: &BTreeMap<String, String>,
 ) -> Columns {
     // Before `natural_bead`: in a narrow pane the BEAD cell carries a stuck row's `stuck 11h30`,
     // eleven cells against `BEAD_FLOOR`, and the column must be sized for what it draws.
@@ -1774,6 +1795,7 @@ fn columns(
                         exits.get(&r.name).copied(),
                         standby_labels.get(&r.name).map(String::as_str),
                         stuck_text(r, now, wide).as_deref(),
+                        handed.get(&r.name).map(String::as_str),
                     )
                     .text()
                     .width()
@@ -1926,6 +1948,8 @@ fn glyph(state: &RowState, stuck: bool) -> Span<'static> {
         // somebody IS coming back, so it is not grey's "nobody is there", and nothing is running
         // here, where an idle agent has a session up with no bead.
         RowState::Standby => Span::styled("◌", Style::default().fg(BLUE)),
+        // The standby glyph: handed a bead, session not running yet (cb-10d.1).
+        RowState::Starting => Span::styled("◌", Style::default().fg(BLUE)),
     }
 }
 
@@ -1941,8 +1965,13 @@ fn glyph(state: &RowState, stuck: bool) -> Span<'static> {
 /// Every other state is bare, and truthfully rather than by omission: `Idle`, `Waiting` and
 /// `Dead` have nothing in flight and nothing armed, and `Up` and `Unknown` cannot tell this view
 /// whether a bead is in flight at all.
+///
+/// `Starting` shows it exactly as `Standby` does (cb-10d.1): `starting ■`.
 fn flag_shows_for(state: &RowState) -> bool {
-    matches!(state, RowState::Working | RowState::Asking | RowState::Standby)
+    matches!(
+        state,
+        RowState::Working | RowState::Asking | RowState::Standby | RowState::Starting
+    )
 }
 
 /// The State column's word, from `cerebro--state-label`: a working agent shows its phase, an
@@ -1958,6 +1987,7 @@ fn state_label(row: &FleetRow) -> String {
         RowState::Up => "up".to_string(),
         RowState::Dead => "dead".to_string(),
         RowState::Standby => "standby".to_string(),
+        RowState::Starting => "starting".to_string(),
         RowState::Invalid => "invalid".to_string(),
     }
 }
@@ -2033,12 +2063,17 @@ fn bead_cell<'a>(
     exit: Option<LastExit>,
     standby_label: Option<&'a str>,
     stuck: Option<&'a str>,
+    handed: Option<&'a str>,
 ) -> BeadCell {
     // First: a stuck row is `Working`, so it can hold neither a standby label nor an exit record,
     // and putting the arm here keeps that fact stated once. `Some` only in a narrow pane, where
     // there is no FOR column to carry the text (cb-ykz.2).
     if let Some(text) = stuck {
         return BeadCell::Stuck(text.to_string());
+    }
+    // A row handed a bead that has not reported names it, in blue (cb-10d.1).
+    if row.state == RowState::Starting {
+        return BeadCell::Starting(handed.unwrap_or_default().to_string());
     }
     if row.state == RowState::Standby {
         if let Some(label) = standby_label {
@@ -2047,15 +2082,20 @@ fn bead_cell<'a>(
     }
     match exit {
         Some(exit) => BeadCell::Verdict(crate::lifecycle::verdict(exit)),
-        None => BeadCell::Bead(row.bead.clone().unwrap_or_default()),
+        // An `up` row shows the bead the view handed it until its state file names one.
+        None => BeadCell::Bead(
+            row.bead.clone().or_else(|| handed.map(str::to_string)).unwrap_or_default(),
+        ),
     }
 }
 
-/// One of the three things the BEAD column ever holds. The variant is the colour.
+/// One of the things the BEAD column ever holds. The variant is the colour.
 enum BeadCell {
     Bead(String),
     Verdict(String),
     Standby(String),
+    /// The bead a starting row was handed (cb-10d.1).
+    Starting(String),
     /// Only ever in a narrow pane, where there is no FOR column to carry it (cb-ykz.2).
     Stuck(String),
 }
@@ -2066,6 +2106,7 @@ impl BeadCell {
             BeadCell::Bead(text)
             | BeadCell::Verdict(text)
             | BeadCell::Standby(text)
+            | BeadCell::Starting(text)
             | BeadCell::Stuck(text) => text,
         }
     }
@@ -2074,7 +2115,7 @@ impl BeadCell {
         match self {
             BeadCell::Bead(_) => Style::default(),
             BeadCell::Verdict(_) => Style::default().fg(RED),
-            BeadCell::Standby(_) => Style::default().fg(BLUE),
+            BeadCell::Standby(_) | BeadCell::Starting(_) => Style::default().fg(BLUE),
             BeadCell::Stuck(_) => Style::default().fg(RED),
         }
     }
@@ -2087,6 +2128,7 @@ fn row_line(
     exit: Option<LastExit>,
     standby_label: Option<&str>,
     flagged: bool,
+    handed: Option<&str>,
 ) -> Line<'static> {
     // Bold is the row-level signal, and it is spent on exactly one state: an agent waiting for an
     // answer from the navigator (`cerebro--wants-attention-p`).
@@ -2129,7 +2171,7 @@ fn row_line(
     // selected - the rule the state glyph already follows.
     // `bead_cell` is the one place the three are chosen between; a verdict and a standby
     // condition each get a span of their own so the selection band sits beneath the colour.
-    let cell = bead_cell(row, exit, standby_label, stuck_text(row, now, columns.wide).as_deref());
+    let cell = bead_cell(row, exit, standby_label, stuck_text(row, now, columns.wide).as_deref(), handed);
     spans.push(Span::styled(
         pad(cell.text(), columns.bead),
         emphasized(cell.colour(), attention),
@@ -2183,6 +2225,8 @@ fn state_spans(
     let unverified = row.diagnostic.is_some() && !invalid;
     let word_style = if invalid {
         Style::default().fg(RED)
+    } else if row.state == RowState::Starting {
+        Style::default().fg(BLUE)
     } else {
         Style::default()
     };
@@ -2705,6 +2749,89 @@ mod tests {
         assert!(style_where(&buffer, "Starting Xavier…").add_modifier.contains(Modifier::DIM));
     }
 
+    // ---- cb-10d.1: the starting row ------------------------------------------------------------
+
+    /// A supervising app whose one implementer, Rogue, was handed cb-4xz and holds ROW_STATE.
+    fn handed_app(row_state: RowState) -> App {
+        let mut app = App::new();
+        app.set_supervision(SupervisionMode::Supervising);
+        app.handed.insert("Rogue".into(), "cb-4xz".into());
+        app.finish_refresh(Ok(vec![row("Rogue", "implementer", row_state)]), at(86_400));
+        app.selected = Some("Rogue".to_string());
+        app
+    }
+
+    /// The style of NEEDLE on the first rendered line containing LINE_NEEDLE.
+    fn style_on_line(buffer: &Buffer, line_needle: &str, needle: &str) -> Style {
+        let rendered = lines(buffer);
+        let y = rendered
+            .iter()
+            .position(|line| line.contains(line_needle))
+            .unwrap_or_else(|| panic!("no line holds {line_needle:?}: {rendered:#?}"));
+        let line = &rendered[y];
+        let x = line
+            .char_indices()
+            .position(|(index, _)| line[index..].starts_with(needle))
+            .unwrap_or_else(|| panic!("{needle:?} is not on {line:?}")) as u16;
+        let cell = buffer.cell((x, y as u16)).expect("a cell inside the frame");
+        Style::default().fg(cell.fg).bg(cell.bg).add_modifier(cell.modifier)
+    }
+
+    #[test]
+    fn a_starting_row_is_blue_and_names_its_bead() {
+        let app = handed_app(RowState::Dead);
+        assert_eq!(app.fleet_rows()[0].state, RowState::Starting);
+        for (width, height) in [(100, 20), (80, 30)] {
+            let buffer = render(&app, width, height);
+            let rendered = lines(&buffer);
+            let line = rendered
+                .iter()
+                .find(|line| line.contains("◌ Rogue"))
+                .unwrap_or_else(|| panic!("{width}x{height}: {rendered:#?}"));
+            let starting = line.find("starting").expect("the STATE cell");
+            let bead = line.find("cb-4xz").expect("the BEAD cell");
+            assert!(starting < bead, "{line}");
+            for needle in ["◌", "starting", "cb-4xz"] {
+                assert_eq!(
+                    style_on_line(&buffer, "◌ Rogue", needle).fg,
+                    Some(BLUE),
+                    "{width}x{height}: {needle}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn an_up_row_shows_the_bead_the_view_handed_it() {
+        let app = handed_app(RowState::Up);
+        let buffer = render(&app, 100, 20);
+        let rendered = lines(&buffer);
+        let line = rendered.iter().find(|line| line.contains("● Rogue")).expect("the row");
+        assert!(line.contains("up") && line.contains("cb-4xz"), "{line}");
+        assert_eq!(style_on_line(&buffer, "● Rogue", "cb-4xz").fg, Some(Color::Reset));
+    }
+
+    #[test]
+    fn a_starting_session_names_its_bead() {
+        let mut app = handed_app(RowState::Dead);
+        app.set_session_view(SessionView::Starting);
+        let buffer = render(&app, 120, 20);
+        let rendered = lines(&buffer);
+        assert!(rendered.iter().any(|line| line.contains("Rogue — starting")), "{rendered:#?}");
+        assert!(style_where(&buffer, "Starting Rogue on cb-4xz…").add_modifier.contains(Modifier::DIM));
+    }
+
+    #[test]
+    fn a_stop_flag_on_a_starting_row_shows_the_marker() {
+        let mut app = handed_app(RowState::Dead);
+        app.set_flagged(["Rogue".to_string()].into_iter().collect());
+        let rendered = lines(&render(&app, 100, 20));
+        assert!(
+            rendered.iter().any(|line| line.contains("◌ Rogue") && line.contains("starting ■")),
+            "{rendered:#?}"
+        );
+    }
+
     #[test]
     fn an_ended_pass_is_titled_by_its_time_and_scrolls() {
         let mut app = supervising();
@@ -3158,7 +3285,7 @@ mod tests {
     #[test]
     fn the_role_column_is_paid_for_out_of_slack() {
         let rows = roster_rows();
-        let narrow = columns(&rows, 38, &BTreeMap::new(), &BTreeMap::new(), &BTreeSet::new(), now());
+        let narrow = columns(&rows, 38, &BTreeMap::new(), &BTreeMap::new(), &BTreeSet::new(), now(), &BTreeMap::new());
 
         assert!(!narrow.wide, "38 cells is the narrow layout");
         assert!(
@@ -3235,7 +3362,7 @@ mod tests {
         ];
         let wanted = 1 + "user-feedback".chars().count();
         for width in WIDE_COLUMNS..=200 {
-            let wide = columns(&rows, width, &BTreeMap::new(), &BTreeMap::new(), &BTreeSet::new(), now());
+            let wide = columns(&rows, width, &BTreeMap::new(), &BTreeMap::new(), &BTreeSet::new(), now(), &BTreeMap::new());
             assert!(wide.wide);
             assert!(
                 wide.role >= wanted,
@@ -3258,7 +3385,7 @@ mod tests {
             working("Wolverinexxx", "implementer", "rebasing", "cb-hjf"),
             row("Nightcrawler", "orchestrator", RowState::Standby),
         ];
-        let narrow = columns(&rows, 30, &BTreeMap::new(), &BTreeMap::new(), &BTreeSet::new(), now());
+        let narrow = columns(&rows, 30, &BTreeMap::new(), &BTreeMap::new(), &BTreeSet::new(), now(), &BTreeMap::new());
         assert_eq!(narrow.role, 0, "the column is given up whole: {narrow:?}");
 
         let (agent, state, bead, role) =
@@ -5167,12 +5294,12 @@ mod tests {
             [("Xavier".to_string(), LastExit::GaveUp { failures: 5 })]
                 .into_iter()
                 .collect();
-        let columns = columns(&rows, 80, &BTreeMap::new(), &exits, &BTreeSet::new(), now());
+        let columns = columns(&rows, 80, &BTreeMap::new(), &exits, &BTreeSet::new(), now(), &BTreeMap::new());
         assert_eq!(columns.bead, 18, "seventeen cells and the column's own gap");
 
         // A pane too narrow to spare them cuts the cell - the clamp below the measurement,
         // unchanged - rather than widening the column past the pane.
-        let narrow = self::columns(&rows, 40, &BTreeMap::new(), &exits, &BTreeSet::new(), now());
+        let narrow = self::columns(&rows, 40, &BTreeMap::new(), &exits, &BTreeSet::new(), now(), &BTreeMap::new());
         assert!(narrow.bead < 18, "the clamp still bites: {}", narrow.bead);
         let mut app = App::new();
         app.finish_refresh(Ok(rows), at(86_400));
@@ -6281,7 +6408,7 @@ mod tests {
     #[test]
     fn the_bead_column_is_sized_for_a_stuck_row() {
         let rows = vec![stuck_row()];
-        let narrow = columns(&rows, 40, &BTreeMap::new(), &BTreeMap::new(), &BTreeSet::new(), now());
+        let narrow = columns(&rows, 40, &BTreeMap::new(), &BTreeMap::new(), &BTreeSet::new(), now(), &BTreeMap::new());
         assert!(
             narrow.bead >= "stuck 11h30".width(),
             "sized for the cell it draws, not for the bead id: {}",

@@ -1821,6 +1821,16 @@ pub struct App {
     /// give-up and a view that may not supervise disarm; a pass that merely ends does not, which
     /// is the whole point of the set. `docs/ui/cb-op0-arming.html` §6 is the table.
     pub armed: BTreeSet<String>,
+    /// The view's own record of what it handed each implementer it started, until that session
+    /// reports (cb-10d.1). Memory only. Written by `main::start_due`, `s`, and autostart; dropped
+    /// by `main::give_back` and by a confirmed `k`. NOT `FleetRow::bead`, which stays the state
+    /// file's.
+    pub handed: std::collections::BTreeMap<String, String>,
+    /// Give-backs this view has asked for, by agent name: the bead, and whether the write is still
+    /// running or failed at a time. Its beads are spoken for until the entry goes.
+    pub releasing: std::collections::BTreeMap<String, model::Releasing>,
+    /// Board writes the loop decided on rather than a key; drained into `dispatch` once per loop.
+    outbox: Vec<WriteRequest>,
     /// The names whose stop flag is set, as of the last frame. Copied in by the event loop from
     /// `lifecycle::stop_flag_set`, never read from the filesystem here: `ui::draw` is pure over
     /// `App`. The twin of `App::exits` and `App::standby_labels`, set the same way, once per
@@ -1994,6 +2004,9 @@ pub enum Prompt {
     /// prompt that is not about a session: it writes to the shared board, which is deliberately
     /// outside the supervision lease.
     Sweep { finding: Finding, text: String },
+    /// `k` on a starting row (cb-10d.1): the agent whose start to stop, and the standby row's own
+    /// disarm line. On `y` the name is disarmed, killed and its handed bead given back.
+    Stop { name: String, text: String },
 }
 
 impl Prompt {
@@ -2005,7 +2018,10 @@ impl Prompt {
     /// keystroke. A fourth variant cannot repeat it.
     pub fn text(&self) -> &str {
         match self {
-            Self::Kill { text, .. } | Self::Disarm { text, .. } | Self::Sweep { text, .. } => text,
+            Self::Kill { text, .. }
+            | Self::Disarm { text, .. }
+            | Self::Sweep { text, .. }
+            | Self::Stop { text, .. } => text,
         }
     }
 }
@@ -2053,6 +2069,9 @@ impl App {
             closing: BTreeSet::new(),
             standby_labels: BTreeMap::new(),
             armed: BTreeSet::new(),
+            handed: std::collections::BTreeMap::new(),
+            releasing: std::collections::BTreeMap::new(),
+            outbox: Vec::new(),
             flagged: BTreeSet::new(),
             stuck_logged: BTreeSet::new(),
             resumed: BTreeMap::new(),
@@ -2154,7 +2173,10 @@ impl App {
     pub fn reapply_standby(&mut self) {
         let parked = self.parked_names();
         let armed = self.armed.clone();
-        let restate = |rows: Vec<FleetRow>| model::apply_standby(rows, &armed, &parked);
+        let handed = self.handed.clone();
+        let restate = |rows: Vec<FleetRow>| {
+            model::apply_standby(model::apply_starting(rows, &handed), &armed, &parked)
+        };
         match std::mem::replace(&mut self.fleet.content, PaneContent::Loading) {
             PaneContent::Fresh { value, read_at } => {
                 self.fleet.content = PaneContent::Fresh { value: restate(value), read_at };
@@ -3279,7 +3301,10 @@ impl App {
         let previous = self.fleet_rows().to_vec();
         let result = result.map(|rows| {
             model::apply_standby(
-                model::hold_closing_rows(rows, &previous, &closing),
+                model::apply_starting(
+                    model::hold_closing_rows(rows, &previous, &closing),
+                    &self.handed,
+                ),
                 &self.armed,
                 &parked,
             )
@@ -3323,9 +3348,48 @@ impl App {
     ///
     /// Called from `route_key` immediately before it returns `AppAction::Write`, so `App` still
     /// starts no process: it says what is wanted and `dispatch` does it.
+    /// May a give-back be asked for NAME now? No entry, or one whose write failed at least
+    /// `RELEASE_RETRY_SECONDS` ago (cb-10d.1).
+    pub fn may_release(&self, name: &str, now: DateTime<Utc>) -> bool {
+        match self.releasing.get(name) {
+            None => true,
+            Some(entry) => entry
+                .failed_at
+                .is_some_and(|at| (now - at).num_seconds() >= RELEASE_RETRY_SECONDS),
+        }
+    }
+
+    /// Record a give-back for NAME and queue its write for the loop to dispatch.
+    pub fn queue_release(&mut self, name: &str, bead: &str, cause: crate::lifecycle::GiveBack) {
+        self.releasing.insert(
+            name.to_string(),
+            model::Releasing { bead: bead.to_string(), failed_at: None },
+        );
+        self.outbox.push(WriteRequest::Release {
+            name: name.to_string(),
+            bead: bead.to_string(),
+            cause,
+        });
+    }
+
+    /// The writes the loop decided on since it last asked.
+    pub fn take_outbox(&mut self) -> Vec<WriteRequest> {
+        std::mem::take(&mut self.outbox)
+    }
+
+    /// NAME's give-back failed AT: its bead stays spoken for, and it is retried after a minute.
+    pub fn note_release_failed(&mut self, name: &str, at: DateTime<Utc>) {
+        if let Some(entry) = self.releasing.get_mut(name) {
+            entry.failed_at = Some(at);
+        }
+    }
+
     pub fn begin_write(&mut self, request: &WriteRequest, bd: &std::path::Path) {
         self.writes_requested += 1;
-        self.set_pending_notice(request.pending_text(bd));
+        // A give-back has no provisional line: the agreed experience has none (cb-10d.1).
+        if !matches!(request, WriteRequest::Release { .. }) {
+            self.set_pending_notice(request.pending_text(bd));
+        }
         if let WriteRequest::Priority { id, from, to, undo } = request {
             // A newer write on the same bead replaces the entry outright: newest wins on screen.
             self.pending_priority
@@ -3373,9 +3437,14 @@ impl App {
         let newest = self.writes_answered == self.writes_requested;
         // A failure always takes the header; a success takes it only when it is the newest write,
         // so an older write's sentence cannot replace the dim line of one still running.
+        // A give-back that found its bead elsewhere has nothing to say (cb-10d.1).
+        let silent = matches!(
+            &answer,
+            WriteAnswer::Release { outcome: crate::lifecycle::ReleaseOutcome::Elsewhere, .. }
+        );
         if answer.failed() {
             self.set_error_notice(answer.text().to_string());
-        } else if newest {
+        } else if newest && !silent {
             self.set_notice(answer.text().to_string());
         }
         match answer {
@@ -3413,6 +3482,18 @@ impl App {
                     AppAction::RefreshSweeps
                 }
             }
+            WriteAnswer::Release { name, outcome, .. } => match outcome {
+                crate::lifecycle::ReleaseOutcome::Returned { .. } => {
+                    self.releasing.remove(&name);
+                    AppAction::RefreshWork
+                }
+                crate::lifecycle::ReleaseOutcome::Elsewhere => {
+                    self.releasing.remove(&name);
+                    AppAction::None
+                }
+                // The entry stays, so its bead is still spoken for; the loop stamps `failed_at`.
+                crate::lifecycle::ReleaseOutcome::Failed { .. } => AppAction::None,
+            },
         }
     }
 
@@ -3646,7 +3727,12 @@ pub enum WriteRequest {
     Priority { id: String, from: Option<u8>, to: u8, undo: bool },
     /// A sweep finding's own command, then `bd dolt push`.
     Finding { finding: Finding },
+    /// `scripts/release-bead NAME BEAD` - giving back a bead the view handed (cb-10d.1).
+    Release { name: String, bead: String, cause: crate::lifecycle::GiveBack },
 }
+
+/// How long a failed give-back waits before it is asked for again.
+pub const RELEASE_RETRY_SECONDS: i64 = 60;
 
 impl WriteRequest {
     /// The dim line shown from the keystroke until this write answers. BD is `Programs::bd`, the
@@ -3666,6 +3752,8 @@ impl WriteRequest {
             WriteRequest::Finding { finding } => {
                 format!("running {}\u{2026}", crate::sweeps::finding_command(finding, bd).join(" "))
             }
+            // Never drawn: `begin_write` shows no provisional line for a give-back.
+            WriteRequest::Release { .. } => String::new(),
         }
     }
 }
@@ -3685,6 +3773,12 @@ pub enum WriteAnswer {
         outcome: crate::lifecycle::PriorityOutcome,
     },
     Finding { outcome: crate::lifecycle::FindingOutcome },
+    Release {
+        name: String,
+        bead: String,
+        cause: crate::lifecycle::GiveBack,
+        outcome: crate::lifecycle::ReleaseOutcome,
+    },
 }
 
 impl WriteAnswer {
@@ -3701,6 +3795,11 @@ impl WriteAnswer {
                 | crate::lifecycle::FindingOutcome::Pushed { text }
                 | crate::lifecycle::FindingOutcome::Failed { text } => text,
             },
+            WriteAnswer::Release { outcome, .. } => match outcome {
+                crate::lifecycle::ReleaseOutcome::Returned { text }
+                | crate::lifecycle::ReleaseOutcome::Failed { text } => text,
+                crate::lifecycle::ReleaseOutcome::Elsewhere => "",
+            },
         }
     }
 
@@ -3713,6 +3812,9 @@ impl WriteAnswer {
             }
             WriteAnswer::Finding { outcome } => {
                 matches!(outcome, crate::lifecycle::FindingOutcome::Failed { .. })
+            }
+            WriteAnswer::Release { outcome, .. } => {
+                matches!(outcome, crate::lifecycle::ReleaseOutcome::Failed { .. })
             }
         }
     }
@@ -3731,6 +3833,12 @@ impl WriteAnswer {
             },
             WriteRequest::Finding { .. } => WriteAnswer::Finding {
                 outcome: crate::lifecycle::FindingOutcome::Failed { text },
+            },
+            WriteRequest::Release { name, bead, cause } => WriteAnswer::Release {
+                name: name.clone(),
+                bead: bead.clone(),
+                cause: *cause,
+                outcome: crate::lifecycle::ReleaseOutcome::Failed { text },
             },
         }
     }
@@ -3779,6 +3887,10 @@ pub fn run_write(
         WriteRequest::Finding { finding } => WriteAnswer::Finding {
             outcome: crate::lifecycle::run_finding(paths, programs, commands, &finding),
         },
+        WriteRequest::Release { name, bead, cause } => {
+            let outcome = crate::lifecycle::release_bead(paths, commands, &name, &bead, cause);
+            WriteAnswer::Release { name, bead, cause, outcome }
+        }
     }
 }
 
@@ -5680,6 +5792,74 @@ mod tests {
         assert_eq!(action, AppAction::None, "a refused write asks for no refresh");
         assert_eq!(app.notice.as_deref(), Some("bd would not set cb-a to P0"));
         assert_eq!(app.notice_tone, NoticeTone::Urgent, "no failure is swallowed");
+    }
+
+    fn release_answer(outcome: crate::lifecycle::ReleaseOutcome) -> WriteAnswer {
+        WriteAnswer::Release {
+            name: "Rogue".into(),
+            bead: "cb-x".into(),
+            cause: crate::lifecycle::GiveBack::DidNotStart,
+            outcome,
+        }
+    }
+
+    #[test]
+    fn a_give_back_that_went_back_says_the_agreed_line() {
+        let mut app = App::new();
+        app.queue_release("Rogue", "cb-x", crate::lifecycle::GiveBack::DidNotStart);
+        let request = app.take_outbox().pop().expect("the release was queued");
+        app.begin_write(&request, bd_path());
+        let text = crate::lifecycle::GiveBack::DidNotStart.notice("Rogue", "cb-x");
+        let action = app.finish_write(release_answer(crate::lifecycle::ReleaseOutcome::Returned {
+            text: text.clone(),
+        }));
+        assert_eq!(action, AppAction::RefreshWork);
+        assert_eq!(app.notice.as_deref(), Some(text.as_str()));
+        assert_eq!(app.notice_tone, NoticeTone::News);
+        assert!(app.releasing.is_empty());
+    }
+
+    #[test]
+    fn a_give_back_that_found_it_elsewhere_says_nothing() {
+        let mut app = App::new();
+        app.set_notice("before".into());
+        app.queue_release("Rogue", "cb-x", crate::lifecycle::GiveBack::DidNotStart);
+        let request = app.take_outbox().pop().unwrap();
+        app.begin_write(&request, bd_path());
+        let action = app.finish_write(release_answer(crate::lifecycle::ReleaseOutcome::Elsewhere));
+        assert_eq!(action, AppAction::None);
+        assert_eq!(app.notice.as_deref(), Some("before"));
+        assert!(app.releasing.is_empty());
+    }
+
+    #[test]
+    fn a_failed_give_back_keeps_its_bead_spoken_for_and_retries_after_a_minute() {
+        let mut app = App::new();
+        let now = Utc::now();
+        app.queue_release("Rogue", "cb-x", crate::lifecycle::GiveBack::DidNotStart);
+        assert!(!app.may_release("Rogue", now), "a release still running is not asked again");
+        let request = app.take_outbox().pop().unwrap();
+        app.begin_write(&request, bd_path());
+        app.finish_write(release_answer(crate::lifecycle::ReleaseOutcome::Failed {
+            text: "cb-x could not be given back from Rogue \u{2014} release-bead failed".into(),
+        }));
+        assert_eq!(app.notice_tone, NoticeTone::Urgent);
+        app.note_release_failed("Rogue", now);
+        assert_eq!(app.releasing["Rogue"].bead, "cb-x");
+        assert!(!app.may_release("Rogue", now + chrono::Duration::seconds(59)));
+        assert!(app.may_release("Rogue", now + chrono::Duration::seconds(60)));
+    }
+
+    #[test]
+    fn a_give_back_shows_no_provisional_line() {
+        let mut app = App::new();
+        app.set_notice("before".into());
+        app.queue_release("Rogue", "cb-x", crate::lifecycle::GiveBack::Stopped);
+        let request = app.take_outbox().pop().unwrap();
+        app.begin_write(&request, bd_path());
+        assert_eq!(app.notice.as_deref(), Some("before"));
+        assert_eq!(app.notice_tone, NoticeTone::News);
+        assert_eq!((app.writes_requested, app.writes_answered), (1, 0));
     }
 
     /// The entry exists from the KEYSTROKE, not from the answer: `u` pressed half a second after

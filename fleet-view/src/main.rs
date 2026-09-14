@@ -899,10 +899,13 @@ fn start_due(
     // sentinel: a `Stale` work pane still carries its last good buckets and is used.
     let Some(buckets) = app.work.content.value() else { return };
     let in_flight = triggers::in_flight(app.fleet_rows());
-    let facts = TriggerFacts::derive(
+    // Every bead a row, a handover or a give-back already holds: no start is given one (cb-10d.1).
+    let spoken = triggers::spoken_for(app.fleet_rows(), &app.handed, &app.releasing);
+    let mut facts = TriggerFacts::derive(
         buckets,
         roster,
         in_flight,
+        &spoken,
         |name| lifecycle::stop_flag_set(paths, name),
         app.gh_answer(),
         planner_multiple,
@@ -1077,15 +1080,31 @@ fn start_due(
             continue;
         }
 
+        // An implementer is handed the first assignable bead nobody holds (cb-10d.1). `None` is
+        // unreachable while its condition requires one, and `continue` keeps it harmless.
+        let bead = if role == "implementer" {
+            match triggers::next_bead(&facts) {
+                Some(id) => Some(id.to_string()),
+                None => continue,
+            }
+        } else {
+            None
+        };
+
         ledger.set_failures(name, if failed { failures + 1 } else { 0 });
         // `clears_flag` is `false` and can only be: a flagged name was skipped above.
-        match lifecycle::start(host, paths, name, false) {
+        match lifecycle::start(host, paths, name, false, bead.as_deref()) {
             Ok(_) => {
                 app.armed.insert(name.clone());
+                if let Some(id) = &bead {
+                    app.handed.insert(name.clone(), id.clone());
+                    // The within-tick rule: the next row in this loop is not handed it again.
+                    facts.take(id);
+                }
                 *taken.entry(role.clone()).or_default() += 1;
                 ledger.note_started(name, now, triggers::fingerprint(role, &facts));
                 let reason = reason.unwrap_or_default();
-                log_start(logger, name, role, Some(&reason), now);
+                log_start(logger, name, role, Some(&reason), bead.as_deref(), now);
                 app.set_notice(triggers::start_notice(name, &reason));
             }
             // The red Session pane is the report, which is the rule `s` already follows.
@@ -1192,6 +1211,100 @@ fn log_exits(logger: &mut Logger, host: &mut SessionHost, now: DateTime<Utc>) {
 /// `by` because `log_start` already spells "who asked for this" as `by`, and `standby` because
 /// that is the word the row itself carries. A retire, a give-up and a handover write their own
 /// lines and gain none of these: two lines for one decision makes the file's own counting wrong.
+/// Queue a give-back of BEAD from NAME and write its `give-back` decision line - written when the
+/// release is QUEUED, the rule `Event::Sweep`'s doc gives (cb-10d.1).
+fn queue_give_back(
+    app: &mut App,
+    logger: &mut Logger,
+    name: &str,
+    bead: &str,
+    cause: lifecycle::GiveBack,
+    now: DateTime<Utc>,
+) {
+    app.queue_release(name, bead, cause);
+    logger.write(
+        log::Event::GiveBack,
+        now,
+        &[
+            ("agent", serde_json::Value::from(name)),
+            ("bead", serde_json::Value::from(bead)),
+            ("cause", serde_json::Value::from(cause.word())),
+        ],
+    );
+}
+
+/// Give back every bead this view handed a session that went away without reporting, and every
+/// orphaned handover file a previous view left behind (cb-10d.1).
+///
+/// Gated on supervision exactly as `start_due` is, and run immediately BEFORE it: a crashed name
+/// comes straight back on its first failure (`retry_delay(1) == 0`), and a `start_due` that ran
+/// first would overwrite `handed[name]` and lose the bead it has to give back.
+fn give_back(
+    app: &mut App,
+    host: &SessionHost,
+    logger: &mut Logger,
+    paths: &ReaderPaths,
+    roster: &[RosterEntry],
+    now: DateTime<Utc>,
+) {
+    if !app.supervision.may_supervise() {
+        return;
+    }
+    for (name, bead) in app.handed.clone() {
+        let state = app.fleet_rows().iter().find(|row| row.name == name).map(|row| row.state.clone());
+        // Words only the agent's own state file produces: the session reported, and the bead is
+        // its own word from here on - nothing to give back.
+        if matches!(
+            state,
+            Some(RowState::Working | RowState::Asking | RowState::Waiting | RowState::Idle | RowState::Unknown(_))
+        ) {
+            app.handed.remove(&name);
+            continue;
+        }
+        if !host.is_live(&name) {
+            app.handed.remove(&name);
+            if app.may_release(&name, now) {
+                queue_give_back(app, logger, &name, &bead, lifecycle::GiveBack::DidNotStart, now);
+            }
+        }
+    }
+    for entry in roster.iter().filter(|entry| entry.kind == cerebro_tui::model::AgentKind::Implementer) {
+        if app.handed.contains_key(&entry.name) {
+            continue;
+        }
+        let Some((bead, age)) =
+            lifecycle::read_handover(paths, &entry.name, std::time::SystemTime::now())
+        else {
+            continue;
+        };
+        let row_alive = app
+            .fleet_rows()
+            .iter()
+            .find(|row| row.name == entry.name)
+            .is_some_and(lifecycle::row_is_alive);
+        if lifecycle::orphaned_handover(
+            host.is_live(&entry.name),
+            row_alive,
+            !app.may_release(&entry.name, now),
+            age,
+        ) {
+            queue_give_back(app, logger, &entry.name, &bead, lifecycle::GiveBack::NeverStarted, now);
+        }
+    }
+}
+
+/// The bead an implementer start made by hand or by declaration is given: the first of the work
+/// pane's `assignable` not spoken for, or `None` - which launches with no bead, and the implementer
+/// ends its pass as it does today when there is nothing to claim (cb-10d.1).
+fn bead_for_start(app: &App, role: &str) -> Option<String> {
+    if role != "implementer" {
+        return None;
+    }
+    let buckets = app.work.content.value()?;
+    let spoken = triggers::spoken_for(app.fleet_rows(), &app.handed, &app.releasing);
+    buckets.assignable.iter().find(|id| !spoken.contains(*id)).cloned()
+}
+
 fn log_disarm(logger: &mut Logger, app: &App, name: &str, by: &str, now: DateTime<Utc>) {
     logger.write(
         log::Event::Disarm,
@@ -1211,6 +1324,7 @@ fn log_start(
     name: &str,
     role: &str,
     reason: Option<&str>,
+    bead: Option<&str>,
     now: DateTime<Utc>,
 ) {
     logger.write(
@@ -1220,6 +1334,8 @@ fn log_start(
             ("agent", serde_json::Value::from(name)),
             ("role", serde_json::Value::from(role)),
             ("reason", reason.map_or(serde_json::Value::Null, serde_json::Value::from)),
+            // The bead this view handed the start, `null` when none (cb-10d.1).
+            ("bead", bead.map_or(serde_json::Value::Null, serde_json::Value::from)),
             ("by", serde_json::Value::from(if reason.is_some() { "trigger" } else { "navigator" })),
         ],
     );
@@ -1288,7 +1404,10 @@ fn arm_and_autostart(
         // widening: a name declared `autostart` under a stale flag would otherwise come up and be
         // retired at once.
         let clears_flag = lifecycle::stop_flag_set(paths, name);
-        match lifecycle::start(host, paths, name, clears_flag) {
+        // Before the first work read, so this is `None` and an autostarted implementer launches
+        // with no bead - deliberately; the trigger brings it back on one (cb-10d.1).
+        let bead = bead_for_start(app, &role_of_name(name));
+        match lifecycle::start(host, paths, name, clears_flag, bead.as_deref()) {
             Ok(_) => {
                 app.armed.insert(name.clone());
                 ledger.note_started(name, now, None);
@@ -1297,7 +1416,10 @@ fn arm_and_autostart(
                 ledger.clear_failures(name);
                 // A declaration is the navigator's own act, which is what `by` says: two words
                 // and only two, byte-parity with the file Emacs has written since May.
-                log_start(logger, name, &role_of_name(name), None, now);
+                if let Some(id) = &bead {
+                    app.handed.insert(name.clone(), id.clone());
+                }
+                log_start(logger, name, &role_of_name(name), None, bead.as_deref(), now);
                 started.push(name.clone());
             }
             // A start that fails is reported and does not stop the others.
@@ -1501,6 +1623,8 @@ where
                         kind: row.kind,
                     })
                     .collect();
+                // Before `start_due`, never after: see `give_back` (cb-10d.1).
+                give_back(app, &state.host, &mut state.logger, &config.paths, &roster, now);
                 start_due(app, &mut state.host, &mut state.ledger, &mut state.logger, &config.paths, &config.spacing, config.planner_multiple, &roster, now);
                 // And a line into an idle Cerebro, on the same freshly derived rows (cb-kcs.5.2).
                 // After `start_due` for its own reason: a Cerebro started on this very tick has
@@ -1559,8 +1683,22 @@ where
         // `errors.jsonl` as well, under the context `write`: the header is painted over by the
         // next frame, and `clear_error` on a successful one is what stops `Logger::error`'s
         // one-per-fault dedupe from swallowing an identical failure minutes later.
+        // The board writes the loop itself decided on - give-backs, from `give_back` and a
+        // confirmed `k` on a starting row (cb-10d.1) - dispatched once per iteration.
+        for request in app.take_outbox() {
+            app.begin_write(&request, &config.programs.bd);
+            dispatch(AppAction::Write(request), app, workers, &clock);
+        }
         if let Some(Ok(answer)) = workers.write.poll() {
             log_write(&mut state.logger, &answer, clock());
+            if let app::WriteAnswer::Release {
+                name,
+                outcome: lifecycle::ReleaseOutcome::Failed { .. },
+                ..
+            } = &answer
+            {
+                app.note_release_failed(name, clock());
+            }
             let action = app.finish_write(answer);
             // Neither of the two `dispatch` calls off the keystroke path may carry a `Write`:
             // `App::finish_write` and `App::on_tick` return refresh actions and `None` alone, and
@@ -1766,8 +1904,24 @@ fn route_key(
                 if disarmed {
                     log_disarm(&mut state.logger, app, &name, "kill", now);
                 }
+                // A killed session that never reported keeps its claim - the prompt promised the
+                // bead stays claimed - so the view's record goes, and `give_back` has nothing to
+                // undo (cb-10d.1).
+                app.handed.remove(&name);
                 state.host.kill(&config.paths, &name);
                 // A killed agent must not wait up to five seconds to disappear from the fleet.
+                AppAction::RefreshFleet
+            }
+            app::Prompt::Stop { name, .. } => {
+                // `k` on a starting row: stop the start, disarm the name, give the bead back.
+                if app.armed.remove(&name) {
+                    log_disarm(&mut state.logger, app, &name, "kill", now);
+                }
+                let bead = app.handed.remove(&name);
+                state.host.kill(&config.paths, &name);
+                if let Some(bead) = bead {
+                    queue_give_back(app, &mut state.logger, &name, &bead, lifecycle::GiveBack::Stopped, now);
+                }
                 AppAction::RefreshFleet
             }
             app::Prompt::Disarm { name, .. } => {
@@ -1941,7 +2095,8 @@ fn lifecycle_key(
             app.drop_pin();
             match outcome {
             lifecycle::StartOutcome::Launch { clears_flag } => {
-                match lifecycle::start(host, paths, &name, clears_flag) {
+                let bead = bead_for_start(app, &role_of(app, &name));
+                match lifecycle::start(host, paths, &name, clears_flag, bead.as_deref()) {
                     Ok(line) => {
                         // Starting an agent is what arms it, whoever asked - the rule
                         // `cerebro--launch` has always followed (cb-op0). Without it a name
@@ -1953,7 +2108,10 @@ fn lifecycle_key(
                         // count down against a start that never happened.
                         ledger.note_started(&name, now, None);
                         ledger.clear_failures(&name);
-                        log_start(logger, &name, &role_of(app, &name), None, now);
+                        if let Some(id) = &bead {
+                            app.handed.insert(name.clone(), id.clone());
+                        }
+                        log_start(logger, &name, &role_of(app, &name), None, bead.as_deref(), now);
                         app.set_notice(line);
                     }
                     // The red Session pane is the report; a gold line saying the same thing twice
@@ -2007,6 +2165,10 @@ fn lifecycle_key(
                 });
                 AppAction::None
             }
+            lifecycle::KillOutcome::ConfirmStop { prompt } => {
+                app.confirm = Some(app::Prompt::Stop { name, text: prompt });
+                AppAction::None
+            }
             lifecycle::KillOutcome::Refuse(text) => {
                 app.set_notice(text);
                 AppAction::None
@@ -2054,8 +2216,9 @@ fn dispatch(
             let answered = app.finish_write(app::WriteAnswer::undeliverable(request));
             // The two `dispatch` calls off the keystroke path can never carry a `Write`:
             // `App::on_tick` and `App::finish_write` return refresh actions and `None` alone, and
-            // `AppAction::Write` is produced by `route_key` and nowhere else. This is what would
-            // catch a third producer.
+            // `AppAction::Write` is produced by `route_key` and by the outbox drain in `run`
+            // (cb-10d.1), and neither is `on_tick` or `finish_write`. This is what would catch a
+            // third producer.
             debug_assert_eq!(answered, AppAction::None);
         }
     }
@@ -4694,6 +4857,7 @@ mod main_tests {
             &previous_work,
             &roster,
             BTreeMap::new(),
+            &std::collections::BTreeSet::new(),
             |_| false,
             triggers::GhAnswer::Unanswered,
             1,
@@ -4757,7 +4921,15 @@ mod main_tests {
     }
 
     /// N planned, unclaimed beads and nothing else.
+    /// N planned beads, every one of them also assignable - what `scripts/assignable-beads` would
+    /// answer for them (cb-10d.1).
     fn planned_beads(n: usize) -> cerebro_tui::model::WorkBuckets {
+        let mut buckets = planned_only(n);
+        buckets.assignable = (0..n).map(|i| format!("cb-p{i}")).collect();
+        buckets
+    }
+
+    fn planned_only(n: usize) -> cerebro_tui::model::WorkBuckets {
         cerebro_tui::model::partition_beads(
             (0..n)
                 .map(|i| cerebro_tui::model::Bead {
@@ -4843,12 +5015,28 @@ mod main_tests {
     /// the CI runners while passing here.
     #[test]
     fn the_headroom_guard_is_named_whether_or_not_the_trigger_fired() {
-        let roster = implementer_roster(&["Storm", "Rogue"]);
+        // A planner row since cb-10d.1: an implementer is handed its bead and is not held by
+        // headroom, while the planning roles still are.
+        let roster = vec![
+            cerebro_tui::model::RosterEntry {
+                name: "Xavier".into(),
+                role: "planner".into(),
+                kind: cerebro_tui::model::AgentKind::Interactive,
+            },
+            cerebro_tui::model::RosterEntry {
+                name: "Beast".into(),
+                role: "planner".into(),
+                kind: cerebro_tui::model::AgentKind::Interactive,
+            },
+        ];
+        let mut one = two_candidates();
+        one.unplanned.truncate(1);
         let facts_of = |flight: std::collections::BTreeMap<String, usize>| {
             cerebro_tui::triggers::TriggerFacts::derive(
-                &planned_beads(1),
+                &one,
                 &roster,
                 flight,
+                &std::collections::BTreeSet::new(),
                 |_| false,
                 cerebro_tui::triggers::GhAnswer::Unanswered,
                 1,
@@ -4861,17 +5049,19 @@ mod main_tests {
             last_fingerprint: None,
         };
 
-        // One builder already coming up for the one bead: the trigger has ALREADY answered
+        // One planner already coming up for the one candidate: the trigger has ALREADY answered
         // nothing, because `condition` gates on headroom...
-        let taken_up = facts_of([("implementer".to_string(), 1usize)].into_iter().collect());
-        assert_eq!(triggers::trigger(&taken_up, agent("implementer"), Utc::now()), None);
+        let taken_up = facts_of([("planner".to_string(), 1usize)].into_iter().collect());
+        assert_eq!(triggers::trigger(&taken_up, agent("planner"), Utc::now()), None);
         // ...and the flag says so anyway, which is the whole point of it.
-        assert!(triggers::no_headroom(&taken_up, "implementer", 0));
+        assert!(triggers::no_headroom(&taken_up, "planner", 0));
 
         // Nothing in flight: free until this loop's own start spends it.
         let free = facts_of(std::collections::BTreeMap::new());
-        assert!(!triggers::no_headroom(&free, "implementer", 0));
-        assert!(triggers::no_headroom(&free, "implementer", 1));
+        assert!(!triggers::no_headroom(&free, "planner", 0));
+        assert!(triggers::no_headroom(&free, "planner", 1));
+        // Nor is an implementer, since cb-10d.1.
+        assert!(!triggers::no_headroom(&free, "implementer", 9));
         // A role headroom does not gate is never held by it.
         assert!(!triggers::no_headroom(&free, "verifier", 9));
     }
@@ -4917,33 +5107,43 @@ mod main_tests {
         let now = Utc::now();
         let mut host = SessionHost::default();
         let mut ledger = cerebro_tui::triggers::StartLedger::default();
-        let roster = implementer_roster(&["Storm", "Rogue"]);
+        // Planners since cb-10d.1: the guard still exists for the planning roles.
+        let roster: Vec<cerebro_tui::model::RosterEntry> = ["Xavier", "Beast"]
+            .iter()
+            .map(|name| cerebro_tui::model::RosterEntry {
+                name: (*name).into(),
+                role: "planner".into(),
+                kind: cerebro_tui::model::AgentKind::Interactive,
+            })
+            .collect();
+        let mut one = two_candidates();
+        one.unplanned.truncate(1);
         let mut app = standby_app(
             supervising(),
             vec![
                 cerebro_tui::model::FleetRow {
                     bead: None,
-                    ..implementer_row("Storm", cerebro_tui::model::RowState::Working)
+                    ..planner_row("Xavier", cerebro_tui::model::RowState::Working)
                 },
-                implementer_row("Rogue", cerebro_tui::model::RowState::Dead),
+                planner_row("Beast", cerebro_tui::model::RowState::Dead),
             ],
-            Some(planned_beads(1)),
+            Some(one),
             now,
         );
 
         start_due(&mut app, &mut host, &mut ledger, &mut logger, &paths, &no_spacing(), 1, &roster, now);
 
         let lines = log_lines(dir.path(), "evaluations");
-        let rogue = lines
+        let beast = lines
             .iter()
-            .find(|line| line.contains(r#""agent":"Rogue""#))
-            .unwrap_or_else(|| panic!("no evaluation for Rogue: {lines:#?}"));
-        assert!(rogue.contains(r#""reason":null"#), "{rogue}");
-        assert!(rogue.contains(r#""no_headroom":true"#), "{rogue}");
+            .find(|line| line.contains(r#""agent":"Beast""#))
+            .unwrap_or_else(|| panic!("no evaluation for Beast: {lines:#?}"));
+        assert!(beast.contains(r#""reason":null"#), "{beast}");
+        assert!(beast.contains(r#""no_headroom":true"#), "{beast}");
     }
 
     /// The same steady state through the loop: the one bead is already spoken for by a builder
-    /// that names none yet, so nothing starts.
+    /// whose state file names it, so nothing starts (cb-10d.1).
     #[test]
     fn a_bead_already_spoken_for_starts_nobody() {
         let dir = tempfile::tempdir().unwrap();
@@ -4956,7 +5156,7 @@ mod main_tests {
             supervising(),
             vec![
                 cerebro_tui::model::FleetRow {
-                    bead: None,
+                    bead: Some("cb-p0".into()),
                     ..implementer_row("Storm", cerebro_tui::model::RowState::Working)
                 },
                 implementer_row("Rogue", cerebro_tui::model::RowState::Dead),
@@ -4978,6 +5178,298 @@ mod main_tests {
     #[test]
     fn four_standby_builders_and_four_beads_start_four() {
         assert_eq!(builders_started(4), 4);
+    }
+
+    // ---- cb-10d.1: the view hands implementers their bead ---------------------------------
+
+    /// Poll FILE until it holds a line, for a launch script that writes its argv as it starts.
+    fn args_of(file: &std::path::Path) -> String {
+        let deadline = Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            if let Ok(text) = std::fs::read_to_string(file) {
+                if text.ends_with('\n') {
+                    return text.trim().to_string();
+                }
+            }
+            assert!(Instant::now() < deadline, "{} was never written", file.display());
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+
+    #[test]
+    fn a_start_given_a_bead_passes_it_to_the_launcher() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), r#"echo "$@" > "$0.args"; sleep 5"#);
+        let mut host = SessionHost::default();
+        cerebro_tui::lifecycle::start(&mut host, &paths, "Rogue", false, Some("cb-x")).unwrap();
+        assert_eq!(args_of(&dir.path().join("launch.args")), "Rogue --bead cb-x");
+        host.kill(&paths, "Rogue");
+        settle_gone(&mut host, "Rogue");
+    }
+
+    #[test]
+    fn four_builders_are_given_four_different_beads() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), r#"echo "$@" > "$0-$1.args"; sleep 5"#);
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+        let mut ledger = cerebro_tui::triggers::StartLedger::default();
+        let names = ["Storm", "Rogue", "Gambit", "Bishop"];
+        let roster = implementer_roster(&names);
+        let mut app = standby_app(
+            supervising(),
+            names
+                .iter()
+                .map(|name| implementer_row(name, cerebro_tui::model::RowState::Dead))
+                .collect(),
+            Some(planned_beads(4)),
+            now,
+        );
+
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &no_spacing(), 1, &roster, now);
+
+        let distinct: std::collections::BTreeSet<&String> = app.handed.values().collect();
+        assert_eq!(distinct.len(), 4, "{:?}", app.handed);
+        for name in &names {
+            let args = args_of(&dir.path().join(format!("launch-{name}.args")));
+            assert_eq!(args, format!("{name} --bead {}", app.handed[*name]));
+            host.kill(&paths, name);
+            settle_gone(&mut host, name);
+        }
+    }
+
+    #[test]
+    fn a_bead_handed_this_tick_is_not_handed_again_next_tick() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+        let mut ledger = cerebro_tui::triggers::StartLedger::default();
+        let names = ["Storm", "Rogue"];
+        let roster = implementer_roster(&names);
+        let mut app = standby_app(
+            supervising(),
+            names
+                .iter()
+                .map(|name| implementer_row(name, cerebro_tui::model::RowState::Dead))
+                .collect(),
+            Some(planned_beads(1)),
+            now,
+        );
+
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &no_spacing(), 1, &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &no_spacing(), 1, &roster, now);
+
+        let live: Vec<&str> = names.iter().copied().filter(|n| host.is_live(n)).collect();
+        assert_eq!(live.len(), 1, "one bead, one builder: {live:?}");
+        assert_eq!(app.handed.len(), 1, "{:?}", app.handed);
+        for name in live {
+            host.kill(&paths, name);
+            settle_gone(&mut host, name);
+        }
+    }
+
+    #[test]
+    fn a_start_that_went_away_unreported_gives_its_bead_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "exit 0");
+        let mut logger = logging(dir.path());
+        let now = Utc::now();
+        let host = SessionHost::default();
+        let roster = implementer_roster(&["Rogue"]);
+        let mut app = standby_app(
+            supervising(),
+            vec![implementer_row("Rogue", cerebro_tui::model::RowState::Dead)],
+            None,
+            now,
+        );
+        app.handed.insert("Rogue".into(), "cb-x".into());
+
+        give_back(&mut app, &host, &mut logger, &paths, &roster, now);
+
+        assert!(app.handed.is_empty());
+        let out = app.take_outbox();
+        assert!(
+            matches!(
+                out.as_slice(),
+                [cerebro_tui::app::WriteRequest::Release {
+                    name,
+                    bead,
+                    cause: cerebro_tui::lifecycle::GiveBack::DidNotStart,
+                }] if name == "Rogue" && bead == "cb-x"
+            ),
+            "{out:?}"
+        );
+        let line = one_line(dir.path(), "decisions", "give-back");
+        assert!(line.contains(r#""agent":"Rogue","bead":"cb-x","cause":"did-not-start""#), "{line}");
+    }
+
+    /// Constraint 8's overlap, at the tick: a state file that names the bead is the agent's own
+    /// word, which ends the view's record without a give-back and without touching the row.
+    #[test]
+    fn a_state_file_naming_a_bead_ends_the_handover_without_giving_it_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+        hosted(&mut host, &paths, "Rogue");
+        let roster = implementer_roster(&["Rogue"]);
+        let mut app = standby_app(
+            supervising(),
+            vec![cerebro_tui::model::FleetRow {
+                bead: Some("cb-x".into()),
+                ..implementer_row("Rogue", cerebro_tui::model::RowState::Working)
+            }],
+            None,
+            now,
+        );
+        app.handed.insert("Rogue".into(), "cb-x".into());
+
+        give_back(&mut app, &host, &mut test_logger(), &paths, &roster, now);
+
+        assert!(app.handed.is_empty());
+        assert!(app.take_outbox().is_empty());
+        assert_eq!(app.fleet_rows()[0].bead.as_deref(), Some("cb-x"));
+        host.kill(&paths, "Rogue");
+        settle_gone(&mut host, "Rogue");
+    }
+
+    #[test]
+    fn an_orphaned_handover_is_given_back_after_its_grace() {
+        for (age, expected) in [(61u64, true), (10, false)] {
+            let dir = tempfile::tempdir().unwrap();
+            let paths = scratch(dir.path(), "exit 0");
+            let now = Utc::now();
+            let host = SessionHost::default();
+            let roster = implementer_roster(&["Rogue"]);
+            let file = dir.path().join(".cerebro/state/Rogue.handover");
+            std::fs::write(&file, "cb-x\n").unwrap();
+            std::fs::File::options()
+                .write(true)
+                .open(&file)
+                .unwrap()
+                .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(age))
+                .unwrap();
+            let mut app = standby_app(
+                supervising(),
+                vec![implementer_row("Rogue", cerebro_tui::model::RowState::Dead)],
+                None,
+                now,
+            );
+
+            give_back(&mut app, &host, &mut test_logger(), &paths, &roster, now);
+
+            let out = app.take_outbox();
+            if expected {
+                assert!(
+                    matches!(
+                        out.as_slice(),
+                        [cerebro_tui::app::WriteRequest::Release {
+                            cause: cerebro_tui::lifecycle::GiveBack::NeverStarted,
+                            ..
+                        }]
+                    ),
+                    "{out:?}"
+                );
+            } else {
+                assert!(out.is_empty(), "a {age}s handover is still in its grace: {out:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn k_on_a_starting_row_disarms_kills_and_gives_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let mut app = standby_app(
+            supervising(),
+            vec![implementer_row("Rogue", RowState::Dead)],
+            None,
+            Utc::now(),
+        );
+        app.handed.insert("Rogue".into(), "cb-x".into());
+        app.reapply_standby();
+        assert_eq!(app.fleet_rows()[0].state, RowState::Starting);
+        app.selected = Some("Rogue".to_string());
+        let mut host = SessionHost::default();
+        host.insert("Rogue", forever());
+
+        drive(&mut app, &mut host, &paths, vec![ch('k')]);
+        assert!(
+            matches!(&app.confirm, Some(cerebro_tui::app::Prompt::Stop { name, .. }) if name == "Rogue"),
+            "{:?}",
+            app.confirm
+        );
+        drive(&mut app, &mut host, &paths, vec![ch('y')]);
+
+        assert!(!app.armed.contains("Rogue"), "the name is disarmed");
+        assert!(app.handed.is_empty());
+        let out = app.take_outbox();
+        assert!(
+            matches!(
+                out.as_slice(),
+                [cerebro_tui::app::WriteRequest::Release {
+                    name,
+                    bead,
+                    cause: cerebro_tui::lifecycle::GiveBack::Stopped,
+                }] if name == "Rogue" && bead == "cb-x"
+            ),
+            "{out:?}"
+        );
+        settle_gone(&mut host, "Rogue");
+    }
+
+    #[test]
+    fn a_killed_unreported_session_keeps_its_claim() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let mut app = standby_app(
+            supervising(),
+            vec![implementer_row("Rogue", RowState::Up)],
+            None,
+            Utc::now(),
+        );
+        app.handed.insert("Rogue".into(), "cb-x".into());
+        app.selected = Some("Rogue".to_string());
+        let mut host = SessionHost::default();
+        host.insert("Rogue", forever());
+
+        drive(&mut app, &mut host, &paths, vec![ch('k')]);
+        assert!(
+            matches!(&app.confirm, Some(cerebro_tui::app::Prompt::Kill { name, .. }) if name == "Rogue"),
+            "{:?}",
+            app.confirm
+        );
+        drive(&mut app, &mut host, &paths, vec![ch('y')]);
+
+        assert!(app.handed.is_empty(), "the view's record goes with the session");
+        assert!(app.take_outbox().is_empty(), "and the claim stays, as the prompt promised");
+        settle_gone(&mut host, "Rogue");
+    }
+
+    #[test]
+    fn a_read_only_view_gives_nothing_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "exit 0");
+        let now = Utc::now();
+        let mut app = App::with_supervision(SupervisionMode::ReadOnly(
+            cerebro_tui::supervisor::ReadOnlyReason::OwnedBy,
+        ));
+        app.finish_refresh(Ok(vec![implementer_row("Rogue", RowState::Dead)]), now);
+        app.handed.insert("Rogue".into(), "cb-x".into());
+        std::fs::write(dir.path().join(".cerebro/state/Gambit.handover"), "cb-y\n").unwrap();
+
+        give_back(
+            &mut app,
+            &SessionHost::default(),
+            &mut test_logger(),
+            &paths,
+            &implementer_roster(&["Rogue", "Gambit"]),
+            now + chrono::Duration::seconds(3600),
+        );
+
+        assert_eq!(app.handed.len(), 1);
+        assert!(app.take_outbox().is_empty());
     }
 
     #[test]
@@ -5406,7 +5898,7 @@ mod main_tests {
 
         assert!(host.is_live("Xavier"));
         let line = one_line(dir.path(), "decisions", "start");
-        assert!(line.contains(r#""agent":"Xavier","role":"planner","reason":"buffer 0 of 2","by":"trigger""#), "{line}");
+        assert!(line.contains(r#""agent":"Xavier","role":"planner","reason":"buffer 0 of 2","bead":null,"by":"trigger""#), "{line}");
         host.kill(&paths, "Xavier");
         settle_gone(&mut host, "Xavier");
     }
@@ -5432,7 +5924,7 @@ mod main_tests {
         assert!(state.host.is_live("Rogue"));
         let line = one_line(dir.path(), "decisions", "start");
         assert!(
-            line.contains(r#""agent":"Rogue","role":"implementer","reason":null,"by":"navigator""#),
+            line.contains(r#""agent":"Rogue","role":"implementer","reason":null,"bead":null,"by":"navigator""#),
             "{line}"
         );
         state.host.kill(&paths, "Rogue");
@@ -5481,7 +5973,7 @@ mod main_tests {
         // And the autostarted name got a `start` line instead, as the navigator's own act.
         let start = one_line(dir.path(), "decisions", "start");
         assert!(
-            start.contains(r#""agent":"Cyclops","role":"implementer","reason":null,"by":"navigator""#),
+            start.contains(r#""agent":"Cyclops","role":"implementer","reason":null,"bead":null,"by":"navigator""#),
             "{start}"
         );
         host.kill(&paths, "Cyclops");
@@ -5497,8 +5989,8 @@ mod main_tests {
         let mut logger = logging(dir.path());
         let now = Utc::now();
         let mut host = SessionHost::default();
-        cerebro_tui::lifecycle::start(&mut host, &paths, "Rogue", false).unwrap();
-        cerebro_tui::lifecycle::start(&mut host, &paths, "Storm", false).unwrap();
+        cerebro_tui::lifecycle::start(&mut host, &paths, "Rogue", false, None).unwrap();
+        cerebro_tui::lifecycle::start(&mut host, &paths, "Storm", false, None).unwrap();
         cerebro_tui::lifecycle::write_stop_flag(&paths, "Storm").unwrap();
         let mut waiting = fleet_row("Rogue", cerebro_tui::model::AgentKind::Implementer,
             cerebro_tui::model::RowState::Waiting);
@@ -5533,9 +6025,9 @@ mod main_tests {
 
         // A child that ended on its own, and one this view ended: both are reaped, one is logged.
         let paths = scratch(dir.path(), "exit 3");
-        cerebro_tui::lifecycle::start(&mut host, &paths, "Rogue", false).unwrap();
+        cerebro_tui::lifecycle::start(&mut host, &paths, "Rogue", false, None).unwrap();
         let paths_long = scratch(&dir.path().join("long"), "sleep 5");
-        cerebro_tui::lifecycle::start(&mut host, &paths_long, "Storm", false).unwrap();
+        cerebro_tui::lifecycle::start(&mut host, &paths_long, "Storm", false, None).unwrap();
         host.end(&paths_long, "Storm");
         settle_gone(&mut host, "Rogue");
         settle_gone(&mut host, "Storm");
@@ -5566,7 +6058,7 @@ mod main_tests {
         let mut host = SessionHost::default();
 
         let paths = scratch(dir.path(), "echo 'thread panicked at src/main.rs'; exit 3");
-        cerebro_tui::lifecycle::start(&mut host, &paths, "Rogue", false).unwrap();
+        cerebro_tui::lifecycle::start(&mut host, &paths, "Rogue", false, None).unwrap();
         settle_gone(&mut host, "Rogue");
 
         log_exits(&mut logger, &mut host, now);
@@ -5592,7 +6084,7 @@ mod main_tests {
         let mut host = SessionHost::default();
 
         let paths = scratch(dir.path(), "echo 'cerebro: no claude on PATH' >&2; exit 2");
-        cerebro_tui::lifecycle::start(&mut host, &paths, "Rogue", false).unwrap();
+        cerebro_tui::lifecycle::start(&mut host, &paths, "Rogue", false, None).unwrap();
         settle_gone(&mut host, "Rogue");
 
         log_exits(&mut logger, &mut host, now);

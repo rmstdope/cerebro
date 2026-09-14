@@ -401,13 +401,17 @@ impl Session {
     /// `env_remove` in this file - the strip belongs in the one thing BOTH views spawn, or it
     /// exists twice and the two copies drift.
     ///
-    /// The command is the launcher and the agent's name and nothing else - the same two tokens
-    /// `cerebro--launch-command` builds in Emacs. No model flag, no provider flag, no prompt:
+    /// The command is the launcher and the agent's name, and `--bead <id>` when the view handed
+    /// the agent a bead (cb-10d.1) - nothing else. No model flag, no provider flag, no prompt:
     /// every one of those is the launcher's own business, and a second opinion here is a second
     /// answer.
-    pub fn spawn(name: &str, paths: &ReaderPaths) -> Result<Self, ReadError> {
+    pub fn spawn(name: &str, paths: &ReaderPaths, bead: Option<&str>) -> Result<Self, ReadError> {
         let mut command = portable_pty::CommandBuilder::new(paths.scripts_dir.join("launch"));
         command.arg(name);
+        if let Some(bead) = bead {
+            command.arg("--bead");
+            command.arg(bead);
+        }
         command.cwd(&paths.consumer_root);
         Self::spawn_command(name, command, INITIAL_ROWS, INITIAL_COLS)
     }
@@ -646,8 +650,13 @@ pub struct SessionHost {
 impl SessionHost {
     /// Start NAME. Replaces that agent's retained pass, which is what "retained until the next
     /// start" means. Refuses when NAME already has a live session.
-    pub fn spawn(&mut self, name: &str, paths: &ReaderPaths) -> Result<(), ReadError> {
-        self.insert(name, Session::spawn(name, paths)?);
+    pub fn spawn(
+        &mut self,
+        name: &str,
+        paths: &ReaderPaths,
+        bead: Option<&str>,
+    ) -> Result<(), ReadError> {
+        self.insert(name, Session::spawn(name, paths, bead)?);
         Ok(())
     }
 

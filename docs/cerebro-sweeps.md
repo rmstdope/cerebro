@@ -50,8 +50,7 @@ The delivery test keeps three rules:
 
 ## Epics left open under closed children
 
-**The fleet view now detects these too**, the same way and on the same ten-minute timer as
-the claims sweep above: `sweep-epics.sh` finds every eligible epic, the Sweeps section shows it once
+**The fleet view detects these**, on the same ten-minute timer as every other sweep: `sweep-epics.sh` finds every eligible epic, the Sweeps section shows it once
 it is stale enough, and `x` runs the `bd close` shown, on confirmation. `cerebro--epic-finding`
 enforces the ten-minute-since-last-child guard below; this prose is what it was built from.
 

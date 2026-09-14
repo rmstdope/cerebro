@@ -929,8 +929,8 @@ Answer from the tools:
   a launched session claimed it and the name says which one, but that still does not say whether the
   claim is live. Check each one's lease (`bd show <id>`, look for "Lease: expires expired"); an
   expired lease with nobody live behind it in `ListAgents`/`pgrep` is a stale claim worth surfacing
-  even when the assignee reads as the navigator's own name — see *Beads that finished without being
-  closed*.
+  even when the assignee reads as the navigator's own name — the fleet view takes back what it
+  safely can, and *What the view kept* is the rest.
 - `.claude/cerebro/scripts/sweep-paused.sh --json` for how many beads are waiting on the navigator
   and how long the oldest has waited. A status turn **reports** that count; it does not run the
   question pass in *The paused beads are yours to walk* — that pass belongs to startup and to a

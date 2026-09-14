@@ -554,6 +554,26 @@ mod tests {
         #[serde(default)] now: Option<DateTime<Utc>>,
     }
 
+    /// cb-10d.2.2: a planning role's assignment is not an implementer's, so however old it is it
+    /// is never offered as an `unassign` - the view gives such a bead back itself when the
+    /// session holding it has ended.
+    #[test]
+    fn a_planning_assignment_is_never_an_unassign_finding() {
+        let candidate = Candidate {
+            id: "cb-x".into(),
+            assignee: Some("Iceman".into()),
+            priority: Some(2),
+            age_min: Some(STALE_ASSIGNEE_MINUTES * 100),
+            ..Candidate::default()
+        };
+        let snapshot = Snapshot {
+            live: Vec::new(),
+            implementers: vec!["Cyclops".into(), "Rogue".into()],
+            now: Utc::now(),
+        };
+        assert_eq!(Sweep::Assignees.judge(&candidate, &snapshot), None);
+    }
+
     fn rows() -> Vec<Row> {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../tests/lib/sweep-findings.json");
         let text = std::fs::read_to_string(path)

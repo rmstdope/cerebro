@@ -3443,10 +3443,17 @@ impl App {
         let newest = self.writes_answered == self.writes_requested;
         // A failure always takes the header; a success takes it only when it is the newest write,
         // so an older write's sentence cannot replace the dim line of one still running.
-        // A give-back that found its bead elsewhere has nothing to say (cb-10d.1).
+        // A give-back that found its bead elsewhere has nothing to say (cb-10d.1), and neither
+        // has one whose sentence is empty - a planning session that ended holding its bead
+        // (cb-10d.2.2).
         let silent = matches!(
             &answer,
             WriteAnswer::Release { outcome: crate::lifecycle::ReleaseOutcome::Elsewhere, .. }
+        ) || matches!(
+            &answer,
+            WriteAnswer::Release {
+                outcome: crate::lifecycle::ReleaseOutcome::Returned { text }, ..
+            } if text.is_empty()
         );
         if answer.failed() {
             self.set_error_notice(answer.text().to_string());
@@ -5837,6 +5844,26 @@ mod tests {
         app.begin_write(&request, bd_path());
         let action = app.finish_write(release_answer(crate::lifecycle::ReleaseOutcome::Elsewhere));
         assert_eq!(action, AppAction::None);
+        assert_eq!(app.notice.as_deref(), Some("before"));
+        assert!(app.releasing.is_empty());
+    }
+
+    /// cb-10d.2.2: a planning session that ended still holding its bead is given it back without
+    /// a word - nothing went wrong from the navigator's side.
+    #[test]
+    fn an_ended_give_back_says_nothing() {
+        let mut app = App::new();
+        app.set_notice("before".into());
+        app.queue_release("Iceman", "cb-x", crate::lifecycle::GiveBack::Ended);
+        let request = app.take_outbox().pop().unwrap();
+        app.begin_write(&request, bd_path());
+        let action = app.finish_write(WriteAnswer::Release {
+            name: "Iceman".into(),
+            bead: "cb-x".into(),
+            cause: crate::lifecycle::GiveBack::Ended,
+            outcome: crate::lifecycle::ReleaseOutcome::Returned { text: String::new() },
+        });
+        assert_eq!(action, AppAction::RefreshWork);
         assert_eq!(app.notice.as_deref(), Some("before"));
         assert!(app.releasing.is_empty());
     }

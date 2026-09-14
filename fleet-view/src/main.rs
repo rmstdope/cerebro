@@ -1266,7 +1266,11 @@ fn give_back(
     for (name, entry) in retries {
         queue_give_back(app, logger, &name, &entry.bead, entry.cause, now);
     }
-    for entry in roster.iter().filter(|entry| entry.kind == cerebro_tui::model::AgentKind::Implementer) {
+    let handed_a_bead = |entry: &&RosterEntry| {
+        entry.kind == cerebro_tui::model::AgentKind::Implementer
+            || cerebro_tui::model::PLANNING_ROLES.contains(&entry.role.as_str())
+    };
+    for entry in roster.iter().filter(handed_a_bead) {
         if app.handed.contains_key(&entry.name) || app.releasing.contains_key(&entry.name) {
             continue;
         }
@@ -1288,6 +1292,33 @@ fn give_back(
         ) {
             queue_give_back(app, logger, &entry.name, &bead, lifecycle::GiveBack::NeverStarted, now);
         }
+    }
+    // A planning session that has ended still holding its bead (cb-10d.2.2). The reclaim loops
+    // the planning skills ran at the top of every pass were the only other thing that freed one.
+    // At most one per name per tick: `queue_release` makes `may_release` false for it.
+    let ended: Vec<(String, String)> = roster
+        .iter()
+        .filter(|entry| cerebro_tui::model::PLANNING_ROLES.contains(&entry.role.as_str()))
+        .filter(|entry| !app.handed.contains_key(&entry.name))
+        .filter_map(|entry| {
+            let buckets = app.work.content.value()?;
+            let row_alive = app
+                .fleet_rows()
+                .iter()
+                .find(|row| row.name == entry.name)
+                .is_some_and(lifecycle::row_is_alive);
+            lifecycle::ended_holding(
+                &entry.name,
+                host.is_live(&entry.name),
+                row_alive,
+                !app.may_release(&entry.name, now),
+                buckets,
+            )
+            .map(|bead| (entry.name.clone(), bead.to_string()))
+        })
+        .collect();
+    for (name, bead) in ended {
+        queue_give_back(app, logger, &name, &bead, lifecycle::GiveBack::Ended, now);
     }
 }
 
@@ -5378,6 +5409,102 @@ mod main_tests {
                 assert!(out.is_empty(), "a {age}s handover is still in its grace: {out:?}");
             }
         }
+    }
+
+    /// cb-10d.2.2: a planning session that is gone - killed, crashed, a closed window - while its
+    /// bead is still assigned to it on the board has that bead given back, once, with the cause
+    /// `ended`.
+    #[test]
+    fn a_planning_session_that_ended_holding_its_bead_is_released() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "exit 0");
+        let mut logger = logging(dir.path());
+        let now = Utc::now();
+        let host = SessionHost::default();
+        let roster = vec![RosterEntry {
+            name: "Iceman".into(),
+            role: "build-design".into(),
+            kind: AgentKind::Interactive,
+        }];
+        let buckets = cerebro_tui::model::partition_beads(vec![cerebro_tui::model::Bead {
+            id: "cb-x".into(),
+            title: "cb-x".into(),
+            status: "open".into(),
+            issue_type: "task".into(),
+            labels: vec!["ux:agreed".into()],
+            priority: Some(2),
+            updated_at: None,
+            assignee: Some("Iceman".into()),
+            metadata: serde_json::Value::Null,
+            external_ref: None,
+        }]);
+        let mut app = standby_app(
+            supervising(),
+            vec![staged_row("Iceman", "build-design", RowState::Dead)],
+            Some(buckets),
+            now,
+        );
+
+        give_back(&mut app, &host, &mut logger, &paths, &roster, now);
+        let out = app.take_outbox();
+        assert!(
+            matches!(
+                out.as_slice(),
+                [cerebro_tui::app::WriteRequest::Release {
+                    cause: cerebro_tui::lifecycle::GiveBack::Ended,
+                    ..
+                }]
+            ),
+            "{out:?}"
+        );
+        let line = one_line(dir.path(), "decisions", "give-back");
+        assert!(line.contains(r#""cause":"ended""#), "{line}");
+
+        // Again on the same tick: the release is still running, so nothing more is queued.
+        give_back(&mut app, &host, &mut logger, &paths, &roster, now);
+        assert!(app.take_outbox().is_empty(), "one give-back per name");
+    }
+
+    /// cb-10d.1's orphaned handover, for a planning role (cb-10d.2.2).
+    #[test]
+    fn an_orphaned_handover_of_a_planning_role_is_given_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "exit 0");
+        let now = Utc::now();
+        let host = SessionHost::default();
+        let roster = vec![RosterEntry {
+            name: "Iceman".into(),
+            role: "build-design".into(),
+            kind: AgentKind::Interactive,
+        }];
+        let file = dir.path().join(".cerebro/state/Iceman.handover");
+        std::fs::write(&file, "cb-x\n").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&file)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(120))
+            .unwrap();
+        let mut app = standby_app(
+            supervising(),
+            vec![staged_row("Iceman", "build-design", RowState::Dead)],
+            None,
+            now,
+        );
+
+        give_back(&mut app, &host, &mut test_logger(), &paths, &roster, now);
+
+        let out = app.take_outbox();
+        assert!(
+            matches!(
+                out.as_slice(),
+                [cerebro_tui::app::WriteRequest::Release {
+                    cause: cerebro_tui::lifecycle::GiveBack::NeverStarted,
+                    ..
+                }]
+            ),
+            "{out:?}"
+        );
     }
 
     #[test]

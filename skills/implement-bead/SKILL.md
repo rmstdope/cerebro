@@ -5,115 +5,69 @@ description: The implementation role — take one planned bead, build it under T
 
 # Implementing a planned bead
 
-You take a bead somebody else planned, build exactly what the plan says, see it onto main, and
-**finish**. One bead, then you are done. Several of you may run at once.
+You take one bead somebody else planned, build exactly what the plan says, see it onto main, and
+**finish**. Several of you may run at once.
 
-You do not loop, and you do not end yourself either. You are an interactive session, so your process
-outlives your turn — which is what lets the navigator talk to you, and what means you cannot simply
-stop. When the bead is closed you run `end-pass` (see *Ending a pass*) and say what you did; the
-fleet view ends you half a minute later and starts a fresh session under your name when there is
-another planned bead. Everything you learned building this one goes with you, which is the point: a
-new session starts with a clean context instead of five beads of residue.
+You do not loop, and you do not end yourself: you are an interactive session, and your process
+outlives your turn. Never kill your own process, shell or terminal. When the bead is closed, run
+`end-pass` (*Ending a pass*) and say what you did; the fleet view ends you about half a minute later
+and starts a fresh session under your name for the next planned bead.
 
-Read `beads-workflow` for the label lifecycle and the consumer's root `CLAUDE.md` — its Four Eye
-Principle — for the review
-rules; this is the role on top of them.
+Read `beads-workflow`, and the consumer's root `CLAUDE.md` for its Four Eye Principle; this is the
+role on top of them.
 
 ## Standing approval, and where it comes from
 
-Merging is not normally something a blanket approval covers. This role is the documented exception,
-and the authority is **the consumer's root `CLAUDE.md` and its Four Eye Principle**, which the
-navigator wrote for exactly this: for a planned bead, a review sub-agent you spawn for yourself is
-the second pair of eyes, and an implementation session merges on the conditions stated there.
-`templates/consumer-CLAUDE.md` is where a project without one starts, and where anything in this
-skill disagrees with the project's own document, the project's governs.
+The authority to merge is **the consumer's root `CLAUDE.md` and its Four Eye Principle**: for a
+planned bead, a review sub-agent you spawn yourself is the second pair of eyes, and you merge on the
+conditions stated there. `templates/consumer-CLAUDE.md` is where a project without one starts. Where
+this skill and the project's document disagree, the project's governs.
 
 So: RED → GREEN → REFACTOR → COMMIT without stopping, announcing each transition, and still stopping
-on a genuine design question — see *When the plan is wrong*. The approval covers a planned bead and
-nothing else: work outside one stops for the navigator at each phase, like any other change.
+on a genuine design question (*When the plan is wrong*). The approval covers a planned bead only;
+other work stops for the navigator at each phase.
 
 ## Waiting, without ending your run
 
-**A bead has two kinds of wait in it, and they are not waited on the same way.** Getting it wrong in
-either direction costs: one strands a bead, the other burns five minutes a round doing nothing.
+A bead has two kinds of wait, waited on differently.
 
-- **CI, and everything else outside this session.** Nothing will tell you it finished, so **block
-  inside a tool call**, polling a condition a shell can actually test. That is the rest of this
-  section.
-- **A `reviewer` sub-agent you spawned yourself** — the review, and nothing else in this skill.
-  **Its result is delivered to you, so do not sleep on it** — but it does not release you from the
-  bead either: *Waiting for a sub-agent*, below, which is the only place this skill narrows anything.
+- **CI, and everything else outside this session.** Nothing tells you it finished, so **block
+  inside a tool call**, polling a condition a shell can test.
+- **A `reviewer` sub-agent you spawned.** Its result is delivered, so do not sleep on it — see
+  *Waiting for a sub-agent*.
 
-The first kind is where a bead gets abandoned. An implementer once armed a `Monitor` against a
-review, said "I'll wait now for the monitor's event", and ended its turn. The review landed two
-minutes later: two comments unanswered, the bead claimed, the PR open, and nothing to wake it.
-
-**So for the first kind: wait by blocking inside a tool call. Never by ending your turn.**
+**For the first kind: wait by blocking inside a tool call. Never by ending your turn.**
 
 ```bash
 until <the condition>; do bd heartbeat <id>; sleep 30; done
 ```
 
-Three things about that line, each of which has cost something here:
+- **The heartbeat goes inside the loop.** A lease is about five minutes and a CI run about ten.
+- **It prints as it goes.** The harness kills a stream stalled for 600 seconds.
+- **Each call stays well under ten minutes**, with an explicit `timeout`; a longer wait is several
+  calls.
 
-- **The heartbeat is inside the loop, not around it.** A lease is about five minutes and a CI run is
-  ten, so a heartbeat before and after leaves the middle uncovered and the claim reads as abandoned.
-- **It must print as it goes.** The harness kills a run whose stream has stalled for 600 seconds,
-  and it has done so here. A silent loop is indistinguishable from a hang.
-- **Keep each call well under ten minutes.** A `Bash` call times out — 600000ms at the most,
-  120000ms by default — so pass an explicit `timeout` and, for a longer wait, call again. A
-  twenty-minute CI wait is three calls, not one.
-
-`Monitor` and `Bash` with `run_in_background` both promise to re-invoke you later. Do not rely on
-either here. Your process survives the end of a turn now, so this is no longer the guaranteed
-disaster it was when it ran under `--print` — but nothing wakes you. A turn ended against a CI run
-sits until the navigator happens to look and type something, with the bead claimed, the PR open and
-the lease going stale the whole time. Block, and stay in the run.
+Do not rely on `Monitor` or `Bash` with `run_in_background`: nothing wakes you, and a turn ended
+against CI sits until somebody types.
 
 ### Waiting for a sub-agent
 
-**Do not sleep on the review, and do not end your *pass* while it is out.** Two different things,
-both load-bearing, in that order.
+**Do not sleep on the review.** Its completion is not a condition a shell can test, and a fixed
+sleep wastes minutes every round. Heartbeat, spawn, and take the findings when they arrive.
 
-**Do not sleep on it.** A sub-agent's completion is not a condition a shell can test, so the loop
-above cannot be pointed at one — there is nothing for `until` to end on. An implementer that points
-it there anyway ends up writing a *fixed* wait, and on cb-sxf that is exactly what happened:
-`for i in $(seq 1 10); do bd heartbeat <id>; sleep 30; done`, five minutes flat, on each of two
-delta rounds. Those two rounds took **6m43s** and **5m31s** from the implementer's answer to the
-next review landing, while the reviews themselves ran **56s** and about a minute — so ten of that
-bead's twenty-two minutes were the two sleeps, with the findings in hand for most of both.
+Letting the turn end meanwhile is fine; **ending your pass is not**. Your state stays
+`working --phase review`, and you never write `waiting` with a review outstanding.
 
-**So: heartbeat, spawn, and take the findings when they arrive.** If there is nothing else to do
-meanwhile, letting the turn end is fine — the completion re-invokes you and the findings come with
-it. **Ending a turn is not ending your pass**, and only the second one is forbidden here: your state
-file still says `working --phase review`, so the fleet view keeps the session and the navigator sees
-exactly where you are. Never write `waiting` with a review outstanding — that is what *Never stop
-with a bead in flight* forbids, and it is the thing that strands a claimed bead and an open PR.
+It is trusted where `Monitor` is not because `reviewer` sub-agents have been observed to report
+back, even after the parent's turn ended. One that never arrives is visible: the row sits in
+`review`, the fleet view keeps a live session's bead, and the row goes red as stuck.
 
-**Why this one tool and not the two the section above distrusts.** Not because a sub-agent is
-"yours" — `Bash` with `run_in_background` is yours too, and is still not to be relied on here. The
-difference is what has actually been observed: those two promised a re-invocation and did not
-deliver, at the cost the incident above describes, while every `reviewer` sub-agent spawned in this
-repository's sessions has reported back, including to a parent whose turn had ended meanwhile. That
-is an empirical difference, not a principled one, and it is the whole of the reason to treat them
-differently. **If a review ever fails to arrive, the failure is visible rather than silent**: the
-row sits in `review` with its elapsed time climbing, the fleet view never takes back a bead a live
-session is on, and the row goes red as stuck for the navigator.
-
-**The lease, honestly.** A lease is about five minutes. A delta round finishes well inside it; **a
-cold read does not** — this file measures one at the better part of ten minutes — so a heartbeat
-before the spawn and another when the findings land leaves a cold read's middle uncovered. That is
-survivable rather than fine, and it is survivable for one reason: an expired lease under a *live*
-session is not reclaimed. Heartbeat on both sides anyway, and do not read this paragraph as licence
-to let a lease go cold anywhere else.
+A cold read can outlast a lease; heartbeat on both sides. An expired lease under a live session is
+not reclaimed — no licence to let one go cold elsewhere.
 
 ## Telling the fleet view what you are doing
 
 `.cerebro/state/<your-name>.state.json` is how you are seen and how you are replaced.
-
-```bash
-.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase build --pid $PPID
-```
 
 <!-- state-contract:begin -->
 
@@ -165,16 +119,13 @@ corrected").
 | *Asking instead of handing back* | `.claude/cerebro/scripts/agent-state <name> asking --bead <id> --phase <current> --pid $PPID`; on resuming, `working` with the same bead and phase |
 | *Finishing, then going again*, after `bd close`, and the hand-back block | `.claude/cerebro/scripts/end-pass <name> --pid $PPID` |
 
-`waiting` is a request to be ended, granted within about half a minute. Run `end-pass` last. There
-is no wake to ask for: the view starts an implementer on a planned bead, not on a clock.
+`waiting` asks to be ended and is granted within about half a minute, so run `end-pass` last; there
+is no wake to ask for.
 
 ## Ending a pass
 
-There is no next bead to take, and no flag for **you** to check. The `.stop` flag still means what
-`orchestrator.md` says it means — the fleet view reads it when you report `waiting`, and decides
-whether a fresh session starts in your place. That is not your business, and you must not read it:
-an implementer that saw a stop flag mid-bead and wound up early would strand exactly what
-one-bead-per-session is arranged to protect.
+The `.stop` flag is the fleet view's to read when you report `waiting`, never yours: winding up early
+mid-bead strands the bead. **Never touch another implementer's state file or stop flag.**
 
 **A pass is ended in one place**, and `waiting` is what it writes for you:
 
@@ -182,23 +133,17 @@ one-bead-per-session is arranged to protect.
 .claude/cerebro/scripts/end-pass <name> --pid $PPID
 ```
 
-Run it last — after the bead is merged and closed, and the retrospective below is written
-— then say what you did and stop producing output. **Never end a pass before that
-point.** A bead abandoned in flight strands a claim, a worktree and an open PR for somebody to
-unpick by hand.
-
-The one exception is a bead you hand back — a missing plan section, a question only the navigator
-can answer. That is a complete run too: hand it back with the block in *Picking up*, clean up, and
-end the pass exactly the same way.
+Run it last — after the bead is merged and closed and the retrospective is written — then say what
+you did and stop producing output. **Never earlier**: a bead abandoned in flight strands its claim,
+worktree and PR. A hand-back is a complete run too, and ends the same way.
 
 ## Picking up
 
-**This is your first turn's work.** Nothing gates it: a running implementer is a working one, and
-there is no flag to wait for.
+**This is your first turn's work.** Nothing gates it.
 
-**You do not pick your bead, and you do not claim it.** The fleet view chose it and claimed it for
-you before your session started, and the prompt that started you names it in one sentence:
-*Your bead is `<id>`; it is already claimed for you.* Confirm it is yours, then write your state:
+**You do not pick your bead, and you do not claim it.** The fleet view claimed it before your
+session started, and the prompt names it: *Your bead is `<id>`; it is already claimed for you.*
+Confirm it is yours, then write your state:
 
 ```bash
 bd dolt pull
@@ -207,23 +152,18 @@ bd show <id> --json          # assignee must be your own name, status must be in
 bd dolt push
 ```
 
-**Never run `bd ready`, never pass `--claim`, and never take a different bead** — not even one that
-looks more urgent. Which bead a builder takes, and when, is the fleet view's decision
-(`scripts/assignable-beads` is the rule it uses), and a second builder choosing for itself is how
-two sessions end up on one bead.
+**Never run `bd ready`, never pass `--claim`, never take a different bead, and never take a bead
+another agent holds: `in_progress` with an assignee is authoritative.** Which bead a builder takes is
+the fleet view's decision (`scripts/assignable-beads`).
 
-**If it is not yours** — another assignee, not `in_progress`, or a bead that does not exist — hand
-it back with the hand-back block below, the `--add-label human` form, naming in the note exactly
-what you found, and end the pass.
+**If it is not yours** — another assignee, not `in_progress`, or no such bead — hand it back with the
+hand-back block below, the `--add-label human` form, name what you found, and end the pass.
 
-**If the prompt names no bead**, say "no bead was given, ending the pass" in one line, run `end-pass`
-as *Ending a pass* describes, and stop producing output. The view starts a fresh session under your
-name, on a bead, when there is one to give; a session that sits polling is one it cannot tell from a
-session that has hung.
+**If the prompt names no bead**, say "no bead was given, ending the pass" in one line, run `end-pass`,
+and stop producing output.
 
-`bd heartbeat <id>` at every phase gate and before anything long — a full gate run, a CI watch. The
-lease is short, about five minutes, and a cycle is an hour; the exact TTL is bd's and not
-configurable here, so heartbeat on every boundary rather than on a timer.
+`bd heartbeat <id>` at every phase gate and before anything long. The lease is about five minutes,
+and its TTL is not configurable here.
 
 **Read the plan with `bd show <id> --json`.** The pretty renderer mangles it.
 
@@ -237,16 +177,12 @@ bd unclaim <id>
 bd dolt push
 ```
 
+All three: this is the **hand-back block** referred to throughout. Why each command matters is in
+`beads-workflow`, *The lifecycle a bead moves through*.
 
-All three, and this is the **hand-back block** referred to throughout. `beads-workflow` carries why
-each command matters; the short of it is that `paused_at` is what makes the pause visible as a
-*duration* rather than as parked-just-now-for-ever (cb-wfb), and that `bd unclaim` is what stops the
-bead sitting `in_progress` under an agent that has walked away.
-
-**One variation, and it is about where the bead goes next.** A bead carrying `verification:failed`
-that you are handing back because there is **nothing left to implement** — you read the failure
-notes and the surface the navigator asked for is already there, or another bead carries it — drops
-the `human`:
+**One variation.** A bead carrying `verification:failed` that you hand back because there is
+**nothing left to implement** — the surface is already there, or another bead carries it — drops the
+`human`:
 
 ```bash
 bd update <id> --remove-label planned --append-notes "<why there is nothing to build>"
@@ -254,50 +190,34 @@ bd unclaim <id>
 bd dolt push
 ```
 
-`verification:failed` on an **open** bead, with neither `planned` nor `plan:revise`, is what puts it
-on Psylocke's second-look list (`scripts/second-look-beads`) — her ordinary work list is built from
-closed beads and would never show it. So a failed verification with nothing left to build wants that
-second look, not the navigator's queue; adding `human` parks it in front of a person who has nothing
-to decide. It has happened, and the bead had to be moved back by hand. (That list once matched
-`verdict:stale` only, and a bead handed back this way reached no role at all for eleven hours —
-which is why the query now lives in a script with a test under it rather than in prose.)
+An open bead with `verification:failed` and neither `planned` nor `plan:revise` is what
+`scripts/second-look-beads` matches, so it gets the verifier's second look; `human` would park it
+before a person with nothing to decide.
 
-**Never add `plan:revise` in either case.** Whether the plan was wrong is the navigator's answer to
-Psylocke's question, asked at the verdict, and it is not an implementer's to assert — the label is
-hers alone to set, and it is what sends the bead to a planner. After either block, run `end-pass` last, exactly as a
-merged bead does — a hand-back is a complete run too.
+**Never add `plan:revise` in either case.** Only the verifier sets it, as the navigator's answer at
+the verdict. After either block, run `end-pass` last.
 
 ### A reopened bead
 
-You can pick one of these up exactly like any other planned bead — it is open, `planned` and P0, and
-`bd ready` does not tell you it has a history. Recognise it from `bd show <id> --json`: a
-`verification:failed` label, notes beginning "Verification failed", and a closed-then-reopened
-history.
-
-What changes is not the process, only what you read first. Before the plan, read what actually
-shipped and what the navigator saw fail:
+Recognise it from `bd show <id> --json`: a `verification:failed` label, notes beginning
+"Verification failed", a reopened history. Before the plan, read what shipped and the failure notes:
 
 ```bash
 git log origin/main --grep "(<id>):" -F --oneline    # the original PR(s)
 ```
 
-and the failure itself, in the bead's notes. The plan (amended in place by a planner, per `plan-bead`)
-is what you build from as always; the failure notes tell you what "done" now has to mean. **Your
-scope is making the plan's promise true — the gap the navigator found — not rebuilding the bead from
-nothing.** Where the failure is testable at all, let your first failing test reproduce what they
-saw; that is the increment that matters most.
+Build from the plan as amended. **Your scope is the gap the navigator found, not a rebuild.** Where
+it is testable, your first failing test reproduces what they saw.
 
-On merge, close it exactly as usual — it keeps `verification:failed` through the close, and that is
-by design: it is what puts the bead back on Psylocke's list for a second look. The parent-close walk
-in *Finishing, then going again* needs nothing different either; Psylocke already reopened the parent chain when she
-reopened this bead, so closing the last open child closes it again the same way it always does.
+Close it as usual: `verification:failed` stays through the close by design, and the parent walk is
+unchanged, because the verifier already reopened the chain.
 
 ## Workspace
 
-**Your tree was made before your session started.** The fleet view ran `disk-preflight` with the
-plan's workload and then `scripts/prepare-worktree` — which fetches the default branch from origin, branches,
-initialises the `.claude/cerebro` submodule and runs the project's declared `install` — at
-`<repo>/.cerebro/worktrees/<id>`. Never check out `main`; go to your tree and read its branch:
+**Your tree was made before your session started**: `disk-preflight` with the plan's workload, then
+`scripts/prepare-worktree` (fetch the default branch, branch, init the `.claude/cerebro` submodule,
+run the project's `install`) at `<repo>/.cerebro/worktrees/<id>`. Never check out `main`; go to
+your tree:
 
 ```bash
 cd <repo>/.cerebro/worktrees/<id>
@@ -306,94 +226,64 @@ git status --porcelain
 git log --oneline "origin/$(.claude/cerebro/scripts/default-branch)..HEAD"
 ```
 
-**If either of the last two shows anything, the tree is an earlier attempt at this same bead**, kept
-because it held work. Read it before you build. If the tree is missing, hand the bead back with the
-hand-back block, naming that. **Never create, move or remove a worktree yourself.**
+**If either of the last two shows anything, the tree is an earlier attempt at this bead**; read it
+before you build. If the tree is missing, hand back, naming that. **Never create, move or remove a
+worktree yourself.**
 
-If a suite needs the project's prewarmed build, run the command
+A fresh tree has no prewarmed build: if a suite needs one, run what
 `.claude/cerebro/scripts/project-conf prewarm` prints, inside the tree.
 
-Worktrees stay under `.cerebro/worktrees/`. `bd`
-and most build tools find their configuration by walking up, so a worktree outside the repository
-silently gets its own empty bead database and its own multi-gigabyte build directory.
+Worktrees stay under `.cerebro/worktrees/`: `bd` and most build tools find their configuration by
+walking up.
 
 ### A bead whose diff is inside `.claude/cerebro`
 
-**It needs no special tree, and no worktree of the submodule at all.** Your tree already has the
-submodule initialised; do the work in
-`<tree>/.claude/cerebro`.
-
-**That checkout is yours alone.** Every consumer worktree gets its own private submodule git dir, so
-branching there moves nobody else's HEAD. Check it rather than believe it:
+Work in `<tree>/.claude/cerebro`; its submodule git dir is private to your tree:
 
 ```bash
 cat <tree>/.claude/cerebro/.git    # gitdir: …/.git/worktrees/<id>/modules/.claude/cerebro
 cat <repo>/.claude/cerebro/.git    # gitdir: …/.git/modules/.claude/cerebro
 ```
 
-**It arrives detached at the pinned sha**, because `prepare-worktree` ends with
-`submodule update --init --recursive`, which checks out the commit the consumer pins rather than a
-branch. So the first two commands are its own fetch and branch — branching from the pinned sha
-instead is how a cerebro PR arrives based on a commit behind cerebro's main:
+**It arrives detached at the pinned sha**, so fetch and branch from cerebro's main, or the PR is
+based behind it:
 
 ```bash
 git -C <tree>/.claude/cerebro fetch origin
 git -C <tree>/.claude/cerebro checkout -b <id>-short-description origin/main
 ```
 
-**Never `git -C .claude/cerebro worktree add`.** It makes a tree registered in the submodule and not
-in the consumer — and for a long time nothing enumerated the submodule's list, so trees made that way
-sat on disk with their merged branches checked out and the janitor never saw one. It walks both
-lists now, but that is cleanup for a category this route no longer creates. Given a relative path it also lands the tree
-*inside* the submodule, which four retrospectives paid for one at a time.
+**Never `git -C .claude/cerebro worktree add`**: it registers the tree in the submodule, not the
+consumer, and a relative path lands it inside the submodule. **Never clone cerebro to a sibling
+directory**: the classifier refuses it. `bd` works here because the tree is inside the consumer.
 
-**Do not clone cerebro to a sibling directory either.** The harness classifier refuses it outright —
-a dead end with no diagnosis.
-
-`bd` still works from here, because the tree is inside the consumer: that is why the location matters
-more than the mechanism, and why a clone in `~/repos/` is the wrong shape even where it is allowed.
-
-**It is two PRs.** Commit and push in `<tree>/.claude/cerebro` and open the PR against the cerebro
-repository; once it merges, bump the pointer with a `chore: bump cerebro` commit from the same
+**It is two PRs**: the cerebro PR, then, once merged, a `chore: bump cerebro` commit from the same
 consumer tree.
 
-**Check `pwd` before any git command.** A shell keeps its directory between commands, so one `cd`
-into another agent's worktree to look at something leaves every later command there — and a
-`git checkout -b` then moves that agent off its own branch.
+**Check `pwd` before any git command.** A `cd` into another agent's worktree followed by
+`git checkout -b` moves that agent off its branch.
 
-**Give each session its own block of ports, and let the run take one.** A project that declares no
-`port_base` has no port-sharing problem to solve: `smoke-port` says so on stderr and runs your
-command unchanged, so the wrapper is always safe to write.
+**Give each session its own block of ports.** With no `port_base` the wrapper is a no-op, so it is
+always safe:
 
 ```bash
 .claude/cerebro/scripts/smoke-port -- <the project's browser-suite command>
 ```
 
 It takes a free block, holds it for exactly as long as your command runs, releases it however the
-command ends, and exports the variable the project's suites read. **Wrap every browser-suite run
-this way, not the first one only.** The check that used to stand here was true at the instant it
-ran, and a bead spends most of an hour between that instant and the run that needs it; three
-retrospectives paid for the gap one at a time.
+command ends, and exports the variable the suites read. **Wrap every browser-suite run, not just the
+first.**
 
-**Do not set `CI` by hand.** It once served as the way to stop a stale server being reused, and a
-project's own tooling reads the same variable to mean "this is a runner with the machine to
-itself" — so setting it can switch off the very things a project does only when it does not have
-the machine to itself. If a project's browser config uses `CI` as a proxy for "never reuse a
-server I did not start", fix the config to say that outright.
+**Do not set `CI` by hand.** Project tooling reads it as "a runner with the machine to itself". A
+browser config using `CI` to mean "never reuse a server I did not start" is fixed to say that
+outright.
 
 ## Building
 
-```bash
-.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase gate --pid $PPID
-```
+Write `gate` (state table) before you first run the fast gate. Follow the plan's increments in
+order, each opening with its named failing test.
 
-Write it once, before you run the fast gate for the first time — `gate` is still the word for
-this step even though there is no machine-wide lock behind it any more.
-
-Follow the plan's increments in order, each opening with its named failing test.
-
-**Before you open the PR: classify what you actually changed, then run the fast gate.** Classify
-first, because the answer decides which gate you run:
+**Before the PR, classify what you changed, then run the fast gate:**
 
 ```bash
 git diff --name-only -z origin/main...HEAD |
@@ -401,193 +291,119 @@ git diff --name-only -z origin/main...HEAD |
 ```
 
 If a planned `non-rust` workload classifies as `rust`, or classification fails, rerun the preflight
-with `--workload rust` and use the normal private-target gate. Otherwise use the plan's shared-target
-fast gate; keep every existing gate leg. The command itself is the project's, not this skill's — ask
-for it, and run exactly what it names:
+with `--workload rust` and use the private-target gate. Otherwise use the plan's shared-target fast
+gate; keep every existing gate leg. The command is the project's:
 
 ```bash
 .claude/cerebro/scripts/project-conf gate_fast     # the fast gate, and what to run
 .claude/cerebro/scripts/project-conf gate_full     # everything the project has
 ```
 
-A project declares those in its tracked `.cerebro/project.conf`; where it has not, the reader
-may detect one and will say on stderr that it did — read that line, because a gate the harness chose
-is not one the project vouched for. If neither answers, you should never have been started: the
-launch preflight refuses an implementer with no fast gate.
+A gate the reader detected rather than the project declared is announced on stderr; read it.
 
 ### A changed shared-root declaration is gated in a clone
 
-`project-conf` and `agents-conf` deliberately read `.cerebro/project.conf` and
-`.cerebro/agents.conf` from the shared checkout. When the diff changes either file, a read from
-this worktree still sees main; a failure or old value there is not evidence that the branch is
-wrong. Finish and commit the increments first, then follow the plan's exact clone, submodule,
-install or prewarm, and fast-gate commands. Run the gate in that throwaway clone of the
-committed branch, where the enclosing and shared roots are one tree. Do not dirty main to make
-a worktree check pass, and do not report a worktree shared-root read as validation of the
-branch. Run any direct reader check the plan labels post-merge only after the merge.
+`project-conf` and `agents-conf` read `.cerebro/project.conf` and `.cerebro/agents.conf` from the
+shared checkout, so when your diff changes either, a read from this worktree sees main and is not
+evidence. Commit the increments, then run the plan's exact clone, submodule, install or prewarm, and
+fast-gate commands in a throwaway clone of the committed branch. Never dirty main to make a worktree
+check pass, and never report a worktree shared-root read as validation. Run a check the plan labels
+post-merge only after the merge. `.cerebro/roster.conf` needs no clone: `roster` reads the enclosing
+worktree.
 
-`.cerebro/roster.conf` does not require this escape hatch: `roster` reads the enclosing
-worktree. Use the clone path only when the changed declaration is actually read through
-`consumer-root --shared`.
+The fast gate is deliberately not everything; CI gates the merge. The full gate is yours to run by
+choice when you suspect a regression the fast gate skips — slower, and possibly serialized.
 
-**The distinction between the two is the project's to make, and it is worth respecting.** The fast
-gate is deliberately *not* everything: it is what the project judged worth paying for on every
-change, and CI is what actually gates the merge. The full gate is the rest, and it is yours to run by
-choice when you suspect a regression in a surface the fast gate skips — expect it to be slower, and
-possibly serialized behind a lock. A fresh worktree carries nothing the project declared as its
-`prewarm` build, so a suite that needs one fails on a missing artefact rather than on anything you
-wrote — run `.claude/cerebro/scripts/project-conf prewarm` and run what it names, now.
-
-A project may also have a suite in neither gate — one needing a runner this machine has not got, run
-in CI only when the diff touches the paths it covers (`.claude/cerebro/scripts/app-paths` is where
-this fleet's application paths are declared). With no local browser or platform run by default, a red
-job of that kind in CI is the *first* sign of that class of regression rather than a surprise — read
-it as the gate doing its job, not as something that slipped past a check that used to catch it
-locally.
+A suite in neither gate may run in CI only when the diff touches its paths
+(`.claude/cerebro/scripts/app-paths`); a red job there is the gate doing its job.
 
 ## When the plan is wrong
 
-A detail the plan missed is yours to decide — do it, and record the deviation in the PR body.
+A detail the plan missed is yours to decide; record the deviation in the PR body.
 
-**A helper the plan cites for what it decides is read before it is built on.** A predicate, a
-filter, a query named as the test for something is a claim about what that symbol accepts, and a
-plan can be confidently wrong about it — a planner once cited one three times as the test for a
-thing it accepted the opposite of. Open it and read its body before the first increment that
-depends on it. If it does not accept what the plan says and the plan's intent is unambiguous, use
-what does and record the deviation in the PR body; if the intent is not, that is the plan being
-wrong about approach, and it goes back. The same care applies to your own PR body: a sentence there
-about what a helper or a label does is read by the reviewer and the navigator with the trust a
-plan gets, so run or read the thing before writing the sentence.
+**A helper the plan cites for what it decides is read before it is built on.** Read its body before
+the first increment that depends on it. If it does not accept what the plan says and the intent is
+unambiguous, use what does and record the deviation; if not, hand back. Run or read a helper or label
+before writing a sentence about it in the PR body.
 
-**A current-source claim the plan relies on is checked before its increment begins.** This includes
-a quoted `Currently:` region, the old side of a proposed diff, a line-number or body claim, and
-replacement prose whose factual wording describes current behavior. Open the referenced region in
-the current worktree before writing the first failing test that depends on it; compare it with
-merged source, not a sibling bead's design. If the source still supports the claim, proceed with
-the planned increment. If `main` already supplies its outcome, do not recreate the code or duplicate
-its tests: skip that overtaken increment and name the current evidence in the PR body, then continue
-with the remaining increments. If the source moved or changed in place but the intent remains
-unambiguous, use the current location or shape and record the deviation in the PR body, as with the
-helper rule above.
-If the change affects or obscures approach, scope, or audience-visible intent, use the existing
-hand-back block rather than inferring a replacement design.
+**A current-source claim the plan relies on is checked before its increment begins** — a quoted
+`Currently:` region, the old side of a diff, a line-number or body claim, or prose describing
+current behaviour. Open it in the current worktree before the dependent failing test, against
+merged source, not a sibling's design. Still true: proceed. Already supplied by `main`: skip that
+increment without duplicating code or tests, cite the evidence in the PR body, continue. Moved,
+intent unambiguous: use the current shape and record it. Affects or obscures approach, scope or
+audience-visible intent: hand back.
 
-Anything touching **approach, scope, or what the user sees** goes back, by the same hand-back block as a missing section. You were given a plan precisely so those decisions were made elsewhere; making
-them here is the failure mode this split exists to prevent.
+Anything touching **approach, scope, or what the user sees** goes back by the hand-back block.
 
 ### Asking instead of handing back
 
-You are interactive, so the navigator can answer you. For a question that genuinely blocks the bead
-you may ask rather than hand back — write `asking` to your state file first, with the bead still in
-`bead` and the current phase passed again, then ask plainly and wait.
-
-The question waits until it is answered. No clock ends it, hands the bead back or ends your pass,
-so ask only what genuinely blocks the bead — and know what asking costs: this session, its claim
-and its worktree sit there until somebody answers.
-
-So prefer handing back outright when the answer plainly needs somebody awake, or when the bead can
-wait for the planner rather than the navigator. Handing back is always available and always
-correct; asking is the faster path only when somebody is there.
+For a question that genuinely blocks the bead you may ask: write `asking` with the bead and the
+current phase, ask plainly, and wait. No clock ends the question; the session, its claim and its
+worktree sit until somebody answers. Prefer handing back when the answer needs somebody awake or the
+bead can wait for a planner. Handing back is always correct.
 
 ## The review loop
 
-**Review the implementation being merged, and obtain it yourself.** No review is requested from GitHub,
-and none is waited for. The second pair of eyes is a `reviewer` sub-agent you spawn
-when the gate is green and the PR is open — and then wait for as *Waiting for a sub-agent* says, and the standing approval you merge on rests on the
-consumer's root `CLAUDE.md` and its *Four Eye Principle*, because the rule is there and nowhere
-else. Everything below is how you satisfy it.
+**Review the implementation being merged, and obtain the review yourself.** Nothing is requested from
+GitHub or waited for. Once the gate is green and the PR is open, spawn a `reviewer` sub-agent and
+wait per *Waiting for a sub-agent*; the approval rests on the Four Eye Principle.
 
 ```bash
 .claude/cerebro/scripts/agent-state <name> working --bead <id> --phase review --pid $PPID
 .claude/cerebro/scripts/agents-conf --role reviewer
 ```
 
-**Ask for no provider, and let `agents-conf` resolve it.** The reviewer lookup has no agent name,
-so it probes the `reviewer` role and then `default`. Its `hit` line is
-`hit<TAB><key><TAB><tool><TAB><model><TAB><effort>`; either model or effort may be empty, meaning
-the selected CLI's own default. A `miss<TAB>no-file` or `miss<TAB>no-line` also means the CLI's
-default. A `refused<TAB><sentence>` is a broken declaration; say the sentence and spawn on the
-current CLI's default rather than silently using an unwritten setting. The tool column is read and
-ignored because the sub-agent runs inside this session's already-selected CLI. Say out loud which
-key matched and which model you are about to review on, so the choice is traceable.
+**Ask for no provider; let `agents-conf` resolve it.** It probes the `reviewer` role, then
+`default`. A `hit` line is `hit<TAB><key><TAB><tool><TAB><model><TAB><effort>`; an empty model or
+effort means the CLI's own default. `miss<TAB>no-file` or `miss<TAB>no-line` also means the CLI's
+default. `refused<TAB><sentence>` is a broken declaration: say the sentence and spawn on the CLI's
+default. The tool column is read and ignored, since the sub-agent runs in this session's CLI. Say
+which key matched and which model you review on.
 
-Before each invocation, read and retain `reviewed_head` from
-`gh pr view <n> --json headRefOid`. A tool failure, empty response, or response lacking both
-findings and an explicit no-findings verdict is unusable; retry that head up to three attempts,
-heartbeating between attempts, then use the hand-back path and record the failed attempts. For a
-usable response, post the complete review with its `reviewed_head` in the heading and answer every
-finding.
+Before each invocation, read and retain `reviewed_head` from `gh pr view <n> --json headRefOid`. A
+tool failure, an empty response, or one with neither findings nor an explicit no-findings verdict is
+unusable: retry that head up to three attempts, heartbeating between them. After three, leave the PR
+open, record the attempts in the bead's notes, hand back, and end the pass. Post a usable review in
+full with its `reviewed_head` in the heading, and answer every finding.
 
-**The first round is a cold read; the rounds after it are about the delta.** Give the first
-reviewer the whole diff, the bead's plan and the checklist, and never your reasoning. Push your
-answers, then give the next reviewer four things: the diff **since the head it last reviewed**
-(`git diff <reviewed_head>..<new head>`), the findings that round raised, the answers you posted,
-and the checklist. It asks two questions — were the findings addressed, and does the delta introduce
-anything new — and a round that returns nothing blocking is the end of the review.
-
-**This is where a bead's wall-clock goes, so the rule is worth knowing exactly.** A cold read of a
-whole PR takes an Opus sub-agent the better part of ten minutes, and a bead that answered seven
-rounds of findings paid that seven times: cb-kcs.2.1 was eighty-five minutes from open to merge and
-of which about sixty-three were the rounds themselves and most of the rest was answering them. A
-delta round asks a smaller question and answers it faster. What
-it does not do is skip the check: **every fix is still read by somebody who did not write it**, and
-that matters because a fix that answers a finding is exactly where the next defect goes — this
-repository has shipped an inert loop, a fail-open cache and a test that passed against the code it
-was meant to catch, each of them introduced by a commit answering a review and each caught by the
-round after it.
-
-**A change that goes beyond answering findings is a fresh cold read** — new behaviour, a different
-approach, work the reviewer has not seen — and so is the first round after a hand-back. A rebase, a
-conflict resolution or an `update-branch` is neither: those need no additional review at all (the
-Four Eye Principle says so). Do not weigh whether your own delta is "substantial": if it does
-something the findings did not ask for, it is new.
+**The first round is a cold read**: the whole diff, the plan and the checklist, never your
+reasoning. **Later rounds read the delta**: the diff since the last reviewed head, the findings, your
+answers and the checklist. They ask whether the findings were addressed and whether the delta adds
+anything new; a round with nothing blocking ends the review. Every fix is still read by somebody who
+did not write it.
 
 ### Getting the review
 
-Spawn a sub-agent of type **`reviewer`**, on the model resolved above. Both layouts ship a
-discoverable `reviewer` agent, so this works on either CLI.
+Spawn a sub-agent of type **`reviewer`** on the resolved model; both layouts ship one.
 
-**A cold read gets three things, and only these three:**
+**A cold read gets three things, and only these:**
 
 - the diff — `gh pr diff <n>`,
 - the bead's plan — `bd show <id> --json`,
 - `.claude/cerebro/agents/reviewer.md`, to read as its checklist.
 
-**A delta round gets five**, and the first three are the same:
+**A delta round gets five**, the same three plus:
 
-- **the two shas** — the `reviewed_head` of the round it follows, and the head now — so it takes
-  `git diff <reviewed_head>..<head>` **itself** rather than trusting a diff you pasted. That is not
-  ceremony: you are the one deciding which round it gets and supplying what it reads, and this is
-  the one line that makes an incomplete or misdescribed delta detectable by the agent it would
-  mislead;
-- the findings that round raised, and the answers you posted — **as claims for it to check against
-  the code**, which is what `agents/reviewer.md` tells it to do with them.
+- **the two shas** — the previous `reviewed_head` and the head now — so it takes
+  `git diff <reviewed_head>..<head>` **itself**, which makes a misdescribed delta detectable;
+- the findings that round raised and the answers you posted, **as claims to check against the code**.
 
-**Do not give it your reasoning**, in either round. The findings and your answers to them are the
-record of an exchange it is auditing; summarising your own approach *to the change* into the prompt
-is the one thing that would make this a second reading of the same mind rather than a second pair of
-eyes.
+**Never give it your reasoning**, in either round.
 
-**Which round to spawn is decided by what you last pushed**, and the Four Eye Principle lists the
-four cases: answering findings or greening a red check is a delta round; a rebase, an
-`update-branch` or a documentation-only commit is no round at all; anything else is a cold read.
-Read that list rather than weighing whether your own delta feels substantial.
+**Which round is decided by what you last pushed**, not by how substantial it feels: answering
+findings or greening a red check is a delta round; a rebase, an `update-branch` or a
+documentation-only commit is no round at all; anything else — including the first round after a
+hand-back — is a cold read.
 
-`agents/reviewer.md` has a section saying which of it applies when it is loaded this way rather than
-as Cypher's own session — the sub-agent reads that for itself, and you do not need to repeat it into
-the prompt.
-
-**Do not sleep waiting for it.** The findings arrive when the sub-agent is done and your turn goes
-on from there — see *Waiting for a sub-agent*. Heartbeat the bead before you spawn and again when
-they land; a fixed sleep loop around a spawn is five minutes a round for nothing, which is what
-cb-sxf paid three times.
+`agents/reviewer.md` tells the sub-agent which of it applies; do not repeat that. Heartbeat before the
+spawn and when the findings land, and do not sleep (*Waiting for a sub-agent*).
 
 ### Posting it
 
-**In full, as a PR comment, before the merge**, and appended to the bead's notes — so a later
-session reads the review without going to GitHub for it. The numbered list is the sub-agent's
-findings, most important first, each naming the file and the case; when it found none, the list is
-replaced by the italic line and nothing else:
+**In full, as a PR comment, before the merge**, and appended to the bead's notes. The numbered list
+is the findings, most important first, each naming the file and the case; with none, the italic line
+alone:
 
 ```markdown
 **Review (cold read, `reviewed_head`: `<sha>`)** — this pull request was reviewed before merge under
@@ -597,10 +413,7 @@ reasoning.
 1. <finding, naming the file and the case>
 ```
 
-**A delta round says which it was, and what it measured from.** The Four Eye Principle asks that
-every round be posted in full and say which of the two it is, so that a reader — or a navigator
-auditing a bead that went wrong — can see which rounds read the whole change and which read a delta,
-and check the chain covers the implementation:
+A delta round names itself and what it measured from:
 
 ```markdown
 **Review (delta since `<previous reviewed_head>`, now `<sha>`)** — the findings of the round before
@@ -611,8 +424,7 @@ this one, checked against the code, and the diff since the head it reviewed.
 *No findings.*
 ```
 
-Write what the sub-agent returned to a file first — `/tmp/review-<id>.md`, say — so the same bytes
-go to both places and neither is a paraphrase:
+Write the sub-agent's output to a file first, so the same bytes go to both places:
 
 ```bash
 gh pr comment <n> --body-file /tmp/review-<id>.md
@@ -622,118 +434,59 @@ bd dolt push
 
 ### Answering it, and going on
 
-**Every finding gets a change or a posted reply saying why not.** The findings arrive in your
-session rather than as review threads, so there is nothing to reply *to* and nothing to resolve: a
-reply is a second PR comment under the review, naming the finding by its number and saying why it is
-not being changed.
+**Every finding gets a change or a posted reply** naming it by number and saying why not:
 
 ```bash
 gh pr comment <n> --body 'Finding 3 — not changing this, because ...'
 ```
 
-One comment answering several findings is fine; what the standing approval asks is that no finding
-is left with neither a change nor an answer. Judge each one: the reviews on
-this repository have caught a lock that could be stolen a millisecond after being taken, a refusal
-message that rounded itself into a contradiction, and a release step that could strand a version
-bump — and they also raise things that are wrong or do not apply. A reasoned reply is a complete
-answer.
+One comment may answer several. Judge each; a reasoned reply is a complete answer. A finding about **approach, scope or what the audience sees**
+is a hand-back.
 
-A finding about **approach, scope or what the audience sees** is a hand-back, by the hand-back block
-above — those decisions were made elsewhere on purpose.
+Once every finding is answered, write `ci` (state table) and wait for CI per *Waiting, without ending
+your run* — after *Merging*'s merge-state check if anything was pushed since the PR opened. A *Red
+CI* fix returns through the review loop before CI.
 
-Once every finding is answered:
-
-```bash
-.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase ci --pid $PPID
-```
-
-and wait for CI as *Waiting, without ending your run* describes — after first checking the head can
-merge, per *Merging*'s merge-state check, if anything was pushed since the PR opened. *Red CI* below
-returns every fix-and-push through the review loop; only after that review is complete does it return
-to `ci` and wait for checks on the reviewed head.
-
-**If three attempts for one head are unusable**: leave the PR open, record the attempts in the
-bead's notes, hand it back by the hand-back block in *Picking up*, and end the
-pass.
-
-A review a person or a bot leaves on the PR anyway is read and answered like any other comment. It
-is welcome; it is not what the approval rests on, and it does not replace the round above.
+A review a person or a bot leaves on the PR is answered like any comment; it is not what the approval
+rests on.
 
 ## Red CI
 
-**Three fix attempts, and two bare re-runs, for the whole bead.** They are two budgets, not one
-each per failure: a fix that pushes a new commit spends a fix attempt, a job re-run of the same head
-spends a re-run, and neither refills. Diagnose, fix, push — and read the failure before believing
-it: a wall of identical connection errors is infrastructure, not a defect.
+**Three fix attempts and two bare re-runs, for the whole bead** — two budgets, neither refilling. A
+pushed fix spends a fix attempt; a re-run of the same head spends a re-run. Read the failure before
+believing it: a wall of identical connection errors is infrastructure.
 
-A re-run is for a suspected flake, and only after you have reproduced it locally once — that means
-running the one suite directly, by whatever command the project runs it with, for the specific spec,
-rather than everything. Without the cap, "it was a flake" is an unbounded loop that ends with a
-genuinely broken timing test merged.
+A re-run is for a suspected flake, only after reproducing it locally once, running the one suite for
+the specific spec.
 
-Every fix changes the head, so it returns through the review loop before CI — as a **delta round**,
-which is what the Four Eye Principle calls a commit that only makes a red check green, not a fresh
-cold read — which makes this budget the only thing bounding how many rounds one red bead costs. **It is deliberately scoped differently from the review budget**, which is three attempts
-*per head* and resets on every new head: a review retried is a supplier that failed, while a fix
-retried is this bead failing, and the second is what has to be bounded for the bead as a whole. On
-exhaustion of either budget here, leave the PR open, hand the bead back by the hand-back block in
-*Picking up*, and end the pass.
+Every fix returns through the review loop as a **delta round**. Unlike the per-head review budget,
+this one is per bead. On exhaustion, leave the PR open, hand back, and end the pass.
 
 ## The retrospective
 
-```bash
-.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase merge --pid $PPID
-```
+Write `merge` (state table) on entering; it covers the retrospective, the merge, the close and
+cleanup. Committing a retrospective changes the head, so follow the table's phase writes: it needs CI
+again, but **no review round**, being documentation only.
 
-Write it entering this section. `merge` covers the retrospective, the merge itself, closing the bead
-and cleaning up — so if you write no file, which is the common case, there is no further phase write
-until the pass ends. Committing one changes the head, which sends you back through `review` and `ci`
-and then to `merge` again, exactly as any other head change does.
-
-**When the review is answered and CI is green, before you merge**, look back over the run and ask
-one question: *did anything happen that I did not expect?*
-
-This is not optional. You are the only one who saw the run, your context is about to be thrown away
-by design, and whatever cost you an hour will cost the next session an hour too unless it is
-written down.
-
-**Before the merge, because it is a tracked file**: it travels in the bead's own PR, and once that
-PR is merged there is no branch left to put it on. The merge itself is the one stretch a
-retrospective written here cannot cover; if something goes wrong there, the next session hits it too
-and records it then.
+**When the review is answered and CI is green, before you merge**, ask: *did anything happen that I
+did not expect?* This is not optional; only you saw the run. It goes before the merge because the
+file is tracked and travels in the bead's own PR.
 
 ### What is worth recording
 
-Something that **would need attention so it does not happen again**. Concretely: a step that failed
-for a reason the plan or these instructions did not prepare you for; a check that passed locally and
-failed in CI; a tool that behaved differently from how it is documented here; a rule you found
-yourself unable to follow as written; time lost to something that reads as avoidable in hindsight.
+**Worth it**: a failure nothing prepared you for; green locally, red in CI; a tool not behaving as
+documented; a rule you could not follow; time lost to something avoidable.
 
-**Not** worth recording, and actively harmful if you do: the bead going normally, a test failing
-during RED, a review comment you answered, anything already written in these instructions. A
-directory with a file per bead is one nobody reads, and then a real finding sits in it unseen.
+**Not worth it**: a normal bead, a RED failure, an answered finding, anything already written here.
 
-If nothing qualifies — which is the common case for a bead that went to plan — **write no file at
-all** and say so in your closing message: *"retrospective: nothing to record."* That is a complete
-retrospective, and it is how the navigator can tell you did one. A directory that only ever gains a
-file when something went wrong is one worth opening.
+If nothing qualifies, **write no file** and say so in your closing message: *"retrospective: nothing
+to record."*
 
 ### Where it goes
 
-`docs/retrospectives/<bead id>.md` — the bead's own id as the file name, and nothing else.
-
-**One retrospective per file, and one file per bead.** Never append to another bead's file and never
-rewrite one: they are the record of runs that are over. If your bead produced two findings, both go
-in your own file, as two sections of the one retrospective.
-
-It lives under `docs/` rather than beside your state file because it is knowledge rather than live
-state — `.cerebro/state/` is gitignored, so a retrospective there would never leave the
-machine that wrote it.
-
-**Committing it costs a CI cycle, and that is the intended trade** — which is also why the bar for
-writing one is high. It costs no review round: a retrospective is a file under `docs/`, and the Four
-Eye Principle exempts a documentation-only commit outright. Adding the file moves the head past the
-green run:
+`docs/retrospectives/<bead id>.md`. **One file per bead**: never append to or rewrite another
+bead's; two findings are two sections of your one file. It lives under `docs/` because
+`.cerebro/state/` is gitignored. It costs a CI cycle, hence the high bar:
 
 ```bash
 mkdir -p docs/retrospectives          # the first finding in a fresh checkout creates it
@@ -745,86 +498,41 @@ git push
 # then wait for CI again, per *Waiting, without ending your run*, and merge on green
 ```
 
-**Stage the directory, not just your own file.** The `cp` above writes the README into your
-worktree, and a worktree is removed at the end of the pass: a copy that is never staged is a copy nobody ever sees,
-and the next bead finds the directory undocumented again.
-
-The commit changes the head, so it returns through CI before the merge — but not through the review
-loop, being documentation only. A bead with no retrospective adds neither.
+**Stage the directory, not just your file**, or the README copy is lost with the worktree.
 
 ### The format
 
-The template the block above copies in — `templates/retrospectives-README.md`, in this mount — is
-the format, documented where the files are rather than only here.
-
-Five fields, and the README has them in full: **What happened** (concretely, with the command that
-produced it), **Why** (or "not established" — do not guess), **Cost**, **Prevent by** (a file and a
-section, a step, a check — "be careful" is not a prevention), **Seen before** (other bead ids, or
-"none found").
+The README that fence copies is the format: **What happened**, **Why** (or "not established"),
+**Cost**, **Prevent by** (a file, a section, a step or a check), **Seen before**.
 
 ### Writing it
 
-**Grep the directory before you write**, so *Seen before* is real rather than decorative — a
-finding on its third sighting is the strongest evidence the fleet produces that something needs
-fixing rather than tolerating:
+**Grep the directory first**, so *Seen before* is real:
 
 ```bash
 grep -rl "<a word from your symptom>" docs/retrospectives/ 2>/dev/null || echo "nothing like it yet"
 ```
 
-A complete example, indented here so its own headings stay out of this skill's outline:
-
-    # <bead-id> — retrospective
-
-    - **Implementer:** Cyclops
-    - **Date:** 2026-08-14
-    - **PR:** #231
-
-    ## The browser suite passed locally and failed in CI
-
-    **What happened.** The project's browser suite was green on this machine three times. The same
-    commit failed twice in CI on `smoke (web, 2, 2)`, both times on a timeout in the map-drag spec.
-    **Why.** Not established. The CI runner is slower and the spec waits on a fixed 500ms, but I did
-    not prove that is the cause.
-    **Cost.** Two CI cycles and a rebase, about 50 minutes.
-    **Prevent by.** The plan's *Validation* section should name which suite covers a map
-    interaction, so it is run in CI-like conditions before the PR opens rather than after.
-    **Seen before.** <an earlier bead id> — same spec, same job.
-
-Two rules for the writing itself. **Be specific enough to act on**: name the file, the command, the
-job, the section. A future reader has none of your context and cannot ask you. And **do not fix it
-here** — recording is your job; changing the rules, the skill or CI is outside a planned bead and
-belongs to the navigator, who reads these precisely so they can decide.
+Be specific enough to act on: name the file, command, job or section. **Record; do not fix** —
+changing the rules, the skill or CI is the navigator's.
 
 ## Merging
 
-Expect `BEHIND` on most merges: with several agents, a PR that sat through one review round has
-usually been overtaken.
-
-**Whether a `BEHIND` branch may merge is the repository's answer, not yours.** Ask it:
+Expect `BEHIND`. **Whether a `BEHIND` branch may merge is the repository's answer:**
 
 ```bash
 gh api "repos/<owner>/<repo>/branches/$(.claude/cerebro/scripts/default-branch)/protection" \
   --jq '.required_status_checks.strict'      # true: catch up first. false: BEHIND may merge.
 ```
 
-- **`false`** — the ordinary case here — means the project does not require a branch to be current,
-  so a `MERGEABLE BEHIND` head with green checks **merges as it stands**. Do not catch it up, and do
-  not spend a CI cycle proving something the project did not ask for.
-- **`true`** means it does, and the catch-up below is how.
-- **A protection call that fails** — no permission, no protection configured — is read as `true`.
-  The cautious branch is the one that costs a CI cycle, not the one that merges something nobody
-  checked.
+- **`false`** — a `MERGEABLE BEHIND` head with green checks **merges as it stands**. Do not catch it
+  up.
+- **`true`** — catch up first, as below.
+- **A failed protection call** is read as `true`.
 
-That deference is the whole rule, and it is deliberate: the project's own configuration is where
-"must a branch be current" belongs, so a navigator who wants every merge re-tested flips `strict`
-and every implementer follows on its next merge without a word of this file changing. What the
-project gives up while it is `false` is the catch that two agents changed the same function
-compatibly-but-wrongly — a semantic conflict git merges cleanly and no green run on either branch
-alone can see. That is a real risk knowingly taken for the cycle it saves.
+The project's configuration owns this; `false` knowingly risks a semantic conflict git merges cleanly.
 
-When it does say `true`, catch the branch up **on GitHub, and wait for CI again — no local
-re-gate**: a green run on a stale tree is evidence about a tree that will never exist.
+When it says `true`, catch up **on GitHub, and wait for CI again — no local re-gate**:
 
 ```bash
 .claude/cerebro/scripts/agent-state <name> working --bead <id> --phase rebase --pid $PPID
@@ -836,13 +544,8 @@ done
 # wait for CI on the new head
 ```
 
-`update-branch` merges main into the branch server-side rather than rebasing — fine here because
-every PR is squash-merged, so the branch's own history never reaches main. It returns 202 and the
-merge commit appears a moment later, hence the poll before waiting on CI. **No local gate runs in
-this path**: CI on the new head is the re-gate, the same as it is on a fresh push.
-
-A **422** from `update-branch` means a real conflict, not a routine BEHIND — fall back to resolving it
-locally:
+`update-branch` merges server-side (fine under squash) and returns 202 before the commit appears,
+hence the poll. A **422** is a real conflict — rebase locally:
 
 ```bash
 git fetch origin main && git rebase origin/main   # resolve conflicts
@@ -850,8 +553,7 @@ git push --force-with-lease
 # back to --phase ci, and wait for CI
 ```
 
-**Before waiting on CI after any push that could have raced main** — an `update-branch`, a rebase and
-force-push, a fix pushed onto a head that sat through a review — check that the head can merge at all:
+**Before waiting on CI after any push that could have raced main**, check the head can merge at all:
 
 ```bash
 want="$(git ls-remote --heads origin "$(git rev-parse --abbrev-ref HEAD)" | cut -f1)"
@@ -865,53 +567,30 @@ state="${state% *}"      # drop the sha again: the bullets below read the two wo
 echo "$state"
 ```
 
-`mergeable` and `mergeStateStatus` both read `UNKNOWN` for a few seconds after every push while
-GitHub recomputes them — and while it does, GitHub can also serve the **previous head's** concrete
-verdict instead, so a `CONFLICTING DIRTY` read straight after a clean rebase and force-push may be
-about a head that no longer exists. That is why the poll compares `headRefOid` with the branch tip
-you just pushed and treats a mismatch exactly as `UNKNOWN`: a verdict about another head is not a
-verdict yet. It waits on both fields, not just the first, so a `mergeStateStatus` still catching up
-cannot slip through as a false `MERGEABLE UNKNOWN`. Then:
+After a push both fields read `UNKNOWN` briefly, or show the **previous head's** verdict, so the
+poll waits for your tip and two known fields. Then:
 
-- `CONFLICTING DIRTY` — the head cannot merge, and whatever `gh pr checks` would show you next
-  describes an older head or a run GitHub will not meaningfully finish. **Do not enter the CI wait.**
-  Go to the local rebase above (`--phase rebase`), resolve, `git push --force-with-lease`, and run
-  this check again.
-- `MERGEABLE BEHIND` — merge it, unless the branch protection asks for `strict` (see the top of
-  this section); only then catch up with `update-branch` and check again once it lands.
-- anything else (`MERGEABLE CLEAN`, `MERGEABLE BLOCKED`, `MERGEABLE UNSTABLE`) — the head is worth
-  waiting on: `--phase ci`, and wait per *Waiting, without ending your run*.
+- `CONFLICTING DIRTY` — **do not enter the CI wait.** Rebase locally (`--phase rebase`),
+  `git push --force-with-lease`, and check again.
+- `MERGEABLE BEHIND` — merge it, unless protection is `strict`; then `update-branch` and check again.
+- anything else (`MERGEABLE CLEAN`, `MERGEABLE BLOCKED`, `MERGEABLE UNSTABLE`) — `--phase ci`, and
+  wait per *Waiting, without ending your run*.
 
-Observed here on 2026-08-15: after a rebase and force-push the PR already read
-`CONFLICTING`/`DIRTY`, and the implementer polled check state for a head that would never merge until
-the navigator interrupted. Twenty seconds of `gh pr view` is what that wait cost. And twice since, on
-consecutive days, the opposite: a `CONFLICTING DIRTY` served for the *old* head for twenty seconds to
-a minute after a clean force-push, which read literally would have sent a rebased branch into a
-second, no-op rebase and a second CI cycle. The `headRefOid` comparison is what tells those two cases
-apart.
+If an update or rebase leaves an empty diff against main, close the PR unmerged.
 
-An update (or a resolved rebase) that brings in commits touching nothing the bead's own diff touches
-can still leave nothing new to test beyond what CI already ran — if the resulting diff against main
-is empty, close the PR unmerged rather than merging a no-op — a retrospective here recorded exactly
-that, an empty bump PR after a rebase.
-
-Immediately before merging, require all three facts together: the PR's current `headRefOid` equals
-the most recently reviewed head, mergeability is not behind or conflicting, and required checks for
-that head are green. If the SHA differs, return to the review loop; if mergeability or checks differ,
-follow the existing rebase and CI paths.
+Immediately before merging, require all three together: the PR's `headRefOid` equals the most
+recently reviewed head, mergeability is not behind or conflicting, and required checks for that head
+are green. A different SHA goes back to the review loop; the others follow the rebase and CI paths.
 
 ```bash
 gh pr merge <n> --squash --delete-branch
 ```
 
-**Never `--auto`.** On this repository the ruleset requires checks but no review, so auto-merge fires
-on green checks alone: it races any fix you push afterwards, and it would merge a PR whose review
-you had not yet obtained. PR #142 merged that way four minutes before its review arrived, back when
-the review came from GitHub — the supplier has changed, the race has not.
+**Never `--auto`.** Auto-merge fires on green checks alone, so it races any fix you push afterwards
+and can merge before the review is obtained.
 
-`--delete-branch` often aborts with `'main' is already used by worktree` — the merge has already
-happened by then. Check `git ls-remote --heads origin <branch>` and delete it explicitly if it
-survived.
+`--delete-branch` often aborts with `'main' is already used by worktree` after the merge has
+happened. Check `git ls-remote --heads origin <branch>` and delete it explicitly if it survived.
 
 ## Finishing, then going again
 
@@ -921,19 +600,12 @@ bd dolt push
 .claude/cerebro/scripts/end-pass <name> --pid $PPID
 ```
 
-**The fleet view removes your tree after your pass ends**, but only when nothing in it can be lost —
-clean, and its work on the default branch at origin; otherwise it keeps it for a person. So before
-`end-pass`, `git status --porcelain` in the tree must print nothing: delete scratch files you made
-(ignored build output is fine), and never leave work you mean to keep uncommitted. That holds on
-every exit, a hand-back included.
+The fleet view removes your tree only when nothing in it can be lost, so `git status --porcelain`
+must print nothing before `end-pass`, on every exit.
 
 ### Close the parent too, when you were the last child
 
-A bead you closed may be a child of an epic, and the epic is nothing but its children: once the last
-one is closed there is no work left under it, but nothing closes it on its own. Two epics sat open
-here with 2/2 children closed for exactly that reason. So this belongs with the `bd close` above and
-**before** the `bd dolt push` that ends the block — a parent closed after the push is a close no
-other machine sees:
+With `bd close` and **before** the `bd dolt push`:
 
 ```bash
 bd show <id> --json | jq -r '(if type=="array" then .[0] else . end) | .parent // empty'
@@ -941,51 +613,25 @@ bd children <parent> --json | jq -r '.[].status'            # includes closed ch
 bd close <parent> --reason "All children closed; last was <id>, delivered in PR #NN"
 ```
 
-An empty first line means there is no parent and you are done. Close the parent only when **every**
-child reads `closed`, then repeat the lookup on *its* parent — a child of a child leaves two levels
-to settle. If the walk runs after you have already pushed, push again; it costs nothing.
+An empty first line means no parent. Close the parent only when **every** child reads `closed`,
+then repeat one level up. If the walk ran after the push, push again. Why the guard, and why not
+`bd epic close-eligible`: `beads-workflow`, *Dependencies and breakdown*. A parent that plainly is
+not done stays open with `--append-notes` saying why; its scope is the navigator's.
 
-`beads-workflow` has the rest of this walk — why the `if type=="array"` guard is there, and why it
-is not `bd epic close-eligible`. The one part that is yours to judge: all children closed is the
-whole test, and a parent that plainly is not done anyway is left open with `--append-notes` saying
-why, because changing an epic's scope is the navigator's.
-
-Say what you merged and anything the navigator should know — a deviation, a trap the plan missed, a
-bead you handed back.
-
-**Then finish.** Do not look for another bead, and do not stay alive in case one appears. The fleet
-view ends this session and starts a fresh one under your name when there is a planned bead to take;
-that session begins with a clean context, which is worth more than anything you could have carried
-into it.
+Say what you merged and anything the navigator should know, then **finish**: no second bead, no
+staying alive in case one appears.
 
 ## Traps this fleet has already paid for
 
-- **One suite's build clobbering another's.** Where two of a project's suites build the same
-  artefact differently, running them in the wrong order fails the second one for a reason that is
-  not a defect — which is why a project's full gate orders them as it does. Run the gate; do not
-  "fix" what the previous suite left behind.
-- **A leftover preview server.** A browser runner configured to reuse an existing server takes
-  whatever is answering on the port — your own dying one from the previous run, or another
-  checkout's — and tests the bundle *it* is serving. That produced a "65 passed" and a "40 passed"
-  run of a 138-test suite before anyone noticed. `CI=1` was once the way to switch that off, and it
-  is not: it is what the project's own gate lock reads to decide it has the machine to itself. Run
-  through `smoke-port` (above), and fix a config that reuses a server to say `false` outright.
-- **`--` forwarded into a test runner.** A package-manager script passes `--` through, and a runner
-  that reads what follows as a positional filter then matches no spec at all, after building and
-  serving — which looks exactly like a hang rather than a mistake.
-- **A stale lease is not an abandoned agent** unless it is genuinely stale — see `beads-workflow`
-  before reclaiming anything.
-- **A merge verdict about the wrong head.** `gh pr view --json mergeable,mergeStateStatus` can
-  describe the head before your push. Never believe it until `headRefOid` is the tip you pushed —
-  *Merging* has the loop and what it cost.
-- **An accessible name is a shared namespace.** A browser suite selects on the names controls
-  expose, so a new control whose name contains — or is contained by — one an existing spec relies on
-  makes that spec match two elements and fail, in a file with nothing to do with your change. Before
-  you push, grep the suite for the words of every name you add. A project may keep a ratchet that
-  holds existing selectors exact; that catches a loose selector, never a new name colliding with an
-  exact one, so it passes while the suite goes red.
+- **Suites clobbering each other's build** fail in the wrong order for no defect; run the gate, and
+  do not "fix" the leftover.
+- **A leftover preview server** is tested by a runner that reuses servers; run through `smoke-port`
+  and set reuse to `false`.
+- **`--` forwarded into a test runner** filters out every spec and looks like a hang.
+- **A stale lease is not an abandoned agent** unless genuinely stale — `beads-workflow`, *Traps*.
+- **A merge verdict about the wrong head** — see *Merging*.
+- **An accessible name is a shared namespace.** A new control whose name overlaps one a spec selects
+  on breaks that spec; grep the suite for every name you add. A selector ratchet does not catch it.
 
-Read `<consumer>/.cerebro/traps.md` if it exists — the traps this project has already paid
-for. It is a list of facts, not rules: if the bead touches one, say so and say what to do about it.
-Absent is an ordinary state, not an error — a project with no traps file has paid for nothing yet,
-which is where every project starts.
+Read `<consumer>/.cerebro/traps.md` if it exists and say what to do about any trap the bead touches;
+absent is ordinary.

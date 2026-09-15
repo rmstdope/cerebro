@@ -57,7 +57,7 @@ Write it at every transition, in the same `Bash` call as the thing it describes,
 - `asking` — blocked on the navigator; nothing moves until they answer.
 - `idle` — live, nothing in hand, waiting to be spoken to.
 - `waiting` — pass over, turn ended. About half a minute later the fleet view ends the session,
-  keeps its buffer as the record of the pass, and starts a fresh one on your role's own trigger.
+  keeps its buffer as the pass's record, and starts a fresh one on your role's own trigger.
 
 The table below says which to write when. A wrong one misleads: a session shown with nothing in
 flight may be `k`-ed, and one shown `asking` looks blocked on the navigator.
@@ -66,7 +66,7 @@ flight may be `k`-ed, and one shown `asking` looks blocked on the navigator.
 `since` across a phase-only change and stamps `phase_since`: another reason never to write by hand.
 
 `--pid` is `$PPID`, whichever agent CLI runs you, captured in the call that writes the file. A stale
-pid shows you dead, and the navigator starts a second session over you.
+pid shows you dead; the navigator starts a second session over you.
 
 **Every question to the navigator is three actions.** Write `asking`, ask, then write `working` as
 the very first thing you do with the answer, before any `bd`, `git` or reply. Typing `bd` or `git`
@@ -79,7 +79,7 @@ from `working`. Write `asking` for a prose question too: one under `working` loo
 stuck clock ends wedged sessions.
 
 **You cannot see your own state file.** Read it at the start of a pass and before ending one. If it
-is wrong, fix it with `agent-state` first and say so ("my state file still said `asking`;
+is wrong, fix it with `agent-state` first and say so in one line ("my state file still said `asking`;
 corrected").
 
 <!-- state-contract:end -->

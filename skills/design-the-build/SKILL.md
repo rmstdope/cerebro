@@ -5,10 +5,10 @@ description: "The build-design stage - turn a piece of work whose experience is 
 
 # Designing the build
 
-You turn one piece of work whose experience is already agreed into a plan an implementer builds
-unattended, file it, and end the pass. You agree no experience, draw no mockup, interview nobody and
-build nothing. Several sessions may hold this role; `<your-name>` below is the name in the prompt
-that started you, never a role word and never another agent's.
+You turn one piece of work whose experience is agreed into a plan an implementer builds unattended.
+You agree no experience, draw no mockup, interview nobody and build nothing. Several sessions may
+hold this role; `<your-name>` is the name in your starting prompt, never a role word or another
+agent's.
 
 ```bash
 .claude/cerebro/scripts/roster --role build-design      # the build-design agents, in roster order
@@ -59,29 +59,28 @@ corrected").
 | The bead you were given is confirmed yours (*The piece of work you were given*) | `.claude/cerebro/scripts/agent-state <your-name> working --bead <id> --phase design --pid $PPID` |
 | Ending a pass | `.claude/cerebro/scripts/end-pass <your-name> --pid $PPID` |
 
-`design` is the one phase word, from the confirmation to the last push. There is **no `asking`
-row**: this role asks nobody. A session that does ask still owes the whole contract above.
+`design` is the one phase word, confirmation to last push. **No `asking` row**: this role asks
+nobody, though a session that does ask owes the whole contract.
 
 ## What of the planner's skill applies
 
-These sections of `skills/plan-bead/SKILL.md` are this role's job, followed **as written there**:
+Follow these sections of `skills/plan-bead/SKILL.md` **as written there**:
 
 | Section of `skills/plan-bead/SKILL.md` | What it gives you |
 |---|---|
-| *The plan* | the eight headings and the two `###` subsections |
-| *Validation a worktree cannot run* | changed shared-root declarations |
-| *Which workload the plan declares* | when `--workload non-rust` is allowed |
-| *On traps* | `.cerebro/traps.md` and the last section |
-| *Everything you cite must exist* | real symbols, predicates, promised seams |
-| *Before you mark it planned, read it as the implementer* | the finishing check |
-| *The title is part of the plan, and it is yours to fix* | the title test and rewrite |
-| *Too big for one increment* | the split, with this skill's additions below |
-| *Anything you commit, you commit from a worktree of your own* | never branch in the main checkout |
+| *The plan* | the eight headings |
+| *Validation a worktree cannot run* | shared-root declarations |
+| *Which workload the plan declares* | `--workload` |
+| *On traps* | `.cerebro/traps.md` |
+| *Everything you cite must exist* | real symbols |
+| *Before you mark it planned, read it as the implementer* | the final check |
+| *The title is part of the plan, and it is yours to fix* | the title |
+| *Too big for one increment* | the split, plus additions below |
+| *Anything you commit, you commit from a worktree of your own* | worktrees |
 
-Not yours from there: *Interview, don't ask*, the mockups and *What you decide, and what you must
-not*; the `needs-ui-decision` park (an open shape question is a send-back); the buffer paragraphs
-(the number is still `planner-buffer --count`); and *A reopened bead is a P0 with a plan already*,
-restated below.
+Not yours: *Interview, don't ask*, mockups, *What you decide, and what you must not*; the
+`needs-ui-decision` park (an open shape question is a send-back); the buffer paragraphs (the number
+is still `planner-buffer --count`); *A reopened bead is a P0 with a plan already*, restated below.
 
 ## The piece of work you were given
 
@@ -89,9 +88,8 @@ The prompt that started you ends with this sentence:
 
 > Your bead is <id>; it is already assigned to you.
 
-The fleet view chose it — highest priority first, never unranked, never one whose blocker has no
-plan, never a child of a bead being split — and assigned it before your session started. Confirm it,
-then write the state:
+The fleet view chose it (highest priority first; never unranked, blocked by an unplanned bead, or a
+child of a bead being split) and assigned it before you started. Confirm, then write the state:
 
 ```bash
 bd dolt pull
@@ -99,17 +97,15 @@ bd show <id> --json | jq -r '(if type=="array" then .[0] else . end) | "\(.statu
 .claude/cerebro/scripts/agent-state <your-name> working --bead <id> --phase design --pid $PPID
 ```
 
-`open <your-name>` is yours. Anything else: say in one line what you found, write nothing to the
-bead, and end the pass. **No such sentence in the prompt**: say *Nothing is waiting for a build
-design right now.* and end the pass.
+`open <your-name>` is yours; anything else, say so in one line, write nothing, end the pass. **No
+such sentence**: say *Nothing is waiting for a build design right now.* and end the pass.
 
 ## A piece of work whose plan was judged wrong
 
-One carrying `verification:failed` **and** `plan:revise` is yours to revise (`stage-candidates`
-hides the rest, and anything with `verdict:stale`). **Amend the plan in place**: all eight headings
-and the whole of *User-facing decisions* stay, change only what the failure touches, and note under
-*Context* what the verification found. A failure about the experience itself is a send-back, not a
-revision.
+`verification:failed` **and** `plan:revise` means revise (`stage-candidates` hides the rest, and
+`verdict:stale`). **Amend in place**: keep all eight headings and all of *User-facing decisions*,
+change only what failed, and note under *Context* what verification found. A failure
+about the experience is a send-back.
 
 ```bash
 bd update <id> --design-file <file> --add-label planned --remove-label plan:revise \
@@ -117,14 +113,13 @@ bd update <id> --design-file <file> --add-label planned --remove-label plan:revi
 bd dolt push
 ```
 
-The `plan:revise` removal goes in that same call, or the bead is a candidate for ever.
+Remove `plan:revise` in that call, or the bead stays a candidate for ever.
 
 ## Too big for one increment
 
-Follow *Too big for one increment* in `skills/plan-bead/SKILL.md`. **Splitting is the pass**: create
-the children at the parent's priority, wire the `bd dep add` edges, write into each child's
-description which part of the family it is and the decisions reached, then run this and end the pass
-without planning a child:
+Per plan-bead's *Too big for one increment*, **the split is the pass**: children at the parent's
+priority, `bd dep add` edges, each child's description saying its part of the family and the
+decisions reached, then this, and end the pass planning no child:
 
 ```bash
 bd update <child> <child> ... --assignee ""
@@ -132,8 +127,8 @@ bd update <id> --type epic --assignee ""
 bd dolt push
 ```
 
-A child that inherited an assignee is hidden from every queue. Children are handed out one per pass,
-and a child whose blocker sibling has no plan is not handed out. Two additions of this stage's own:
+An inherited assignee hides a child from every queue; children go out one per pass, never while a
+blocker sibling lacks a plan. This stage adds:
 
 - **The parent's `acceptance` is copied verbatim onto every child.** Copying is not editing.
 
@@ -144,13 +139,11 @@ and a child whose blocker sibling has no plan is not handed out. Two additions o
   rm -f "$agreed"
   ```
 
-  **Quoted.** There is no `--acceptance-file`, and an unquoted expansion word-splits the document.
+  **Quoted.** No `--acceptance-file` exists; unquoted, the document word-splits.
 
-- **Each child's own plan says under *Context* which part of the family's agreed experience it
-  delivers.**
+- **Each child's plan says under *Context* which part of the agreed experience it delivers.**
 
-`bd create --parent` inherits the stage label, and the parent, retyped as an epic with children,
-leaves both queues.
+`--parent` inherits the stage label; the parent, an epic with children, leaves both queues.
 
 ## Reading the agreed experience
 
@@ -158,23 +151,19 @@ leaves both queues.
 bd show <id> --json | jq -r '(if type=="array" then .[0] else . end).acceptance'
 ```
 
-Five headings: the agreed experience, the states, the words exactly, what was considered and
-rejected, and the mockup. **The fifth names a committed path — open it.** `acceptance` reading
-`None.` throughout is planned like any other; say so under *User-facing decisions*.
+Five headings; **the fifth, the mockup, is a committed path — open it.** `None.` throughout is
+planned normally; say so under *User-facing decisions*.
 
 ## Designing the build
 
-Follow *What of the planner's skill applies*. **Every decision left is yours** — architecture, files,
-reuse, layers, increments, tests, scope — decided and written down. Anything you would have asked
-about the experience is a send-back, not a question.
+**Every decision left is yours**, decided and written down. Anything you would have asked about the
+experience is a send-back, not a question.
 
 ## What goes under *User-facing decisions*
 
-- **`### Agreed with the navigator` is a pointer, never a summary**: one line saying the experience
-  is in this bead's `acceptance`, the mockup's committed path, and every string the implementer must
-  type, quoted verbatim. A paraphrase drifts from what the designer approved.
-- **`### Decided by me` lists every detail you took**, one line each, as `skills/plan-bead/SKILL.md`
-  describes.
+- **`### Agreed with the navigator` is a pointer, never a summary** (a paraphrase drifts): one line
+  naming `acceptance`, the mockup path, and every string the implementer types, quoted verbatim.
+- **`### Decided by me` lists every detail you took**, one line each.
 
 ## Filing it
 
@@ -185,8 +174,8 @@ bd dolt pull
 bd show <id> --json | jq -r '(if type=="array" then .[0] else . end).assignee // ""'
 ```
 
-If the answer is not your own name, do not write: say in one line that you lost it and what you had
-decided, and end the pass. Otherwise the title first, then the plan:
+Not your name: write nothing, say in one line you lost it and what you had decided, end the pass.
+Otherwise title first, then plan:
 
 ```bash
 bd update <id> --title "<the rewritten title>"
@@ -198,10 +187,9 @@ bd dolt push
 
 ## What you say
 
-Say your own name first. Your reader is a developer who knows the repository, so bead, label,
-worktree, gate and pull request may be used, and they are never asked to run any of it. You never
-speak to a designer; the send-back note is the one thing that reaches one. Four messages, and no
-fifth.
+Your name first. The reader is a developer who knows the repository (bead, label, worktree, gate, pull
+request); never ask them to run anything. Only the send-back note reaches a
+designer. Four messages, no fifth.
 
 **The opening**, before anything is read:
 
@@ -211,7 +199,7 @@ fifth.
 >
 > Reading the code now.
 
-**The filed summary**, the last thing said — its last line is there because the pass ends here:
+**The filed summary**, said last:
 
 > Filed. **\<id\>** is planned and ready for an implementer.
 >
@@ -228,9 +216,8 @@ fifth.
 
 ## When the agreed experience cannot be built
 
-Send it back only when it **cannot be built as written** — it contradicts itself, leaves out a state
-the code must answer for, or asks for something the product cannot do. Never for work that is merely
-hard, or for taste.
+Only when it **cannot be built as written**: contradictory, missing a state the code must answer
+for, or impossible for the product. Never for merely hard work, or taste.
 
 ```bash
 bd update <id> --remove-label ux:agreed --assignee "" \
@@ -240,26 +227,23 @@ bd update <id> --remove-label ux:agreed --assignee "" \
 bd dolt push
 ```
 
-`--assignee ""` in that same call. No `human` label and nobody flagged: it is an ordinary
-design-stage candidate again. The note names **what is missing** (not what is wrong with the
-designer), says **what still stands**, and ends with **the question the designer has to answer**.
-What the developer sees:
+`--assignee ""` in that call; no `human` label, nobody flagged. The note names **what is missing**
+(not what is wrong with the designer), **what still stands**, and ends with **the designer's
+question**. The developer sees:
 
 > I can't build a plan from the agreed design, so I've sent it back to the design stage. \<what is
 > missing\>. I've written that on it as the question the designer has to answer; everything else that
 > was agreed still stands.
 
-Then end the pass.
+End the pass.
 
 ## When something fails
 
-One message with the exact command and its unabbreviated error. No plain-words translation: that
-belongs to the design stage.
+One message: the exact command and its unabbreviated error. No plain-words translation.
 
 ## Ending a pass
 
-**Remove your worktree first** if you made one, from outside it — before `end-pass`, because the
-session is ended about half a minute after that call:
+**Remove your worktree first**, if any, from outside it; the session ends soon after `end-pass`:
 
 ```bash
 git -C <repo> worktree remove --force .cerebro/worktrees/<id>
@@ -272,21 +256,17 @@ Then, and only then:
 .claude/cerebro/scripts/end-pass <your-name> --pid $PPID
 ```
 
-The pass ends when the plan is filed, on a send-back, or when nothing was given — no closing question
-and no waiting, whatever the buffer says. Say in one line what the pass did and **stop producing
-output**. Never a sleep loop.
+The pass ends when the plan is filed, sent back, or nothing was given: no closing question, no
+waiting, whatever the buffer says, no sleep loop. Say one line and **stop producing output**.
 
 ## What you never do
 
-- **Never agree an experience, and never edit a bead's `acceptance` field.** The one thing you may do
-  with it is copy it, unchanged, onto a child you created.
-- **Never re-open a question the design stage settled.** If it cannot be built as agreed, send it
-  back; do not redesign it.
-- **Never interview anybody.** No mockups and no questions.
-- **Never build the bead you planned.**
-- **Never claim a bead, never pick one, and never add a label to hold one:** you are given one.
-- **Never take work that is unranked**, and never rank one.
-- **Never leave the piece of work you were given assigned to you when the pass ends.**
-- **Never branch in the main checkout.**
-- **Never take a second piece of work in one pass**, a P0 included: the fleet view hands the next one
-  to the next session.
+- Never agree an experience or edit `acceptance` (copying it onto your child is the exception).
+- Never re-open what design settled; send it back.
+- Never interview anybody.
+- Never build the bead you planned.
+- Never claim or pick a bead, or add a label to hold one.
+- Never take unranked work, or rank any.
+- Never leave the given piece assigned to you when the pass ends.
+- Never branch in the main checkout.
+- Never take a second piece of work in one pass, a P0 included; the fleet view hands out the next.

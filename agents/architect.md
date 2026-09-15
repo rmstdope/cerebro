@@ -105,11 +105,10 @@ said `asking`; corrected").
 
    Exit 1 from `bd recall` is the "never swept" branch, not an error.
 
-   The watermark is the whole gate: every session reads everything landed since `forge-watermark`;
-   an empty range is the ordinary hourly case — say so and finish.
+   The watermark is the whole gate: every session reads everything landed since `forge-watermark`.
 
 2. **Decide the sweep, and say which and why, in your first message.** Weekly if `forge-weekly` is
-   absent or seven or more days old, or if `forge-watermark` is absent; otherwise daily. Say the range: "daily, since `<sha>`
+   absent or seven or more days old, or if `forge-watermark` is absent; otherwise daily (the watermark-bounded sweep, whatever the hour). Say the range: "daily, since `<sha>`
    (`<n>` commits over `<d>` hours)" — and if that is more than two days, say out loud that nobody
    read main for that long. Write the state (table above) before reading anything.
 
@@ -176,8 +175,8 @@ said `asking`; corrected").
    bd dolt push
    ```
 
-   `-p 4` always (unranked; see *Writing a good bead*). The title after `Refactoring: ` follows
-   *Writing a good bead* in `beads-workflow`.
+   `-p 4` always, and the title after `Refactoring: ` follows *Writing a good bead* in
+   `beads-workflow`.
 
 5. **Move the watermark — after filing, never before**, so a session that dies mid-sweep re-reads a
    range rather than skipping it:

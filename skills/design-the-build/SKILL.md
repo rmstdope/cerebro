@@ -104,7 +104,7 @@ such sentence**: say *Nothing is waiting for a build design right now.* and end 
 
 `verification:failed` **and** `plan:revise` means revise (`stage-candidates` hides the rest, and
 `verdict:stale`). **Amend in place**: keep all eight headings and all of *User-facing decisions*,
-change only what failed, and note under *Context* what verification found. A failure
+change only what the failure touches, and note under *Context* what verification found. A failure
 about the experience is a send-back.
 
 ```bash

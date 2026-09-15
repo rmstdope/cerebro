@@ -30,7 +30,7 @@ refuse (never do the setup):
 > cerebro is not mounted at .claude/cerebro — do steps 1–3 of its README first, then run
 > /project-definition again.
 
-**Open beads — refuse.** Say this, count and first three filled in, and write nothing:
+**Open beads — refuse.** Say this (count, first three) and write nothing:
 
 > This project already has work on its board — N open beads, the first three: `<id>` <title>,
 > `<id>` <title>, `<id>` <title>. Project definition is for a blank repository; new work goes on
@@ -53,8 +53,9 @@ Options *"Continue, treating this code as given"* and *"Stop"*. *Stop*: write no
 
 - In order. **Never accept the first answer**; follow up until you can write the read-back.
 - Each ends with a short read-back via the question tool, *"Right"* / *"Not quite"* (correction in
-  Other); only *"Right"* closes it. A correction that changes an earlier topic re-reads that one.
-- Question tool, up to four independent questions per batch; propose answers.
+  Other); only *"Right"* closes it. A correction to an earlier topic re-reads it.
+- Question tool, up to four independent questions per batch, one at a time when dependent;
+  propose answers.
 
 ### 1. What is it?
 
@@ -62,7 +63,7 @@ Options *"Continue, treating this code as given"* and *"Stop"*. *Stop*: write no
 > harness, something else? One sentence on who uses it and for what.
 
 Keep the navigator's own word for *"something else"*. Follow up: who uses it for what; single- or
-multi-user; who else reads its output.
+multi-user; who else reads output.
 
 ### 2. Where does it run?
 
@@ -80,19 +81,20 @@ Ask the ruled-out stacks **explicitly**. Follow up: language, framework, databas
 test runner. Then:
 
 - **The gate** — one command, or a fast and a slow one: `gate_fast`, `gate_full`.
-- **Install on a fresh clone** — the command that makes the gate runnable: `install`. *"nothing"* is
+- **Install** — the command that makes a fresh clone's gate runnable: `install`. *"nothing"* is
   written as an absence with a reason.
 
 > And which agent CLI should the fleet's sessions run on — Claude Code or GitHub Copilot?
 
-`.cerebro/agents.conf` holds each agent's tool, model and effort; absent means Claude Code defaults.
+`.cerebro/agents.conf` holds each agent's tool, model and effort; copy `agents.conf.example` to share it; absent means Claude
+Code defaults.
 
 ### 4. What is using it like, and what does it look and feel like?
 
 > Walk me through the first minute for each kind of user. What do they see first, what is the one
 > thing they came to do, and what does done look like?
 
-Follow up: day-one empty state; auth; what a mistake looks like and how it is undone. Then:
+Follow up: day-one empty state; auth; how a mistake looks and is undone. Then:
 
 > And what should it look and feel like? Visual style, and any reference you have in mind. Which
 > platform's conventions it should follow — native, web, terminal. What it must do for people who
@@ -170,7 +172,7 @@ One entry per trap: what happened, what it cost, and what to do about it. Empty 
 .cerebro/scratch
 ```
 
-**6. The board.** Skip if a board exists. Propose a prefix: first letter plus next consonant, else
+**6. The board.** Skip if a board exists. Propose a two- or three-letter lowercase prefix: first letter plus next consonant, else
 the first two letters (Crux → `cx`, Ledger → `lg`):
 
 > Bead ids will look like `cx-a1b`. Keep `cx`, or type another prefix.
@@ -185,7 +187,8 @@ bd init --prefix <prefix> --quiet
 bd dolt remote add origin "$(git remote get-url origin)"
 ```
 
-Announce that `bd init` writes `.beads/` and appends to `.gitignore`.
+Before `bd init`, say it writes `.beads/` and appends to `.gitignore`; read the `.gitignore` diff
+after.
 
 **7. The beads**, then **8. `bd dolt push` and the commit** — below.
 
@@ -200,7 +203,7 @@ Per epic:
 
 - **Read-back** — what it is, what "done" means; closed by *"Right"*.
 - **Children** — three to six obvious ones, one line each, nameable without design. *"Strike or
-  add?"*
+  add?"*: drop struck, append added.
 - **Rank** — options `P0` to `P4`, recommendation first marked `(Recommended)`, a reason in each
   description. **Children take the parent's priority.**
 
@@ -258,11 +261,11 @@ No project summary.
 - **Never sets a priority the navigator did not choose.** Anything they declined to rank is P4.
 - **Never pushes git.**
 - **Never runs `git add -A`.**
-- **Never deletes or overwrites a file it found.** `CLAUDE.md` is merged, `.gitignore` is appended.
+- **Never deletes or overwrites a file it found.**
 - **Never writes `.cerebro/agents.conf`.**
 
 ## Known traps
 
 - **`bd show --json` returns an array**: `bd show <id> --json | jq -r '(if type=="array" then .[0] else . end) | .title'`.
 - **`bd create` defaults to P2**: pass `-p` on every one.
-- **`bd init` appends to `.gitignore`**: show the `.gitignore` diff after the board step.
+- **`bd init` appends to `.gitignore`.**

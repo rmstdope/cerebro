@@ -257,7 +257,7 @@ git -C <tree>/.claude/cerebro checkout -b <id>-short-description origin/main
 consumer, and a relative path lands it inside the submodule. **Never clone cerebro to a sibling
 directory**: the classifier refuses it. `bd` works here because the tree is inside the consumer.
 
-**Two PRs**: cerebro's, then a `chore: bump cerebro` commit from the same consumer tree.
+**Two PRs**: cerebro's, then, once merged, a `chore: bump cerebro` commit from the same consumer tree.
 
 **Check `pwd` before any git command.** A `cd` into another agent's worktree followed by
 `git checkout -b` moves that agent off its branch.

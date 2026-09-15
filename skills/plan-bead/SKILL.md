@@ -284,8 +284,8 @@ in the `docs/ui/` house style (no build step, no external assets, inline SVG), i
 - **Stop asking when the rest is yours to answer. Stop planning when nothing is unanswered** in both
   halves of *User-facing decisions*.
 - **Batch up to four questions** in the question tool. The `file://` links go **inside** the
-  question text and each option's description, never in an earlier message
-  (`bd remember planner-mockup-links`).
+  question text and each option's description, or in the same message as a prose question; never
+  in an earlier message either way (`bd remember planner-mockup-links`).
 - **Every mockup mention is a full `file://` URL**, one per variant, labelled with the option name,
   never a bare path:
 
@@ -298,7 +298,7 @@ in the `docs/ui/` house style (no build step, no external assets, inline SVG), i
 - **An answer that engages only with your prose, or comes too fast**, gets one "did you see it?".
 
 The chosen mockup goes to `docs/ui/` in a `docs(<bead>): mockup` PR and the plan names its path.
-Once CI is green, merge it yourself, with no review sub-agent:
+Once CI is green, check the diff, then merge it yourself, with no review sub-agent:
 
 ```bash
 gh pr merge <n> --squash --delete-branch
@@ -479,5 +479,6 @@ without asking is.
 
 ## Finishing one, and the session
 
-Report which bead you planned, what the navigator decided, and any title rename. Then end the pass:
+Report which bead you planned, what the navigator decided, and any title rename. Never end a pass
+with the bead still assigned to you: file, park, split or give it back first. Then end the pass:
 one bead per pass, and the next session re-reads the board.

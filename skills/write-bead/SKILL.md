@@ -5,8 +5,7 @@ description: "Interview the navigator about a piece of work they want filed, the
 
 # Writing a bead
 
-Somebody has asked for a bead. You interview them until you can **describe** the work so that a
-UX designer and developer can take on the bead.
+Somebody has asked for a bead.
 
 ## What this skill is for, and what it is not
 

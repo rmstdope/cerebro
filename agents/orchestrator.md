@@ -449,7 +449,7 @@ worktree sweep once:
 
 It also removes trees nobody recorded and reclaims cold build directories under disk pressure.
 
-A tree both kept is **yours to judge alone**. Remove it only when all three hold:
+A tree the view and the sweep both kept is **yours to judge alone**. Remove it only when all three hold:
 
 - no live session is in it — no name on that bead, no process there (`lsof +D <path>` or
   `pgrep -f <path>`);

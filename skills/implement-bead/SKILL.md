@@ -257,8 +257,7 @@ git -C <tree>/.claude/cerebro checkout -b <id>-short-description origin/main
 consumer, and a relative path lands it inside the submodule. **Never clone cerebro to a sibling
 directory**: the classifier refuses it. `bd` works here because the tree is inside the consumer.
 
-**It is two PRs**: the cerebro PR, then, once merged, a `chore: bump cerebro` commit from the same
-consumer tree.
+**Two PRs**: cerebro's, then a `chore: bump cerebro` commit from the same consumer tree.
 
 **Check `pwd` before any git command.** A `cd` into another agent's worktree followed by
 `git checkout -b` moves that agent off its branch.
@@ -299,7 +298,8 @@ gate; keep every existing gate leg. The command is the project's:
 .claude/cerebro/scripts/project-conf gate_full     # everything the project has
 ```
 
-A gate the reader detected rather than the project declared is announced on stderr; read it.
+A detected, undeclared gate is announced on stderr; read it. With no gate at all, launch preflight
+refuses.
 
 ### A changed shared-root declaration is gated in a clone
 
@@ -308,8 +308,8 @@ shared checkout, so when your diff changes either, a read from this worktree see
 evidence. Commit the increments, then run the plan's exact clone, submodule, install or prewarm, and
 fast-gate commands in a throwaway clone of the committed branch. Never dirty main to make a worktree
 check pass, and never report a worktree shared-root read as validation. Run a check the plan labels
-post-merge only after the merge. `.cerebro/roster.conf` needs no clone: `roster` reads the enclosing
-worktree.
+post-merge only after the merge. Use the clone only for a declaration read through
+`consumer-root --shared`; `roster.conf` needs none, as `roster` reads the enclosing worktree.
 
 The fast gate is deliberately not everything; CI gates the merge. The full gate is yours to run by
 choice when you suspect a regression the fast gate skips — slower, and possibly serialized.
@@ -391,8 +391,8 @@ Spawn a sub-agent of type **`reviewer`** on the resolved model; both layouts shi
 
 **Never give it your reasoning**, in either round.
 
-**Which round is decided by what you last pushed**, not by how substantial it feels: answering
-findings or greening a red check is a delta round; a rebase, an `update-branch` or a
+**Which round is decided by what you last pushed**, not how it feels: answering findings or
+greening a red check is a delta round; a rebase, a conflict resolution, an `update-branch` or a
 documentation-only commit is no round at all; anything else — including the first round after a
 hand-back — is a cold read.
 
@@ -440,8 +440,8 @@ bd dolt push
 gh pr comment <n> --body 'Finding 3 — not changing this, because ...'
 ```
 
-One comment may answer several. Judge each; a reasoned reply is a complete answer. A finding about **approach, scope or what the audience sees**
-is a hand-back.
+One comment may answer several. Judge each — a finding can be wrong — and a reasoned reply is a
+complete answer. A finding about **approach, scope or what the audience sees** is a hand-back.
 
 Once every finding is answered, write `ci` (state table) and wait for CI per *Waiting, without ending
 your run* — after *Merging*'s merge-state check if anything was pushed since the PR opened. A *Red
@@ -456,8 +456,7 @@ rests on.
 pushed fix spends a fix attempt; a re-run of the same head spends a re-run. Read the failure before
 believing it: a wall of identical connection errors is infrastructure.
 
-A re-run is for a suspected flake, only after reproducing it locally once, running the one suite for
-the specific spec.
+Re-run a suspected flake only after reproducing it locally once, in the one suite, for that spec.
 
 Every fix returns through the review loop as a **delta round**. Unlike the per-head review budget,
 this one is per bead. On exhaustion, leave the PR open, hand back, and end the pass.
@@ -630,8 +629,8 @@ staying alive in case one appears.
 - **`--` forwarded into a test runner** filters out every spec and looks like a hang.
 - **A stale lease is not an abandoned agent** unless genuinely stale — `beads-workflow`, *Traps*.
 - **A merge verdict about the wrong head** — see *Merging*.
-- **An accessible name is a shared namespace.** A new control whose name overlaps one a spec selects
-  on breaks that spec; grep the suite for every name you add. A selector ratchet does not catch it.
+- **Accessible names are a shared namespace**: grep the suite for every name you add; a selector
+  ratchet does not catch an overlap.
 
 Read `<consumer>/.cerebro/traps.md` if it exists and say what to do about any trap the bead touches;
 absent is ordinary.

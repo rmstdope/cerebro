@@ -23,12 +23,11 @@ bd search "<the strongest noun of the request>"
 bd search "<a second noun>"
 ```
 
-Two or three nouns, one search each. `bd search` includes closed beads on purpose: *was this already
-fixed?* must not silently answer no. `--desc-contains` only narrows what the query already matched,
-so it cannot search descriptions alone; search a broader word instead.
+Two or three nouns, one search each. Closed beads are included on purpose. `--desc-contains` only
+narrows the query, so it cannot search descriptions alone.
 
-Show what comes back, closed ones included. If anything is close, ask whether to file a new bead,
-add to the existing one, or drop it. If nothing comes back, say nothing and start the interview.
+Show what comes back. If anything is close, ask whether to file new, add to it, or drop it. If
+nothing comes back, say nothing.
 
 ## The interview
 
@@ -42,8 +41,7 @@ Three things, and the bead is not describable until you have them all:
 Ask through the question tool, up to four questions per round, each round chosen from what the last
 one answered. There is no cap on rounds: keep going until you can describe the work.
 
-The third is **not** a design question. A *yes* is recorded in the description as the planner's cue
-that the navigator must agree the shape; you do not design it or ask what it should look like.
+The third is **not** a design question: record a *yes* in the description, and design nothing.
 
 When you have all three, file the bead without asking for approval.
 

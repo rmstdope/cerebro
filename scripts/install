@@ -498,13 +498,14 @@ step_board() {
     report wrote "the board (prefix $prefix; no remote)"
     echo "  Once the repository has an origin, run: bd dolt remote add origin <url>"
   fi
-  # `bd init' COMMITS what it writes, on the current branch: .beads/ and its own .gitignore lines,
-  # sweeping any staged or unstaged .gitignore change of this run into that commit. Say so, and
-  # name what it committed outside .beads/, so the commit on the branch is no surprise.
+  # `bd init' COMMITS what it writes, on the current branch: .beads/, its own .gitignore lines, and
+  # ANYTHING ALREADY STAGED - this run's .gitignore change included. Say so, and name what it
+  # committed outside .beads/, so the commit on the branch is no surprise.
   if [[ -n "$after" && "$after" != "$before" ]]; then
-    local committed
+    local committed branch
     committed="$(git -C "$root" show --stat --format= --name-only HEAD 2>/dev/null | grep -v '^\.beads/' | tr '\n' ' ')" || committed=""
-    echo "  bd init committed ${after:0:7} on $(git -C "$root" branch --show-current 2>/dev/null): .beads/${committed:+ and }${committed% }"
+    branch="$(git -C "$root" branch --show-current 2>/dev/null)" || branch=""
+    echo "  bd init committed ${after:0:7} on ${branch:-a detached HEAD}: .beads/${committed:+ and }${committed% }"
   fi
 }
 

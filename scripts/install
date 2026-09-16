@@ -484,9 +484,9 @@ step_board() {
   fi
 
   local before after remotes
-  before="$(git -C "$root" status --porcelain --untracked-files=all 2>/dev/null)" || before=""
+  before="$(git -C "$root" rev-parse HEAD 2>/dev/null)" || before=""
   (cd "$root" && bd init --prefix "$prefix" --quiet --non-interactive --skip-agents) || return 1
-  after="$(git -C "$root" status --porcelain --untracked-files=all 2>/dev/null)" || after=""
+  after="$(git -C "$root" rev-parse HEAD 2>/dev/null)" || after=""
   remotes="$(cd "$root" && bd dolt remote list 2>/dev/null | tr -s ' \t' ' ' | tr '\n' ';')" || remotes=""
   remotes="${remotes%;}"
   if [[ -n "$remotes" ]]; then
@@ -498,11 +498,14 @@ step_board() {
     report wrote "the board (prefix $prefix; no remote)"
     echo "  Once the repository has an origin, run: bd dolt remote add origin <url>"
   fi
-  # What init wrote outside .beads/ - its .gitignore lines, a lock file - so `git add' is no surprise.
-  local extra
-  extra="$(comm -13 <(printf '%s\n' "$before" | sort) <(printf '%s\n' "$after" | sort) \
-    | awk '{print $2}' | grep -v '^\.beads/' | tr '\n' ' ')" || extra=""
-  [[ -z "${extra// /}" ]] || echo "  bd init also wrote: $extra"
+  # `bd init' COMMITS what it writes, on the current branch: .beads/ and its own .gitignore lines,
+  # sweeping any staged or unstaged .gitignore change of this run into that commit. Say so, and
+  # name what it committed outside .beads/, so the commit on the branch is no surprise.
+  if [[ -n "$after" && "$after" != "$before" ]]; then
+    local committed
+    committed="$(git -C "$root" show --stat --format= --name-only HEAD 2>/dev/null | grep -v '^\.beads/' | tr '\n' ' ')" || committed=""
+    echo "  bd init committed ${after:0:7} on $(git -C "$root" branch --show-current 2>/dev/null): .beads/${committed:+ and }${committed% }"
+  fi
 }
 
 step_tools

@@ -299,9 +299,10 @@ pass "an existing .gitignore keeps its lines, gains the missing ones, and a pers
 
 # --- 8. the board: bd init with a prefix, and the Dolt remote from origin ---------------------------
 # A `bd' that logs what it was asked and behaves like the real one where the step depends on it
-# (probed against bd HEAD-62d2119): `init' makes `.beads/' and configures the Dolt remote from the
-# git origin when there is one, as `git+<url>'; `dolt remote list' prints it; `dolt remote add'
-# refuses a URL equal to the git origin, exit 1.
+# (probed against bd HEAD-62d2119): `init' makes `.beads/', appends to `.gitignore', COMMITS both on
+# the current branch, and configures the Dolt remote from the git origin when there is one, as
+# `git+<url>'; `dolt remote list' prints it; `dolt remote add' refuses a URL equal to the git
+# origin, exit 1.
 logging_bd="$(stubs gh jq claude cargo)"
 cat > "$logging_bd/bd" <<'STUB'
 #!/usr/bin/env bash
@@ -310,6 +311,10 @@ origin="$(git remote get-url origin 2>/dev/null || true)"
 case "$1 ${2:-} ${3:-}" in
   "init  "*|"init "*)
     mkdir -p .beads
+    echo '{}' > .beads/metadata.json
+    echo '*.gate.lock*' >> .gitignore
+    git -c user.name=bd -c user.email=bd@example.com add .beads/metadata.json .gitignore >/dev/null
+    git -c user.name=bd -c user.email=bd@example.com commit -q -m 'bd init: initialize beads issue tracking' >/dev/null
     [[ -z "$origin" ]] || printf 'origin\tgit+%s\n' "$origin" > .beads/remotes ;;
   "dolt remote list") [[ -f .beads/remotes ]] && cat .beads/remotes ;;
   "dolt remote add")
@@ -333,7 +338,10 @@ grep -qx 'init --prefix bd --quiet --non-interactive --skip-agents' "$BD_LOG" ||
 [[ -d "$board/.beads" ]] || fail "board: no .beads/ after init"
 grep -Eq "^ +wrote +the board .*git\+$(git -C "$board" remote get-url origin)" <<<"$out" \
   || fail "board: expected the remote init configured to be reported: $out"
-pass "the board is initialised with a proposed prefix and no agent files, and init's own remote is reported"
+grep -Eq "^ +bd init committed [0-9a-f]{7} on main: \.beads/ and \.gitignore" <<<"$out" \
+  || fail "board: expected the commit bd init made to be reported with what it holds: $out"
+[[ "$(git -C "$board" log -1 --format=%s)" == "bd init: initialize beads issue tracking" ]] || fail "board: the stub did not commit"
+pass "the board is initialised with a proposed prefix and no agent files; init's remote and its commit are reported"
 
 # A second run finds the board and runs nothing.
 : > "$BD_LOG"

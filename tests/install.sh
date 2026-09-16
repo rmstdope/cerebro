@@ -12,8 +12,9 @@
 # the consumer; a run that refused at the tools never reaches it.
 #
 # Step 3, the declaration: `.cerebro/project.conf' is written from an interview - the seven keys a
-# fleet needs, each with a detected default, and every other key present but commented out - and an
-# existing one is kept untouched. Answers come from stdin, so a case pipes them; EOF is "the
+# fleet reads first, with a detected default where there is one, the gates and the install command
+# optional and written commented out when empty, and every other key present but commented out -
+# and an existing one is kept untouched. Answers come from stdin, so a case pipes them; EOF is "the
 # default", and a required key with no default and no answer refuses.
 #
 # Step 4, the fleet: `.cerebro/roster.conf' from a second interview - how many ux, build-design and
@@ -232,7 +233,9 @@ grep -q 'gate_fast' <<<"$out" && grep -qi 'implementer' <<<"$out" \
   || fail "nogate: expected a line saying an implementer needs gate_fast before it starts: $out"
 pass "with no gate to detect the gates are left empty, written commented out, and the cost is said"
 
-# The app_paths question explains what it is asking for before it asks.
+# The app_paths question explains what it is asking for before it asks (asserted on this run's own
+# output, so the case stands without the one above it).
+run_install "$all" "$(consumer_new wording --copy)"
 grep -q 'extended regex' <<<"$out" && grep -qi 'invisible' <<<"$out" \
   || fail "app_paths: expected the question to explain the regex and what counts as invisible: $out"
 pass "the app_paths question explains itself"

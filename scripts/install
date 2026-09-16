@@ -105,8 +105,9 @@ step_links() {
 
 # --- 3. the declaration ----------------------------------------------------------------------------
 #
-# `.cerebro/project.conf', from an interview: the seven keys a fleet needs, each offered with a
-# default detected from the tree (the directory's name, the branch `default-branch' resolves, a
+# `.cerebro/project.conf', from an interview: the seven keys a fleet reads first, each offered
+# with a default detected from the tree where there is one (the directory's name, the branch
+# `default-branch' resolves, a
 # `src/', the gate and install command `project-conf' itself detects), and every other key present
 # in the file but commented out, one line and one meaning each - templates/project.conf is the
 # file. Answers are read from stdin, so a pipe works as well as a person; an empty answer takes the
@@ -170,7 +171,7 @@ step_declare() {
   echo "  The application is what those people see. Which repository paths belong to it, as an"
   echo "  extended regex matched against each changed path? e.g. ^src/ or ^(app|packages)/. A change"
   echo "  anywhere else - docs, tests, CI, the fleet's own files - counts as invisible to them, and"
-  echo "  is neither verified by hand nor released."
+  echo "  is neither reviewed as application code, verified by hand, nor released."
   ask app_paths      "  application paths" "$d_app" || return 1
   echo "  The gate: what an implementer runs before it opens a pull request, and what a pull request"
   echo "  is judged by. A new project may have none yet - leave it empty, and declare it in"

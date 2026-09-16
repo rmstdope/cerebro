@@ -235,7 +235,8 @@ pass "with no gate to detect the gates are left empty, written commented out, an
 
 # The app_paths question explains what it is asking for before it asks (asserted on this run's own
 # output, so the case stands without the one above it).
-run_install "$all" "$(consumer_new wording --copy)"
+run_install "$all" "$(new_consumer wording)"
+[[ $status -eq 0 ]] || fail "wording: expected a completing run, got exit $status; stderr: $err"
 grep -q 'extended regex' <<<"$out" && grep -qi 'invisible' <<<"$out" \
   || fail "app_paths: expected the question to explain the regex and what counts as invisible: $out"
 pass "the app_paths question explains itself"

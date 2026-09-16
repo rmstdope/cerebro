@@ -1,0 +1,494 @@
+#!/usr/bin/env bash
+#
+# `install` - the one command a new consumer runs after adding cerebro as a submodule (cb-4ua).
+#
+#     git submodule add https://github.com/rmstdope/cerebro.git .claude/cerebro
+#     .claude/cerebro/scripts/install
+#
+# It takes the README's setup steps in order, one function each. Every step reports one line per
+# fact, does nothing that is already done, and never overwrites a declaration the project wrote:
+# running it twice is the same as running it once. A step that cannot go on refuses with what is
+# missing and how to get it, after reporting everything it could, so one run says everything a
+# person has to fix.
+#
+#   exit 0  every step done
+#   exit 1  a step refused; the reason is above it on stdout and summarised on stderr
+#   exit 2  usage
+#
+# Under a narrowed PATH (tests/install.sh) the tools step runs with bash and dirname alone: a tool
+# is looked up with `command -v`, never run, so an absent `jq` cannot break the check for `jq`.
+set -euo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+
+[[ $# -eq 0 ]] || { echo "usage: install" >&2; exit 2; }
+
+# --- 1. the tools ----------------------------------------------------------------------------------
+#
+# What the fleet runs on and does not ship. The agent CLI is any provider `agent-cli --known'
+# answers, so a new provider is a row there and nothing here. Cargo only builds the fleet view, and
+# the launchers work without it, so its absence is reported and not refused.
+
+homepage_of() {
+  case "$1" in
+    bd)      echo "https://github.com/steveyegge/beads" ;;
+    gh)      echo "https://cli.github.com" ;;
+    git)     echo "https://git-scm.com" ;;
+    jq)      echo "https://jqlang.github.io/jq" ;;
+    claude)  echo "https://claude.com/claude-code" ;;
+    copilot) echo "https://github.com/github/copilot-cli" ;;
+    cargo)   echo "https://rustup.rs" ;;
+    *)       echo "" ;;
+  esac
+}
+
+report() { printf '  %-8s %s\n' "$1" "$2"; }
+
+step_tools() {
+  local missing=0 t found=""
+  echo "install: tools on PATH"
+
+  for t in bd gh git jq; do
+    if command -v "$t" >/dev/null 2>&1; then
+      report ok "$t"
+    else
+      report MISSING "$t - $(homepage_of "$t")"
+      missing=$((missing + 1))
+    fi
+  done
+
+  # One agent CLI, whichever the fleet will run on; `.cerebro/agents.conf' names it per agent later.
+  local known=() p
+  while IFS= read -r p; do known+=("$p"); done < <("$here/agent-cli" --known)
+  for p in "${known[@]}"; do
+    if command -v "$("$here/agent-cli" --binary --tool "$p")" >/dev/null 2>&1; then
+      report ok "$p (agent CLI)"
+      found=1
+    fi
+  done
+  if [[ -z "$found" ]]; then
+    local names="" sep=""
+    for p in "${known[@]}"; do names+="$sep$p ($(homepage_of "$p"))"; sep=" or "; done
+    report MISSING "agent CLI - one of $names"
+    missing=$((missing + 1))
+  fi
+
+  if command -v cargo >/dev/null 2>&1; then
+    report ok "cargo (cerebro-tui, the fleet view, can be built)"
+  else
+    report absent "cargo - cerebro-tui, the fleet view, needs Rust and Cargo ($(homepage_of cargo)); the launchers work without it"
+  fi
+
+  if [[ $missing -gt 0 ]]; then
+    echo "install: $missing tool$([[ $missing -eq 1 ]] || echo s) missing - install them and run this again" >&2
+    return 1
+  fi
+}
+
+# --- 3. the links ----------------------------------------------------------------------------------
+#
+# `sync-symlinks.sh' is the one place a provider's discovery layout is written, and every launch
+# re-runs it; this is only its first run, so the skills and agents are discoverable before any
+# session starts. Its lines are shown as it says them, indented under the step, and its exit status
+# is the step's: a refusal (a real directory where a link should go) is said by the sync itself.
+
+step_links() {
+  echo "install: skills and agents linked"
+  "$here/sync-symlinks.sh" | while IFS= read -r line; do echo "  $line"; done
+}
+
+# --- 3. the declaration ----------------------------------------------------------------------------
+#
+# `.cerebro/project.conf', from an interview: the seven keys a fleet needs, each offered with a
+# default detected from the tree (the directory's name, the branch `default-branch' resolves, a
+# `src/', the gate and install command `project-conf' itself detects), and every other key present
+# in the file but commented out, one line and one meaning each - templates/project.conf is the
+# file. Answers are read from stdin, so a pipe works as well as a person; an empty answer takes the
+# default, and a required key with no default and no answer refuses before anything is written. An
+# existing file is kept whole: after the first run it is the project's, and edited by hand.
+
+# ask <var> <prompt> <default> [optional]  ->  sets <var>; an empty default with an empty answer
+# is a refusal, unless the fourth word says the answer may be empty
+ask() {
+  local var="$1" prompt="$2" default="$3" optional="${4:-}" answer=""
+  if [[ -n "$default" ]]; then
+    printf '  %s [%s]: ' "$prompt" "$default"
+  else
+    printf '  %s: ' "$prompt"
+  fi
+  IFS= read -r answer || true
+  # A terminal echoes the answer and the newline; a pipe echoes nothing, so say it here, or the
+  # next line lands on the prompt.
+  [[ -t 0 ]] || printf '%s\n' "$answer"
+  [[ -n "$answer" ]] || answer="$default"
+  if [[ -z "$answer" && -z "$optional" ]]; then
+    echo
+    echo "install: $var is required and has no default here - answer it, and run this again" >&2
+    return 1
+  fi
+  printf -v "$var" '%s' "$answer"
+}
+
+step_declare() {
+  local root conf template body
+  root="$("$here/consumer-root")"
+  conf="$root/.cerebro/project.conf"
+  echo "install: the project declared"
+  if [[ -f "$conf" ]]; then
+    report kept ".cerebro/project.conf (exists; edit it by hand)"
+    return 0
+  fi
+  template="$here/../templates/project.conf"
+  [[ -f "$template" ]] || { echo "install: $template is missing from the mount" >&2; return 1; }
+
+  # The defaults, detected where detection is safe. `project-conf' and `default-branch' say on
+  # stderr which branch they took; that is theirs to say and is left to reach the terminal.
+  local d_name d_branch d_app="" d_fast d_full d_install dirs="" d
+  d_name="${root##*/}"
+  d_branch="$("$here/default-branch" 2>/dev/null)" || d_branch="main"
+  for d in src app lib packages crates apps; do
+    [[ -d "$root/$d" ]] && dirs="${dirs:+$dirs|}$d"
+  done
+  [[ -z "$dirs" ]] || d_app="^($dirs)/"
+  [[ "$d_app" == "^($dirs)/" && "$dirs" != *"|"* ]] && d_app="^$dirs/"
+  d_fast="$("$here/project-conf" gate_fast 2>/dev/null)" || d_fast=""
+  d_full="$("$here/project-conf" gate_full 2>/dev/null)" || d_full=""
+  d_install="$("$here/project-conf" install 2>/dev/null)" || d_install=""
+
+  local project_name default_branch audience_noun app_paths gate_fast gate_full install
+  ask project_name   "Project name" "$d_name" || return 1
+  ask default_branch "Default branch, the one the fleet merges to" "$d_branch" || return 1
+  ask audience_noun  "What the agents call the people who use it (user, member, player, ...)" "user" || return 1
+  ask app_paths      "Which changed paths those people could see, as a regex (e.g. ^src/)" "$d_app" || return 1
+  ask gate_fast      "The gate an implementer runs before it opens a pull request" "$d_fast" || return 1
+  ask gate_full      "The gate a pull request is judged by" "${d_full:-$gate_fast}" || return 1
+  printf '  %s\n' "What installs dependencies into a fresh worktree - empty when nothing does"
+  ask install        "  install command" "$d_install" 2>/dev/null || install=""
+
+  local install_line
+  if [[ -n "$install" ]]; then install_line="install        $install"; else install_line="#install        <command>"; fi
+
+  body="$(cat "$template")"
+  body="${body//\{\{project_name\}\}/$project_name}"
+  body="${body//\{\{default_branch\}\}/$default_branch}"
+  body="${body//\{\{audience_noun\}\}/$audience_noun}"
+  body="${body//\{\{app_paths\}\}/$app_paths}"
+  body="${body//\{\{gate_fast\}\}/$gate_fast}"
+  body="${body//\{\{gate_full\}\}/$gate_full}"
+  body="${body//\{\{install_line\}\}/$install_line}"
+  mkdir -p "$root/.cerebro"
+  printf '%s\n' "$body" > "$conf"
+  report wrote ".cerebro/project.conf"
+}
+
+# --- 4. the fleet ----------------------------------------------------------------------------------
+#
+# `.cerebro/roster.conf', from a second interview: how many ux, build-design and implementer agents,
+# whether the three optional roles run, and per role present how the fleet view starts it -
+# `autostart' as the view opens, `standby' armed for its trigger, or `manual' for `s'. The
+# orchestrator and the architect are always there. Names come from the built-in fleet's pool, in
+# the order `scripts/roster' wants: the interactive roles first, then the implementers.
+
+# ask_count <var> <prompt> <default> <min>
+ask_count() {
+  local var="$1" prompt="$2" min="$4"
+  ask "$var" "$prompt" "$3" || return 1
+  local n="${!var}"
+  if [[ ! "$n" =~ ^[0-9]+$ || "$n" -lt "$min" ]]; then
+    echo "install: '$n' is not a whole number of at least $min, for: $prompt - run this again" >&2
+    return 1
+  fi
+}
+
+# ask_choice <var> <prompt> <default> <word>...   the answer must be one of the words
+ask_choice() {
+  local var="$1" prompt="$2" default="$3" w
+  shift 3
+  ask "$var" "$prompt" "$default" || return 1
+  for w in "$@"; do [[ "${!var}" == "$w" ]] && return 0; done
+  echo "install: '${!var}' is not one of: $* - run this again" >&2
+  return 1
+}
+
+# names_for <role> <n>  ->  <n> names for that role from the pool, then <Role><n> past its end
+names_for() {
+  local role="$1" n="$2" pool i=0 name
+  case "$role" in
+    orchestrator)  pool="Cerebro" ;;
+    ux)            pool="Xavier Beast Jean Emma" ;;
+    build-design)  pool="Gambit Iceman Bishop Cable" ;;
+    verifier)      pool="Psylocke" ;;
+    reviewer)      pool="Cypher" ;;
+    user-feedback) pool="Moira" ;;
+    architect)     pool="Forge" ;;
+    implementer)   pool="Cyclops Storm Wolverine Rogue Nightcrawler Colossus Jubilee Phoenix Mystique Magneto" ;;
+  esac
+  for name in $pool; do
+    [[ $i -lt $n ]] || break
+    echo "$name"; i=$((i + 1))
+  done
+  while [[ $i -lt $n ]]; do
+    i=$((i + 1)); echo "${role//-/}$i"
+  done
+}
+
+step_fleet() {
+  local root conf
+  root="$("$here/consumer-root")"
+  conf="$root/.cerebro/roster.conf"
+  echo "install: the fleet declared"
+  if [[ -f "$conf" ]]; then
+    report kept ".cerebro/roster.conf (exists; edit it by hand)"
+    return 0
+  fi
+
+  local n_ux n_bd n_impl verifier reviewer feedback
+  ask_count  n_ux   "How many ux agents, to agree what a person will see" 1 0 || return 1
+  ask_count  n_bd   "How many build-design agents, to plan the build of an agreed experience" 1 0 || return 1
+  ask_count  n_impl "How many implementers, to build planned beads" 2 1 || return 1
+  ask_choice verifier "A verifier, to verify merged beads with you (y/n)" y y n || return 1
+  ask_choice reviewer "A reviewer, for pull requests from outside the fleet (y/n)" n y n || return 1
+  ask_choice feedback "A user-feedback agent, to own the GitHub issues (y/n)" n y n || return 1
+
+  # role<TAB>count, in file order; a count of 0 is a role left out.
+  local roles=() r count word start rows="" name
+  roles+=("orchestrator	1" "ux	$n_ux" "build-design	$n_bd")
+  [[ "$verifier" == y ]] && roles+=("verifier	1")
+  [[ "$reviewer" == y ]] && roles+=("reviewer	1")
+  [[ "$feedback" == y ]] && roles+=("user-feedback	1")
+  roles+=("architect	1" "implementer	$n_impl")
+
+  echo "  How the fleet view starts each role: autostart as it opens, standby to arm it for its"
+  echo "  own trigger, or manual to start it yourself with 's'."
+  for r in "${roles[@]}"; do
+    role="${r%%	*}"; count="${r#*	}"
+    [[ "$count" -gt 0 ]] || continue
+    case "$role" in
+      orchestrator)                 start=autostart ;;
+      ux|build-design|implementer)  start=standby ;;
+      *)                            start=manual ;;
+    esac
+    ask_choice word "$role ($(names_for "$role" "$count" | tr '\n' ' ' | sed 's/ $//'))" "$start" autostart standby manual || return 1
+    [[ "$word" == manual ]] && word=""
+    while IFS= read -r name; do
+      if [[ -n "$word" ]]; then
+        rows+="$(printf '%-14s %-14s %s' "$name" "$role" "$word")"$'\n'
+      else
+        rows+="$(printf '%-14s %s' "$name" "$role")"$'\n'
+      fi
+    done < <(names_for "$role" "$count")
+  done
+
+  mkdir -p "$root/.cerebro"
+  {
+    echo "# The fleet THIS project runs, written by .claude/cerebro/scripts/install and edited by hand."
+    echo "# NAME  ROLE  [autostart|standby]: one agent per line, the interactive roles first, then the"
+    echo "# implementers. Order is load-bearing - implementers are taken in file order. \`autostart' is"
+    echo "# started as the fleet view opens; \`standby' is armed and started by its role's trigger; no"
+    echo "# third word means you start it with \`s'. The roles are the files in .claude/cerebro/agents/."
+    echo
+    printf '%s' "$rows"
+  } > "$conf"
+  report wrote ".cerebro/roster.conf ($(printf '%s' "$rows" | grep -c .) agents)"
+}
+
+# --- 5. the agent settings -------------------------------------------------------------------------
+#
+# `.cerebro/agents.conf', from a third interview: which agent CLI, the default model and effort,
+# the implementers' own (the role with the most sessions, so the one worth pricing apart) - and,
+# on copilot, an external OpenAI-compatible model source, defined once on an `external' line and
+# then named by a model answer like any model. Every other role is written as a commented line
+# equal to `default', so giving one its own settings is uncommenting and editing. The shape is
+# `agents.conf.example's; `scripts/agents-conf' reads it.
+
+# setting_line <key> <tool> <model> <effort>
+setting_line() {
+  printf '%-13s tool=%s' "$1" "$2"
+  [[ -z "$3" ]] || printf '  model=%s' "$3"
+  [[ -z "$4" ]] || printf '  effort=%s' "$4"
+  echo
+}
+
+step_settings() {
+  local root conf known=() default_tool p
+  root="$("$here/consumer-root")"
+  conf="$root/.cerebro/agents.conf"
+  echo "install: the agents' settings declared"
+  if [[ -f "$conf" ]]; then
+    report kept ".cerebro/agents.conf (exists; edit it by hand)"
+    return 0
+  fi
+  while IFS= read -r p; do known+=("$p"); done < <("$here/agent-cli" --known)
+  default_tool="$("$here/agent-cli" --default-tool)"
+
+  local tool want_ext ext_name="" ext_url ext_env ext_model external_line=""
+  ask_choice tool "Which agent CLI the agents run on (${known[*]})" "$default_tool" "${known[@]}" || return 1
+  if [[ "$tool" == copilot ]]; then
+    ask_choice want_ext "An external OpenAI-compatible model source, reached through Copilot's own key (y/n)" n y n || return 1
+    if [[ "$want_ext" == y ]]; then
+      ask ext_name  "  Its name, which the model answers below may then give" research || return 1
+      ask ext_url   "  Its base URL" "https://api.openai.com/v1" || return 1
+      ask ext_env   "  The environment variable that holds its API key" OPENAI_API_KEY || return 1
+      if [[ ! "$ext_env" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+        echo "install: '$ext_env' is not an environment variable name - run this again" >&2
+        return 1
+      fi
+      ask ext_model "  The model id to request from it (e.g. gpt-5.4)" "" || return 1
+      external_line="external $ext_name openai $ext_url \${$ext_env} $ext_model"
+    fi
+  fi
+
+  local d_model="" model effort impl_model impl_effort
+  case "$tool" in
+    claude) d_model=opus ;;
+    *)      d_model="$ext_name" ;;
+  esac
+  ask model       "Default model (empty leaves it to the tool)" "$d_model" optional || return 1
+  ask effort      "Default effort - low, medium or high (empty leaves it to the tool)" medium optional || return 1
+  ask impl_model  "The implementers' model" "$model" optional || return 1
+  ask impl_effort "The implementers' effort" "$effort" optional || return 1
+
+  mkdir -p "$root/.cerebro"
+  {
+    echo "# What each agent runs on: which tool, which model, how hard it thinks. Written by"
+    echo "# .claude/cerebro/scripts/install and edited by hand; .claude/cerebro/agents.conf.example is the shape."
+    echo "# The most specific line wins whole: the agent's own name, then its role, then \`default'."
+    echo
+    if [[ -n "$external_line" ]]; then
+      echo "# An external model source: name, provider, URL, the variable holding its key, and the model."
+      echo "# A line below names it with model=$ext_name."
+      echo "$external_line"
+      echo
+    fi
+    setting_line default "$tool" "$model" "$effort"
+    setting_line implementer "$tool" "$impl_model" "$impl_effort"
+    echo
+    echo "# Every other role runs on the default line. Uncomment one to give that role its own settings."
+    local r
+    for r in ux build-design orchestrator verifier reviewer user-feedback architect; do
+      printf '#'; setting_line "$r" "$tool" "$model" "$effort"
+    done
+  } > "$conf"
+  report wrote ".cerebro/agents.conf"
+}
+
+# --- 6. the traps ----------------------------------------------------------------------------------
+#
+# `.cerebro/traps.md', empty: the heading and what the file is for, the same words
+# skills/project-definition writes. Planners and implementers read it before they start, and a
+# file that exists and says "nothing yet" is a clearer answer than one that is not there.
+
+step_traps() {
+  local root conf
+  root="$("$here/consumer-root")"
+  conf="$root/.cerebro/traps.md"
+  echo "install: the traps"
+  if [[ -f "$conf" ]]; then
+    report kept ".cerebro/traps.md (exists)"
+    return 0
+  fi
+  mkdir -p "$root/.cerebro"
+  cat > "$conf" <<'TRAPS'
+# Traps
+
+The facts this project has already paid for, read by planners and implementers before they start.
+One entry per trap: what happened, what it cost, and what to do about it. Empty until the first one.
+TRAPS
+  report wrote ".cerebro/traps.md (empty)"
+}
+
+# --- 7. the ignores --------------------------------------------------------------------------------
+#
+# `.cerebro/' is deny-listed, not allow-listed: the three directories the fleet writes while it runs
+# are ignored and everything else in it is tracked, so every clone carries the declarations. Each
+# line is appended only if it is not there, under the comment the first missing one brings with it.
+# `agents.conf' is the one declaration a project may choose to keep personal, so that is asked.
+
+step_ignore() {
+  local root ig share line added=0 missing=()
+  root="$("$here/consumer-root")"
+  ig="$root/.gitignore"
+  echo "install: the runtime ignored, the declarations tracked"
+  local wanted=(.cerebro/worktrees .cerebro/state .cerebro/scratch)
+  for line in "${wanted[@]}"; do
+    [[ -f "$ig" ]] && grep -qx -- "$line" "$ig" && continue
+    missing+=("$line")
+  done
+  # All three there: somebody has been here, and agents.conf is whatever they decided.
+  if [[ ${#missing[@]} -eq 0 ]]; then
+    report kept ".gitignore (already ignores the runtime)"
+    return 0
+  fi
+  ask_choice share "Share .cerebro/agents.conf with every clone (share), or keep it personal (personal)" share share personal || return 1
+  if [[ "$share" == personal ]] && ! { [[ -f "$ig" ]] && grep -qx -- .cerebro/agents.conf "$ig"; }; then
+    missing+=(.cerebro/agents.conf)
+  fi
+  {
+    # A file that does not end in a newline would otherwise glue the comment to its last line.
+    [[ ! -s "$ig" ]] || [[ "$(tail -c 1 "$ig")" == "" ]] || echo
+    [[ ! -s "$ig" ]] || echo
+    echo "# Cerebro writes these while the fleet runs; the declarations beside them are tracked."
+    for line in "${missing[@]}"; do echo "$line"; done
+  } >> "$ig"
+  report wrote ".gitignore (${#missing[@]} line(s) added)"
+}
+
+# --- 8. the board ----------------------------------------------------------------------------------
+#
+# Beads: `bd init' with a prefix, then the Dolt remote every machine and session shares - the
+# repository's `origin', asked for and added to git as well when there is none. Without one the
+# board is still made and the command to add the remote later is said, since a repository nobody
+# pushes has nothing to share yet. A `.beads/' that exists is a board, whatever its prefix, and is
+# kept: `bd init' over one is a question for `bd', not for this script.
+
+# prefix_for <name>  ->  the first letter and the last consonant after it, else the first two
+# letters; lowercase, letters only. Crux -> cx, board -> bd. A proposal, not a rule.
+prefix_for() {
+  local n i c
+  n="$(printf '%s' "$1" | tr -cd 'A-Za-z' | tr 'A-Z' 'a-z')"
+  [[ -n "$n" ]] || n="xx"
+  for ((i = ${#n} - 1; i > 0; i--)); do
+    c="${n:$i:1}"
+    case "$c" in a|e|i|o|u) continue ;; esac
+    printf '%s%s\n' "${n:0:1}" "$c"
+    return 0
+  done
+  printf '%s%s\n' "${n:0:1}" "${n:1:1}"
+}
+
+step_board() {
+  local root name prefix url
+  root="$("$here/consumer-root")"
+  echo "install: the board"
+  if [[ -d "$root/.beads" ]]; then
+    report kept "the board (.beads/ exists)"
+    return 0
+  fi
+  name="$("$here/project-conf" project_name 2>/dev/null)" || name=""
+  [[ -n "$name" ]] || name="${root##*/}"
+  ask prefix "The prefix bead ids carry, as in <prefix>-a1b" "$(prefix_for "$name")" || return 1
+
+  url="$(git -C "$root" remote get-url origin 2>/dev/null)" || url=""
+  if [[ -z "$url" ]]; then
+    ask url "The repository has no origin; its remote URL, which the board will share too (empty: none yet)" "" optional || return 1
+    [[ -z "$url" ]] || git -C "$root" remote add origin "$url"
+  fi
+
+  (cd "$root" && bd init --prefix "$prefix" --quiet --non-interactive) || return 1
+  if [[ -n "$url" ]]; then
+    (cd "$root" && bd dolt remote add origin "$url") || return 1
+    report wrote "the board (prefix $prefix, remote $url)"
+  else
+    report wrote "the board (prefix $prefix, no remote)"
+    echo "  Once the repository has an origin, run: bd dolt remote add origin <url>"
+  fi
+}
+
+step_tools
+step_links
+step_declare
+step_fleet
+step_settings
+step_traps
+step_ignore
+step_board

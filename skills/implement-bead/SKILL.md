@@ -20,7 +20,7 @@ role on top of them.
 
 The authority to merge is **the consumer's root `CLAUDE.md` and its Four Eye Principle**: for a
 planned bead, a review sub-agent you spawn yourself is the second pair of eyes, and you merge on the
-conditions stated there. `templates/consumer-CLAUDE.md` is where a project without one starts. Where
+conditions stated there. `templates/consumer-instructions.md` is where a project without one starts. Where
 this skill and the project's document disagree, the project's governs.
 
 So: RED → GREEN → REFACTOR → COMMIT without stopping, announcing each transition, and still stopping

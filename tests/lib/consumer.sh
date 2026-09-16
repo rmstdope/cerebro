@@ -50,7 +50,7 @@
 # explanation in docs/retrospectives/cb-ge0.md is not the mechanism. Only reaching the end of the
 # suite proves the suite ran, so that is what is recorded.
 #
-#   copy_cerebro_into <dest>      scripts, agents, skills, hooks - and no .git
+#   copy_cerebro_into <dest>      scripts, agents, skills, hooks, templates - and no .git
 #   link_scripts <consumer> <script>...
 #                                 symlinks <script> into <consumer>/.claude/cerebro/scripts/, with
 #                                 the libraries those scripts source (tests/lib/place-scripts)
@@ -193,7 +193,7 @@ trap _consumer_lib_cleanup EXIT
 copy_cerebro_into() {
   local dest="$1" d
   mkdir -p "$dest"
-  for d in scripts agents skills hooks; do
+  for d in scripts agents skills hooks templates; do
     [ -d "$repo_root/$d" ] && cp -R "$repo_root/$d" "$dest/"
   done
   return 0

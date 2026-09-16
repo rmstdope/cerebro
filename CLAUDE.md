@@ -22,7 +22,7 @@ Every project-specific fact is read from the consumer's `.cerebro/project.conf` 
 
 Cerebro is mounted in itself: `.claude/cerebro` is a committed symlink back to the checkout, so the
 fleet works on its own source and runs the *working tree* rather than a pinned sha. The four
-sections below are the same declaration `templates/consumer-CLAUDE.md` asks of every consumer;
+sections below are the same declaration `templates/consumer-instructions.md` asks of every consumer;
 its "The project" section is *What this repository is*, above.
 
 ## Four Eye Principle

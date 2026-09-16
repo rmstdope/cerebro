@@ -2,7 +2,7 @@
 #
 # Proves `scripts/four-eye-sync' answers "do this repository's copies of the merge-review rule
 # agree". The rule is written once, in `templates/four-eye-principle.md'; the two documents that
-# carry it - the root `CLAUDE.md' and `templates/consumer-CLAUDE.md' - wrap their copy in
+# carry it - the root `CLAUDE.md' and `templates/consumer-instructions.md' - wrap their copy in
 # `<!-- four-eye:begin -->' / `<!-- four-eye:end -->' markers, and this is what makes a drifted
 # copy a red gate rather than a silent divergence. The two had already drifted when cb-m7u was
 # filed: the root's closing sentence was never in the template.
@@ -42,7 +42,7 @@ new_fixture() {
   mkdir -p "$fix/templates"
   printf '%s\n' "$BLOCK" >"$fix/templates/four-eye-principle.md"
   local carrier
-  for carrier in "$fix/CLAUDE.md" "$fix/templates/consumer-CLAUDE.md"; do
+  for carrier in "$fix/CLAUDE.md" "$fix/templates/consumer-instructions.md"; do
     {
       printf '## Four Eye Principle\n\n*A preamble this carrier owns.*\n\n'
       printf '<!-- four-eye:begin -->\n\n%s\n\n<!-- four-eye:end -->\n\n' "$BLOCK"
@@ -92,10 +92,10 @@ run "$fix/scripts/four-eye-sync"
 pass "carriers that carry the block verbatim are silent"
 
 fix="$(new_fixture)"
-perl -0pi -e 's/Nothing merges unreviewed/Nothing merges unread/' "$fix/templates/consumer-CLAUDE.md"
+perl -0pi -e 's/Nothing merges unreviewed/Nothing merges unread/' "$fix/templates/consumer-instructions.md"
 run "$fix/scripts/four-eye-sync"
 [[ $status -eq 1 ]] || fail "a drifted carrier must exit 1, got $status (output: $out)"
-[[ "$out" == "drifted: templates/consumer-CLAUDE.md (block differs from templates/four-eye-principle.md)" ]] \
+[[ "$out" == "drifted: templates/consumer-instructions.md (block differs from templates/four-eye-principle.md)" ]] \
   || fail "expected exactly the drifted: line, got: $out"
 pass "a carrier whose block has drifted is reported"
 

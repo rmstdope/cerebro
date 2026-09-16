@@ -1,19 +1,18 @@
 # Cerebro
-An AI harness consisting of agents, skills and scripts, with a terminal fleet view.
 
-![The Cerebro fleet](docs/cerebro-fleet.svg)
+Cerebro runs a fleet of AI coding agents on your repository. You file work as beads and rank it;
+the fleet plans each bead, builds it test-first in its own worktree, reviews and merges the pull
+request, and brings what merged back to you to verify. It ships as a git submodule mounted at
+`.claude/cerebro`: agent definitions, skills and scripts for Claude Code or GitHub Copilot CLI, and
+a terminal fleet view that shows the agents and the board and starts, ends and nudges their
+sessions. You are the navigator. You never make a technical decision: architecture, files, tests
+and approach are the agents' to decide. You make every decision about what people will see and
+about what gets built in which order: you rank the work, agree each user experience before it is
+built, and verify it once it has merged.
 
-Six agent roles, one bead board, and the humans they answer to — the same picture lives in
-[docs/agent-workflow.md](docs/agent-workflow.md), which is the operating guide behind it.
+## Prerequisites
 
-## Setting up a new project
-
-Nine steps, in this order. Each says what it is for, what to run from the root of your
-repository, and how to tell it worked.
-
-### 1. Have the tools on PATH
-
-The fleet is bash and Rust on top of programs it does not ship:
+The fleet is bash and Rust on top of programs it does not ship. Have these on `PATH`:
 
 - **One agent CLI** — every agent is a session of it. Either `claude`
   ([Claude Code](https://claude.com/claude-code)) or `copilot`
@@ -24,18 +23,15 @@ The fleet is bash and Rust on top of programs it does not ship:
   with a Dolt remote so every machine and session sees one board.
 - `gh` — pull requests, reviews, and the issue inbox.
 - `git` and `jq` — every script.
-- **Rust and Cargo**, for the fleet view (`.claude/cerebro/scripts/cerebro-tui`, below).
+- **Rust and Cargo**, for the fleet view (`.claude/cerebro/scripts/cerebro-tui`, below). Optional:
+  the launchers work without it.
 
-Check:
+## Setting up a new project
 
-```bash
-for t in bd gh git jq; do command -v "$t" >/dev/null && echo "$t ok" || echo "$t MISSING"; done
-if command -v claude >/dev/null || command -v copilot >/dev/null
-then echo "agent CLI ok"; else echo "agent CLI MISSING"; fi
-command -v cargo >/dev/null && echo "cargo ok (cerebro-tui available)" || echo "cargo absent (cerebro-tui unavailable)"
-```
+Five steps, in this order, and an optional sixth. Each says what it is for, what to run from the root of your
+repository, and how to tell it worked.
 
-### 2. Add cerebro as a submodule at `.claude/cerebro`
+### 1. Add cerebro as a submodule at `.claude/cerebro`
 
 `.claude/cerebro` is the one path every script and the fleet view assume.
 
@@ -46,150 +42,77 @@ git submodule update --init --recursive
 
 Check: `.claude/cerebro/scripts/consumer-root` prints your repository's absolute path.
 
-### 3. Link the skills and agents
-
-Claude Code discovers `.claude/skills/<name>/SKILL.md` and `.claude/agents/<name>.md`; GitHub
-Copilot discovers `.github/skills/<name>/` and `.github/agents/<name>.agent.md`, and its hooks from
-`.github/hooks/`. The sync writes relative symlinks into **both** layouts in every project, whatever
-any `agents.conf` line names — so switching CLI stays one line per agent and nothing else.
+### 2. Run the installer
 
 ```bash
-.claude/cerebro/scripts/sync-symlinks.sh
+.claude/cerebro/scripts/install
 ```
 
-Check: it prints one `Synced N skill link(s) …` line and one `Synced N agent link(s) …` line. If a
-`.dir-locals.el` link from an earlier sync is at your root, it also prints
-`Removed stale .dir-locals.el link (templates/consumer-dir-locals.el is gone)`.
+It asks a handful of questions about the project, each with a default taken from the tree, and
+writes the answers to `.cerebro/project.conf`, where every other setting is listed, explained and
+commented out. Then it asks about the fleet — how many agents of each role, and which the fleet
+view starts on its own — and writes `.cerebro/roster.conf`. Next it asks which agent CLI and
+models the agents run on, and writes `.cerebro/agents.conf`, shared with every clone or kept
+personal as you answer; the runtime directories under `.cerebro/` are ignored either way. Last it
+makes the bead board, proposing a prefix for bead ids, with the repository's `origin` as the Dolt
+remote every machine and session shares.
 
-#### Or: let a session do steps 4 to 9
+Check: it exits 0. If it does not, it has named what is missing; fix that and run it again.
 
-With the tools, the submodule and the links in place, run `claude` at the root of your repository
-and type `/project-definition`. It interviews you about the project — what the software is, where it
-runs, what it is built with, what using it is like — and then writes every declaration below,
-initialises the board and files the first epics. The steps that follow are what it does, written out
-for reading or for doing by hand.
+### 3. Give the fleet its instructions
 
-### 4. Declare the project: `.cerebro/project.conf`
-
-The one file every script reads a project fact from — `key value`, one per line, and everything
-from a `#` on is a comment, so a value can never contain one. The minimum:
-
-```
-project_name   Ledger
-default_branch main
-audience_noun  user          # what the agents call the people who use your application
-app_paths      ^src/         # a regex: which changed paths those people could see
-gate_fast      make test     # what an implementer runs before it opens a pull request
-gate_full      make test     # what a pull request is judged by
-install        npm ci        # omit it when there is nothing to install
-```
-
-An absent key is a default, with one exception: without `app_paths` the fleet refuses to classify a
-change rather than guess, since a wrong guess either empties the release notes or sends you to
-verify documentation.
-A project with nothing a person can launch — a library, a build tool, a harness like this one —
-adds `verification none`, and the verifier marks every merged bead as needing no look instead of
-asking how to start an application that does not exist.
-A project whose verification has a procedure of its own — which shell to prefer, how its fixtures
-are chosen and proved, what shape a script should take for the person reading it — declares
-`verification_skill <skill name>` instead, and the verifier loads that skill before it prepares
-anything, following it wherever it is more specific than the verifier's own file.
-A role two or more agents hold has its starts spaced, so that a condition true for all of them at
-once does not start them in one breath; `role_start_spacing_<role> <seconds>` declares that gap for
-one role, `0` means never space that role, and an absent key leaves the fleet view's own built-in
-number in force.
-
-Which window may act on the checkout — start a session, nudge one, prune a worktree — is not
-declared at all: the first fleet view to open takes the checkout, and a second one open beside it
-draws everything and acts on nothing, saying so in its header. Exclusion is a socket the owner
-binds rather than a file it writes, so an owner that crashes releases immediately instead of
-leaving a lock somebody has to judge stale, and the second window takes over on `g` or on its next
-five-second tick.
-This repository's own `.cerebro/project.conf` is a commented example, and
-the header of `scripts/project-conf` states the format.
-
-Check: `.claude/cerebro/scripts/project-conf project_name` prints the name, and
-`.claude/cerebro/scripts/app-paths` prints your pattern.
-
-### 5. Declare the fleet: `.cerebro/roster.conf` (optional)
-
-Absent, you run the built-in fleet. To run your own names, or fewer of them, write `NAME  ROLE` per
-line — the roles are the files in `.claude/cerebro/agents/`: `planner`, `implementer`,
-`orchestrator`, `verifier`, `reviewer`, `user-feedback`, `architect`. Order is load-bearing:
-implementers are taken in file order.
-
-Check: `.claude/cerebro/scripts/roster` prints your fleet, one `name<TAB>role<TAB>kind` per line.
-
-### 6. Traps and agent settings (optional)
-
-- `.cerebro/traps.md` — the facts this project has already paid for, read by planners and
-  implementers before they start. Absent is where every project starts.
-- `.cerebro/agents.conf` — which tool, model and effort each agent runs on:
-  `cp .claude/cerebro/agents.conf.example .cerebro/agents.conf`. Each line names an agent, role or
-  `default`, then `tool=`, `model=` and `effort=` settings. The most specific line wins outright.
-  Commit it to share the fleet's settings with every clone, or ignore it (step 8) to keep it personal.
-
-Check: `launch` says `launch: agents.conf ("<key>") -> <tool>, <model>` on stderr as it starts a session.
-
-### 7. Give the fleet its `CLAUDE.md`
-
-Copy the template to your root `CLAUDE.md` — or merge its sections into the one you have — and edit
-every section until it describes your project. Two headings are read by their exact name:
-`## Four Eye Principle`, an implementer's standing permission to merge (delete it and nothing
-merges), and `## Work tracking`.
+The fleet reads one instruction file at your root, `CLAUDE.md`. Claude Code loads it, and Copilot
+loads the same file as its custom instructions when no `AGENTS.md` sits beside it
+([docs/providers/copilot.md](docs/providers/copilot.md)). Copy the template there, or merge its
+sections into the file you have, and edit it until it describes your project. Two headings are
+read by their exact name: `## Four Eye Principle`, an implementer's standing permission to merge
+(delete it and nothing merges), and `## Work tracking`.
 
 ```bash
-cp .claude/cerebro/templates/consumer-CLAUDE.md CLAUDE.md
+cp .claude/cerebro/templates/consumer-instructions.md CLAUDE.md
 ```
 
 Check: `grep -c '^## Four Eye Principle' CLAUDE.md` prints `1`.
 
-### 8. Ignore the runtime, track the declarations
+### 4. Commit and push
 
-`.cerebro/` holds two kinds of thing: what the fleet writes while it runs, and what the project
-declares. Ignore the first and commit the second:
+Everything so far is tracked, so every clone runs the same fleet: the submodule, the links the
+installer wrote under `.claude/` and `.github/`, the declarations under `.cerebro/`, `CLAUDE.md`,
+`.gitignore` and `.beads/`. The board goes to its own remote.
 
-```gitignore
-.cerebro/worktrees
-.cerebro/state
-.cerebro/scratch
+```bash
+git add -A && git commit -m "Mount cerebro" && git push
+bd dolt push
 ```
 
-`worktrees/` is where every implementer builds; `state/` holds the agents' state files and stop
-flags; `scratch/` holds the planners' drafts and rejected mockup variants. Everything else in
-`.cerebro/` is tracked — the declarations from steps 4 to 6, and `agents.conf` if the fleet's
-settings are the project's to share (add `.cerebro/agents.conf` here to keep it personal instead).
-Then commit the submodule, the links, the declarations and `CLAUDE.md`.
+Check: `git status` reports a clean tree, and `bd dolt push` says there is nothing left to push.
 
-Check: `git check-ignore -v .cerebro/state/x` names the `.cerebro/state` line, and
-`git check-ignore .cerebro/project.conf` prints nothing.
+### 5. Start the fleet
 
-### 9. Set up the board, and start the fleet
-
-The board is beads: `bd init` in your repository, then a Dolt remote
-(`bd dolt remote add origin <url>`) so every machine and session sees the same beads. Every bead is
-created unranked and ranked with you; a planner turns it into a plan; an implementer builds it.
-
-Then open the fleet view, from anywhere inside the consumer:
+Open the fleet view, from anywhere inside the repository:
 
 ```bash
 .claude/cerebro/scripts/cerebro-tui
 ```
 
-Press `s` on a planner's row.
+The rows the roster marks `autostart` start as it opens, `standby` rows wait for their trigger,
+and `s` on any row starts that agent now. Work is tracked on the board: every bead is created
+unranked and ranked with you; a planner turns it into a plan; an implementer builds it.
 
-A session can also be started from a terminal without the fleet view:
+Check: a started row turns green a few seconds later, when the session writes its state file.
+[docs/agent-workflow.md](docs/agent-workflow.md) is what to read next: it is the operating guide
+for everything after this point.
 
-```bash
-.claude/cerebro/scripts/launch Xavier
-```
+### 6. Define the project in more detail (optional)
 
-Check: `.claude/cerebro/scripts/launch-preflight planner Xavier; echo $?` prints `0` and nothing
-else. In the fleet view the row turns green a few seconds after the session starts, when it writes
-its state file. [docs/agent-workflow.md](docs/agent-workflow.md) is what to read next: it is the
-operating guide for everything after this point.
+With the fleet up, type `/project-definition` into the orchestrator's or the architect's session.
+It interviews you about the project — what the software is, where it runs, what it is built with,
+what using it is like — refines the declarations and the instruction file from the answers, and
+files the opening epics on the board, ranked with you, so the fleet has work to start on. Today
+the skill still expects a blank repository and writes its own declarations; until it is reworked to
+build on the installer's, answer its questions the same way you answered the installer.
 
-#### What the view shows
+## The fleet view
 
 It shows the fleet rows and six work queues (Claimed, Planned unclaimed, Being
 planned, Unplanned, Waiting on you, Merged unverified) in two separately bordered, independently
@@ -202,7 +125,7 @@ refreshes both panes, and `q`, `Esc` or `Ctrl-C` quits.
 **What it may do is whether it holds the checkout's lease, not a property of the program.** The
 window that holds it operates the fleet: it hosts sessions, starts them on their triggers, ends a
 pass, runs the sweeps and prunes worktrees. A second window open on the same checkout draws all of
-that and acts on none of it, and says so in its header. Building it needs Rust and Cargo (step 1); the first
+that and acts on none of it, and says so in its header. Building it needs Rust and Cargo (see Prerequisites); the first
 run in a fresh checkout compiles the workspace, so give it a minute before deciding it has hung.
 
 ## Launchers
@@ -218,7 +141,9 @@ Each agent is started by a script of its own, run from the consumer repository r
 
 Every agent starts the same way, by its own name: `launch Xavier`, `launch Cyclops`, `launch Forge`.
 There are no per-role launcher scripts - the roster is the one place the fleet is declared, and
-`launch` is the one place a session is started.
+`launch` is the one place a session is started. A session started this way runs in that terminal,
+outside the fleet view; `.claude/cerebro/scripts/launch-preflight planner Xavier; echo $?` printing
+`0` and nothing else says one could start.
 
 Every session starts with Remote Control on and is listed under its agent's name at
 [claude.ai/code](https://claude.ai/code) and in the Claude app, so an agent can be read and steered

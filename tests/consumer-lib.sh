@@ -154,11 +154,11 @@ pass "consumer_new --link brings each script's own libraries and no others"
 # present - a local .cerebro/, the .git - so the fixture was neither hermetic nor cheap
 # (ah-qled.11).
 c="$(consumer_new copied --copy)"
-for d in scripts agents skills hooks; do
+for d in scripts agents skills hooks templates; do
   [[ -d "$c/.claude/cerebro/$d" ]] || fail "--copy: $d missing under .claude/cerebro"
 done
 [[ ! -e "$c/.claude/cerebro/.git" ]] || fail "--copy: .git should not be copied"
-pass "consumer_new --copy: scripts, agents, skills and hooks only"
+pass "consumer_new --copy: scripts, agents, skills, hooks and templates only"
 
 # --- consumer_new --origin, and advance_origin ------------------------------------------------------
 #

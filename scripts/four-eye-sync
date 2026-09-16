@@ -3,7 +3,7 @@
 # four-eye-sync - do this repository's copies of the merge-review rule agree?
 #
 # The Four Eye Principle is the implementer's whole standing approval to merge, and until cb-m7u it
-# was written out twice - in the root `CLAUDE.md' and in `templates/consumer-CLAUDE.md' - with
+# was written out twice - in the root `CLAUDE.md' and in `templates/consumer-instructions.md' - with
 # nothing checking that the two agreed. They had already drifted: the root ends the rule with "That
 # is the whole standing approval, and it covers a planned bead only." and the template had never
 # carried that sentence. The rule now lives once, in `templates/four-eye-principle.md', and each
@@ -71,7 +71,7 @@ CANONICAL="templates/four-eye-principle.md"
 # theirs to edit and is never read here.
 CARRIERS=(
   CLAUDE.md                      # this repository is a consumer of itself; this IS its Four Eye section
-  templates/consumer-CLAUDE.md   # what a new consumer copies
+  templates/consumer-instructions.md   # what a new consumer copies
 )
 
 cerebro_block_sync four-eye "$CANONICAL" "${CARRIERS[@]}"

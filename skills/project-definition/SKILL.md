@@ -27,7 +27,7 @@ git ls-files \
 `consumer-root` answers the tree the session started in. If `.claude/cerebro` does not resolve,
 refuse (never do the setup):
 
-> cerebro is not mounted at .claude/cerebro — do steps 1–3 of its README first, then run
+> cerebro is not mounted at .claude/cerebro — do steps 1 and 2 of its README first, then run
 > /project-definition again.
 
 **Open beads — refuse.** Say this (count, first three) and write nothing:
@@ -126,7 +126,7 @@ before the next:
 
 **1. `.cerebro/project.conf`** — topic 5's block, comments included.
 
-**2. `CLAUDE.md`** from `.claude/cerebro/templates/consumer-CLAUDE.md`: `## The project` becomes
+**2. `CLAUDE.md`** from `.claude/cerebro/templates/consumer-instructions.md`: `## The project` becomes
 read-backs 1, 2 and 4 as three paragraphs (drop the italic note and placeholder); one line in
 `## Development practices` names the gate; keep every other template section verbatim,
 `## Four Eye Principle` especially (read by its exact heading). An existing `CLAUDE.md` is **merged**:

@@ -961,24 +961,59 @@ fn parent_ids(beads: &[Bead]) -> BTreeSet<String> {
         .collect()
 }
 
+/// The ids whose DIRECT children are all `closed`.
+///
+/// "Direct" is everything before a child's LAST dot, matching `parent_ids`. A parent with no
+/// direct child is absent from both sets and so never appears here.
+fn closed_parent_ids(beads: &[Bead]) -> BTreeSet<String> {
+    let mut parents = BTreeSet::new();
+    let mut open_or_inflight = BTreeSet::new();
+    for bead in beads {
+        let Some((parent, _)) = bead.id.rsplit_once('.') else { continue };
+        let parent = parent.to_string();
+        parents.insert(parent.clone());
+        if bead.status != "closed" {
+            open_or_inflight.insert(parent);
+        }
+    }
+    parents
+        .difference(&open_or_inflight)
+        .cloned()
+        .collect()
+}
+
 /// Whether BEAD is bookkeeping rather than work, and so appears in no section.
 ///
 /// An `event` always is - bd's own audit record of a state change, carrying the very labels the
-/// buckets key on. An `epic` is bookkeeping over its CHILDREN, so it is skipped exactly while it
-/// has some: a split epic listed beside its children double-counts the same work, and it closes
-/// when its last child does. A childless epic is bookkeeping over nothing - nobody has broken it
-/// down yet, so it is work, and it partitions like any other bead at any status (cb-hzl).
-fn is_bookkeeping(bead: &Bead, parents: &BTreeSet<String>) -> bool {
+/// buckets key on. An `epic` is bookkeeping over its CHILDREN while any child is not yet closed:
+/// a split epic listed beside its children double-counts the same work. Once all direct children
+/// are closed, that closed epic may carry the family's remaining unverified state and is allowed
+/// through to the merged section. A childless epic is bookkeeping over nothing - nobody has broken
+/// it down yet - so it partitions like any other bead at any status.
+fn is_bookkeeping(
+    bead: &Bead,
+    parents: &BTreeSet<String>,
+    closed_parents: &BTreeSet<String>,
+) -> bool {
     let issue_type = bead.issue_type.as_str();
-    SKIPPED_ISSUE_TYPES.contains(&issue_type)
-        && (issue_type != CONDITIONAL_ISSUE_TYPE || parents.contains(&bead.id))
+    if !SKIPPED_ISSUE_TYPES.contains(&issue_type) {
+        return false;
+    }
+    if issue_type != CONDITIONAL_ISSUE_TYPE {
+        return true;
+    }
+    if !parents.contains(&bead.id) {
+        return false;
+    }
+    !(bead.status == "closed" && closed_parents.contains(&bead.id))
 }
 
 /// Split BEADS into the fleet panel's seven buckets.
 ///
-/// Exact precedence, matching `emacs/cerebro.el:4652-4764`: an `event`, and an `epic` that has at
-/// least one direct child, are skipped outright (`is_bookkeeping`), while a CHILDLESS epic
-/// partitions like any other bead; `in_progress` is always claimed; for `open`, `human` wins over exact `planned`,
+/// Exact precedence, matching `emacs/cerebro.el:4652-4764` except the verifier-driven closed-epic
+/// carve-out in `is_bookkeeping`: an `event`, and an `epic` whose direct children are not all
+/// closed, are skipped; a CHILDLESS epic and a closed eligible parented epic partition like any
+/// other bead; `in_progress` is always claimed; for `open`, `human` wins over exact `planned`,
 /// exact `planned` wins over an assignee (cb-10d.2.2), an assignee wins over the
 /// `ux:agreed` stage label, and anything else open is unplanned; `closed` is merged unless it carries a settled verification label; every other
 /// status (blocked, deferred, an unknown future status) appears in no bucket.
@@ -986,8 +1021,9 @@ pub fn partition_beads(beads: Vec<Bead>) -> WorkBuckets {
     let mut buckets = WorkBuckets::default();
     buckets.linked = linked_beads(&beads);
     let parents = parent_ids(&beads);
+    let closed_parents = closed_parent_ids(&beads);
     for bead in beads {
-        if is_bookkeeping(&bead, &parents) {
+        if is_bookkeeping(&bead, &parents, &closed_parents) {
             continue;
         }
         match bead.status.as_str() {
@@ -1746,11 +1782,12 @@ mod tests {
         );
     }
 
-    /// An epic is bookkeeping over its CHILDREN, so it is skipped exactly while it has some. A
-    /// childless epic is bookkeeping over nothing - nobody has broken it down yet - so it
-    /// partitions like any other bead, at every status (cb-hzl). An `event` never does.
+    /// An epic is bookkeeping over its CHILDREN while some child is still not closed. A childless
+    /// epic is bookkeeping over nothing and partitions like any other bead; a CLOSED parented epic
+    /// with all children closed also partitions, so verifier triggers can see an unverified family.
+    /// An `event` never does.
     #[test]
-    fn a_childless_epic_is_work_and_a_parented_one_is_not() {
+    fn closed_eligible_parented_epics_reach_merged() {
         let beads = vec![
             bead("cb-p", "open", "epic", &[]),
             bead("cb-p.1", "open", "feature", &["planned"]),
@@ -1770,8 +1807,8 @@ mod tests {
         );
         assert_eq!(
             buckets.merged.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(),
-            vec!["cb-c.1", "cb-done"],
-            "a closed childless epic reaches Merged, unverified; a parented one does not"
+            vec!["cb-c", "cb-c.1", "cb-done"],
+            "a closed eligible parented epic reaches Merged, unverified"
         );
         assert_eq!(
             buckets.planned.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(),

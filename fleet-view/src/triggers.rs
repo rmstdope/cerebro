@@ -1496,6 +1496,19 @@ mod tests {
         }
     }
 
+    fn typed_bead(
+        id: &str,
+        status: &str,
+        issue_type: &str,
+        labels: &[&str],
+        priority: u8,
+    ) -> Bead {
+        Bead {
+            issue_type: issue_type.into(),
+            ..bead(id, status, labels, priority)
+        }
+    }
+
     fn roster(names: &[(&str, &str)]) -> Vec<RosterEntry> {
         names
             .iter()
@@ -1554,6 +1567,27 @@ mod tests {
         assert_eq!(facts.stale_verdicts, 1);
         assert_eq!(facts.implementers, 2);
         assert_eq!(facts.planner_want(), 2);
+    }
+
+    #[test]
+    fn an_eligible_closed_epic_counts_as_merged_unverified() {
+        let buckets = crate::model::partition_beads(vec![
+            typed_bead("cb-ep", "closed", "epic", &[], 2),
+            typed_bead("cb-ep.1", "closed", "feature", &["verification:passed"], 2),
+        ]);
+        let facts = TriggerFacts::derive(
+            &buckets,
+            &roster(&[("Psylocke", "verifier")]),
+            &std::collections::BTreeSet::new(),
+            |_| false,
+            GhAnswer::Unanswered,
+            1,
+        );
+        assert_eq!(facts.merged_unverified, 1);
+        assert_eq!(
+            trigger(&facts, agent_of("verifier"), at(0)),
+            Some("1 merged, unverified".to_string())
+        );
     }
 
     /// Ranking a bead is what Cerebro does when the fleet view wakes it, and it has to be able to

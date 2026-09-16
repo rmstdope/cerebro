@@ -448,10 +448,13 @@ checks that the merged result actually does what it was supposed to, until **Psy
 .claude/cerebro/scripts/launch Psylocke
 ```
 
-She walks beads closed since her last pass, works out on her own which ones touched anything the audience
-could see — a change to `.claude/`, `docs/`, or CI is marked and skipped without ever bothering you —
-and for the rest, prepares everything she can before she asks for your time: what the bead claimed,
-which shell to launch (web or desktop), which fixture report to load, and what you should look for.
+She walks merged work since her last pass, but treats epics as families: when a bead belongs to an
+epic, she waits until that epic has all children closed, then verifies the family in one sweep.
+At that point she decides whether to run verification per child or as one run for the whole epic.
+She still works out on her own which candidates touched anything the audience could see — a change
+to `.claude/`, `docs/`, or CI is marked and skipped without ever bothering you — and for what
+remains, prepares everything before she asks for your time: what the bead (or epic) claimed, which
+shell to launch (web or desktop), which fixture report to load, and what you should look for.
 A project that declares `verification none` in `.cerebro/project.conf` has told her there is
 nothing to launch at all, and she marks every merged bead as needing no look, saying so in one line
 per pass.
@@ -459,7 +462,8 @@ per pass.
 **She only ever asks when she is ready to hand you something to run.** Say yes and she briefs you,
 launches the app and waits for one of three verdicts:
 
-- **Passed.** The bead is marked verified and that is the end of it.
+- **Passed.** The bead is marked verified and that is the end of it (for an epic sweep, that means
+  the epic and its children in scope).
 - **Passed, with a follow-up.** It works; something small about it is worth a look later. She files
   that as an ordinary new bead — unranked, for Cerebro to rank with you next time round — and
   still marks the original passed.
@@ -475,10 +479,10 @@ again next pass rather than escalating it to your queue.
 the orchestrator cuts one, it names whatever has not yet had a person look at it and leaves the
 decision to you. Verification is information, not a gate.
 
-**What it costs**: a few minutes of your time per bead, on top of whatever it took to build one in
-the first place — starting the app, loading the report she names, and telling her what you saw. She
-sleeps **five minutes** between passes, so a bead that merges while you are at lunch is offered soon
-after you are back.
+**What it costs**: a few minutes of your time per verification sweep — often one bead, sometimes a
+whole epic family once all its children are merged — on top of whatever it took to build it in the
+first place: starting the app, loading the report she names, and telling her what you saw. She
+sleeps **five minutes** between passes, so merged work is offered soon after you are back.
 
 She verifies in her own worktree, `.cerebro/worktrees/psylocke`, reset to `origin/main` immediately
 before every use — never the shared checkout, and never a build started before she fetched. Every
@@ -492,8 +496,9 @@ build, she writes a retrospective of her own, the same way an implementer does.
 ## Starting the architect
 
 Nobody else in the fleet reads the *shape* of the code. A planner plans one bead, an implementer
-builds one bead, a review sub-agent reads that one diff, Psylocke checks that one merged bead does
-what it claimed — and across fifty merges nobody asks whether the codebase got harder to change
+builds one bead, a review sub-agent reads that one diff, Psylocke checks merged work (single beads
+or epic sweeps) against what it claimed — and across fifty merges nobody asks whether the codebase
+got harder to change
 along the way. **Forge** is that reader:
 
 ```bash

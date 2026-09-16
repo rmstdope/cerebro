@@ -83,7 +83,8 @@ Omit `--bead` when no candidate is in hand (the first-pass cutoff, anything aske
 ### The second-look list
 
 This runs first in the pass. It is a separate query because every bead on it is **open**, while the
-work list asks `work-beads --status closed`: an arm for an open bead added there could never match.
+ordinary closed-bead queue asks `work-beads --status closed`: an arm for an open bead added there
+could never match.
 
 ```bash
 .claude/cerebro/scripts/second-look-beads
@@ -96,9 +97,9 @@ Two states reach you through it:
 - **handed back** — `verification:failed` with neither `planned` nor `plan:revise`: an implementer
   found nothing left to build, and its notes say why.
 
-**Run it first, and take what it returns before the work list**, because both states hold the bead
-out of every other queue. A handed-back bead takes one of the three outcomes below; acting on it in
-any of those ways clears the state, and doing nothing leaves it here.
+**Run it first, and take what it returns before any closed-bead candidates**, because both states
+hold the bead out of every other queue. A handed-back bead takes one of the three outcomes below;
+acting on it in any of those ways clears the state, and doing nothing leaves it here.
 
 - **The finding still holds.** Record a fresh verdict by the `failed` recipe in *Taking the verdict*.
 - **The finding no longer holds.** Pass it and clear the label:
@@ -118,13 +119,37 @@ any of those ways clears the state, and doing nothing leaves it here.
 The sweep says only that main has moved; whether the finding still applies is yours and the
 navigator's.
 
-### The work list
+### The candidate lists
+
+You verify in two queues, in this order.
+
+#### 1. Epic sweeps (first)
+
+An epic is ready only when every child is merged (closed). Take those first:
+
+```bash
+bd epic status --eligible-only --json | jq -r '.[].epic.id'
+```
+
+For each eligible epic, list children and verify the family in one sweep once:
+
+```bash
+bd children <epic-id> --json | jq -r '.[].id'
+```
+
+- Do **not** verify a child of an epic before the epic is eligible.
+- This is the decision point: once all children are merged, decide whether this family should be
+  verified per child (separate runs inside the same sweep) or by one script run for the whole epic.
+- Record your choice in the briefing ("per-child for this epic" or "one run for this epic") and why.
+
+#### 2. Ordinary closed beads (second)
 
 Closed beads carrying no `verification:*` label, or `verification:failed`, or
-`verification:pending`:
+`verification:pending`, and **not a child of an epic**:
 
 ```bash
 .claude/cerebro/scripts/work-beads --status closed | jq -r '.[]
+  | select((.parent // "") == "")
   | select(([.labels[]? | select(startswith("verification:"))] | length == 0)
            or ([.labels[]?] | index("verification:failed"))
            or ([.labels[]?] | index("verification:pending")))
@@ -134,7 +159,8 @@ Closed beads carrying no `verification:*` label, or `verification:failed`, or
 - **Pending** means offered and not yet answered. Skip the beads this pass itself offered, and offer
   each at most once per pass. A bead a previous session left pending is an ordinary candidate again.
 - `work-beads` passes the status you name, refuses a call without one, and excludes epics with
-  children and bd's `event` beads. The `jq` is only your question: which still want a verdict.
+  children and bd's `event` beads. The `jq` adds your question ("which still want a verdict?") and
+  excludes children that belong to an epic family.
 - **Never label an event bead:** `bd set-state` writes one per verdict, and labelling them grows a
   chain one link per pass. A chain that already exists is left alone.
 - A childless closed epic reaches you like any other closed bead.
@@ -177,7 +203,7 @@ ids first, the label last. After this the steady-state query needs no memory of 
 `none` is a decision that nothing here can be launched and judged, unlike an unset
 `launch_targets`, which is an omission and is still asked about below. When it says `none`:
 
-- Mark **every bead in the work list with no `verification:*` label** `not-needed`, one per bead:
+- Mark **every candidate with no `verification:*` label** `not-needed`, one per bead:
 
   ```bash
   bd set-state <id> verification=not-needed --reason "this project declares verification none: nothing to launch"
@@ -193,7 +219,7 @@ ids first, the label last. After this the steady-state query needs no memory of 
 Any other value is unrecognised: say `verification is "<value>", which I do not understand; treating
 it as unset` and carry on as if the key were absent.
 
-For each id in the work list, find what it touched:
+For each candidate (single bead, or every bead in an eligible epic family), find what it touched:
 
 ```bash
 git log origin/main --grep "(<id>):" -F --oneline
@@ -215,7 +241,15 @@ bd set-state <id> verification=not-needed --reason "harness/docs-only, nothing t
 bd dolt push
 ```
 
-Silent, every time. Everything left is a candidate.
+Silent, every time. Everything left is a verification candidate.
+
+For an eligible epic, prepare once for the family and decide run mode at this point:
+
+- **Per-child runs in one sweep** when children changed distinct areas, launch targets, or fixtures.
+- **One run for the whole epic** when one launch path and fixture can prove the acceptance of all
+  children together.
+
+Make that choice only after the epic is eligible (all children closed), never earlier.
 
 ### The tree you verify in
 
@@ -323,6 +357,9 @@ bd update <id> --set-metadata verified_at=<full sha>
 bd dolt push
 ```
 
+For an epic sweep done as one run, apply the same `passed` update to every child you swept (and the
+epic id itself), then push.
+
 **2. Passed, with a follow-up.** Mark it passed as above, **and** file the niggle:
 
 ```bash
@@ -330,6 +367,8 @@ bd create --title "..." --description "Found during verification of <id>: ..." -
 bd update <id> --set-metadata verified_at=<full sha>
 bd dolt push
 ```
+
+For an epic sweep, name the epic and affected child ids in the follow-up description.
 
 `--priority 4`, unranked, as *Writing a good bead* in `beads-workflow` says for all new work.
 
@@ -342,6 +381,10 @@ bd dolt push
   --notes "<what the navigator saw, in full>" \
   --fault plan          # or: build
 ```
+
+For an epic sweep, never reopen the parent epic directly for one finding. Reopen the failing
+child bead(s) with the same command, one id at a time, naming in `--notes` that the finding came
+from the epic sweep.
 
 It does the reopen, the assignee clear, P0, the dated failure note, `verification=failed`,
 `verified_at`, dropping `verdict:stale`, the plan-or-build label flip, every closed ancestor, and the

@@ -18,6 +18,12 @@
 # Under a narrowed PATH (tests/install.sh) the tools step runs with bash and dirname alone: a tool
 # is looked up with `command -v`, never run, so an absent `jq` cannot break the check for `jq`.
 set -euo pipefail
+# bash 5.2 turned `patsub_replacement' on: an unquoted `&' in a `${x//pat/rep}' replacement then
+# stands for the matched text, so a gate like `npm test && npm run lint' written through the
+# template substitution below came out mangled. Quoting the replacement fixes 5.x and writes
+# literal quotes on 3.2, so the option is turned off instead; 3.2 has no such option and says so
+# to /dev/null.
+shopt -u patsub_replacement 2>/dev/null || true
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
@@ -85,7 +91,7 @@ step_tools() {
   fi
 }
 
-# --- 3. the links ----------------------------------------------------------------------------------
+# --- 2. the links ----------------------------------------------------------------------------------
 #
 # `sync-symlinks.sh' is the one place a provider's discovery layout is written, and every launch
 # re-runs it; this is only its first run, so the skills and agents are discoverable before any
@@ -251,7 +257,7 @@ step_fleet() {
   ask_choice feedback "A user-feedback agent, to own the GitHub issues (y/n)" n y n || return 1
 
   # role<TAB>count, in file order; a count of 0 is a role left out.
-  local roles=() r count word start rows="" name
+  local roles=() r role count word start rows="" name
   roles+=("orchestrator	1" "ux	$n_ux" "build-design	$n_bd")
   [[ "$verifier" == y ]] && roles+=("verifier	1")
   [[ "$reviewer" == y ]] && roles+=("reviewer	1")
@@ -435,18 +441,21 @@ step_ignore() {
 
 # --- 8. the board ----------------------------------------------------------------------------------
 #
-# Beads: `bd init' with a prefix, then the Dolt remote every machine and session shares - the
-# repository's `origin', asked for and added to git as well when there is none. Without one the
-# board is still made and the command to add the remote later is said, since a repository nobody
-# pushes has nothing to share yet. A `.beads/' that exists is a board, whatever its prefix, and is
-# kept: `bd init' over one is a question for `bd', not for this script.
+# Beads: `bd init' with a prefix, then the Dolt remote every machine and session shares. `bd init'
+# configures that remote ITSELF from the repository's git `origin' (as `git+<url>'), and refuses a
+# second `remote add' of the same URL - so the remote is read back from `bd dolt remote list' and
+# reported, and only added here when init configured none. Without an origin the URL is asked for
+# and added to git first, so init finds it; with no URL at all the board is still made and the
+# command to run later is said. `--skip-agents', because a plain `bd init' also plants an
+# `AGENTS.md', a `CLAUDE.md' and editor settings, and the fleet's own instruction file is README
+# step 3's. A `.beads/' that exists is a board, whatever its prefix, and is kept.
 
 # prefix_for <name>  ->  the first letter and the last consonant after it, else the first two
 # letters; lowercase, letters only. Crux -> cx, board -> bd. A proposal, not a rule.
 prefix_for() {
   local n i c
   n="$(printf '%s' "$1" | tr -cd 'A-Za-z' | tr 'A-Z' 'a-z')"
-  [[ -n "$n" ]] || n="xx"
+  [[ ${#n} -ge 2 ]] || n="${n:-x}${n:-x}"
   for ((i = ${#n} - 1; i > 0; i--)); do
     c="${n:$i:1}"
     case "$c" in a|e|i|o|u) continue ;; esac
@@ -474,14 +483,26 @@ step_board() {
     [[ -z "$url" ]] || git -C "$root" remote add origin "$url"
   fi
 
-  (cd "$root" && bd init --prefix "$prefix" --quiet --non-interactive) || return 1
-  if [[ -n "$url" ]]; then
+  local before after remotes
+  before="$(git -C "$root" status --porcelain --untracked-files=all 2>/dev/null)" || before=""
+  (cd "$root" && bd init --prefix "$prefix" --quiet --non-interactive --skip-agents) || return 1
+  after="$(git -C "$root" status --porcelain --untracked-files=all 2>/dev/null)" || after=""
+  remotes="$(cd "$root" && bd dolt remote list 2>/dev/null | tr -s ' \t' ' ' | tr '\n' ';')" || remotes=""
+  remotes="${remotes%;}"
+  if [[ -n "$remotes" ]]; then
+    report wrote "the board (prefix $prefix; remote $remotes)"
+  elif [[ -n "$url" ]]; then
     (cd "$root" && bd dolt remote add origin "$url") || return 1
-    report wrote "the board (prefix $prefix, remote $url)"
+    report wrote "the board (prefix $prefix; remote origin $url)"
   else
-    report wrote "the board (prefix $prefix, no remote)"
+    report wrote "the board (prefix $prefix; no remote)"
     echo "  Once the repository has an origin, run: bd dolt remote add origin <url>"
   fi
+  # What init wrote outside .beads/ - its .gitignore lines, a lock file - so `git add' is no surprise.
+  local extra
+  extra="$(comm -13 <(printf '%s\n' "$before" | sort) <(printf '%s\n' "$after" | sort) \
+    | awk '{print $2}' | grep -v '^\.beads/' | tr '\n' ' ')" || extra=""
+  [[ -z "${extra// /}" ]] || echo "  bd init also wrote: $extra"
 }
 
 step_tools

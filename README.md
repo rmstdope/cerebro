@@ -108,7 +108,9 @@ for everything after this point.
 With the fleet up, type `/project-definition` into the orchestrator's or the architect's session.
 It interviews you about the project — what the software is, where it runs, what it is built with,
 what using it is like — refines the declarations and the instruction file from the answers, and
-files the opening epics on the board, ranked with you, so the fleet has work to start on.
+files the opening epics on the board, ranked with you, so the fleet has work to start on. Today
+the skill still expects a blank repository and writes its own declarations; until it is reworked to
+build on the installer's, answer its questions the same way you answered the installer.
 
 ## The fleet view
 

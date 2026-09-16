@@ -57,7 +57,7 @@ source "$repo_root/tests/lib/consumer.sh"
 # which the later steps need for real (the consumer root, the branch) and no case makes absent.
 bare="$work_dir/bare"
 mkdir -p "$bare"
-for t in bash dirname mkdir ln readlink rm basename find awk cut grep sed tr sort cat ls git; do
+for t in bash dirname mkdir ln readlink rm basename find awk cut grep sed tr sort cat ls tail comm git; do
   ln -s "$(command -v "$t")" "$bare/$t"
 done
 
@@ -94,6 +94,8 @@ run_install() {
   status=$?
   set -e
   err="$(cat "$work_dir/err")"
+  # A program missing from `bare' must turn a case red, not pass as an empty answer.
+  ! grep -q 'command not found' <<<"$err" || fail "a program the installer runs is not on the narrowed PATH: $err"
 }
 
 # --- every tool present -----------------------------------------------------------------------------
@@ -169,7 +171,7 @@ pass "a second run is a no-op and exits 0"
 declared="$(consumer_new declared --copy)"           # bare: nothing to detect
 mkdir -p "$declared/app"
 answers="$work_dir/answers"
-printf 'Ledger\ntrunk\nmember\n^app/\nmake check\nmake check-all\nnpm ci\n' > "$answers"
+printf 'Ledger\ntrunk\nmember\n^app/\nmake check && make lint\nmake check-all\nnpm ci\n' > "$answers"
 run_install "$all" "$declared"
 answers=/dev/null
 [[ $status -eq 0 ]] || fail "declare: expected exit 0, got $status; stderr: $err"
@@ -177,13 +179,13 @@ conf="$declared/.cerebro/project.conf"
 [[ -f "$conf" ]] || fail "declare: no $conf written"
 pc="$declared/.claude/cerebro/scripts/project-conf"
 for pair in project_name=Ledger default_branch=trunk audience_noun=member app_paths='^app/' \
-            gate_fast='make check' gate_full='make check-all' install='npm ci'; do
+            gate_fast='make check && make lint' gate_full='make check-all' install='npm ci'; do
   k="${pair%%=*}"; v="${pair#*=}"
   [[ "$("$pc" "$k" 2>/dev/null)" == "$v" ]] || fail "declare: $k: expected '$v', got '$("$pc" "$k" 2>/dev/null)'"
 done
 [[ "$("$declared/.claude/cerebro/scripts/app-paths" 2>/dev/null)" == '^app/' ]] || fail "declare: app-paths does not answer"
 grep -Eq "^ +wrote +\.cerebro/project\.conf" <<<"$out" || fail "declare: expected a wrote line: $out"
-pass "the interview's answers are the declaration, and every reader answers from it"
+pass "the interview's answers are the declaration, and every reader answers from it (a gate with && included)"
 
 # Every other key the scripts read is there to be found, and off.
 for k in install_shell prewarm disk_floor_gb reclaim_dirs rust_paths launch_targets port_base \
@@ -230,7 +232,6 @@ printf 'default tool=claude\n' > "$kept/.cerebro/agents.conf"
 printf '# Traps\n\n- one\n' > "$kept/.cerebro/traps.md"
 printf '.cerebro/worktrees\n.cerebro/state\n.cerebro/scratch\n' > "$kept/.gitignore"
 mkdir -p "$kept/.beads"
-mkdir -p "$kept/.beads"
 run_install "$all" "$kept"
 [[ $status -eq 0 ]] || fail "kept: expected exit 0, got $status; stderr: $err"
 [[ "$(cat "$kept/.cerebro/project.conf")" == "$(printf 'project_name  Mine\napp_paths ^x/\ngate_fast true')" ]] \
@@ -250,8 +251,6 @@ pass "an existing traps.md is kept untouched too"
 [[ "$(wc -l < "$kept/.gitignore")" -eq 3 ]] || fail "kept: .gitignore grew: $(cat "$kept/.gitignore")"
 grep -Eq "^ +kept +\.gitignore" <<<"$out" || fail "kept: expected a kept line for .gitignore: $out"
 pass "a .gitignore that already ignores the runtime is kept, and not asked about"
-grep -Eq "^ +kept +the board" <<<"$out" || fail "kept: expected a kept line for the board: $out"
-pass "an existing board is kept, and not asked about"
 grep -Eq "^ +kept +the board" <<<"$out" || fail "kept: expected a kept line for the board: $out"
 pass "an existing board is kept, and not asked about"
 
@@ -282,7 +281,7 @@ pass "a second run leaves .gitignore as it was"
 
 # An existing .gitignore is appended to, keeping what it had; a line already there is not repeated.
 own="$(new_consumer own)"
-printf 'node_modules/\n.cerebro/state\n' > "$own/.gitignore"
+printf 'node_modules/\n.cerebro/state' > "$own/.gitignore"       # no trailing newline, on purpose
 answers="$work_dir/own-answers"
 { printf '\n\n\n\n\n\n\n'; printf '\n\n\n\n\n\n\n\n\n\n\n\n'; printf '\n\n\n\n\n'; printf 'personal\n'; } > "$answers"
 run_install "$all" "$own"
@@ -294,15 +293,32 @@ grep -qx '\.cerebro/worktrees' "$own/.gitignore" || fail "own: .cerebro/worktree
 grep -qx '\.cerebro/agents\.conf' "$own/.gitignore" || fail "own: a personal agents.conf was not ignored"
 git -C "$own" check-ignore -q .cerebro/agents.conf || fail "own: agents.conf is not ignored"
 grep -Eq "^ +wrote +\.gitignore" <<<"$out" || fail "own: expected a wrote line: $out"
+[[ "$(sed -n '2,4p' "$own/.gitignore")" == "$(printf '.cerebro/state\n\n# Cerebro writes these while the fleet runs; the declarations beside them are tracked.')" ]] \
+  || fail "own: a file without a trailing newline was not repaired before the block: $(cat "$own/.gitignore")"
 pass "an existing .gitignore keeps its lines, gains the missing ones, and a personal agents.conf"
 
 # --- 8. the board: bd init with a prefix, and the Dolt remote from origin ---------------------------
-# A `bd' that logs what it was asked and leaves a `.beads/' behind on init, like the real one.
+# A `bd' that logs what it was asked and behaves like the real one where the step depends on it
+# (probed against bd HEAD-62d2119): `init' makes `.beads/' and configures the Dolt remote from the
+# git origin when there is one, as `git+<url>'; `dolt remote list' prints it; `dolt remote add'
+# refuses a URL equal to the git origin, exit 1.
 logging_bd="$(stubs gh jq claude cargo)"
 cat > "$logging_bd/bd" <<'STUB'
 #!/usr/bin/env bash
 echo "$*" >> "$BD_LOG"
-[[ "$1" == init ]] && mkdir -p .beads
+origin="$(git remote get-url origin 2>/dev/null || true)"
+case "$1 ${2:-} ${3:-}" in
+  "init  "*|"init "*)
+    mkdir -p .beads
+    [[ -z "$origin" ]] || printf 'origin\tgit+%s\n' "$origin" > .beads/remotes ;;
+  "dolt remote list") [[ -f .beads/remotes ]] && cat .beads/remotes ;;
+  "dolt remote add")
+    if [[ "${5:-}" == "$origin" ]]; then
+      echo "Error: refusing to add \"$5\" as a Dolt remote - this URL matches the git origin." >&2
+      exit 1
+    fi
+    printf '%s\t%s\n' "$4" "$5" >> .beads/remotes ;;
+esac
 exit 0
 STUB
 chmod +x "$logging_bd/bd"
@@ -312,12 +328,12 @@ export BD_LOG="$work_dir/board.log"
 run_install "$logging_bd" "$board"
 [[ $status -eq 0 ]] || fail "board: expected exit 0, got $status; stderr: $err"
 grep -q '\[bd\]' <<<"$out" || fail "board: expected the prefix proposed from the name 'board': $out"
-grep -qx 'init --prefix bd --quiet --non-interactive' "$BD_LOG" || fail "board: bd init not run as expected: $(cat "$BD_LOG")"
-grep -qx "dolt remote add origin $(git -C "$board" remote get-url origin)" "$BD_LOG" \
-  || fail "board: the Dolt remote was not origin's URL: $(cat "$BD_LOG")"
+grep -qx 'init --prefix bd --quiet --non-interactive --skip-agents' "$BD_LOG" || fail "board: bd init not run as expected: $(cat "$BD_LOG")"
+! grep -q 'remote add' "$BD_LOG" || fail "board: a remote was added over the one init configured: $(cat "$BD_LOG")"
 [[ -d "$board/.beads" ]] || fail "board: no .beads/ after init"
-grep -Eq "^ +wrote +the board" <<<"$out" || fail "board: expected a wrote line: $out"
-pass "the board is initialised with a proposed prefix, and its remote is the repository's origin"
+grep -Eq "^ +wrote +the board .*git\+$(git -C "$board" remote get-url origin)" <<<"$out" \
+  || fail "board: expected the remote init configured to be reported: $out"
+pass "the board is initialised with a proposed prefix and no agent files, and init's own remote is reported"
 
 # A second run finds the board and runs nothing.
 : > "$BD_LOG"
@@ -335,10 +351,11 @@ answers="$work_dir/noorigin-answers"
 run_install "$logging_bd" "$noorigin"
 answers=/dev/null
 [[ $status -eq 0 ]] || fail "noorigin: expected exit 0, got $status; stderr: $err"
-grep -qx 'init --prefix nx --quiet --non-interactive' "$BD_LOG" || fail "noorigin: the typed prefix was not used: $(cat "$BD_LOG")"
-grep -qx 'dolt remote add origin https://example.com/x.git' "$BD_LOG" || fail "noorigin: the remote was not added: $(cat "$BD_LOG")"
+grep -qx 'init --prefix nx --quiet --non-interactive --skip-agents' "$BD_LOG" || fail "noorigin: the typed prefix was not used: $(cat "$BD_LOG")"
 [[ "$(git -C "$noorigin" remote get-url origin)" == "https://example.com/x.git" ]] || fail "noorigin: git has no origin"
-pass "with no origin the URL is asked for, and becomes both git's origin and the board's remote"
+! grep -q 'remote add' "$BD_LOG" || fail "noorigin: a remote was added over the one init took from the new origin: $(cat "$BD_LOG")"
+grep -q 'git+https://example.com/x.git' <<<"$out" || fail "noorigin: expected the remote reported: $out"
+pass "with no origin the URL is asked for, becomes git's origin, and init takes it as the board's remote"
 
 # No origin and no URL: the board still exists, and the missing remote is said, not refused.
 noremote="$(new_consumer noremote)"

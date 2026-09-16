@@ -270,6 +270,10 @@ in the `docs/ui/` house style (no build step, no external assets, inline SVG), i
   planning; run each item through the cost test, decide yours, ask the rest.
 - **Never present one option.** At least two variants that differ visibly, with the cost of the
   difference in one line. A detail you decide is not presented.
+- **Recommend one option whenever you present variants.** Base the recommendation first on an
+  established industry-standard interaction pattern for this case. If there is no clear standard,
+  recommend the most user-friendly option (lowest cognitive load, clearest wording, fewest error-prone
+  steps). Name the reason in one line.
 - **A chosen variant opens the walk.** Settle each of:
   - the states: empty, loading, error, too many, too few, too long;
   - cancel and Escape: what closes it, what it leaves, whether anything was written;

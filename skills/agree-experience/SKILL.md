@@ -171,6 +171,9 @@ Rewrite the title in the product's words, never quoted. Offer no choice of work.
 
 Follow *Interview, don't ask*. After the links, ask the next open question at once (checking the
 drawings were opened) or go to *Recording it* — no confirmation-only question or progress notice.
+When you offer variants, recommend one: prefer an established industry-standard pattern for that
+interaction; if there is no clear standard, recommend the most user-friendly option and say why in
+one line.
 
 Once a variant is chosen, walk the surface. This **is** your work:
 

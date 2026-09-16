@@ -110,7 +110,9 @@ step_links() {
 # `src/', the gate and install command `project-conf' itself detects), and every other key present
 # in the file but commented out, one line and one meaning each - templates/project.conf is the
 # file. Answers are read from stdin, so a pipe works as well as a person; an empty answer takes the
-# default, and a required key with no default and no answer refuses before anything is written. An
+# default, and a required key with no default and no answer refuses before anything is written.
+# The gates and the install command may be left empty - a new project has none yet - and are then
+# written commented out, with a line saying an implementer will not start until a gate exists. An
 # existing file is kept whole: after the first run it is the project's, and edited by hand.
 
 # ask <var> <prompt> <default> [optional]  ->  sets <var>; an empty default with an empty answer
@@ -165,26 +167,42 @@ step_declare() {
   ask project_name   "Project name" "$d_name" || return 1
   ask default_branch "Default branch, the one the fleet merges to" "$d_branch" || return 1
   ask audience_noun  "What the agents call the people who use it (user, member, player, ...)" "user" || return 1
-  ask app_paths      "Which changed paths those people could see, as a regex (e.g. ^src/)" "$d_app" || return 1
-  ask gate_fast      "The gate an implementer runs before it opens a pull request" "$d_fast" || return 1
-  ask gate_full      "The gate a pull request is judged by" "${d_full:-$gate_fast}" || return 1
+  echo "  The application is what those people see. Which repository paths belong to it, as an"
+  echo "  extended regex matched against each changed path? e.g. ^src/ or ^(app|packages)/. A change"
+  echo "  anywhere else - docs, tests, CI, the fleet's own files - counts as invisible to them, and"
+  echo "  is neither verified by hand nor released."
+  ask app_paths      "  application paths" "$d_app" || return 1
+  echo "  The gate: what an implementer runs before it opens a pull request, and what a pull request"
+  echo "  is judged by. A new project may have none yet - leave it empty, and declare it in"
+  echo "  .cerebro/project.conf before the first implementer starts; none starts without one."
+  ask gate_fast      "  fast gate" "$d_fast" optional || return 1
+  if [[ -n "$gate_fast" ]]; then
+    ask gate_full    "  full gate" "${d_full:-$gate_fast}" || return 1
+  else
+    gate_full=""
+  fi
   printf '  %s\n' "What installs dependencies into a fresh worktree - empty when nothing does"
-  ask install        "  install command" "$d_install" 2>/dev/null || install=""
+  ask install        "  install command" "$d_install" optional || return 1
 
-  local install_line
+  local install_line gate_lines
   if [[ -n "$install" ]]; then install_line="install        $install"; else install_line="#install        <command>"; fi
+  if [[ -n "$gate_fast" ]]; then
+    gate_lines="gate_fast      $gate_fast"$'\n'"gate_full      $gate_full"
+  else
+    gate_lines="#gate_fast      <command>"$'\n'"#gate_full      <command>"
+  fi
 
   body="$(cat "$template")"
   body="${body//\{\{project_name\}\}/$project_name}"
   body="${body//\{\{default_branch\}\}/$default_branch}"
   body="${body//\{\{audience_noun\}\}/$audience_noun}"
   body="${body//\{\{app_paths\}\}/$app_paths}"
-  body="${body//\{\{gate_fast\}\}/$gate_fast}"
-  body="${body//\{\{gate_full\}\}/$gate_full}"
+  body="${body//\{\{gate_lines\}\}/$gate_lines}"
   body="${body//\{\{install_line\}\}/$install_line}"
   mkdir -p "$root/.cerebro"
   printf '%s\n' "$body" > "$conf"
   report wrote ".cerebro/project.conf"
+  [[ -n "$gate_fast" ]] || echo "  No gate declared: an implementer will not start until gate_fast is set in .cerebro/project.conf."
 }
 
 # --- 4. the fleet ----------------------------------------------------------------------------------

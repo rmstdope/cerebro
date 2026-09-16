@@ -216,6 +216,27 @@ grep -Eq '^#[[:space:]]*install\b' "$detected/.cerebro/project.conf" \
   || fail "detected: with nothing to install, install should be commented out"
 pass "each default is detected and shown, and an empty answer takes it"
 
+# --- a new project has no gate yet: the gates may be left empty, and the file says what that costs --
+nogate="$(consumer_new nogate --copy)"
+mkdir -p "$nogate/app"                               # an app_paths default, no Makefile: no gate to detect
+run_install "$all" "$nogate"
+[[ $status -eq 0 ]] || fail "nogate: expected exit 0, got $status; stderr: $err"
+conf="$nogate/.cerebro/project.conf"
+pc="$nogate/.claude/cerebro/scripts/project-conf"
+grep -Eq '^#[[:space:]]*gate_fast\b' "$conf" || fail "nogate: gate_fast should be present and commented out: $(cat "$conf")"
+grep -Eq '^#[[:space:]]*gate_full\b' "$conf" || fail "nogate: gate_full should be present and commented out"
+[[ -z "$("$pc" gate_fast 2>/dev/null)" ]] || fail "nogate: a gate was declared from nothing: $("$pc" gate_fast)"
+[[ "$(grep -cEv '^[[:space:]]*(#|$)' "$conf")" -eq 4 ]] \
+  || fail "nogate: expected four live keys, got: $(grep -Ev '^[[:space:]]*(#|$)' "$conf")"
+grep -q 'gate_fast' <<<"$out" && grep -qi 'implementer' <<<"$out" \
+  || fail "nogate: expected a line saying an implementer needs gate_fast before it starts: $out"
+pass "with no gate to detect the gates are left empty, written commented out, and the cost is said"
+
+# The app_paths question explains what it is asking for before it asks.
+grep -q 'extended regex' <<<"$out" && grep -qi 'invisible' <<<"$out" \
+  || fail "app_paths: expected the question to explain the regex and what counts as invisible: $out"
+pass "the app_paths question explains itself"
+
 # --- a required key with no default and no answer refuses, and writes nothing ---------------------
 bare_c="$(consumer_new bare-c --copy)"
 run_install "$all" "$bare_c"

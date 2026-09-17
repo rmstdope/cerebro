@@ -250,6 +250,20 @@ run_in "$c" --name Beast --role planner
 expect_hit Beast claude research "" "an invalid unselected definition"
 pass "an invalid unselected external definition does not disrupt another selection"
 
+c="$(new_consumer \
+  'external research openai https://api.openai.com/v1 ${OPENAI_API_KEY} gpt-5.4' \
+  'Beast tool=copilot model=research')"
+set +e
+out="$(cd "$c" && env -u CEREBRO_CONSUMER_ROOT -u CEREBRO_CONSUMER_SHARED_ROOT -u CEREBRO_CONSUMER_MOUNT \
+         /bin/bash "$c/.claude/cerebro/scripts/agents-conf" --name Beast --role planner \
+         2>"$work_dir/stderr")"
+status=$?
+set -e
+err="$(cat "$work_dir/stderr")"
+expect_external Beast copilot gpt-5.4 "" research openai https://api.openai.com/v1 OPENAI_API_KEY \
+  "an external definition under /bin/bash"
+pass "an external definition resolves under /bin/bash, including bash 3.2 with nounset"
+
 # --- 6: the three refusals ----------------------------------------------------------------------
 #
 # The sentences are the ones the navigator agreed at the design stage, asserted byte for byte. The

@@ -1623,13 +1623,17 @@ fn work_document(app: &App, now: DateTime<Utc>, width: usize) -> Vec<Line<'stati
                 format!("{title} {count}"),
                 Style::default().add_modifier(Modifier::BOLD),
             )),
-            app::WorkBodyLine::Bead { bead, suffix } => {
+            app::WorkBodyLine::Bead { bead, suffix, tone } => {
                 let line = work_row(bead, width, suffix.as_deref());
+                let mut style = match tone {
+                    Some(app::WorkBeadTone::Ready) => Style::default().fg(GREEN),
+                    Some(app::WorkBeadTone::Waiting) => Style::default().fg(GOLD),
+                    None => Style::default(),
+                };
                 if selected {
-                    line.style(Style::default().bg(SELECTED_BG))
-                } else {
-                    line
+                    style = style.bg(SELECTED_BG);
                 }
+                line.style(style)
             }
             app::WorkBodyLine::Empty => Line::from(Span::styled("  (none)", dim())),
             app::WorkBodyLine::GiveRow { candidate, name_width, selected } => {
@@ -4924,6 +4928,29 @@ mod tests {
         // The prefix is never truncated, whatever it costs: an id is a key, not a label.
         let over = line_with(&rendered, "cb-verylongid");
         assert!(over.starts_with("  cb-verylongid P1 short"), "{over:?}");
+    }
+
+    #[test]
+    fn planned_unclaimed_rows_are_colored_by_readiness() {
+        let app = work_app(WorkBuckets {
+            planned: vec![
+                bead("cb-ready", Some(1), "can start now"),
+                bead("cb-wait", Some(1), "blocked by dependency"),
+            ],
+            assignable: vec!["cb-ready".to_string()],
+            ..WorkBuckets::default()
+        });
+        let buffer = render(&app, 99, 40);
+        assert_eq!(
+            style_on_line(&buffer, "cb-ready", "cb-ready").fg,
+            Some(GREEN),
+            "ready planned rows are green"
+        );
+        assert_eq!(
+            style_on_line(&buffer, "cb-wait", "cb-wait").fg,
+            Some(GOLD),
+            "waiting planned rows are yellow"
+        );
     }
 
     #[test]

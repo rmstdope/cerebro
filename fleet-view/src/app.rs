@@ -100,6 +100,15 @@ pub enum PaneContent<T> {
     },
 }
 
+/// Optional emphasis for a bead row in the Work pane.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WorkBeadTone {
+    /// A planned, unclaimed bead an implementer could take right now.
+    Ready,
+    /// A planned, unclaimed bead waiting on blockers.
+    Waiting,
+}
+
 impl<T> PaneContent<T> {
     /// The held value, to be changed in place. The one caller is `App::begin_write`, applying the
     /// overlay to the buckets already on screen so the row changes on the keystroke's own frame.
@@ -1014,7 +1023,11 @@ pub enum WorkBodyLine<'a> {
     /// A line of the work pane's own failure states. Never selectable.
     Notice(WorkNotice),
     SectionHeader { title: &'static str, count: usize },
-    Bead { bead: &'a Bead, suffix: Option<String> },
+    Bead {
+        bead: &'a Bead,
+        suffix: Option<String>,
+        tone: Option<WorkBeadTone>,
+    },
     /// `  (none)`.
     Empty,
     /// The `+N more` row, or the `all N shown` row of an open section.
@@ -1535,6 +1548,8 @@ fn sections_body<'a>(
         ("Waiting on you", &buckets.paused, SectionKind::Paused),
         ("Merged, unverified", &buckets.merged, SectionKind::Merged),
     ];
+    let planned_ready: std::collections::BTreeSet<String> =
+        buckets.assignable.iter().cloned().collect();
     let mut body = Vec::new();
     for (index, (title, beads, kind)) in sections.into_iter().enumerate() {
         // The one section that is hidden rather than shown as `(none)': in a project running the
@@ -1547,7 +1562,7 @@ fn sections_body<'a>(
         if index > 0 {
             body.push(WorkBodyLine::Blank);
         }
-        body.extend(section_body(app, title, beads, kind, now));
+        body.extend(section_body(app, title, beads, kind, &planned_ready, now));
     }
     body
 }
@@ -1561,6 +1576,7 @@ fn section_body<'a>(
     title: &'static str,
     beads: &'a [Bead],
     kind: SectionKind,
+    planned_ready: &std::collections::BTreeSet<String>,
     now: DateTime<Utc>,
 ) -> Vec<WorkBodyLine<'a>> {
     let sorted = match kind {
@@ -1577,7 +1593,16 @@ fn section_body<'a>(
     let shown = if expanded { sorted.len() } else { WORK_ROWS_PER_SECTION };
     for bead in sorted.iter().take(shown) {
         let suffix = row_suffix(bead, kind, now);
-        body.push(WorkBodyLine::Bead { bead, suffix });
+        let tone = if title == "Planned, unclaimed" {
+            if planned_ready.contains(&bead.id) {
+                Some(WorkBeadTone::Ready)
+            } else {
+                Some(WorkBeadTone::Waiting)
+            }
+        } else {
+            None
+        };
+        body.push(WorkBodyLine::Bead { bead, suffix, tone });
         if let Some(picker) = app.give.as_ref().filter(|p| p.bead == bead.id) {
             let candidates = crate::give::candidates(
                 bead,
@@ -7454,7 +7479,7 @@ mod tests {
         let body = work_body(&app, at(3600));
         let suffix_of = |id: &str| -> Option<String> {
             body.iter().find_map(|l| match l {
-                WorkBodyLine::Bead { bead, suffix } if bead.id == id => Some(suffix.clone()),
+                WorkBodyLine::Bead { bead, suffix, .. } if bead.id == id => Some(suffix.clone()),
                 _ => None,
             })
             .expect("the row is drawn")
@@ -7540,6 +7565,31 @@ mod tests {
             })
             .expect("the row is drawn");
         assert_eq!(priority, Some(0));
+    }
+
+    #[test]
+    fn planned_unclaimed_rows_carry_ready_or_waiting_tone() {
+        let mut app = App::default();
+        app.finish_work_refresh(
+            Ok(WorkBuckets {
+                planned: vec![test_bead("cb-ready", Some(2)), test_bead("cb-wait", Some(2))],
+                assignable: vec!["cb-ready".to_string()],
+                ..WorkBuckets::default()
+            }),
+            at(0),
+        );
+
+        let body = work_body(&app, at(0));
+        let tone_of = |id: &str| {
+            body.iter()
+                .find_map(|line| match line {
+                    WorkBodyLine::Bead { bead, tone, .. } if bead.id == id => Some(*tone),
+                    _ => None,
+                })
+                .expect("the row is drawn")
+        };
+        assert_eq!(tone_of("cb-ready"), Some(WorkBeadTone::Ready));
+        assert_eq!(tone_of("cb-wait"), Some(WorkBeadTone::Waiting));
     }
 
     #[test]

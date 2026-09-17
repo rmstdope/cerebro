@@ -363,7 +363,14 @@ bd dolt push
 ```
 
 For an epic sweep done as one run, apply the same `passed` update to every child you swept (and the
-epic id itself), then push.
+epic id itself), then push. Use the family helper so closure and verdict stay aligned:
+
+```bash
+.claude/cerebro/scripts/verifier-pass-epic-family <epic-id> --sha <full sha>
+```
+
+It closes any still-open member of the family, sets `verification=passed` on the epic and every
+child, writes `verified_at=<full sha>` on each, removes `verdict:stale`, and pushes once.
 
 **2. Passed, with a follow-up.** Mark it passed as above, **and** file the niggle:
 
@@ -373,7 +380,8 @@ bd update <id> --set-metadata verified_at=<full sha>
 bd dolt push
 ```
 
-For an epic sweep, name the epic and affected child ids in the follow-up description.
+For an epic sweep, run `verifier-pass-epic-family` first, then name the epic and affected child ids
+in the follow-up description.
 
 `--priority 4`, unranked, as *Writing a good bead* in `beads-workflow` says for all new work.
 

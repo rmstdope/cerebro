@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+#
+# The one place a full epic verification is recorded across the whole family.
+#
+#     .claude/cerebro/scripts/verifier-pass-epic-family <epic-id> --sha <full-sha> [--reason <line>]
+#
+# It ensures every bead in the family (the epic and every descendant `<epic-id>.*`) is closed and
+# marked verification=passed at the sha that was verified.
+#
+#   exit 0  family updated and pushed
+#   exit 1  a bd call failed; the family may be partially updated
+#   exit 2  usage error / missing epic / malformed sha
+
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+usage() {
+  echo "usage: verifier-pass-epic-family <epic-id> --sha <full-sha> [--reason <line>]" >&2
+  exit 2
+}
+
+epic_id="${1:-}"
+[[ -n "$epic_id" ]] || usage
+case "$epic_id" in
+  -*) usage ;;
+esac
+shift
+
+sha=""
+reason=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --sha) [[ $# -ge 2 ]] || usage; sha="$2"; shift 2 ;;
+    --reason) [[ $# -ge 2 ]] || usage; reason="$2"; shift 2 ;;
+    *)
+      echo "verifier-pass-epic-family: unknown argument '$1'" >&2
+      exit 2
+      ;;
+  esac
+done
+
+if [[ -z "$sha" ]]; then
+  echo "verifier-pass-epic-family: --sha is required (the full 40-character commit that was verified)" >&2
+  exit 2
+fi
+if ! [[ "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "verifier-pass-epic-family: --sha must be a full 40-character hex commit, not '$sha'" >&2
+  exit 2
+fi
+
+root="$("$script_dir/consumer-root" --shared 2>/dev/null)" || {
+  echo "verifier-pass-epic-family: not in a git repository, or this copy of cerebro has no consumer" >&2
+  exit 1
+}
+
+die_step() {
+  echo "verifier-pass-epic-family: $1 failed for '$2'; the family may be partially updated - re-running is safe" >&2
+  exit 1
+}
+
+if ! all_beads="$(bd -C "$root" list --status open,in_progress,blocked,deferred,closed --exclude-type event --json --brief)"; then
+  echo "verifier-pass-epic-family: bd list failed" >&2
+  exit 1
+fi
+if ! jq -e . >/dev/null 2>&1 <<<"$all_beads"; then
+  echo "verifier-pass-epic-family: bd list printed something that is not JSON" >&2
+  exit 1
+fi
+
+is_epic="$(
+  jq -r --arg epic "$epic_id" '
+    [.[] | select(.id == $epic) | .issue_type][0] // empty
+  ' <<<"$all_beads"
+)"
+if [[ -z "$is_epic" ]]; then
+  echo "verifier-pass-epic-family: no such bead '$epic_id'" >&2
+  exit 2
+fi
+if [[ "$is_epic" != "epic" ]]; then
+  echo "verifier-pass-epic-family: '$epic_id' is not an epic (issue_type=$is_epic)" >&2
+  exit 2
+fi
+
+family_json="$(
+  jq -c --arg epic "$epic_id" '
+    [.[] | select(.id == $epic or (.id | startswith($epic + ".")))]
+  ' <<<"$all_beads"
+)"
+family_count="$(jq 'length' <<<"$family_json")"
+if [[ "$family_count" -eq 0 ]]; then
+  echo "verifier-pass-epic-family: no family beads found for '$epic_id'" >&2
+  exit 2
+fi
+
+short=""
+if git -C "$root" cat-file -e "$sha^{commit}" 2>/dev/null; then
+  short="$(git -C "$root" rev-parse --short "$sha" 2>/dev/null || true)"
+fi
+[[ -n "$short" ]] || short="${sha:0:8}"
+[[ -n "$reason" ]] || reason="verified by the navigator at $short"
+
+while IFS= read -r row; do
+  [[ -n "$row" ]] || continue
+  id="$(jq -r '.id' <<<"$row")"
+  status="$(jq -r '.status // empty' <<<"$row")"
+
+  if [[ "$status" != "closed" ]]; then
+    bd -C "$root" close "$id" --reason "Closed as part of epic verification sweep for $epic_id at $short" \
+      || die_step "bd close" "$id"
+  fi
+
+  bd -C "$root" set-state "$id" verification=passed --reason "$reason" \
+    || die_step "set-state verification=passed" "$id"
+  bd -C "$root" update "$id" --set-metadata "verified_at=$sha" \
+    || die_step "setting verified_at metadata" "$id"
+  bd -C "$root" update "$id" --remove-label "verdict:stale" \
+    || die_step "removing verdict:stale" "$id"
+done < <(jq -c '.[]' <<<"$family_json")
+
+bd -C "$root" dolt push || die_step "bd dolt push" "$epic_id"

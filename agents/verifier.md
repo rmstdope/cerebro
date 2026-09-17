@@ -125,13 +125,18 @@ You verify in two queues, in this order.
 
 #### 1. Epic sweeps (first)
 
-An epic is ready only when every child is merged (closed). Take those first:
+An epic family is ready only when every child is merged (closed). Take those first:
 
 ```bash
-bd epic status --eligible-only --json | jq -r '.[].epic.id'
+.claude/cerebro/scripts/verifier-epic-candidates
 ```
 
-For each eligible epic, list children and verify the family in one sweep once:
+This list includes:
+
+- open eligible epics (as before); and
+- closed epics whose children are all closed, when the epic or any child is still unverified.
+
+For each listed epic, list children and verify the family in one sweep once:
 
 ```bash
 bd children <epic-id> --json | jq -r '.[].id'

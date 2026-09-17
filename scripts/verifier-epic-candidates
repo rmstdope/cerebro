@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+#
+# The epic families Psylocke should verify now, one epic id per line.
+# A family is due when:
+#   1) the epic has children, and every child is closed; and
+#   2) the epic or at least one child is still unverified
+#      (no `verification:passed` / `verification:not-needed` label).
+#
+# This keeps open eligible epics in, and also keeps CLOSED epics in once their last child closes.
+#
+#     .claude/cerebro/scripts/verifier-epic-candidates
+
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$("$script_dir/consumer-root" --shared 2>/dev/null)" || {
+  echo "verifier-epic-candidates: not in a git repository, or this copy of cerebro has no consumer" >&2
+  exit 1
+}
+
+if ! all_beads="$(bd -C "$repo_root" list --status open,closed --exclude-type event --json --brief)"; then
+  echo "verifier-epic-candidates: bd list failed" >&2
+  exit 1
+fi
+if ! jq -e . >/dev/null 2>&1 <<<"$all_beads"; then
+  echo "verifier-epic-candidates: bd list printed something that is not JSON" >&2
+  exit 1
+fi
+
+epic_ids="$(jq -r '.[] | select(.issue_type == "epic") | .id' <<<"$all_beads")"
+
+family_settled_jq='((.labels // []) | index("verification:passed") != null or index("verification:not-needed") != null)'
+
+while IFS= read -r epic_id; do
+  [[ -n "$epic_id" ]] || continue
+
+  if ! children="$(bd -C "$repo_root" children "$epic_id" --json)"; then
+    echo "verifier-epic-candidates: bd children failed for $epic_id" >&2
+    exit 1
+  fi
+  if ! jq -e . >/dev/null 2>&1 <<<"$children"; then
+    echo "verifier-epic-candidates: bd children printed something that is not JSON for $epic_id" >&2
+    exit 1
+  fi
+
+  child_count="$(jq 'length' <<<"$children")"
+  [[ "$child_count" -gt 0 ]] || continue
+
+  all_children_closed="$(jq '[.[] | select(.status != "closed")] | length == 0' <<<"$children")"
+  [[ "$all_children_closed" == "true" ]] || continue
+
+  epic_settled="$(jq -r --arg id "$epic_id" \
+    ".[] | select(.id == \$id) | $family_settled_jq" <<<"$all_beads")"
+  [[ -n "$epic_settled" ]] || epic_settled=false
+
+  unsettled_children="$(jq \
+    "[.[] | select(($family_settled_jq) | not)] | length" <<<"$children")"
+
+  if [[ "$epic_settled" != "true" || "$unsettled_children" -gt 0 ]]; then
+    printf '%s\n' "$epic_id"
+  fi
+done <<<"$epic_ids"

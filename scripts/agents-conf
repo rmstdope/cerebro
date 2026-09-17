@@ -132,7 +132,7 @@ while IFS= read -r line || [[ -n "$line" ]]; do
     [[ -n "$external_name" ]] || continue
 
     duplicate=""
-    for existing_name in "${external_names[@]}"; do
+    for existing_name in ${external_names+"${external_names[@]}"}; do
       [[ "$existing_name" == "$external_name" ]] && duplicate=1
     done
     [[ -n "$duplicate" ]] && continue

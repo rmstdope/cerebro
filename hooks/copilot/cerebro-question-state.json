@@ -2,13 +2,13 @@
   "version": 1,
   "hooks": {
     "preToolUse": [
-      { "type": "command", "matcher": "ask_user", "bash": "\"$CEREBRO_SCRIPTS/agent-asking\" begin" }
+      { "type": "command", "matcher": "ask_user", "bash": "[ -n \"$CEREBRO_SCRIPTS\" ] && \"$CEREBRO_SCRIPTS/agent-asking\" begin || true" }
     ],
     "postToolUse": [
-      { "type": "command", "matcher": "ask_user", "bash": "\"$CEREBRO_SCRIPTS/agent-asking\" end" }
+      { "type": "command", "matcher": "ask_user", "bash": "[ -n \"$CEREBRO_SCRIPTS\" ] && \"$CEREBRO_SCRIPTS/agent-asking\" end || true" }
     ],
     "postToolUseFailure": [
-      { "type": "command", "matcher": "ask_user", "bash": "\"$CEREBRO_SCRIPTS/agent-asking\" end" }
+      { "type": "command", "matcher": "ask_user", "bash": "[ -n \"$CEREBRO_SCRIPTS\" ] && \"$CEREBRO_SCRIPTS/agent-asking\" end || true" }
     ]
   }
 }

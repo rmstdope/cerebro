@@ -1,17 +1,16 @@
 #!/usr/bin/env bash
 #
-# Proves `scripts/assignable-beads`: the one place "which beads may an implementer be given" is
-# answered (cb-10d.1). The fleet view's work reader and `scripts/assign-bead` both call it, so they
-# cannot disagree about what a builder may take.
+# Proves `scripts/bugfix-candidates`: the one place "which beads may a bugfixer be given" is
+# answered.
 #
-#     bash tests/assignable-beads.sh
+#     bash tests/bugfix-candidates.sh
 
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$repo_root/tests/lib/consumer.sh"
 
-consumer="$(consumer_new repo --link assignable-beads consumer-root)"
+consumer="$(consumer_new repo --link bugfix-candidates consumer-root)"
 stub="$work_dir/stub"
 mkdir -p "$stub"
 cat > "$stub/bd" <<'STUB'
@@ -24,34 +23,32 @@ chmod +x "$stub/bd"
 
 run() {
   rm -f "$stub/bd.log"
-  STUB_DIR="$stub" PATH="$stub:$PATH" bash "$consumer/.claude/cerebro/scripts/assignable-beads" "$@"
+  STUB_DIR="$stub" PATH="$stub:$PATH" bash "$consumer/.claude/cerebro/scripts/bugfix-candidates" "$@"
 }
 
-# --- prints the ready planned beads sorted by priority then id ----------------------------------
+# --- prints the ready bugfix beads sorted by priority then id -----------------------------------
 
 cat > "$stub/ready.json" <<'JSON'
 [{"id":"cb-c","priority":1,"title":"c"},{"id":"cb-b","priority":0,"title":"b"},{"id":"cb-a","priority":1,"title":"a"}]
 JSON
 out="$(run)"
 [[ "$(jq -c . <<<"$out")" == '[{"id":"cb-b","priority":0},{"id":"cb-a","priority":1},{"id":"cb-c","priority":1}]' ]] \
-  || fail "the ready beads come back sorted by priority then id, got $out"
+  || fail "the bugfix candidates come back sorted by priority then id, got $out"
 log="$(cat "$stub/bd.log")"
-for want in --readonly " ready " "--label planned" "--exclude-label human" \
-            "--exclude-label verdict:stale" "--exclude-label bugfix" \
-            "--exclude-type epic" "-n 0" "--unassigned"; do
+for want in --readonly " ready " "--label bugfix" "--exclude-label human" \
+            "--exclude-label verdict:stale" "--exclude-type epic" "-n 0" "--unassigned"; do
   [[ "$log" == *"$want"* ]] || fail "bd is asked with $want, got: $log"
 done
-pass "prints the ready planned beads sorted by priority then id"
-pass "an assigned planned bead is never assignable (bd ready --unassigned)"
+pass "prints the ready bugfix beads sorted by priority then id"
 
-# --- any argument is a usage error --------------------------------------------------------------
+# --- any argument is a usage error ---------------------------------------------------------------
 
 status=0
 out="$(run --all 2>/dev/null)" || status=$?
 [[ $status -eq 2 && -z "$out" ]] || fail "an argument is exit 2 with nothing on stdout, got $status: $out"
 pass "any argument is a usage error"
 
-# --- a bd failure is exit 1 with nothing on stdout ----------------------------------------------
+# --- a bd failure is exit 1 with nothing on stdout -----------------------------------------------
 
 status=0
 out="$(BD_EXIT=1 run 2>/dev/null)" || status=$?

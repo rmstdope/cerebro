@@ -1457,6 +1457,9 @@ fn bead_for_start(app: &App, role: &str) -> Option<String> {
     if role == "implementer" {
         return buckets.assignable.iter().find(|id| !spoken.contains(*id)).cloned();
     }
+    if role == "bugfixer" {
+        return buckets.bugfixable.iter().find(|id| !spoken.contains(*id)).cloned();
+    }
     let free: Vec<cerebro_tui::model::Candidate> = buckets
         .candidates
         .get(role)?
@@ -1610,8 +1613,8 @@ fn arm_and_autostart(
 }
 
 /// The roles a spacing is asked about, once, at startup.
-const SPACED_ROLES: [&str; 6] =
-    ["planner", "implementer", "verifier", "orchestrator", "ux", "build-design"];
+const SPACED_ROLES: [&str; 7] =
+    ["planner", "implementer", "bugfixer", "verifier", "orchestrator", "ux", "build-design"];
 
 /// The startup line, naming both halves of the roster's declaration - because the declaration did
 /// both and only one of them is otherwise audible. An empty half drops its clause along with the
@@ -2701,7 +2704,7 @@ mod main_tests {
     /// cb-lz5 roles silently fall back to no spacing at all while their peers have one.
     #[test]
     fn spaced_roles_covers_every_board_backed_role() {
-        for role in ["planner", "implementer", "verifier", "orchestrator", "ux", "build-design"] {
+        for role in ["planner", "implementer", "bugfixer", "verifier", "orchestrator", "ux", "build-design"] {
             assert!(SPACED_ROLES.contains(&role), "{role} is asked about spacing");
         }
     }

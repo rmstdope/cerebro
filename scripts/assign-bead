@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Hand a bead to an implementer or a planning role before its session starts (cb-10d.1, cb-10d.2.1):
+# Hand a bead to a builder role or a planning role before its session starts (cb-10d.1, cb-10d.2.1):
 #
 #     .claude/cerebro/scripts/assign-bead <Name> <id>
 #
@@ -9,10 +9,11 @@
 #   exit 2  usage, NAME not on the roster, or NAME's role is none of the four below
 #   exit 3  the bead is not available to NAME: not in the role's queue and not already NAME's, or
 #           a planning role lost the assignment race (`bd update --if-assignee ""` exited 13)
-#   exit 4  an implementer's worktree could not be made: `disk-preflight` refused, the path holds
+#   exit 4  a builder worktree could not be made: `disk-preflight` refused, the path holds
 #           something that is not a worktree, or `prepare-worktree` failed (cb-10d.3)
 #
-# THE WORKTREE (cb-10d.3). For an implementer only, this script makes the tree the session works in:
+# THE WORKTREE (cb-10d.3). For a claim-based role (`implementer` or `bugfixer`), this script makes
+# the tree the session works in:
 # `.cerebro/worktrees/<id>` on branch `<id>` (or the first free `<id>-N`), by `prepare-worktree`,
 # after `disk-preflight` passed with the plan's workload (`non-rust` only when the plan says
 # `disk-preflight --workload non-rust`). A registered tree already at that path - an earlier
@@ -24,6 +25,7 @@
 # Which queue, and how the bead is taken, is decided by ROLE:
 #
 #   implementer   `assignable-beads`               claimed (`--claim`); NAME's when in_progress
+#   bugfixer      `bugfix-candidates`              claimed (`--claim`); NAME's when in_progress
 #   planner       `plan-candidates`                assigned; NAME's when open with assignee NAME
 #   ux            `stage-candidates ux`            assigned, likewise
 #   build-design  `stage-candidates build-design`  assigned, likewise
@@ -80,11 +82,12 @@ IFS=$'\t' read -r _ role kind <<<"$entry"
 # `interactive'. `candidates' is the role's own queue; `mode' is how the bead is taken.
 case "$role" in
   implementer)  candidates=("$script_dir/assignable-beads");              mode=claim ;;
+  bugfixer)     candidates=("$script_dir/bugfix-candidates");              mode=claim ;;
   planner)      candidates=("$script_dir/plan-candidates");               mode=assign ;;
   ux)           candidates=("$script_dir/stage-candidates" ux);           mode=assign ;;
   build-design) candidates=("$script_dir/stage-candidates" build-design); mode=assign ;;
   *)
-    echo "assign-bead: $name is a $role; only implementers and the planning roles are handed a bead" >&2
+    echo "assign-bead: $name is a $role; only implementers, bugfixers and the planning roles are handed a bead" >&2
     exit 2 ;;
 esac
 if [[ "$mode" == claim ]]; then

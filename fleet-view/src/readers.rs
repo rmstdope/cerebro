@@ -614,6 +614,7 @@ pub fn read_work(
 ) -> Result<WorkBuckets, ReadError> {
     let mut buckets = model::partition_beads(read_beads(paths, programs, commands)?);
     buckets.assignable = read_assignable(paths, commands)?;
+    buckets.bugfixable = read_bugfixable(paths, commands)?;
     // Sequential, on this one thread, in `BTreeSet` order: a pool would reorder which error is
     // reported. A failure fails the whole read, this module's standing rule (cb-10d.2.2).
     for role in planning_roles {
@@ -662,6 +663,29 @@ pub fn read_assignable(
     let args: [&str; 0] = [];
     let stdout = commands.run(&program, &args, None, BD_TIMEOUT)?;
     let parsed: Vec<Assignable> = serde_json::from_slice(&stdout).map_err(|e| ReadError::Invalid {
+        source: Invocation::new(&program, &args),
+        message: e.to_string(),
+    })?;
+    Ok(parsed.into_iter().map(|bead| bead.id).collect())
+}
+
+/// The beads a bugfixer may be handed, via `<scripts_dir>/bugfix-candidates`.
+/// Ids in the script's order. A failure is returned as itself: an empty list would say there is
+/// no bug to fix.
+pub fn read_bugfixable(
+    paths: &ReaderPaths,
+    commands: &dyn CommandRunner,
+) -> Result<Vec<String>, ReadError> {
+    #[derive(serde::Deserialize)]
+    struct Candidate {
+        id: String,
+        #[allow(dead_code)]
+        priority: Option<u8>,
+    }
+    let program = paths.scripts_dir.join("bugfix-candidates");
+    let args: [&str; 0] = [];
+    let stdout = commands.run(&program, &args, None, BD_TIMEOUT)?;
+    let parsed: Vec<Candidate> = serde_json::from_slice(&stdout).map_err(|e| ReadError::Invalid {
         source: Invocation::new(&program, &args),
         message: e.to_string(),
     })?;
@@ -1495,9 +1519,9 @@ mod tests {
 
         // Exactly one `bd` run, with the panel's whole argv - the shared root, every status,
         // `--readonly` and `--brief`.
-        // Exactly one `bd list`, plus the assignable-beads script (cb-10d.1).
+        // Exactly one `bd list`, plus the assignable-beads and bugfix-candidates scripts.
         let calls = fake.calls();
-        assert_eq!(calls.len(), 2, "one `bd` answer, not one per bucket, and one assignable read");
+        assert_eq!(calls.len(), 3, "one `bd` answer, not one per bucket, one assignable read, and one bugfix-candidates read");
         assert_eq!(calls[0].args, bd_argv(&paths.shared_root));
     }
 
@@ -1505,10 +1529,14 @@ mod tests {
     fn read_work_carries_the_assignable_beads_in_the_scripts_order() {
         let paths = paths_at(Path::new("/consumer"));
         let script = paths.scripts_dir.join("assignable-beads");
+        let bugfix_script = paths.scripts_dir.join("bugfix-candidates");
         let answers = script.clone();
+        let bugfix = bugfix_script.clone();
         let fake = FakeCommands::new(move |call: &Call| {
             if call.program == answers {
                 Ok(br#"[{"id":"cb-b","priority":0},{"id":"cb-a","priority":1}]"#.to_vec())
+            } else if call.program == bugfix {
+                Ok(b"[]".to_vec())
             } else {
                 Ok(BUCKETED_BEADS.as_bytes().to_vec())
             }
@@ -1528,9 +1556,12 @@ mod tests {
         let plan = paths.scripts_dir.join("plan-candidates");
         let stage = paths.scripts_dir.join("stage-candidates");
         let assignable = paths.scripts_dir.join("assignable-beads");
+        let bugfix = paths.scripts_dir.join("bugfix-candidates");
         let (plan_c, stage_c) = (plan.clone(), stage.clone());
         let fake = FakeCommands::new(move |call: &Call| {
             if call.program == assignable {
+                Ok(b"[]".to_vec())
+            } else if call.program == bugfix {
                 Ok(b"[]".to_vec())
             } else if call.program == plan_c {
                 Ok(br#"[{"id":"cb-p","priority":1}]"#.to_vec())
@@ -1569,10 +1600,13 @@ mod tests {
         let paths = paths_at(Path::new("/consumer"));
         let plan = paths.scripts_dir.join("plan-candidates");
         let assignable = paths.scripts_dir.join("assignable-beads");
+        let bugfix = paths.scripts_dir.join("bugfix-candidates");
         let fake = FakeCommands::new(move |call: &Call| {
             if call.program == plan {
                 Err(exit(1, "plan-candidates: work-beads failed"))
             } else if call.program == assignable {
+                Ok(b"[]".to_vec())
+            } else if call.program == bugfix {
                 Ok(b"[]".to_vec())
             } else {
                 Ok(BUCKETED_BEADS.as_bytes().to_vec())
@@ -1586,7 +1620,9 @@ mod tests {
     fn no_planning_roles_runs_no_candidate_script() {
         let paths = paths_at(Path::new("/consumer"));
         let fake = FakeCommands::new(|call: &Call| {
-            if call.program.ends_with("assignable-beads") {
+            if call.program.ends_with("assignable-beads")
+                || call.program.ends_with("bugfix-candidates")
+            {
                 Ok(b"[]".to_vec())
             } else {
                 Ok(BUCKETED_BEADS.as_bytes().to_vec())
@@ -1594,7 +1630,7 @@ mod tests {
         });
         let work = read_work(&paths, &Programs::default(), &fake, &BTreeSet::new()).unwrap();
         assert!(work.candidates.is_empty());
-        assert_eq!(fake.calls().len(), 2, "bd list and assignable-beads, nothing else");
+        assert_eq!(fake.calls().len(), 3, "bd list, assignable-beads and bugfix-candidates, nothing else");
     }
 
     #[test]
@@ -1609,9 +1645,12 @@ mod tests {
     fn a_failed_assignable_read_fails_the_work_read() {
         let paths = paths_at(Path::new("/consumer"));
         let script = paths.scripts_dir.join("assignable-beads");
+        let bugfix = paths.scripts_dir.join("bugfix-candidates");
         let fake = FakeCommands::new(move |call: &Call| {
             if call.program == script {
                 Err(exit(1, "assignable-beads: bd ready failed"))
+            } else if call.program == bugfix {
+                Ok(b"[]".to_vec())
             } else {
                 Ok(BUCKETED_BEADS.as_bytes().to_vec())
             }

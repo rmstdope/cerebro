@@ -88,6 +88,7 @@ if ! out="$(printf '%s' "$raw" | jq '. as $all
         | select((.labels // []) | index("planned")       | not)
         | select((.labels // []) | index("human")         | not)
         | select((.labels // []) | index("verdict:stale") | not)
+        | select((.labels // []) | index("bugfix")        | not)
         | select(held | not)
         | select(((.labels // []) | index("verification:failed") | not)
                  or ((.labels // []) | index("plan:revise")))

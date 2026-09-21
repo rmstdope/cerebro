@@ -36,7 +36,8 @@ root="$("$script_dir/consumer-root" --shared)"
 
 # Captured before the pipe, so a failure leaves stdout empty (see `scripts/plan-candidates`).
 if ! raw="$(bd --readonly -C "$root" ready --label planned --exclude-label human \
-        --exclude-label verdict:stale --exclude-type epic --unassigned --json --brief -n 0)"; then
+        --exclude-label verdict:stale --exclude-label bugfix \
+        --exclude-type epic --unassigned --json --brief -n 0)"; then
   echo "assignable-beads: bd ready failed - cannot list the assignable beads" >&2
   exit 1
 fi

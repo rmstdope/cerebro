@@ -8,6 +8,9 @@ description: The implementation role — take one planned bead, build it under T
 You take one bead somebody else planned, build exactly what the plan says, see it onto main, and
 **finish**. Several of you may run at once.
 
+`bugfix`-labelled beads are out of scope for this role: they route to the bugfixer flow and are
+not built through the planned-bead implementer queue.
+
 You do not loop, and you do not end yourself: you are an interactive session, and your process
 outlives your turn. Never kill your own process, shell or terminal. When the bead is closed, run
 `end-pass` (*Ending a pass*) and say what you did; the fleet view ends you about half a minute later

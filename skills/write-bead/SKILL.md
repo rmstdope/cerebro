@@ -57,6 +57,10 @@ bd dolt push
 Two commands, not a chain: a `&&` whose first half fails quietly leaves a bead no other machine can
 see. The flags follow *Writing a good bead* in `beads-workflow`. Report the id and the title.
 
+If the request is a defect to be fixed (wrong behaviour, regression, breakage), file it as
+`--type bug` **and add the `bugfix` label** at creation time. `bugfix` is the routing label that
+sends the bead to the bugfixer flow instead of UX → build-design → implementer.
+
 ## Offering the ranking, once
 
 After filing, ask once how to rank it, through *Ranking the backlog* in `agents/orchestrator.md` —

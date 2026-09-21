@@ -31,7 +31,11 @@ that agent before the session starts, choosing from:
 ```
 
 It excludes `human` (already waiting on the navigator), `epic` (a split parent, with children
-rather than a plan) and `verdict:stale` (waiting for the verifier, not a builder).
+rather than a plan), `verdict:stale` (waiting for the verifier, not a builder), and `bugfix`
+(bug beads go to the bugfixer flow).
+
+**`bugfix` is a routing label, not decoration.** A bead carrying it is worked by the `bugfixer`
+role directly and does not go through UX, build-design or the implementer planned-bead queue.
 
 **Only the implementer claims, and the fleet view does it on its behalf.** No other role runs
 `bd update --claim`, `bd ready --claim` or `bd unclaim` — not the planner, user feedback, the

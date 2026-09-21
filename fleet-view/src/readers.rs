@@ -615,6 +615,7 @@ pub fn read_work(
     let mut buckets = model::partition_beads(read_beads(paths, programs, commands)?);
     buckets.assignable = read_assignable(paths, commands)?;
     buckets.bugfixable = read_bugfixable(paths, commands)?;
+    buckets.second_look = read_second_look(paths, commands)?;
     // Sequential, on this one thread, in `BTreeSet` order: a pool would reorder which error is
     // reported. A failure fails the whole read, this module's standing rule (cb-10d.2.2).
     for role in planning_roles {
@@ -690,6 +691,23 @@ pub fn read_bugfixable(
         message: e.to_string(),
     })?;
     Ok(parsed.into_iter().map(|bead| bead.id).collect())
+}
+
+/// The open beads that need Psylocke's second look, via `<scripts_dir>/second-look-beads`.
+/// Ids in the script's order, one id per line.
+pub fn read_second_look(
+    paths: &ReaderPaths,
+    commands: &dyn CommandRunner,
+) -> Result<Vec<String>, ReadError> {
+    let program = paths.scripts_dir.join("second-look-beads");
+    let args: [&str; 0] = [];
+    let stdout = commands.run(&program, &args, None, BD_TIMEOUT)?;
+    Ok(String::from_utf8_lossy(&stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
+        .collect())
 }
 
 /// How long each `gh` child may run. Thirty seconds, not `COMMAND_TIMEOUT`'s five: these are
@@ -1519,9 +1537,14 @@ mod tests {
 
         // Exactly one `bd` run, with the panel's whole argv - the shared root, every status,
         // `--readonly` and `--brief`.
-        // Exactly one `bd list`, plus the assignable-beads and bugfix-candidates scripts.
+        // Exactly one `bd list`, plus the assignable-beads, bugfix-candidates and
+        // second-look-beads scripts.
         let calls = fake.calls();
-        assert_eq!(calls.len(), 3, "one `bd` answer, not one per bucket, one assignable read, and one bugfix-candidates read");
+        assert_eq!(
+            calls.len(),
+            4,
+            "one `bd` answer, not one per bucket, one assignable read, one bugfix-candidates read, and one second-look read"
+        );
         assert_eq!(calls[0].args, bd_argv(&paths.shared_root));
     }
 
@@ -1530,13 +1553,17 @@ mod tests {
         let paths = paths_at(Path::new("/consumer"));
         let script = paths.scripts_dir.join("assignable-beads");
         let bugfix_script = paths.scripts_dir.join("bugfix-candidates");
+        let second_look_script = paths.scripts_dir.join("second-look-beads");
         let answers = script.clone();
         let bugfix = bugfix_script.clone();
+        let second_look = second_look_script.clone();
         let fake = FakeCommands::new(move |call: &Call| {
             if call.program == answers {
                 Ok(br#"[{"id":"cb-b","priority":0},{"id":"cb-a","priority":1}]"#.to_vec())
             } else if call.program == bugfix {
                 Ok(b"[]".to_vec())
+            } else if call.program == second_look {
+                Ok(b"".to_vec())
             } else {
                 Ok(BUCKETED_BEADS.as_bytes().to_vec())
             }
@@ -1549,6 +1576,27 @@ mod tests {
         assert!(call.args.is_empty(), "no arguments, got {:?}", call.args);
     }
 
+    #[test]
+    fn read_work_carries_second_look_ids_in_the_scripts_order() {
+        let paths = paths_at(Path::new("/consumer"));
+        let assignable_script = paths.scripts_dir.join("assignable-beads");
+        let bugfix_script = paths.scripts_dir.join("bugfix-candidates");
+        let second_look_script = paths.scripts_dir.join("second-look-beads");
+        let second_look = second_look_script.clone();
+        let fake = FakeCommands::new(move |call: &Call| {
+            if call.program == assignable_script || call.program == bugfix_script {
+                Ok(b"[]".to_vec())
+            } else if call.program == second_look {
+                Ok(b"cb-jny\ncb-ak9\n".to_vec())
+            } else {
+                Ok(BUCKETED_BEADS.as_bytes().to_vec())
+            }
+        });
+
+        let work = read_work(&paths, &Programs::default(), &fake, &BTreeSet::new()).unwrap();
+        assert_eq!(work.second_look, ["cb-jny", "cb-ak9"]);
+    }
+
     /// cb-10d.2.2: the work read runs each asked planning role's candidate script, and only those.
     #[test]
     fn read_work_lists_each_asked_planning_roles_candidates() {
@@ -1557,12 +1605,15 @@ mod tests {
         let stage = paths.scripts_dir.join("stage-candidates");
         let assignable = paths.scripts_dir.join("assignable-beads");
         let bugfix = paths.scripts_dir.join("bugfix-candidates");
+        let second_look = paths.scripts_dir.join("second-look-beads");
         let (plan_c, stage_c) = (plan.clone(), stage.clone());
         let fake = FakeCommands::new(move |call: &Call| {
             if call.program == assignable {
                 Ok(b"[]".to_vec())
             } else if call.program == bugfix {
                 Ok(b"[]".to_vec())
+            } else if call.program == second_look {
+                Ok(b"".to_vec())
             } else if call.program == plan_c {
                 Ok(br#"[{"id":"cb-p","priority":1}]"#.to_vec())
             } else if call.program == stage_c && call.args == ["build-design"] {
@@ -1601,6 +1652,7 @@ mod tests {
         let plan = paths.scripts_dir.join("plan-candidates");
         let assignable = paths.scripts_dir.join("assignable-beads");
         let bugfix = paths.scripts_dir.join("bugfix-candidates");
+        let second_look = paths.scripts_dir.join("second-look-beads");
         let fake = FakeCommands::new(move |call: &Call| {
             if call.program == plan {
                 Err(exit(1, "plan-candidates: work-beads failed"))
@@ -1608,6 +1660,8 @@ mod tests {
                 Ok(b"[]".to_vec())
             } else if call.program == bugfix {
                 Ok(b"[]".to_vec())
+            } else if call.program == second_look {
+                Ok(b"".to_vec())
             } else {
                 Ok(BUCKETED_BEADS.as_bytes().to_vec())
             }
@@ -1622,6 +1676,7 @@ mod tests {
         let fake = FakeCommands::new(|call: &Call| {
             if call.program.ends_with("assignable-beads")
                 || call.program.ends_with("bugfix-candidates")
+                || call.program.ends_with("second-look-beads")
             {
                 Ok(b"[]".to_vec())
             } else {
@@ -1630,7 +1685,11 @@ mod tests {
         });
         let work = read_work(&paths, &Programs::default(), &fake, &BTreeSet::new()).unwrap();
         assert!(work.candidates.is_empty());
-        assert_eq!(fake.calls().len(), 3, "bd list, assignable-beads and bugfix-candidates, nothing else");
+        assert_eq!(
+            fake.calls().len(),
+            4,
+            "bd list, assignable-beads, bugfix-candidates and second-look-beads, nothing else"
+        );
     }
 
     #[test]
@@ -1646,11 +1705,14 @@ mod tests {
         let paths = paths_at(Path::new("/consumer"));
         let script = paths.scripts_dir.join("assignable-beads");
         let bugfix = paths.scripts_dir.join("bugfix-candidates");
+        let second_look = paths.scripts_dir.join("second-look-beads");
         let fake = FakeCommands::new(move |call: &Call| {
             if call.program == script {
                 Err(exit(1, "assignable-beads: bd ready failed"))
             } else if call.program == bugfix {
                 Ok(b"[]".to_vec())
+            } else if call.program == second_look {
+                Ok(b"".to_vec())
             } else {
                 Ok(BUCKETED_BEADS.as_bytes().to_vec())
             }

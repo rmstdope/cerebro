@@ -867,6 +867,9 @@ pub struct WorkBuckets {
     /// The ids a bugfixer may be handed, in `scripts/bugfix-candidates`' order (priority, then
     /// id). `partition_beads` leaves it empty; `readers::read_work` fills it.
     pub bugfixable: Vec<String>,
+    /// The open beads that need Psylocke's second look, in `scripts/second-look-beads`' order.
+    /// `partition_beads` leaves it empty; `readers::read_work` fills it.
+    pub second_look: Vec<String>,
     /// Each planning role's candidates, keyed by role, in its script's order (cb-10d.2.2).
     /// `partition_beads` leaves it empty; `readers::read_work` fills it for exactly the roles it
     /// was asked for, so a role absent from the map was not asked for - which is not the same as

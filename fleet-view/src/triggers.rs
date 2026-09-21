@@ -268,6 +268,8 @@ pub struct TriggerFacts {
     /// because a bead can carry `verdict:stale` and `human` at once, and a stale verdict does not
     /// stop being one because the navigator was asked something about the bead.
     pub stale_verdicts: usize,
+    /// Open beads the second-look script says are reachable by no standby role and need Psylocke.
+    pub second_look: usize,
     /// Implementers on the roster that have not been told to finish. State is deliberately not
     /// read: a builder between beads has no session (cb-1or.1), so `standby`, `dead`, `idle` and
     /// `working` all count.
@@ -402,6 +404,7 @@ impl TriggerFacts {
             unranked_ids,
             merged_unverified: buckets.merged.len(),
             stale_verdicts,
+            second_look: buckets.second_look.len(),
             implementers: roster
                 .iter()
                 .filter(|entry| entry.kind == AgentKind::Implementer && !flagged(&entry.name))
@@ -588,6 +591,13 @@ fn condition(facts: &TriggerFacts, agent: &AgentFacts<'_>) -> Option<String> {
                 return Some(format!(
                     "{n} stale verdict{}",
                     if n == 1 { "" } else { "s" }
+                ));
+            }
+            if facts.second_look > 0 {
+                let n = facts.second_look;
+                return Some(format!(
+                    "{n} need{} second look",
+                    if n == 1 { "s" } else { "" }
                 ));
             }
             (facts.merged_unverified > 0)
@@ -1593,6 +1603,7 @@ mod tests {
         assert_eq!(facts.merged_unverified, 1);
         // A paused bead carrying `verdict:stale` is still a stale verdict.
         assert_eq!(facts.stale_verdicts, 1);
+        assert_eq!(facts.second_look, 0);
         assert_eq!(facts.implementers, 2);
         assert_eq!(facts.planner_want(), 2);
     }
@@ -1705,6 +1716,7 @@ mod tests {
             unranked_ids: Vec::new(),
             merged_unverified: 0,
             stale_verdicts: 0,
+            second_look: 0,
             implementers: 4,
             planner_multiple: 1,
             gh: GhAnswer::Unanswered,
@@ -1752,6 +1764,17 @@ mod tests {
             Some("2 stale verdicts".to_string())
         );
         stale.stale_verdicts = 0;
+        stale.second_look = 1;
+        assert_eq!(
+            trigger(&stale, agent("verifier"), at(0)),
+            Some("1 needs second look".to_string())
+        );
+        stale.second_look = 2;
+        assert_eq!(
+            trigger(&stale, agent("verifier"), at(0)),
+            Some("2 need second look".to_string())
+        );
+        stale.second_look = 0;
         assert_eq!(
             trigger(&stale, agent("verifier"), at(0)),
             Some("2 merged, unverified".to_string())
@@ -1892,6 +1915,17 @@ mod tests {
         ledger.note_ended("Psylocke", at(2_280));
         let after = verifier_after_pass(&ledger);
         assert_eq!(trigger(&facts, after, at(2_310)), Some("1 stale verdict".to_string()));
+    }
+
+    #[test]
+    fn a_verifier_pass_that_left_second_look_beads_starts_another() {
+        let mut facts = empty_facts();
+        facts.second_look = 1;
+        let mut ledger = StartLedger::default();
+        ledger.note_started("Psylocke", at(0), fingerprint("verifier", &facts));
+        ledger.note_ended("Psylocke", at(2_280));
+        let after = verifier_after_pass(&ledger);
+        assert_eq!(trigger(&facts, after, at(2_310)), Some("1 needs second look".to_string()));
     }
 
     #[test]

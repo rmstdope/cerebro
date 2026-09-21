@@ -10,18 +10,23 @@ use crate::lifecycle::row_is_alive;
 use crate::model::{Bead, FleetRow, Releasing, RowState, PLANNING_ROLES};
 
 const PLANNED_LABEL: &str = "planned";
+const BUGFIX_LABEL: &str = "bugfix";
 
 /// Which kind of work a role takes from the board.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Stage {
     Builder,
+    Bugfixer,
     Designer,
 }
 
-/// `implementer` -> Builder; the planning roles -> Designer; anything else -> None.
+/// `implementer` -> Builder; `bugfixer` -> Bugfixer; the planning roles -> Designer; anything
+/// else -> None.
 pub fn stage_of(role: &str) -> Option<Stage> {
     if role == "implementer" {
         Some(Stage::Builder)
+    } else if role == "bugfixer" {
+        Some(Stage::Bugfixer)
     } else if PLANNING_ROLES.contains(&role) {
         Some(Stage::Designer)
     } else {
@@ -35,7 +40,8 @@ pub enum Standing {
     Free,
     /// Running, starting or giving something back. BEAD is what it is busy with, when known.
     Busy { bead: Option<String> },
-    /// Not planned for a Builder, already planned for a Designer.
+    /// Not planned for a Builder, not bugfix-labelled for a Bugfixer, or already planned for a
+    /// Designer.
     WrongStage(Stage),
 }
 
@@ -65,8 +71,10 @@ fn standing_for(
         return Standing::Busy { bead: busy };
     }
     let planned = bead.labels.iter().any(|l| l == PLANNED_LABEL);
+    let bugfix = bead.labels.iter().any(|l| l == BUGFIX_LABEL);
     match stage {
         Stage::Builder if !planned => Standing::WrongStage(Stage::Builder),
+        Stage::Bugfixer if !bugfix => Standing::WrongStage(Stage::Bugfixer),
         Stage::Designer if planned => Standing::WrongStage(Stage::Designer),
         _ => Standing::Free,
     }
@@ -220,6 +228,7 @@ pub fn choose(
         Standing::Busy { bead: Some(b) } => Choice::Refuse(busy(cursor, &b)),
         Standing::Busy { bead: None } => Choice::Revalidate,
         Standing::WrongStage(Stage::Builder) => Choice::Refuse(not_planned(open_bead, cursor)),
+        Standing::WrongStage(Stage::Bugfixer) => Choice::Refuse(not_a_bugfix(open_bead, cursor)),
         Standing::WrongStage(Stage::Designer) => {
             Choice::Refuse(already_planned(open_bead, cursor))
         }
@@ -238,6 +247,7 @@ pub fn row_text(candidate: &Candidate, name_width: usize) -> String {
     match &candidate.standing {
         Standing::Busy { bead: Some(b) } => format!("{name}busy with {b}"),
         Standing::WrongStage(Stage::Builder) => format!("{name}only builds planned work"),
+        Standing::WrongStage(Stage::Bugfixer) => format!("{name}only fixes bugfix-labelled work"),
         Standing::WrongStage(Stage::Designer) => format!("{name}only designs unplanned work"),
         Standing::Free | Standing::Busy { bead: None } => {
             format!("{name}{}  {}", candidate.role, candidate.state_word)
@@ -274,6 +284,9 @@ pub fn not_planned(bead: &str, name: &str) -> String {
 }
 pub fn already_planned(bead: &str, name: &str) -> String {
     format!("{bead} is already planned \u{2014} {name} only designs unplanned work")
+}
+pub fn not_a_bugfix(bead: &str, name: &str) -> String {
+    format!("{bead} is not labelled bugfix \u{2014} {name} only fixes bugfix-labelled work")
 }
 pub fn refused(bead: &str, name: &str) -> String {
     format!("bd would not give {bead} to {name}")

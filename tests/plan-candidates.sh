@@ -131,6 +131,7 @@ labelled='[{"id":"tt-plain","issue_type":"task","priority":2,"labels":[]},
            {"id":"tt-held-x","issue_type":"task","priority":2,"labels":["planning:Xavier"]},
            {"id":"tt-ideas","issue_type":"task","priority":2,"labels":["planning-ideas"]},
            {"id":"tt-assigned","issue_type":"task","priority":2,"labels":[],"assignee":"Xavier"},
+           {"id":"tt-bugfix","issue_type":"bug","priority":2,"labels":["bugfix"]},
            {"id":"tt-failed","issue_type":"task","priority":2,"labels":["verification:failed"]},
            {"id":"tt-revise","issue_type":"task","priority":2,"labels":["verification:failed","plan:revise"]},
            {"id":"tt-stale","issue_type":"task","priority":2,"labels":["verdict:stale","plan:revise"]}]'
@@ -151,6 +152,9 @@ case " $ids " in *" tt-held-x "*) : ;; *) fail "planning:<name> still holds a be
 case " $ids " in *" tt-ideas "*) : ;; *) fail "planning-ideas was read as a hold: '$ids'";; esac
 case " $ids " in *" tt-assigned "*) fail "an assigned bead is still a candidate: '$ids'";; esac
 pass "a planning label no longer holds a bead"
+
+case " $ids " in *" tt-bugfix "*) fail "a bugfix-labelled bead is still a planning candidate: '$ids'";; esac
+pass "never a bead carrying bugfix"
 
 case " $ids " in *" tt-failed "*) fail "a failed verification with no plan:revise is a candidate: '$ids'";; esac
 case " $ids " in *" tt-revise "*) : ;; *) fail "a failed verification with plan:revise was dropped: '$ids'";; esac

@@ -10,6 +10,9 @@ end the pass. **Your reader knows nothing of this repository**: do the machinery
 only the product's language — screens, flows, what a person sees and presses — never a module, file
 or test.
 
+`bugfix`-labelled beads are out of scope for UX: they route directly to the bugfixer flow and are
+not designed here.
+
 ## Telling the fleet view what you are doing
 
 `.cerebro/state/<your-name>.state.json` is how the fleet view sees you and when it replaces you.

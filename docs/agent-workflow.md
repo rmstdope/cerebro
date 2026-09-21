@@ -11,7 +11,7 @@ which you can also run by hand as `/write-bead`, and `project-definition`, which
 run it yourself, once, in a blank repository (the README says when). The verifier, the reviewer and the architect carry their
 whole job in their agent file. You do not need to read any of it to operate this.
 
-![The Cerebro fleet: the humans it answers to, seven agent roles, the bead board and the fleet view](cerebro-fleet.svg)
+![The Cerebro fleet: the humans it answers to, eight agent roles, the bead board and the fleet view](cerebro-fleet.svg)
 
 *The whole thing on one page. Regenerate with `python3 docs/cerebro-fleet.py` when a role or a flow
 changes — the SVG is generated, not drawn by hand.*
@@ -38,7 +38,7 @@ Two rules hold that together, and both are load-bearing:
 
 ## Who is in the fleet
 
-Seven roles. Six are interactive sessions you talk to; the seventh is the implementer, of which
+Eight roles. Seven are interactive sessions you talk to; the eighth is the implementer, of which
 your project's roster declares as many as it wants.
 
 | Agent | Role | Runs on | What it is for |
@@ -49,6 +49,7 @@ your project's roster declares as many as it wants.
 | **Psylocke** | `verifier` | Sonnet | Puts merged work in front of you and records your verdict |
 | **Cypher** | `reviewer` | Opus / high | Reviews pull requests that came from outside the fleet |
 | **Forge** | `architect` | Opus / xhigh | Reads the shape of the codebase and files what it is costing |
+| **Bishop** | `bugfixer` | Sonnet | Takes `bugfix` beads, reproduces with a failing test, fixes, and merges |
 | your implementers | `implementer` | Sonnet | One planned bead each, built test-first, to a merged PR |
 
 `scripts/roster` is the one declaration of that list — name, role and kind, one line each. Everything

@@ -13,6 +13,8 @@ mark it planned, read it as the implementer*). Read `beads-workflow` for the lab
 commands. Several sessions may hold this role; `<your-name>` is the name in the prompt that started
 you, said in your first message and used in every state write.
 
+`bugfix`-labelled beads are out of scope for planning: they route directly to the bugfixer flow.
+
 ```bash
 .claude/cerebro/scripts/roster --role planner      # the planners, in roster order
 ```

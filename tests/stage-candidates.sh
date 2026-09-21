@@ -130,6 +130,7 @@ labelled='[{"id":"tt-plain","issue_type":"task","priority":2,"labels":[]},
            {"id":"tt-held-x","issue_type":"task","priority":2,"labels":["planning:Xavier"]},
            {"id":"tt-ideas","issue_type":"task","priority":2,"labels":["planning-ideas"]},
            {"id":"tt-failed","issue_type":"task","priority":2,"labels":["verification:failed"]},
+           {"id":"tt-bugfix","issue_type":"bug","priority":2,"labels":["bugfix"]},
            {"id":"tt-revise","issue_type":"task","priority":2,"labels":["verification:failed","plan:revise"]},
            {"id":"tt-stale","issue_type":"task","priority":2,"labels":["verdict:stale","plan:revise"]},
            {"id":"tt-agreed-planned","issue_type":"task","priority":2,"labels":["ux:agreed","planned"]},
@@ -149,6 +150,11 @@ set_stub_for children '[]'
 ids="$(run build-design | ids_of)"
 [ "$ids" = "tt-agreed tt-agreed-held " ] || fail "the build-design stage listed '$ids', not the two agreed beads (a planning label holds nothing since cb-10d.2.2)"
 pass "the build-design stage takes only what is agreed and not yet planned"
+
+case " $ids " in *" tt-bugfix "*) fail "the build-design stage kept a bugfix-labelled bead: '$ids'";; esac
+ids="$(run ux | ids_of)"
+case " $ids " in *" tt-bugfix "*) fail "the ux stage kept a bugfix-labelled bead: '$ids'";; esac
+pass "both stages drop bugfix-labelled beads"
 
 # --- a label at position 0 is seen ---------------------------------------------------------------
 #

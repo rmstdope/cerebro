@@ -209,7 +209,7 @@ pub const GIVE_UP_AFTER: u32 = 5;
 pub fn wake_interval(role: &str) -> i64 {
     match role {
         "verifier" => 300,
-        "planner" | "implementer" | "ux" | "build-design" => 0,
+        "planner" | "implementer" | "bugfixer" | "ux" | "build-design" => 0,
         _ => WAKE_INTERVAL_DEFAULT,
     }
 }
@@ -217,7 +217,7 @@ pub fn wake_interval(role: &str) -> i64 {
 /// `cerebro-role-start-spacing`, the fallback for a role the project declares nothing about.
 pub fn default_spacing(role: &str) -> Option<u64> {
     match role {
-        "planner" | "implementer" | "ux" | "build-design" => Some(30),
+        "planner" | "implementer" | "bugfixer" | "ux" | "build-design" => Some(30),
         _ => None,
     }
 }
@@ -255,6 +255,10 @@ pub struct TriggerFacts {
     /// bead already spoken for (`spoken_for`), in the script's order. `take` removes one handed out
     /// earlier in the same tick (cb-10d.1).
     pub assignable_ids: Vec<String>,
+    /// The beads the next bugfixer start may be handed: `WorkBuckets::bugfixable` minus every
+    /// bead already spoken for (`spoken_for`), in the script's order. `take` removes one handed
+    /// out earlier in the same tick.
+    pub bugfixable_ids: Vec<String>,
     /// Ids of the unplanned, unparked beads at priority 4, sorted, so the same set in a different
     /// bucket order is the same set.
     pub unranked_ids: Vec<String>,
@@ -389,6 +393,12 @@ impl TriggerFacts {
                 .filter(|id| !spoken_for.contains(*id))
                 .cloned()
                 .collect(),
+            bugfixable_ids: buckets
+                .bugfixable
+                .iter()
+                .filter(|id| !spoken_for.contains(*id))
+                .cloned()
+                .collect(),
             unranked_ids,
             merged_unverified: buckets.merged.len(),
             stale_verdicts,
@@ -451,6 +461,9 @@ pub enum Fingerprint {
     Implementer {
         planned_ids: Vec<String>,
     },
+    Bugfixer {
+        bugfixable_ids: Vec<String>,
+    },
     Orchestrator {
         unranked_ids: Vec<String>,
     },
@@ -485,6 +498,9 @@ pub fn fingerprint(role: &str, facts: &TriggerFacts) -> Option<Fingerprint> {
         }),
         "implementer" => Some(Fingerprint::Implementer {
             planned_ids: facts.planned_ids.clone(),
+        }),
+        "bugfixer" => Some(Fingerprint::Bugfixer {
+            bugfixable_ids: facts.bugfixable_ids.clone(),
         }),
         "orchestrator" => Some(Fingerprint::Orchestrator {
             unranked_ids: facts.unranked_ids.clone(),
@@ -579,6 +595,8 @@ fn condition(facts: &TriggerFacts, agent: &AgentFacts<'_>) -> Option<String> {
         }
         "implementer" => (!facts.assignable_ids.is_empty())
             .then(|| format!("{} planned, unclaimed", facts.assignable_ids.len())),
+        "bugfixer" => (!facts.bugfixable_ids.is_empty())
+            .then(|| format!("{} bugfix candidate{}", facts.bugfixable_ids.len(), if facts.bugfixable_ids.len() == 1 { "" } else { "s" })),
         "orchestrator" => (!facts.unranked_ids.is_empty())
             .then(|| format!("{} unranked", facts.unranked_ids.len())),
         // First true wins, and the order is who is waiting: an issue is a person, a linked bead
@@ -789,6 +807,7 @@ pub fn standby_label(
             Some(format!("→ planned {}/{}", facts.planned, facts.planner_want()))
         }
         "implementer" => Some("→ planned".to_string()),
+        "bugfixer" => Some("→ bugs".to_string()),
         "verifier" => Some("→ merged".to_string()),
         "orchestrator" => Some("→ unranked".to_string()),
         _ => {
@@ -808,10 +827,15 @@ pub fn next_bead(facts: &TriggerFacts) -> Option<&str> {
     facts.assignable_ids.first().map(String::as_str)
 }
 
+/// The bead the next bugfixer start is given: the first bugfix candidate, or `None`.
+pub fn next_bugfix(facts: &TriggerFacts) -> Option<&str> {
+    facts.bugfixable_ids.first().map(String::as_str)
+}
+
 /// Whether ROLE is started with a bead the view picked: `implementer` (cb-10d.1) and the three
 /// planning roles (cb-10d.2.2).
 pub fn hands_a_bead(role: &str) -> bool {
-    role == "implementer" || crate::model::PLANNING_ROLES.contains(&role)
+    role == "implementer" || role == "bugfixer" || crate::model::PLANNING_ROLES.contains(&role)
 }
 
 /// The first candidate a planning role may be given: not P4 and not unranked (`priority` `None`)
@@ -826,6 +850,9 @@ pub fn bead_for<'a>(facts: &'a TriggerFacts, role: &str) -> Option<&'a str> {
     if role == "implementer" {
         return next_bead(facts);
     }
+    if role == "bugfixer" {
+        return next_bugfix(facts);
+    }
     first_candidate(facts.planning_candidates.get(role)?).map(|c| c.id.as_str())
 }
 
@@ -834,6 +861,7 @@ impl TriggerFacts {
     /// out earlier in THIS tick is not handed again, to any role.
     pub fn take(&mut self, id: &str) {
         self.assignable_ids.retain(|candidate| candidate != id);
+        self.bugfixable_ids.retain(|candidate| candidate != id);
         for list in self.planning_candidates.values_mut() {
             list.retain(|candidate| candidate.id != id);
         }
@@ -1673,6 +1701,7 @@ mod tests {
             planned: 0,
             planned_ids: Vec::new(),
             assignable_ids: Vec::new(),
+            bugfixable_ids: Vec::new(),
             unranked_ids: Vec::new(),
             merged_unverified: 0,
             stale_verdicts: 0,

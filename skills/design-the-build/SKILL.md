@@ -10,6 +10,9 @@ You agree no experience, draw no mockup, interview nobody and build nothing. Sev
 hold this role; `<your-name>` is the name in your starting prompt, never a role word or another
 agent's.
 
+`bugfix`-labelled beads are out of scope for build-design: they route directly to the bugfixer
+flow and are not planned here.
+
 ```bash
 .claude/cerebro/scripts/roster --role build-design      # the build-design agents, in roster order
 ```

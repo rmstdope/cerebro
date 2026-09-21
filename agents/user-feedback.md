@@ -179,7 +179,7 @@ symptom, a bead describes work. Follow `beads-workflow` for what a good one cont
 
 ```bash
 bd create --title "..." --type bug|feature|task --priority 4 \
-  --external-ref gh-<number> --description "..." --acceptance "..."
+  --external-ref gh-<number> --description "..." --acceptance "..." [--labels bugfix]
 bd dolt push
 ```
 
@@ -188,6 +188,10 @@ says otherwise (see *Writing a good bead* in `beads-workflow`). `bd github pull 
 issue verbatim; use it only when the navigator wants exactly that.
 
 Then post the CREATED status (*Status comments*).
+
+When the navigator chooses `--type bug`, add `--labels bugfix` on the create call. That label is
+the routing signal: bug beads go to the bugfixer directly and do not go through UX, build-design
+or implementer.
 
 **2. Ask the reporter for more.** The navigator says what is missing; write it specifically, one thing
 per bullet, never a demand. Leave the issue open with no bead. Present it again only once the reporter

@@ -11,8 +11,8 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$repo_root/tests/lib/consumer.sh"
 
-consumer="$(consumer_new repo --origin --link assign-bead assignable-beads roster consumer-root)"
-printf 'Rogue implementer\nXavier planner\nBeast ux\nIceman build-design\nCerebro orchestrator\n' > "$consumer/.cerebro/roster.conf"
+consumer="$(consumer_new repo --origin --link assign-bead assignable-beads bugfix-candidates roster consumer-root)"
+printf 'Rogue implementer\nBishop bugfixer\nXavier planner\nBeast ux\nIceman build-design\nCerebro orchestrator\n' > "$consumer/.cerebro/roster.conf"
 state="$consumer/.cerebro/state"
 stub="$work_dir/stub"
 mkdir -p "$stub"
@@ -40,7 +40,7 @@ chmod +x "$stub/bd"
 # cb-10d.2.1: stub candidate scripts for the planning roles, placed in the fixture's own scripts
 # directory (nothing real is linked there under these names). Each logs its name and arguments and
 # prints $CANDIDATES_JSON.
-for cand in plan-candidates stage-candidates; do
+for cand in plan-candidates stage-candidates bugfix-candidates; do
   cat > "$consumer/.claude/cerebro/scripts/$cand" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$(basename "$0") $*" >> "$STUB_DIR/candidates.log"
@@ -165,6 +165,13 @@ CANDIDATES_JSON="$candidates" run Xavier cb-x 2>/dev/null || fail "a planner is 
 pass "a planner is assigned from plan-candidates"
 
 reset "$unassigned"
+CANDIDATES_JSON="$candidates" run Bishop cb-x 2>/dev/null || fail "a bugfixer is exit 0"
+[[ "$(cat "$stub/candidates.log")" == "bugfix-candidates " ]] \
+  || fail "a bugfixer is served from bugfix-candidates, got: '$(cat "$stub/candidates.log")'"
+grep -q -- "--actor Bishop .*update cb-x --claim" "$stub/bd.log" || fail "a bugfixer claims as Bishop"
+pass "a bugfixer is claimed from bugfix-candidates"
+
+reset "$unassigned"
 status=0; err="$(CANDIDATES_JSON="$candidates" run Cerebro cb-x 2>&1 >/dev/null)" || status=$?
 [[ $status -eq 2 ]] || fail "an orchestrator is exit 2, got $status"
 [[ "$err" == *orchestrator* ]] || fail "the refusal names the role, got: $err"
@@ -266,6 +273,12 @@ w="$(line_of "prepare-worktree --path $tree --branch cb-x")"; d="$(line_of "dolt
 [[ "$(cat "$state/worktrees/cb-x")" == "Rogue" ]] || fail "the tree is recorded for Rogue"
 [[ "$(cat "$state/Rogue.handover")" == "cb-x" ]] || fail "the handover still names cb-x"
 pass "an implementer's tree is made after the claim and recorded"
+
+reset "$open" "$ready"
+CANDIDATES_JSON="$candidates" run Bishop cb-x 2>/dev/null || fail "a bugfixer with a tree is exit 0"
+grep -q "prepare-worktree" "$stub/bd.log" || fail "a bugfixer gets a prepared worktree"
+[[ "$(cat "$state/worktrees/cb-x")" == "Bishop" ]] || fail "the tree is recorded for Bishop"
+pass "a bugfixer is prepared like any claim-based builder"
 
 reset '[{"id":"cb-x","status":"open","assignee":"","design":"run disk-preflight --workload non-rust first"}]' "$ready"
 run Rogue cb-x 2>/dev/null || fail "a non-rust plan is exit 0"

@@ -158,6 +158,7 @@ were tuned against — read it before changing any role. Which names run which r
 | `ux`            | `agents/ux.md`          | `agree-experience`   | agrees what a person will see           |
 | `build-design`  | `agents/build-design.md`| `design-the-build`   | plans the build of an agreed experience |
 | `implementer`   | `agents/implementer.md` | `implement-bead`     | builds one planned bead, reviews, merges|
+| `bugfixer`      | `agents/bugfixer.md`    | `fix-bug`            | reproduces one bug bead with a test, fixes and merges |
 | `orchestrator`  | `agents/orchestrator.md`| `write-bead`         | ranks, files beads, stops implementers  |
 | `verifier`      | `agents/verifier.md`    | —                    | verifies merged beads with the navigator|
 | `reviewer`      | `agents/reviewer.md`    | —                    | reviews external PRs; review sub-agent  |

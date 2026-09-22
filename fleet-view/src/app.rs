@@ -3961,7 +3961,7 @@ pub struct Worker<T, Req = ()> {
 }
 
 /// The fleet's worker: `read_fleet` on its own thread.
-pub type FleetWorker = Worker<Vec<FleetRow>>;
+pub type FleetWorker = Worker<crate::readers::FleetSnapshot>;
 /// The bead panel's worker: `read_work` on its own thread.
 /// Its request is the planning roles whose candidates to list (cb-10d.2.2).
 pub type WorkWorker = Worker<WorkBuckets, BTreeSet<String>>;
@@ -4034,7 +4034,7 @@ impl<T: Send + 'static> Worker<T, ()> {
     }
 }
 
-impl Worker<Vec<FleetRow>> {
+impl Worker<crate::readers::FleetSnapshot> {
     pub fn spawn(paths: ReaderPaths, programs: Programs, commands: Commands) -> Self {
         Self::spawn_reader(move |()| read_fleet(&paths, &programs, commands.as_ref()))
     }
@@ -7010,6 +7010,8 @@ mod tests {
         let fake = crate::readers::testing::FakeCommands::new(|call| {
             if call.program.ends_with("roster") {
                 Ok(b"Xavier\tplanner\tinteractive\n".to_vec())
+            } else if call.program.ends_with("planner-buffer") {
+                Ok(b"2\n".to_vec())
             } else {
                 Ok(Vec::new())
             }
@@ -7034,9 +7036,9 @@ mod tests {
             assert!(Instant::now() < deadline, "the worker never answered");
             std::thread::sleep(Duration::from_millis(10));
         };
-        let rows = result.expect("the fake answers both reads");
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].name, "Xavier");
+        let snapshot = result.expect("the fake answers both reads");
+        assert_eq!(snapshot.rows.len(), 1);
+        assert_eq!(snapshot.rows[0].name, "Xavier");
     }
 
     // --- the gh pane (cb-kcs.4.3) --------------------------------------------------------------

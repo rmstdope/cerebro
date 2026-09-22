@@ -200,6 +200,8 @@ default model and says
 Planning is split between `ux` and `build-design`. Both are started and supervised the same way as
 the rest of the interactive roles: the fleet view assigns one bead per pass, keeps ownership by
 assignee (not claim), and restarts the next pass when the trigger says more work is ready.
+Agents read `scripts/planner-buffer --count` for the current buffer; the fleet view reads the
+same script's `--want` output for the resolved target.
 
 ## Starting builders
 

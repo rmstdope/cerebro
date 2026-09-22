@@ -1,3 +1,3 @@
 [workspace]
-members = ["fleet-view"]
+members = ["fleet-view", "web-console"]
 resolver = "2"

@@ -10,6 +10,10 @@ dist/
 # Cargo build artefacts for the fleet-view workspace (cb-vyp.1). Cargo.lock is tracked, not this.
 /target
 
+# Browser console build artefacts and local dependencies.
+/web-console/ui/dist
+/web-console/ui/node_modules
+
 # Backup files
 *~
 .DS_Store

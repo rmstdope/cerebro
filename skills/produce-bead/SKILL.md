@@ -12,8 +12,10 @@ claimed for you; `bugfix` beads stay with the bugfixer.
    worktree. Write `working --phase design` through `agent-state`.
 2. Read its acceptance and mockup. The agreed experience is fixed. Decide the architecture, files,
    increments, test plan, validation, and any non-UX details. Write those decisions to the bead's
-   `design` field under the usual eight plan headings, then add `planned`. If the experience cannot
-   be built as written, remove `planned`, add `human`, unclaim it, push, and end the pass.
+   `design` field under the usual eight plan headings, then add `planned`. A missing `design` field
+   or `planned` label is the normal producer input, never a reason to return it for build design.
+   If the experience cannot be built as written, remove `planned`, add `human`, unclaim it, push,
+   and end the pass.
 3. Design each test with the increment it proves. Work RED -> GREEN -> REFACTOR, beginning every
    increment with its failing test. Use `build`, `gate`, `review`, `ci`, `rebase`, and `merge` as
    the phase changes; heartbeat before long work.

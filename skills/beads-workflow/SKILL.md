@@ -53,15 +53,16 @@ assignee when done. `plan-bead` has the commands.
 
 ## The lifecycle a bead moves through
 
-A **planning** session turns an unplanned bead into a specified one and owns every decision the
-user can see; **implementation** sessions build what the plan says.
+A UX session owns the decisions a person sees. A producer then turns that UX-agreed bead into a
+build and test plan before implementing it; legacy planning and implementation roles remain
+supported for consumers that still use them.
 
 | State | How it looks | Who moves it, and how |
 |---|---|---|
 | unplanned | open, no `planned` | — |
 | being planned | open, assigned to a planning agent, no `planned` | the fleet view: `scripts/assign-bead` |
-| planned | open, `planned`, unassigned | planner: write the plan, add `planned`, clear its assignee |
-| being produced | in_progress, producer holds the lease | the producer pickup above |
+| planned | open, `planned`, unassigned | legacy planner: write its plan, add `planned`, and clear its assignee |
+| being produced | in_progress, producer holds the lease | the producer writes its missing build/test plan, adds `planned` while retaining its claim, then implements it |
 | needs the user | open, unassigned, `human`, **`planned` removed** | either role, on anything it must not decide |
 | parked on a UI answer | open, unassigned, `needs-ui-decision` **and** `human` | planner, when the user is away |
 | parked, and asked about already | as either row above, plus `pause:kept` | orchestrator, when the user was asked and left it parked |

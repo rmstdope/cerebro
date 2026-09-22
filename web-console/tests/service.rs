@@ -4,6 +4,7 @@ use axum::{
 };
 use cerebro_tui::{Programs, ReaderPaths, RealCommands, SupervisionMode};
 use cerebro_web::{ReadOnlyService, ServiceError};
+use http_body_util::BodyExt;
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::PathBuf,
@@ -150,6 +151,53 @@ async fn event_stream_is_available_only_through_a_read_request() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+}
+
+#[tokio::test]
+async fn event_stream_emits_a_named_event_when_a_snapshot_changes() {
+    let commands = Arc::new(ToggleCommands {
+        fails: AtomicBool::new(false),
+    });
+    let response = service_with_commands(PathBuf::from("/assets"), commands.clone())
+        .router()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/api/events")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let mut body = response.into_body();
+    let baseline = tokio::time::timeout(Duration::from_secs(1), body.frame())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap()
+        .into_data()
+        .unwrap();
+    assert_eq!(
+        std::str::from_utf8(&baseline).unwrap(),
+        ": snapshot baseline\n\n"
+    );
+
+    commands.fail();
+    let event = tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            let frame = body.frame().await.unwrap().unwrap();
+            if let Ok(data) = frame.into_data() {
+                let event = String::from_utf8(data.to_vec()).unwrap();
+                if event.starts_with("event: ") {
+                    return event;
+                }
+            }
+        }
+    })
+    .await
+    .unwrap();
+
+    assert_eq!(event, "event: fleet\ndata: snapshot changed\n\n");
 }
 
 #[tokio::test]

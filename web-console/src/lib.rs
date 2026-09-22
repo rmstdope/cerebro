@@ -177,11 +177,15 @@ async fn event_stream(
             events: EventChanges::default(),
             interval: tokio::time::interval(EVENT_POLL_INTERVAL),
             pending: VecDeque::new(),
+            initialized: false,
         },
         |mut stream| async move {
             loop {
                 if let Some(event) = stream.pending.pop_front() {
-                    return Some((Ok(Event::default().event(event)), stream));
+                    return Some((
+                        Ok(Event::default().event(event).data("snapshot changed")),
+                        stream,
+                    ));
                 }
 
                 stream.interval.tick().await;
@@ -207,6 +211,10 @@ async fn event_stream(
                 if stream.events.observe("work", &work) {
                     stream.pending.push_back("work");
                 }
+                if !stream.initialized {
+                    stream.initialized = true;
+                    return Some((Ok(Event::default().comment("snapshot baseline")), stream));
+                }
             }
         },
     ))
@@ -218,6 +226,7 @@ struct EventState {
     events: EventChanges,
     interval: tokio::time::Interval,
     pending: VecDeque<&'static str>,
+    initialized: bool,
 }
 
 #[derive(Default)]

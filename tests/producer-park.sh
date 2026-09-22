@@ -100,6 +100,16 @@ out="$(run Storm cb-x ux "The mockup is ambiguous" 2>"$work_dir/err")" || status
   || fail "another producer's bead is not changed"
 pass "does not park another producer's bead"
 
+# --- legacy planned work stays on the legacy hand-back path -------------------------------------
+
+reset '[{"id":"cb-x","status":"in_progress","assignee":"Storm","labels":["planned"]}]'
+status=0
+out="$(run Storm cb-x ux "The mockup is ambiguous" 2>"$work_dir/err")" || status=$?
+[[ $status -eq 1 && -z "$out" ]] || fail "a non-UX bead is rejected"
+! grep -qE "update|unclaim|dolt push" "$stub/bd.log" \
+  || fail "a non-UX bead is not changed"
+pass "does not park planned legacy work"
+
 # --- a claim lost between the read and update changes nothing ------------------------------------
 
 reset "$mine"

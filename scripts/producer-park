@@ -42,6 +42,12 @@ if [[ "$status" != "in_progress" || "$assignee" != "$name" ]]; then
   echo "producer-park: $id is not in progress for $name" >&2
   exit 1
 fi
+if ! printf '%s' "$shown" \
+  | jq -e '(if type == "array" then .[0] else . end) | (.labels // [] | index("ux:agreed")) != null' \
+  >/dev/null; then
+  echo "producer-park: $id is not UX-agreed producer work" >&2
+  exit 1
+fi
 
 paused_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 note="Producer parking for a $decision decision: $reason"

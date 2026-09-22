@@ -1,19 +1,29 @@
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeSet, VecDeque},
+    convert::Infallible,
     fmt,
     net::SocketAddr,
     path::PathBuf,
     sync::{Arc, Mutex},
+    time::Duration,
 };
-use chrono::{DateTime, Utc};
 
-use axum::{extract::State, routing::get, Json, Router};
+use axum::{
+    extract::State,
+    response::sse::{Event, KeepAlive, Sse},
+    routing::get,
+    Json, Router,
+};
 use cerebro_tui::{
     read_fleet, read_health, read_work, CommandRunner, Commands, FleetHealth, FleetRow, Programs,
     ReaderPaths, SupervisionMode, WorkBuckets,
 };
+use chrono::{DateTime, Utc};
+use futures_util::stream;
 use serde::Serialize;
 use tower_http::services::{ServeDir, ServeFile};
+
+const EVENT_POLL_INTERVAL: Duration = Duration::from_secs(2);
 
 /// A local HTTP boundary for browser-console reads.
 ///
@@ -52,13 +62,17 @@ struct CachedSnapshot<T> {
 #[derive(Serialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 enum Snapshot<T> {
-    Fresh { value: T },
+    Fresh {
+        value: T,
+    },
     Stale {
         value: T,
         error: String,
         updated_at: DateTime<Utc>,
     },
-    Unavailable { error: String },
+    Unavailable {
+        error: String,
+    },
 }
 
 impl ReadOnlyService {
@@ -119,6 +133,7 @@ impl ReadOnlyService {
             .route("/api/fleet", get(fleet_snapshot))
             .route("/api/work", get(work_snapshot))
             .route("/api/health", get(health_snapshot))
+            .route("/api/events", get(event_stream))
             .fallback_service(
                 ServeDir::new(self.assets_dir.clone()).fallback(ServeFile::new(index)),
             )
@@ -151,6 +166,87 @@ async fn health_snapshot(State(state): State<SnapshotState>) -> Json<Snapshot<Fl
     Json(snapshot(&state.snapshots.health, || {
         read_health(&state.reader_paths, state.commands.as_ref())
     }))
+}
+
+async fn event_stream(
+    State(state): State<SnapshotState>,
+) -> Sse<impl futures_util::Stream<Item = Result<Event, Infallible>>> {
+    Sse::new(stream::unfold(
+        EventState {
+            state,
+            events: EventChanges::default(),
+            interval: tokio::time::interval(EVENT_POLL_INTERVAL),
+            pending: VecDeque::new(),
+            initialized: false,
+        },
+        |mut stream| async move {
+            loop {
+                if let Some(event) = stream.pending.pop_front() {
+                    return Some((
+                        Ok(Event::default().event(event).data("snapshot changed")),
+                        stream,
+                    ));
+                }
+
+                stream.interval.tick().await;
+                let fleet = snapshot(&stream.state.snapshots.fleet, || {
+                    read_fleet(
+                        &stream.state.reader_paths,
+                        &stream.state.programs,
+                        stream.state.commands.as_ref(),
+                    )
+                });
+                if stream.events.observe("fleet", &fleet) {
+                    stream.pending.push_back("fleet");
+                }
+
+                let work = snapshot(&stream.state.snapshots.work, || {
+                    read_work(
+                        &stream.state.reader_paths,
+                        &stream.state.programs,
+                        stream.state.commands.as_ref(),
+                        &BTreeSet::new(),
+                    )
+                });
+                if stream.events.observe("work", &work) {
+                    stream.pending.push_back("work");
+                }
+                if !stream.initialized {
+                    stream.initialized = true;
+                    return Some((Ok(Event::default().comment("snapshot baseline")), stream));
+                }
+            }
+        },
+    ))
+    .keep_alive(KeepAlive::default())
+}
+
+struct EventState {
+    state: SnapshotState,
+    events: EventChanges,
+    interval: tokio::time::Interval,
+    pending: VecDeque<&'static str>,
+    initialized: bool,
+}
+
+#[derive(Default)]
+struct EventChanges {
+    fleet: Option<String>,
+    work: Option<String>,
+}
+
+impl EventChanges {
+    fn observe<T: Serialize>(&mut self, name: &str, snapshot: &Snapshot<T>) -> bool {
+        let current = serde_json::to_string(snapshot).expect("snapshot serialization cannot fail");
+        let previous = match name {
+            "fleet" => &mut self.fleet,
+            "work" => &mut self.work,
+            _ => unreachable!("event names are fixed"),
+        };
+        previous
+            .replace(current.clone())
+            .is_some_and(|prior| prior != current)
+    }
 }
 
 fn snapshot<T>(
@@ -205,3 +301,24 @@ impl fmt::Display for ServiceError {
 }
 
 impl std::error::Error for ServiceError {}
+
+#[cfg(test)]
+mod tests {
+    use super::{EventChanges, Snapshot};
+
+    #[test]
+    fn event_changes_emit_only_when_a_snapshot_changes() {
+        let mut changes = EventChanges::default();
+        let fresh = Snapshot::Fresh {
+            value: vec!["Cyclops"],
+        };
+        let changed = Snapshot::Fresh {
+            value: vec!["Cyclops", "Storm"],
+        };
+
+        assert!(!changes.observe("fleet", &fresh));
+        assert!(!changes.observe("fleet", &fresh));
+        assert!(changes.observe("fleet", &changed));
+        assert!(!changes.observe("work", &fresh));
+    }
+}

@@ -7,11 +7,22 @@ use cerebro_web::{ReadOnlyService, ServiceError};
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::PathBuf,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::Duration,
 };
 use tower::ServiceExt;
 
 fn service(assets_dir: PathBuf) -> ReadOnlyService {
+    service_with_commands(assets_dir, Arc::new(RealCommands))
+}
+
+fn service_with_commands(
+    assets_dir: PathBuf,
+    commands: Arc<dyn cerebro_tui::CommandRunner>,
+) -> ReadOnlyService {
     ReadOnlyService::new(
         ReaderPaths {
             consumer_root: PathBuf::from("/consumer"),
@@ -19,10 +30,56 @@ fn service(assets_dir: PathBuf) -> ReadOnlyService {
             scripts_dir: PathBuf::from("/scripts"),
         },
         Programs::default(),
-        Arc::new(RealCommands),
+        commands,
         SupervisionMode::Supervising,
         assets_dir,
     )
+}
+
+struct ToggleCommands {
+    fails: AtomicBool,
+}
+
+impl ToggleCommands {
+    fn fail(&self) {
+        self.fails.store(true, Ordering::SeqCst);
+    }
+}
+
+impl cerebro_tui::CommandRunner for ToggleCommands {
+    fn run(
+        &self,
+        program: &std::path::Path,
+        args: &[&str],
+        _cwd: Option<&std::path::Path>,
+        _timeout: Duration,
+    ) -> Result<Vec<u8>, cerebro_tui::ReadError> {
+        if self.fails.load(Ordering::SeqCst) {
+            return Err(cerebro_tui::ReadError::Spawn {
+                source: cerebro_tui::Invocation::new(program, args),
+                message: "reader unavailable".to_string(),
+            });
+        }
+        if program
+            .file_name()
+            .is_some_and(|name| name == "second-look-beads")
+        {
+            return Ok(Vec::new());
+        }
+        if program.file_name().is_some_and(|name| name == "roster") {
+            return Ok(b"Storm\tproducer\tinteractive\n".to_vec());
+        }
+        if program == std::path::Path::new("ps") {
+            return Ok(Vec::new());
+        }
+        if program
+            .file_name()
+            .is_some_and(|name| name == "fleet-health")
+        {
+            return Ok(b"{\"since\":\"\",\"until\":\"\"}".to_vec());
+        }
+        Ok(b"[]".to_vec())
+    }
 }
 
 #[tokio::test]
@@ -54,6 +111,119 @@ async fn health_is_available_only_through_a_read_request() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+}
+
+#[tokio::test]
+async fn work_snapshot_is_available_through_a_read_request() {
+    let commands = Arc::new(ToggleCommands {
+        fails: AtomicBool::new(false),
+    });
+    let service = service_with_commands(PathBuf::from("/assets"), commands.clone());
+    let router = service.router();
+
+    let response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/api/work")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        to_bytes(response.into_body(), usize::MAX).await.unwrap(),
+        r#"{"state":"fresh","value":{"claimed":[],"planned":[],"being_planned":[],"ux_agreed":[],"unplanned":[],"paused":[],"merged":[],"linked":[],"assignable":[],"implementer_assignable":[],"bugfixable":[],"second_look":[],"candidates":{}}}"#
+    );
+
+    commands.fail();
+    let response = router
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/api/work")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = String::from_utf8(
+        to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    assert!(body.starts_with(r#"{"state":"stale","value":{"claimed":[],"planned":[],"being_planned":[],"ux_agreed":[],"unplanned":[],"paused":[],"merged":[],"linked":[],"assignable":[],"implementer_assignable":[],"bugfixable":[],"second_look":[],"candidates":{}},"error":"could not run "#));
+}
+
+#[tokio::test]
+async fn failed_initial_snapshot_is_unavailable_not_empty() {
+    let commands = Arc::new(ToggleCommands {
+        fails: AtomicBool::new(true),
+    });
+
+    let response = service_with_commands(PathBuf::from("/assets"), commands)
+        .router()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/api/work")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = String::from_utf8(
+        to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    assert!(body.starts_with(r#"{"state":"unavailable","error":"could not run "#));
+}
+
+#[tokio::test]
+async fn fleet_and_health_snapshots_return_typed_fresh_values() {
+    let commands = Arc::new(ToggleCommands {
+        fails: AtomicBool::new(false),
+    });
+    let router = service_with_commands(PathBuf::from("/assets"), commands).router();
+
+    for path in ["/api/fleet", "/api/health"] {
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(path)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(
+            String::from_utf8(
+                to_bytes(response.into_body(), usize::MAX)
+                    .await
+                    .unwrap()
+                    .to_vec()
+            )
+            .unwrap()
+            .starts_with(r#"{"state":"fresh","value":"#),
+            "{path} did not return a fresh snapshot"
+        );
+    }
 }
 
 #[test]

@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+#
+# Park a producer's claimed bead only for a UX or scope decision:
+#
+#     .claude/cerebro/scripts/producer-park <Name> <id> <ux|scope> <reason>
+#
+# This is deliberately narrower than the legacy implementer hand-back: a
+# producer designs an unplanned `ux:agreed` bead itself. A parking transition
+# means the navigator must settle an agreed-experience ambiguity or scope.
+
+set -euo pipefail
+
+usage() {
+  echo "usage: producer-park <Name> <id> <ux|scope> <reason>" >&2
+  exit 2
+}
+
+[[ $# -eq 4 && -n "$1" && -n "$2" && -n "$4" ]] || usage
+name="$1"
+id="$2"
+decision="$3"
+reason="$4"
+
+case "$decision" in
+  ux|scope) ;;
+  *) usage ;;
+esac
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+root="$("$script_dir/consumer-root" --shared)"
+
+if ! shown="$(bd -C "$root" show "$id" --json)"; then
+  exit 1
+fi
+if ! fields="$(printf '%s' "$shown" \
+    | jq -r '(if type == "array" then .[0] else . end) | "\(.status // "")\t\(.assignee // "")"')"; then
+  echo "producer-park: bd show $id did not print JSON this script can read" >&2
+  exit 1
+fi
+IFS=$'\t' read -r status assignee <<<"$fields"
+if [[ "$status" != "in_progress" || "$assignee" != "$name" ]]; then
+  echo "producer-park: $id is not in progress for $name" >&2
+  exit 1
+fi
+if ! printf '%s' "$shown" \
+  | jq -e '(if type == "array" then .[0] else . end) | (.labels // [] | index("ux:agreed")) != null' \
+  >/dev/null; then
+  echo "producer-park: $id is not UX-agreed producer work" >&2
+  exit 1
+fi
+
+paused_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+note="Producer parking for a $decision decision: $reason"
+bd --actor "$name" -C "$root" update "$id" \
+  --remove-label planned \
+  --add-label human \
+  --add-label needs-ui-decision \
+  --append-notes "$note" \
+  --set-metadata "paused_at=$paused_at" \
+  --if-assignee "$name" \
+  --if-status in_progress
+bd --actor "$name" -C "$root" unclaim "$id" --if-assignee "$name"
+bd -C "$root" dolt push

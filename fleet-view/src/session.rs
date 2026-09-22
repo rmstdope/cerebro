@@ -10,7 +10,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -24,25 +24,144 @@ use crate::readers::{ReadError, ReaderPaths};
 /// epic's interview and unchanged here.
 pub const SCROLLBACK_LINES: usize = 10_000;
 
-/// How often an unchanged published screen is rewritten, so a reader can tell a live publisher
-/// from a file a crashed view left behind. `cerebro-web` treats a snapshot older than three of
-/// these as gone (`SCREEN_STALE_SECONDS`), a literal twin.
+/// How often an unchanged publication is rewritten, so a reader can tell a live publisher from a
+/// file a crashed view left behind. `cerebro-web` treats one older than three of these as gone
+/// (`SCREEN_STALE_SECONDS`), a literal twin.
 pub const SCREEN_REFRESH: Duration = Duration::from_secs(5);
 
-/// The least time between two writes of one session's screen: a streaming agent repaints far
-/// more often than a browser needs to hear about it.
-const SCREEN_MIN_INTERVAL: Duration = Duration::from_millis(250);
+/// How large a session's output log may grow before it starts again from the current screen,
+/// which drops the history the old log held.
+pub const LOG_LIMIT: u64 = 8 * 1024 * 1024;
 
-/// One live session's screen, as `SessionHost::publish` writes it for readers outside this
-/// process. `screen` is vt100's formatted contents: ANSI that repaints the screen, cursor
-/// included, on a terminal of `rows` by `cols`.
+/// One live session, as `SessionHost::publish` writes it for readers outside this process. `log`
+/// names a file beside it holding the session's pty output as it arrived: it opens with
+/// `CSI 8 ; rows ; cols t` and the screen at the moment recording began, and carries the same
+/// sequence wherever the pty was resized. A new name means a new log, to be read from the start.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct ScreenSnapshot {
+pub struct PublishedSession {
     pub name: String,
-    pub rows: u16,
-    pub cols: u16,
-    pub screen: String,
+    pub log: String,
     pub updated_at: DateTime<Utc>,
+}
+
+/// The file a session's output is appended to. Only ever touched with the session's parser lock
+/// held, so what is in the log and what is in the parser never disagree.
+struct Recorder {
+    dir: std::path::PathBuf,
+    name: String,
+    file: std::fs::File,
+    log: String,
+    written: u64,
+    limit: u64,
+    generation: u32,
+}
+
+static LOG_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
+
+/// `CSI 8 ; rows ; cols t`, the xterm sequence that resizes a terminal.
+fn size_sequence(rows: u16, cols: u16) -> Vec<u8> {
+    format!("\u{1b}[8;{rows};{cols}t").into_bytes()
+}
+
+impl Recorder {
+    /// Open a new log for NAME in DIR, starting from SCREEN's current state.
+    fn open(
+        dir: &std::path::Path,
+        name: &str,
+        limit: u64,
+        generation: u32,
+        screen: &vt100::Screen,
+    ) -> std::io::Result<Self> {
+        std::fs::create_dir_all(dir)?;
+        let log = format!(
+            "{name}.{}-{}-{generation}.log",
+            std::process::id(),
+            LOG_SEQUENCE.fetch_add(1, Ordering::SeqCst)
+        );
+        let file = std::fs::File::create(dir.join(&log))?;
+        let mut recorder =
+            Self { dir: dir.to_path_buf(), name: name.to_string(), file, log, written: 0, limit, generation };
+        let (rows, cols) = screen.size();
+        let mut header = size_sequence(rows, cols);
+        header.extend(screen.contents_formatted());
+        header.extend(screen.cursor_state_formatted());
+        recorder.append(&header)?;
+        Ok(recorder)
+    }
+
+    fn append(&mut self, bytes: &[u8]) -> std::io::Result<()> {
+        self.file.write_all(bytes)?;
+        self.written += bytes.len() as u64;
+        Ok(())
+    }
+
+    /// Append BYTES, which SCREEN has already processed, starting a fresh log when this one is
+    /// full. `Err` drops the recorder; the next `publish` opens a new one.
+    fn record(&mut self, bytes: &[u8], screen: &vt100::Screen) -> std::io::Result<()> {
+        self.append(bytes)?;
+        if self.written > self.limit {
+            let next = Self::open(&self.dir, &self.name, self.limit, self.generation + 1, screen)?;
+            drop(std::mem::replace(self, next));
+        }
+        Ok(())
+    }
+}
+
+impl Drop for Recorder {
+    /// A log is only worth keeping while its session runs: a rotated, replaced or ended one goes.
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(self.dir.join(&self.log));
+    }
+}
+
+/// Append BYTES to the session's log, if it has one, dropping the recorder when that fails.
+fn record(recorder: &Mutex<Option<Recorder>>, bytes: &[u8], screen: &vt100::Screen) {
+    if let Ok(mut slot) = recorder.lock() {
+        if slot.as_mut().is_some_and(|recorder| recorder.record(bytes, screen).is_err()) {
+            slot.take();
+        }
+    }
+}
+
+/// How old an unreferenced log or a publication must be before `sweep` takes it for a gone
+/// view's leftovers. `cerebro-web`'s `SCREEN_STALE_SECONDS`, a literal twin.
+const ORPHAN_AGE: Duration = Duration::from_secs(15);
+
+/// Remove what a fleet view that has gone left in DIR: publications it stopped refreshing, and
+/// logs no fresh publication names. A log younger than `ORPHAN_AGE` is kept whatever names it,
+/// since a live view may have just rotated to it and not yet published the new name.
+fn sweep(dir: &std::path::Path, at: DateTime<Utc>) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let files: Vec<std::path::PathBuf> = entries.flatten().map(|entry| entry.path()).collect();
+    let mut named = std::collections::BTreeSet::new();
+    for path in files.iter().filter(|path| path.extension().is_some_and(|ext| ext == "json")) {
+        let publication = std::fs::read_to_string(path)
+            .ok()
+            .and_then(|text| serde_json::from_str::<PublishedSession>(&text).ok());
+        let fresh = publication.as_ref().is_some_and(|publication| {
+            at.signed_duration_since(publication.updated_at).num_seconds()
+                < ORPHAN_AGE.as_secs() as i64
+        });
+        match publication {
+            Some(publication) if fresh => {
+                named.insert(publication.log);
+            }
+            _ => {
+                let _ = std::fs::remove_file(path);
+            }
+        }
+    }
+    for path in files.iter().filter(|path| path.extension().is_some_and(|ext| ext == "log")) {
+        let listed = path.file_name().and_then(|name| name.to_str()).is_some_and(|name| named.contains(name));
+        let old = std::fs::metadata(path)
+            .and_then(|meta| meta.modified())
+            .ok()
+            .and_then(|modified| modified.elapsed().ok())
+            .is_some_and(|age| age >= ORPHAN_AGE);
+        if !listed && old {
+            let _ = std::fs::remove_file(path);
+        }
+    }
 }
 
 /// The size a pty is opened at, before the first frame has told us how big the pane is.
@@ -385,13 +504,13 @@ fn refusal_lines(message: &str) -> Vec<Line<'static>> {
     lines
 }
 
-/// Write SNAPSHOT to `DIR/<name>.json` through a rename, so a reader never sees half a file.
-fn write_snapshot(dir: &std::path::Path, snapshot: &ScreenSnapshot) -> std::io::Result<()> {
+/// Write PUBLICATION to `DIR/<name>.json` through a rename, so a reader never sees half a file.
+fn write_publication(dir: &std::path::Path, publication: &PublishedSession) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)?;
-    let text = serde_json::to_string(snapshot).map_err(std::io::Error::other)?;
-    let partial = dir.join(format!(".{}.json.partial", snapshot.name));
+    let text = serde_json::to_string(publication).map_err(std::io::Error::other)?;
+    let partial = dir.join(format!(".{}.json.partial", publication.name));
     std::fs::write(&partial, text)?;
-    std::fs::rename(&partial, dir.join(format!("{}.json", snapshot.name)))
+    std::fs::rename(&partial, dir.join(format!("{}.json", publication.name)))
 }
 
 /// One agent CLI, in one pty, with one thread draining it.
@@ -409,6 +528,8 @@ pub struct Session {
     seen: Arc<AtomicUsize>,
     size: (u16, u16),
     reader: Option<std::thread::JoinHandle<()>>,
+    /// Where the child's output is also written, once `publish` has started recording it.
+    recorder: Arc<Mutex<Option<Recorder>>>,
 }
 
 impl std::fmt::Debug for Session {
@@ -470,6 +591,8 @@ impl Session {
         let seen = Arc::new(AtomicUsize::new(0));
         let thread_parser = Arc::clone(&parser);
         let thread_seen = Arc::clone(&seen);
+        let recorder: Arc<Mutex<Option<Recorder>>> = Arc::new(Mutex::new(None));
+        let thread_recorder = Arc::clone(&recorder);
         // Unconditional, whether or not the pane is visible or focused: a child that writes more
         // than the pty buffer holds blocks for ever if nobody drains it.
         let handle = std::thread::spawn(move || {
@@ -480,6 +603,7 @@ impl Session {
                     Ok(count) => {
                         if let Ok(mut parser) = thread_parser.write() {
                             parser.process(&buffer[..count]);
+                            record(&thread_recorder, &buffer[..count], parser.screen());
                         }
                         thread_seen.fetch_add(count, Ordering::SeqCst);
                     }
@@ -495,6 +619,7 @@ impl Session {
             seen,
             size: (rows, cols),
             reader: Some(handle),
+            recorder,
         })
     }
 
@@ -515,6 +640,7 @@ impl Session {
             .resize(portable_pty::PtySize { rows, cols, pixel_width: 0, pixel_height: 0 });
         if let Ok(mut parser) = self.parser.write() {
             parser.screen_mut().set_size(rows, cols);
+            record(&self.recorder, &size_sequence(rows, cols), parser.screen());
         }
     }
 
@@ -547,18 +673,16 @@ impl Session {
         Some(materialise(parser.screen(), rows, cols))
     }
 
-    /// The child's screen as ANSI that repaints it, cursor included, with the size it is drawn
-    /// at. `None` before the first byte.
-    fn formatted(&self) -> Option<(u16, u16, String)> {
-        if self.seen.load(Ordering::SeqCst) == 0 {
-            return None;
-        }
+    /// Start recording the child's output to a log in DIR, unless it already is, and return the
+    /// log's name. Taken under the parser lock, so every byte lands in the log exactly once: in
+    /// the opening screen, or appended after it.
+    fn recording(&self, dir: &std::path::Path, limit: u64) -> Option<String> {
         let parser = self.parser.read().ok()?;
-        let screen = parser.screen();
-        let mut bytes = screen.contents_formatted();
-        bytes.extend(screen.cursor_state_formatted());
-        let (rows, cols) = screen.size();
-        Some((rows, cols, String::from_utf8_lossy(&bytes).into_owned()))
+        let mut slot = self.recorder.lock().ok()?;
+        if slot.is_none() {
+            *slot = Recorder::open(dir, &self.name, limit, 0, parser.screen()).ok();
+        }
+        slot.as_ref().map(|recorder| recorder.log.clone())
     }
 
     /// Where the child's cursor is, as (row, column) inside the pane's inner rect.
@@ -689,8 +813,12 @@ pub struct SessionHost {
     /// Children reaped since `take_reaped` was last called, and the last line each painted.
     /// See it.
     reaped: Vec<(String, Ended, Option<String>)>,
-    /// What `publish` last wrote for each name, and when.
+    /// What `publish` last wrote for each name: the log it named, and when.
     published: HashMap<String, (String, Instant)>,
+    /// `LOG_LIMIT`, unless a case has set a smaller one.
+    log_limit: Option<u64>,
+    /// Whether `publish` has swept DIR of a gone view's leftovers yet.
+    swept: bool,
 }
 
 impl SessionHost {
@@ -891,42 +1019,47 @@ impl SessionHost {
         }
     }
 
-    /// Write each live session's screen to `DIR/<name>.json` for readers outside this process,
-    /// and remove the file of any session this host published that is no longer live.
+    /// Record each live session's output to a log in DIR and publish `DIR/<name>.json` naming
+    /// it, for readers outside this process; withdraw both for any session no longer live.
     ///
-    /// A screen is written when it changed and `SCREEN_MIN_INTERVAL` has passed, or when
-    /// `SCREEN_REFRESH` has passed regardless, so its `updated_at` says the publisher is alive.
-    /// A failed write is dropped: the next frame tries again, and the pane here is unaffected.
+    /// The publication is rewritten when its log changes, and every `SCREEN_REFRESH` regardless,
+    /// so its `updated_at` says the publisher is alive. A failed write is dropped: the next frame
+    /// tries again, and the pane here is unaffected.
     pub fn publish(&mut self, dir: &std::path::Path, now: Instant, at: DateTime<Utc>) {
+        if !self.swept {
+            self.swept = true;
+            sweep(dir, at);
+        }
         let gone: Vec<String> =
             self.published.keys().filter(|name| !self.live.contains_key(*name)).cloned().collect();
         for name in gone {
+            // The log went with its session's recorder.
             self.published.remove(&name);
             let _ = std::fs::remove_file(dir.join(format!("{name}.json")));
         }
+        let limit = self.log_limit.unwrap_or(LOG_LIMIT);
         for (name, session) in &self.live {
-            let Some((rows, cols, screen)) = session.formatted() else { continue };
+            let Some(log) = session.recording(dir, limit) else { continue };
             let due = match self.published.get(name) {
                 None => true,
                 Some((last, when)) => {
-                    let since = now.saturating_duration_since(*when);
-                    since >= SCREEN_REFRESH || (*last != screen && since >= SCREEN_MIN_INTERVAL)
+                    *last != log || now.saturating_duration_since(*when) >= SCREEN_REFRESH
                 }
             };
             if !due {
                 continue;
             }
-            let snapshot = ScreenSnapshot {
-                name: name.clone(),
-                rows,
-                cols,
-                screen: screen.clone(),
-                updated_at: at,
-            };
-            if write_snapshot(dir, &snapshot).is_ok() {
-                self.published.insert(name.clone(), (screen, now));
+            let publication =
+                PublishedSession { name: name.clone(), log: log.clone(), updated_at: at };
+            if write_publication(dir, &publication).is_ok() {
+                self.published.insert(name.clone(), (log, now));
             }
         }
+    }
+
+    /// Start every log from now on again once it passes LIMIT bytes, rather than `LOG_LIMIT`.
+    pub fn limit_logs(&mut self, limit: u64) {
+        self.log_limit = Some(limit);
     }
 
     /// Once per frame: reap any child that has exited into `retained`, resize the selected
@@ -1171,36 +1304,87 @@ mod tests {
             .collect()
     }
 
-    fn published(dir: &std::path::Path, name: &str) -> Option<ScreenSnapshot> {
+    fn published(dir: &std::path::Path, name: &str) -> Option<PublishedSession> {
         let text = std::fs::read_to_string(dir.join(format!("{name}.json"))).ok()?;
-        Some(serde_json::from_str(&text).expect("a published screen is valid JSON"))
+        Some(serde_json::from_str(&text).expect("a published session is valid JSON"))
+    }
+
+    /// The log NAME's publication points at, lossily as text; `None` until both exist.
+    fn recorded(dir: &std::path::Path, name: &str) -> Option<(String, String)> {
+        let publication = published(dir, name)?;
+        let bytes = std::fs::read(dir.join(&publication.log)).ok()?;
+        Some((publication.log, String::from_utf8_lossy(&bytes).into_owned()))
+    }
+
+    /// Publish until NAME's log satisfies WANTED, and return it.
+    fn record_until(
+        host: &mut SessionHost,
+        dir: &std::path::Path,
+        name: &str,
+        wanted: impl Fn(&str) -> bool,
+    ) -> (String, String) {
+        probe::wait_for(probe::POLL_BOUND, || {
+            host.publish(dir, Instant::now(), Utc::now());
+            recorded(dir, name).filter(|(_, log)| wanted(log))
+        })
+        .unwrap_or_else(|| panic!("never recorded; last saw {:?}", recorded(dir, name)))
     }
 
     #[test]
-    fn a_live_session_publishes_its_screen_for_other_readers() {
+    fn a_live_session_records_its_output_for_other_readers() {
         let dir = tempfile::tempdir().unwrap();
         let mut host = SessionHost::default();
         host.insert("Storm", shell(r#"printf "hello from storm\r\n"; sleep 5"#, 12, 40));
-        let snapshot = probe::wait_for(probe::POLL_BOUND, || {
-            host.publish(dir.path(), Instant::now(), Utc::now());
-            published(dir.path(), "Storm")
-                .filter(|snapshot| snapshot.screen.contains("hello from storm"))
-        })
-        .expect("the screen is published");
-        assert_eq!((snapshot.name.as_str(), snapshot.rows, snapshot.cols), ("Storm", 12, 40));
+        let (_, log) = record_until(&mut host, dir.path(), "Storm", |log| {
+            log.contains("hello from storm")
+        });
+        assert!(log.starts_with("\u{1b}[8;12;40t"), "the log opens with its size: {log:?}");
+        assert_eq!(published(dir.path(), "Storm").unwrap().name, "Storm");
     }
 
     #[test]
-    fn an_unchanged_screen_is_republished_only_to_stay_fresh() {
+    fn output_is_recorded_once_whenever_recording_begins() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut host = SessionHost::default();
+        host.insert("Storm", shell(r#"printf "first\r\n"; sleep 0.3; printf "later\r\n"; sleep 5"#, 12, 40));
+        let (_, log) = record_until(&mut host, dir.path(), "Storm", |log| log.contains("later"));
+        assert_eq!(log.matches("first").count(), 1, "{log:?}");
+    }
+
+    #[test]
+    fn a_resize_is_recorded_in_the_log() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut host = SessionHost::default();
+        host.insert("Storm", shell(r#"printf "sized\r\n"; sleep 5"#, 12, 40));
+        record_until(&mut host, dir.path(), "Storm", |log| log.contains("sized"));
+        host.sync(Some("Storm"), 20, 60, Utc::now());
+        record_until(&mut host, dir.path(), "Storm", |log| log.contains("\u{1b}[8;20;60t"));
+    }
+
+    #[test]
+    fn a_full_log_starts_again_from_the_current_screen() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut host = SessionHost::default();
+        host.limit_logs(256);
+        host.insert("Storm", shell(r#"i=0; while [ $i -lt 40 ]; do printf "line %s\r\n" $i; i=$((i+1)); sleep 0.02; done; sleep 5"#, 12, 40));
+        let (first, _) = record_until(&mut host, dir.path(), "Storm", |_| true);
+        let (second, log) = record_until(&mut host, dir.path(), "Storm", |log| log.contains("line 39"));
+        assert_ne!(first, second, "the log was replaced");
+        assert!(!dir.path().join(&first).exists(), "the full log is removed");
+        assert!(log.starts_with("\u{1b}[8;12;40t"), "{log:?}");
+    }
+
+    #[test]
+    fn an_unchanged_publication_is_rewritten_only_to_stay_fresh() {
         let dir = tempfile::tempdir().unwrap();
         let mut host = SessionHost::default();
         host.insert("Storm", shell(r#"printf "steady\r\n"; sleep 5"#, 12, 40));
         let start = Instant::now();
         probe::wait_for(probe::POLL_BOUND, || {
             host.publish(dir.path(), start, Utc::now());
-            published(dir.path(), "Storm").filter(|snapshot| snapshot.screen.contains("steady"))
+            published(dir.path(), "Storm")
         })
-        .expect("the screen is published");
+        .expect("the session is published");
         std::fs::remove_file(dir.path().join("Storm.json")).unwrap();
         host.publish(dir.path(), start + Duration::from_secs(1), Utc::now());
         assert!(published(dir.path(), "Storm").is_none(), "nothing changed, nothing written");
@@ -1209,21 +1393,67 @@ mod tests {
     }
 
     #[test]
-    fn an_ended_session_withdraws_its_published_screen() {
+    fn an_ended_session_withdraws_its_publication_and_log() {
         let dir = tempfile::tempdir().unwrap();
         let mut host = SessionHost::default();
         host.insert("Storm", shell(r#"printf "bye\r\n"; sleep 1"#, 12, 40));
-        probe::wait_for(probe::POLL_BOUND, || {
-            host.publish(dir.path(), Instant::now(), Utc::now());
-            published(dir.path(), "Storm")
-        })
-        .expect("the screen is published");
+        let (log, _) = record_until(&mut host, dir.path(), "Storm", |_| true);
         let gone = probe::wait_until(probe::POLL_BOUND, || {
             host.sync(None, 12, 40, Utc::now());
             host.publish(dir.path(), Instant::now(), Utc::now());
             !host.is_live("Storm") && published(dir.path(), "Storm").is_none()
         });
-        assert!(gone, "the file outlived its session");
+        assert!(gone, "the publication outlived its session");
+        assert!(!dir.path().join(log).exists(), "the log outlived its session");
+    }
+
+    #[test]
+    fn replacing_a_live_session_removes_the_old_log() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut host = SessionHost::default();
+        host.insert("Storm", shell(r#"printf "old\r\n"; sleep 5"#, 12, 40));
+        let (old, _) = record_until(&mut host, dir.path(), "Storm", |log| log.contains("old"));
+        host.insert("Storm", shell(r#"printf "new\r\n"; sleep 5"#, 12, 40));
+        let (new, _) = record_until(&mut host, dir.path(), "Storm", |log| log.contains("new"));
+        assert_ne!(old, new);
+        assert!(!dir.path().join(old).exists(), "the replaced session's log is removed");
+    }
+
+    #[test]
+    fn a_first_publish_sweeps_what_a_gone_view_left_behind() {
+        let dir = tempfile::tempdir().unwrap();
+        let old = std::time::SystemTime::now() - Duration::from_secs(60);
+        let age = |path: &std::path::Path| {
+            std::fs::File::options().write(true).open(path).unwrap().set_modified(old).unwrap();
+        };
+        let stale = PublishedSession {
+            name: "Rogue".into(),
+            log: "Rogue.1-0-0.log".into(),
+            updated_at: Utc::now() - chrono::Duration::seconds(60),
+        };
+        let fresh = PublishedSession {
+            name: "Storm".into(),
+            log: "Storm.2-0-0.log".into(),
+            updated_at: Utc::now(),
+        };
+        write_publication(dir.path(), &stale).unwrap();
+        write_publication(dir.path(), &fresh).unwrap();
+        for log in ["Rogue.1-0-0.log", "Storm.2-0-0.log", "Orphan.3-0-0.log", "Young.4-0-0.log"] {
+            std::fs::write(dir.path().join(log), "x").unwrap();
+        }
+        for log in ["Rogue.1-0-0.log", "Storm.2-0-0.log", "Orphan.3-0-0.log"] {
+            age(&dir.path().join(log));
+        }
+
+        SessionHost::default().publish(dir.path(), Instant::now(), Utc::now());
+
+        let left: std::collections::BTreeSet<String> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect();
+        let expected: std::collections::BTreeSet<String> =
+            ["Storm.json", "Storm.2-0-0.log", "Young.4-0-0.log"].map(String::from).into();
+        assert_eq!(left, expected, "a live publisher's files and a just-made log are kept");
     }
 
     #[test]

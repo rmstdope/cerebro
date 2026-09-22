@@ -391,29 +391,30 @@ fn service_at(shared_root: &std::path::Path) -> ReadOnlyService {
     )
 }
 
-fn publish(root: &std::path::Path, name: &str, age: chrono::Duration) {
+fn publish(root: &std::path::Path, name: &str, age: chrono::Duration, log: &[u8]) -> String {
     let dir = root.join(".cerebro/state/sessions");
     std::fs::create_dir_all(&dir).unwrap();
-    let snapshot = cerebro_tui::ScreenSnapshot {
+    let file = format!("{name}.1-0-0.log");
+    std::fs::write(dir.join(&file), log).unwrap();
+    let publication = cerebro_tui::PublishedSession {
         name: name.to_string(),
-        rows: 12,
-        cols: 40,
-        screen: "\u{1b}[31mhello\u{1b}[m".to_string(),
+        log: file.clone(),
         updated_at: chrono::Utc::now() - age,
     };
     std::fs::write(
         dir.join(format!("{name}.json")),
-        serde_json::to_string(&snapshot).unwrap(),
+        serde_json::to_string(&publication).unwrap(),
     )
     .unwrap();
+    file
 }
 
-async fn session(root: &std::path::Path, name: &str) -> (StatusCode, serde_json::Value) {
+async fn session(root: &std::path::Path, path: &str) -> (StatusCode, serde_json::Value) {
     let response = service_at(root)
         .router()
         .oneshot(
             Request::builder()
-                .uri(format!("/api/sessions/{name}"))
+                .uri(format!("/api/sessions/{path}"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -428,25 +429,87 @@ async fn session(root: &std::path::Path, name: &str) -> (StatusCode, serde_json:
 }
 
 #[tokio::test]
-async fn a_published_session_screen_is_served_live() {
+async fn a_published_session_log_is_served_from_the_start() {
     let root = tempfile::tempdir().unwrap();
-    publish(root.path(), "Storm", chrono::Duration::zero());
+    let log = publish(
+        root.path(),
+        "Storm",
+        chrono::Duration::zero(),
+        b"\x1b[8;12;40thello",
+    );
 
     let (status, body) = session(root.path(), "Storm").await;
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["state"], "live");
-    assert_eq!(
-        (body["rows"].as_u64(), body["cols"].as_u64()),
-        (Some(12), Some(40))
-    );
-    assert_eq!(body["screen"], "\u{1b}[31mhello\u{1b}[m");
+    assert_eq!(body["log"], log.as_str());
+    assert_eq!(body["reset"], true);
+    assert_eq!(body["data"], "\u{1b}[8;12;40thello");
+    assert_eq!(body["offset"], 15);
+    assert_eq!(body["more"], false);
 }
 
 #[tokio::test]
-async fn a_missing_or_abandoned_session_screen_is_absent() {
+async fn a_reader_that_has_caught_up_gets_only_what_was_appended() {
     let root = tempfile::tempdir().unwrap();
-    publish(root.path(), "Rogue", chrono::Duration::seconds(60));
+    let log = publish(
+        root.path(),
+        "Storm",
+        chrono::Duration::zero(),
+        b"hello world",
+    );
+
+    let (_, body) = session(root.path(), &format!("Storm?log={log}&from=6")).await;
+
+    assert_eq!(
+        (body["reset"].as_bool(), body["data"].as_str()),
+        (Some(false), Some("world"))
+    );
+    assert_eq!(body["offset"], 11);
+}
+
+#[tokio::test]
+async fn a_reader_of_a_replaced_log_starts_again() {
+    let root = tempfile::tempdir().unwrap();
+    publish(root.path(), "Storm", chrono::Duration::zero(), b"fresh");
+
+    let (_, body) = session(root.path(), "Storm?log=Storm.1-0-9.log&from=3").await;
+
+    assert_eq!(
+        (body["reset"].as_bool(), body["data"].as_str()),
+        (Some(true), Some("fresh"))
+    );
+}
+
+#[tokio::test]
+async fn a_chunk_never_splits_a_character() {
+    let root = tempfile::tempdir().unwrap();
+    let log = publish(
+        root.path(),
+        "Storm",
+        chrono::Duration::zero(),
+        "aä".as_bytes(),
+    );
+
+    // Offset 2 is inside `ä`; a well-behaved reader never asks for it, but a truncated log could
+    // end there, and the reader is told to stop before it rather than given half a character.
+    std::fs::write(
+        root.path().join(".cerebro/state/sessions").join(&log),
+        &"aä".as_bytes()[..2],
+    )
+    .unwrap();
+    let (_, body) = session(root.path(), &format!("Storm?log={log}&from=0")).await;
+
+    assert_eq!(
+        (body["data"].as_str(), body["offset"].as_u64()),
+        (Some("a"), Some(1))
+    );
+}
+
+#[tokio::test]
+async fn a_missing_or_abandoned_session_is_absent() {
+    let root = tempfile::tempdir().unwrap();
+    publish(root.path(), "Rogue", chrono::Duration::seconds(60), b"old");
 
     assert_eq!(session(root.path(), "Storm").await.1["state"], "absent");
     assert_eq!(session(root.path(), "Rogue").await.1["state"], "absent");
@@ -462,7 +525,28 @@ async fn a_session_name_cannot_leave_the_sessions_directory() {
 }
 
 #[tokio::test]
-async fn an_unreadable_session_screen_is_a_failure_not_an_absence() {
+async fn a_publication_naming_a_log_elsewhere_is_refused() {
+    let root = tempfile::tempdir().unwrap();
+    let dir = root.path().join(".cerebro/state/sessions");
+    std::fs::create_dir_all(&dir).unwrap();
+    let publication = cerebro_tui::PublishedSession {
+        name: "Storm".to_string(),
+        log: "../../secret".to_string(),
+        updated_at: chrono::Utc::now(),
+    };
+    std::fs::write(
+        dir.join("Storm.json"),
+        serde_json::to_string(&publication).unwrap(),
+    )
+    .unwrap();
+
+    let (status, _) = session(root.path(), "Storm").await;
+
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+}
+
+#[tokio::test]
+async fn an_unreadable_publication_is_a_failure_not_an_absence() {
     let root = tempfile::tempdir().unwrap();
     let dir = root.path().join(".cerebro/state/sessions");
     std::fs::create_dir_all(&dir).unwrap();

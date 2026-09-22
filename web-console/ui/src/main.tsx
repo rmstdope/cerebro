@@ -9,7 +9,7 @@ type Bead = { id: string; title: string; status: string; issue_type: string; lab
 type Work = { claimed: Bead[]; planned: Bead[]; being_planned: Bead[]; ux_agreed: Bead[]; unplanned: Bead[]; paused: Bead[]; merged: Bead[] };
 type Snapshot<T> = { state: "fresh"; value: T } | { state: "stale"; value: T; error: string; updated_at: string } | { state: "unavailable"; error: string };
 type Tab = "fleet" | "work";
-type Screen = { state: "live"; rows: number; cols: number; screen: string; updated_at: string } | { state: "absent" };
+type Output = { state: "live"; log: string; reset: boolean; data: string; offset: number; more: boolean } | { state: "absent" };
 
 const notice = "This page lets you inspect the fleet and its work. Start, stop, assign, and priority controls stay in the terminal console.";
 const read = async <T,>(path: string) => {
@@ -25,28 +25,40 @@ function SessionScreen({ name }: { name: string }) {
   const host = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<"loading" | "live" | "absent" | "failed">("loading");
   useEffect(() => {
-    const terminal = new Terminal({ disableStdin: true, cursorBlink: false, fontSize: 12, scrollback: 0 });
+    const terminal = new Terminal({ disableStdin: true, cursorBlink: false, fontSize: 12, scrollback: 10000 });
+    // The log carries each pty resize as CSI 8 ; rows ; cols t, in order with the output.
+    terminal.parser.registerCsiHandler({ final: "t" }, params => {
+      const [op, rows, cols] = params.map(param => Array.isArray(param) ? param[0] : param);
+      if (op === 8 && rows > 0 && cols > 0) terminal.resize(cols, rows);
+      return true;
+    });
     terminal.open(host.current!);
-    let last = "";
+    let log: string | undefined;
+    let offset = 0;
     let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const poll = async () => {
+      let again = 500;
       try {
-        const response = await fetch(`/api/sessions/${encodeURIComponent(name)}`);
+        const query = log === undefined ? "" : `?log=${encodeURIComponent(log)}&from=${offset}`;
+        const response = await fetch(`/api/sessions/${encodeURIComponent(name)}${query}`);
         if (!response.ok) throw new Error(response.statusText);
-        const screen = await response.json() as Screen;
+        const output = await response.json() as Output;
         if (stopped) return;
-        if (screen.state === "absent") { setStatus("absent"); last = ""; return; }
-        setStatus("live");
-        if (screen.screen === last) return;
-        last = screen.screen;
-        if (terminal.rows !== screen.rows || terminal.cols !== screen.cols) terminal.resize(screen.cols, screen.rows);
-        terminal.reset();
-        terminal.write(screen.screen);
-      } catch { if (!stopped) setStatus("failed"); }
+        if (output.state === "absent") { setStatus("absent"); log = undefined; offset = 0; }
+        else {
+          setStatus("live");
+          if (output.reset) terminal.reset();
+          if (output.data) terminal.write(output.data);
+          log = output.log;
+          offset = output.offset;
+          if (output.more) again = 0;
+        }
+      } catch { if (!stopped) setStatus(current => current === "live" ? current : "failed"); again = 2000; }
+      if (!stopped) timer = setTimeout(() => void poll(), again);
     };
     void poll();
-    const timer = setInterval(() => void poll(), 1000);
-    return () => { stopped = true; clearInterval(timer); terminal.dispose(); };
+    return () => { stopped = true; clearTimeout(timer); terminal.dispose(); };
   }, [name]);
   return <section className="session" aria-label={`${name} session`}>
     <h3>Session</h3>

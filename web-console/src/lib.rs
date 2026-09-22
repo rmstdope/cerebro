@@ -9,7 +9,7 @@ use std::{
 };
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::sse::{Event, KeepAlive, Sse},
     routing::get,
@@ -17,7 +17,7 @@ use axum::{
 };
 use cerebro_tui::{
     read_fleet, read_health, read_work, CommandRunner, Commands, FleetHealth, FleetRow, Programs,
-    ReaderPaths, ScreenSnapshot, SupervisionMode, WorkBuckets,
+    PublishedSession, ReaderPaths, SupervisionMode, WorkBuckets,
 };
 use chrono::{DateTime, Utc};
 use futures_util::stream;
@@ -26,9 +26,12 @@ use tower_http::services::{ServeDir, ServeFile};
 
 const EVENT_POLL_INTERVAL: Duration = Duration::from_secs(2);
 
-/// A published screen older than this is a file a gone fleet view left behind. Three of the
-/// fleet view's `SCREEN_REFRESH` periods (5 s), a literal twin.
+/// A publication older than this is a file a gone fleet view left behind. Three of the fleet
+/// view's `SCREEN_REFRESH` periods (5 s), a literal twin.
 const SCREEN_STALE_SECONDS: i64 = 15;
+
+/// The most session output one response carries; a reader behind by more asks again.
+const OUTPUT_CHUNK: u64 = 512 * 1024;
 
 /// A local HTTP boundary for browser-console reads.
 ///
@@ -139,7 +142,7 @@ impl ReadOnlyService {
             .route("/api/work", get(work_snapshot))
             .route("/api/health", get(health_snapshot))
             .route("/api/events", get(event_stream))
-            .route("/api/sessions/{name}", get(session_screen))
+            .route("/api/sessions/{name}", get(session_output))
             .fallback_service(
                 ServeDir::new(self.assets_dir.clone()).fallback(ServeFile::new(index)),
             )
@@ -176,59 +179,115 @@ async fn health_snapshot(State(state): State<SnapshotState>) -> Json<Snapshot<Fl
 
 #[derive(Serialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
-enum SessionScreen {
+enum SessionOutput {
     Live {
-        rows: u16,
-        cols: u16,
-        screen: String,
-        updated_at: DateTime<Utc>,
+        log: String,
+        /// The reader's log was replaced, or it had none: `data` starts the new log.
+        reset: bool,
+        data: String,
+        /// Where the next read starts.
+        offset: u64,
+        /// More is already waiting beyond `offset`.
+        more: bool,
     },
     Absent,
 }
 
-/// The screen the fleet view last published for NAME's hosted session, read-only. A session the
-/// fleet view does not host - or one it stopped refreshing - is `absent`, never an empty screen.
-async fn session_screen(
+#[derive(serde::Deserialize)]
+struct OutputQuery {
+    log: Option<String>,
+    from: Option<u64>,
+}
+
+fn is_plain_name(name: &str, extra: &[char]) -> bool {
+    !name.is_empty()
+        && !name.starts_with('.')
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || extra.contains(&c))
+}
+
+/// The end of the longest prefix of BYTES that does not stop inside a character.
+fn character_boundary(bytes: &[u8]) -> usize {
+    match std::str::from_utf8(bytes) {
+        Ok(_) => bytes.len(),
+        Err(error) if error.error_len().is_none() => error.valid_up_to(),
+        Err(_) => bytes.len(),
+    }
+}
+
+/// NAME's hosted session output, read-only: the log the fleet view last published for it, from
+/// the reader's offset. A session the fleet view does not host - or one it stopped refreshing -
+/// is `absent`; anything else that cannot be read is an error, never an empty answer.
+async fn session_output(
     State(state): State<SnapshotState>,
     Path(name): Path<String>,
-) -> Result<Json<SessionScreen>, StatusCode> {
-    if name.is_empty()
-        || !name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-    {
+    Query(query): Query<OutputQuery>,
+) -> Result<Json<SessionOutput>, StatusCode> {
+    if !is_plain_name(&name, &[]) {
         return Err(StatusCode::BAD_REQUEST);
     }
-    let path = state
+    let dir = state
         .reader_paths
         .shared_root
-        .join(".cerebro/state/sessions")
-        .join(format!("{name}.json"));
-    let text = match tokio::fs::read_to_string(path).await {
+        .join(".cerebro/state/sessions");
+    tokio::task::spawn_blocking(move || read_output(&dir, &name, query))
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .map(Json)
+}
+
+fn read_output(
+    dir: &std::path::Path,
+    name: &str,
+    query: OutputQuery,
+) -> Result<SessionOutput, StatusCode> {
+    use std::io::{Read, Seek, SeekFrom};
+    let fault = |_| StatusCode::INTERNAL_SERVER_ERROR;
+    let text = match std::fs::read_to_string(dir.join(format!("{name}.json"))) {
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(Json(SessionScreen::Absent))
+            return Ok(SessionOutput::Absent)
         }
-        Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR),
+        Err(error) => return Err(fault(error)),
     };
     // The fleet view renames a whole file into place, so one that does not parse is a fault.
-    let snapshot = serde_json::from_str::<ScreenSnapshot>(&text)
+    let publication = serde_json::from_str::<PublishedSession>(&text)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let snapshot = Some(snapshot).filter(|snapshot| {
-        Utc::now()
-            .signed_duration_since(snapshot.updated_at)
-            .num_seconds()
-            < SCREEN_STALE_SECONDS
-    });
-    Ok(Json(match snapshot {
-        Some(snapshot) => SessionScreen::Live {
-            rows: snapshot.rows,
-            cols: snapshot.cols,
-            screen: snapshot.screen,
-            updated_at: snapshot.updated_at,
-        },
-        None => SessionScreen::Absent,
-    }))
+    if Utc::now()
+        .signed_duration_since(publication.updated_at)
+        .num_seconds()
+        >= SCREEN_STALE_SECONDS
+    {
+        return Ok(SessionOutput::Absent);
+    }
+    if !is_plain_name(&publication.log, &['.']) {
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    }
+    // A log replaced between reading the publication and opening it is gone for a moment only.
+    let mut file = std::fs::File::open(dir.join(&publication.log))
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    let length = file.metadata().map_err(fault)?.len();
+    let continuing = query.log.as_deref() == Some(publication.log.as_str());
+    let from = query
+        .from
+        .filter(|from| continuing && *from <= length)
+        .unwrap_or(0);
+    let reset = !continuing || query.from.is_none_or(|asked| asked != from);
+    file.seek(SeekFrom::Start(from)).map_err(fault)?;
+    let mut bytes = Vec::new();
+    file.take(OUTPUT_CHUNK)
+        .read_to_end(&mut bytes)
+        .map_err(fault)?;
+    bytes.truncate(character_boundary(&bytes));
+    let offset = from + bytes.len() as u64;
+    Ok(SessionOutput::Live {
+        log: publication.log,
+        reset,
+        data: String::from_utf8_lossy(&bytes).into_owned(),
+        offset,
+        more: offset < length,
+    })
 }
 
 async fn event_stream(

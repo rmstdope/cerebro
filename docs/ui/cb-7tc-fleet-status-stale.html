@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Fleet status with an older update</title>
+  <style>
+    :root { font-family: system-ui, sans-serif; color: #172033; background: #f5f7fb; }
+    body { margin: 0; }
+    main { max-width: 1000px; margin: auto; padding: 32px 20px; }
+    header, article, .alert { border: 1px solid #d8dee9; background: #fff; border-radius: 12px; }
+    header { padding: 20px 24px; }
+    h1, h2, p { margin: 0; }
+    h1 { font-size: 1.5rem; }
+    header p, article p { color: #566176; margin-top: 6px; }
+    .alert { border-color: #e7bd61; background: #fff9ed; margin: 20px 0; padding: 16px 20px; }
+    .alert p { margin-top: 4px; }
+    .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    article { padding: 16px; }
+    .status { float: right; font-weight: 700; }
+    .working { color: #075f36; }
+    .waiting { color: #87610c; }
+    .idle { color: #566176; }
+    @media (max-width: 620px) { .grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Fleet status</h1>
+      <p>The latest available picture of the fleet.</p>
+    </header>
+    <section class="alert" role="status">
+      <strong>Couldn’t get a current update</strong>
+      <p>Showing the last update from 14:32. Trying again automatically.</p>
+    </section>
+    <section class="grid" aria-label="Last known fleet status">
+      <article><span class="status working">Working</span><strong>Storm</strong><p>Building the new task summary</p></article>
+      <article><span class="status waiting">Waiting for a reply</span><strong>Xavier</strong><p>Agreeing how the fleet status should look</p></article>
+      <article><span class="status idle">Available</span><strong>Moira</strong><p>Nothing in hand</p></article>
+      <article><span class="status working">Working</span><strong>Forge</strong><p>Reviewing recent work</p></article>
+    </section>
+  </main>
+</body>
+</html>

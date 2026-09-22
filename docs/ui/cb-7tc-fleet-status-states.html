@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Fleet status states</title>
+  <style>
+    :root { font-family: system-ui, sans-serif; color: #172033; background: #f5f7fb; }
+    body { margin: 0; }
+    main { max-width: 760px; margin: auto; padding: 32px 20px; }
+    h1, h2, h3, p { margin: 0; }
+    h1 { font-size: 1.5rem; }
+    h2 { font-size: 1.1rem; margin-bottom: 14px; }
+    h3 { font-size: .9rem; color: #566176; margin: 28px 0 8px; text-transform: uppercase; }
+    .page, .card, .message { background: #fff; border: 1px solid #d8dee9; border-radius: 12px; }
+    .page { padding: 20px; }
+    .page > p { color: #566176; margin-top: 5px; }
+    .message { margin-top: 16px; padding: 36px 20px; text-align: center; }
+    .message p { color: #566176; margin-top: 6px; }
+    .loading { display: inline-block; border: 3px solid #d8dee9; border-top-color: #365bba; border-radius: 50%; height: 20px; margin-bottom: 12px; width: 20px; }
+    .card { margin-top: 12px; padding: 15px; }
+    .card p { color: #566176; margin-top: 4px; }
+    .warning { border-color: #e7bd61; background: #fff9ed; padding: 12px; margin-top: 16px; border-radius: 8px; }
+    .warning p { margin-top: 4px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Fleet status — page states</h1>
+
+    <h3>First opening</h3>
+    <section class="page">
+      <h2>Fleet status</h2>
+      <section class="message" role="status"><span class="loading" aria-hidden="true"></span><strong>Loading fleet status</strong><p>One moment while we get the latest update.</p></section>
+    </section>
+
+    <h3>No people in the fleet</h3>
+    <section class="page">
+      <h2>Fleet status</h2><p>Last updated just now. Refreshes automatically.</p>
+      <section class="message"><strong>No people are in the fleet right now</strong><p>This page will update automatically when someone joins.</p></section>
+    </section>
+
+    <h3>Older, but still useful, information</h3>
+    <section class="page">
+      <h2>Fleet status</h2>
+      <section class="warning" role="status"><strong>Couldn’t get a current update</strong><p>Showing the last update from 14:32. Trying again automatically.</p></section>
+      <article class="card"><strong>Storm</strong><p>Working — Building the new task summary</p></article>
+      <article class="card"><strong>Xavier</strong><p>Waiting for a reply — Agreeing how the fleet status should look</p></article>
+    </section>
+
+    <h3>No update has ever arrived</h3>
+    <section class="page">
+      <h2>Fleet status</h2>
+      <section class="message" role="status"><strong>Fleet status is unavailable</strong><p>We couldn’t load the latest status. This page will try again automatically.</p></section>
+    </section>
+  </main>
+</body>
+</html>

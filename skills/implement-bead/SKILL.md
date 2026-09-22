@@ -169,6 +169,11 @@ and its TTL is not configurable here.
 
 **Read the plan with `bd show <id> --json`.** The pretty renderer mangles it.
 
+**Redirect an unplanned UX-agreed bead before validating a plan.** When its labels contain
+`ux:agreed` and not `planned`, it is combined-producer work, not a malformed legacy input: load
+`produce-bead` and continue there. The producer writes the missing build plan and implements the
+bead; do not use the hand-back block.
+
 **Refuse a plan missing a mandatory section** — context, files and reuse, increments with their
 tests, test plan, user-facing decisions, out of scope, validation, traps:
 
@@ -336,7 +341,9 @@ increment without duplicating code or tests, cite the evidence in the PR body, c
 intent unambiguous: use the current shape and record it. Affects or obscures approach, scope or
 audience-visible intent: hand back.
 
-Anything touching **approach, scope, or what the user sees** goes back by the hand-back block.
+Anything touching **approach, scope, or what the user sees** needs the navigator. In the combined
+producer flow, use `producer-park` only for a genuine UX or scope decision; the legacy hand-back
+block remains for a malformed planned legacy bead.
 
 ### Asking instead of handing back
 

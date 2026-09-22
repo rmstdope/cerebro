@@ -251,6 +251,9 @@ pub struct TriggerFacts {
     pub planned: usize,
     /// Ids of the planned, unclaimed, unparked beads - what an implementer may actually claim.
     pub planned_ids: Vec<String>,
+    /// Planned-bead revisions keyed by id, so a replanned bead under the same id still moves the
+    /// implementer fingerprint.
+    pub planned_revisions: Vec<(String, Option<DateTime<Utc>>)>,
     /// The beads the next implementer start may be handed: `WorkBuckets::assignable` minus every
     /// bead already spoken for (`spoken_for`), in the script's order. `take` removes one handed out
     /// earlier in the same tick (cb-10d.1).
@@ -389,6 +392,7 @@ impl TriggerFacts {
             planned: planned.len(),
             ux_agreed: agreed.len(),
             planned_ids: planned.iter().map(|bead| bead.id.clone()).collect(),
+            planned_revisions: planned.iter().map(|bead| (bead.id.clone(), bead.updated_at)).collect(),
             assignable_ids: buckets
                 .assignable
                 .iter()
@@ -463,6 +467,7 @@ pub enum Fingerprint {
     },
     Implementer {
         planned_ids: Vec<String>,
+        planned_revisions: Vec<(String, Option<DateTime<Utc>>)>,
     },
     Bugfixer {
         bugfixable_ids: Vec<String>,
@@ -501,6 +506,7 @@ pub fn fingerprint(role: &str, facts: &TriggerFacts) -> Option<Fingerprint> {
         }),
         "implementer" => Some(Fingerprint::Implementer {
             planned_ids: facts.planned_ids.clone(),
+            planned_revisions: facts.planned_revisions.clone(),
         }),
         "bugfixer" => Some(Fingerprint::Bugfixer {
             bugfixable_ids: facts.bugfixable_ids.clone(),
@@ -1711,6 +1717,7 @@ mod tests {
             ux_agreed: 0,
             planned: 0,
             planned_ids: Vec::new(),
+            planned_revisions: Vec::new(),
             assignable_ids: Vec::new(),
             bugfixable_ids: Vec::new(),
             unranked_ids: Vec::new(),
@@ -1869,6 +1876,28 @@ mod tests {
         // And a role this view has never started has no fingerprint to be held by.
         assert_eq!(
             trigger(&facts, agent("implementer"), at(120)),
+            Some("1 planned, unclaimed".to_string())
+        );
+    }
+
+    #[test]
+    fn a_replanned_bead_under_the_same_id_breaks_the_implementer_guard() {
+        let mut before = empty_facts();
+        before.planned_ids = vec!["cb-a".into()];
+        before.assignable_ids = vec!["cb-a".into()];
+        before.planned_revisions = vec![("cb-a".into(), Some(at(10)))];
+        let print = fingerprint("implementer", &before).expect("an implementer has one");
+        let held = AgentFacts {
+            role: "implementer",
+            started_at: Some(at(0)),
+            ended_at: Some(at(60)),
+            last_fingerprint: Some(&print),
+        };
+
+        let mut after = before.clone();
+        after.planned_revisions = vec![("cb-a".into(), Some(at(120)))];
+        assert_eq!(
+            trigger(&after, held, at(180)),
             Some("1 planned, unclaimed".to_string())
         );
     }

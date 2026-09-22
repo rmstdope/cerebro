@@ -13,6 +13,7 @@ dist/
 # Browser console build artefacts and local dependencies.
 /web-console/ui/dist
 /web-console/ui/node_modules
+/web-console/ui/test-results
 /web-console/ui/*.tsbuildinfo
 
 # Backup files

@@ -19,6 +19,10 @@ out="$(cd "$consumer" && "$tool" --classify crates/core/src/lib.rs)"
 printf 'rust_paths [\n' > "$conf"
 if out="$(cd "$consumer" && "$tool" --classify crates/core/src/lib.rs 2>/dev/null)"; then fail "malformed declaration succeeded"; fi
 [ -z "$out" ] || fail "malformed declaration printed stdout"
+rm "$conf"
+printf 'rust_paths deprecated\n' > "$consumer/.claude/cerebro-project.conf"
+if out="$(cd "$consumer" && "$tool" --classify crates/core/src/lib.rs 2>/dev/null)"; then fail "failed declaration lookup succeeded"; fi
+[ -z "$out" ] || fail "failed declaration lookup printed stdout"
 if (cd "$consumer" && "$tool" 2>/dev/null); then fail "missing mode succeeded"; fi
 if (cd "$consumer" && "$tool" --wat 2>/dev/null); then fail "unknown mode succeeded"; fi
 suite_passed

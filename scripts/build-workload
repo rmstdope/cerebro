@@ -6,7 +6,11 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 usage() { echo "usage: build-workload --classify <path>..." >&2; exit 2; }
 [ "$#" -ge 2 ] && [ "$1" = --classify ] || usage
 shift
-pattern="$("$here/project-conf" rust_paths 2>/dev/null)" || pattern=""
+if pattern="$("$here/project-conf" rust_paths)"; then
+  :
+else
+  exit $?
+fi
 [ -n "$pattern" ] || {
   echo "build-workload: no rust_paths in .cerebro/project.conf - classifying as non-rust." >&2
   echo non-rust

@@ -24,6 +24,27 @@ use crate::readers::{ReadError, ReaderPaths};
 /// epic's interview and unchanged here.
 pub const SCROLLBACK_LINES: usize = 10_000;
 
+/// How often an unchanged published screen is rewritten, so a reader can tell a live publisher
+/// from a file a crashed view left behind. `cerebro-web` treats a snapshot older than three of
+/// these as gone (`SCREEN_STALE_SECONDS`), a literal twin.
+pub const SCREEN_REFRESH: Duration = Duration::from_secs(5);
+
+/// The least time between two writes of one session's screen: a streaming agent repaints far
+/// more often than a browser needs to hear about it.
+const SCREEN_MIN_INTERVAL: Duration = Duration::from_millis(250);
+
+/// One live session's screen, as `SessionHost::publish` writes it for readers outside this
+/// process. `screen` is vt100's formatted contents: ANSI that repaints the screen, cursor
+/// included, on a terminal of `rows` by `cols`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ScreenSnapshot {
+    pub name: String,
+    pub rows: u16,
+    pub cols: u16,
+    pub screen: String,
+    pub updated_at: DateTime<Utc>,
+}
+
 /// The size a pty is opened at, before the first frame has told us how big the pane is.
 pub const INITIAL_ROWS: u16 = 24;
 pub const INITIAL_COLS: u16 = 80;
@@ -364,6 +385,15 @@ fn refusal_lines(message: &str) -> Vec<Line<'static>> {
     lines
 }
 
+/// Write SNAPSHOT to `DIR/<name>.json` through a rename, so a reader never sees half a file.
+fn write_snapshot(dir: &std::path::Path, snapshot: &ScreenSnapshot) -> std::io::Result<()> {
+    std::fs::create_dir_all(dir)?;
+    let text = serde_json::to_string(snapshot).map_err(std::io::Error::other)?;
+    let partial = dir.join(format!(".{}.json.partial", snapshot.name));
+    std::fs::write(&partial, text)?;
+    std::fs::rename(&partial, dir.join(format!("{}.json", snapshot.name)))
+}
+
 /// One agent CLI, in one pty, with one thread draining it.
 ///
 /// The `Arc<RwLock<Parser>>` belongs to this struct rather than to the pty, which is the whole
@@ -517,6 +547,20 @@ impl Session {
         Some(materialise(parser.screen(), rows, cols))
     }
 
+    /// The child's screen as ANSI that repaints it, cursor included, with the size it is drawn
+    /// at. `None` before the first byte.
+    fn formatted(&self) -> Option<(u16, u16, String)> {
+        if self.seen.load(Ordering::SeqCst) == 0 {
+            return None;
+        }
+        let parser = self.parser.read().ok()?;
+        let screen = parser.screen();
+        let mut bytes = screen.contents_formatted();
+        bytes.extend(screen.cursor_state_formatted());
+        let (rows, cols) = screen.size();
+        Some((rows, cols, String::from_utf8_lossy(&bytes).into_owned()))
+    }
+
     /// Where the child's cursor is, as (row, column) inside the pane's inner rect.
     pub fn cursor(&self) -> (u16, u16) {
         self.parser
@@ -645,6 +689,8 @@ pub struct SessionHost {
     /// Children reaped since `take_reaped` was last called, and the last line each painted.
     /// See it.
     reaped: Vec<(String, Ended, Option<String>)>,
+    /// What `publish` last wrote for each name, and when.
+    published: HashMap<String, (String, Instant)>,
 }
 
 impl SessionHost {
@@ -842,6 +888,44 @@ impl SessionHost {
         self.pending.retain(|(_, when)| *when > at);
         for name in due {
             self.send(&name, b"\r");
+        }
+    }
+
+    /// Write each live session's screen to `DIR/<name>.json` for readers outside this process,
+    /// and remove the file of any session this host published that is no longer live.
+    ///
+    /// A screen is written when it changed and `SCREEN_MIN_INTERVAL` has passed, or when
+    /// `SCREEN_REFRESH` has passed regardless, so its `updated_at` says the publisher is alive.
+    /// A failed write is dropped: the next frame tries again, and the pane here is unaffected.
+    pub fn publish(&mut self, dir: &std::path::Path, now: Instant, at: DateTime<Utc>) {
+        let gone: Vec<String> =
+            self.published.keys().filter(|name| !self.live.contains_key(*name)).cloned().collect();
+        for name in gone {
+            self.published.remove(&name);
+            let _ = std::fs::remove_file(dir.join(format!("{name}.json")));
+        }
+        for (name, session) in &self.live {
+            let Some((rows, cols, screen)) = session.formatted() else { continue };
+            let due = match self.published.get(name) {
+                None => true,
+                Some((last, when)) => {
+                    let since = now.saturating_duration_since(*when);
+                    since >= SCREEN_REFRESH || (*last != screen && since >= SCREEN_MIN_INTERVAL)
+                }
+            };
+            if !due {
+                continue;
+            }
+            let snapshot = ScreenSnapshot {
+                name: name.clone(),
+                rows,
+                cols,
+                screen: screen.clone(),
+                updated_at: at,
+            };
+            if write_snapshot(dir, &snapshot).is_ok() {
+                self.published.insert(name.clone(), (screen, now));
+            }
         }
     }
 
@@ -1085,6 +1169,61 @@ mod tests {
             .iter()
             .map(|line| texts(line).join(""))
             .collect()
+    }
+
+    fn published(dir: &std::path::Path, name: &str) -> Option<ScreenSnapshot> {
+        let text = std::fs::read_to_string(dir.join(format!("{name}.json"))).ok()?;
+        Some(serde_json::from_str(&text).expect("a published screen is valid JSON"))
+    }
+
+    #[test]
+    fn a_live_session_publishes_its_screen_for_other_readers() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut host = SessionHost::default();
+        host.insert("Storm", shell(r#"printf "hello from storm\r\n"; sleep 5"#, 12, 40));
+        let snapshot = probe::wait_for(probe::POLL_BOUND, || {
+            host.publish(dir.path(), Instant::now(), Utc::now());
+            published(dir.path(), "Storm")
+                .filter(|snapshot| snapshot.screen.contains("hello from storm"))
+        })
+        .expect("the screen is published");
+        assert_eq!((snapshot.name.as_str(), snapshot.rows, snapshot.cols), ("Storm", 12, 40));
+    }
+
+    #[test]
+    fn an_unchanged_screen_is_republished_only_to_stay_fresh() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut host = SessionHost::default();
+        host.insert("Storm", shell(r#"printf "steady\r\n"; sleep 5"#, 12, 40));
+        let start = Instant::now();
+        probe::wait_for(probe::POLL_BOUND, || {
+            host.publish(dir.path(), start, Utc::now());
+            published(dir.path(), "Storm").filter(|snapshot| snapshot.screen.contains("steady"))
+        })
+        .expect("the screen is published");
+        std::fs::remove_file(dir.path().join("Storm.json")).unwrap();
+        host.publish(dir.path(), start + Duration::from_secs(1), Utc::now());
+        assert!(published(dir.path(), "Storm").is_none(), "nothing changed, nothing written");
+        host.publish(dir.path(), start + SCREEN_REFRESH, Utc::now());
+        assert!(published(dir.path(), "Storm").is_some(), "rewritten so readers see it is live");
+    }
+
+    #[test]
+    fn an_ended_session_withdraws_its_published_screen() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut host = SessionHost::default();
+        host.insert("Storm", shell(r#"printf "bye\r\n"; sleep 1"#, 12, 40));
+        probe::wait_for(probe::POLL_BOUND, || {
+            host.publish(dir.path(), Instant::now(), Utc::now());
+            published(dir.path(), "Storm")
+        })
+        .expect("the screen is published");
+        let gone = probe::wait_until(probe::POLL_BOUND, || {
+            host.sync(None, 12, 40, Utc::now());
+            host.publish(dir.path(), Instant::now(), Utc::now());
+            !host.is_live("Storm") && published(dir.path(), "Storm").is_none()
+        });
+        assert!(gone, "the file outlived its session");
     }
 
     #[test]

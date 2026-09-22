@@ -376,3 +376,99 @@ async fn browser_paths_fall_back_to_the_application_shell() {
         "browser shell"
     );
 }
+
+fn service_at(shared_root: &std::path::Path) -> ReadOnlyService {
+    ReadOnlyService::new(
+        ReaderPaths {
+            consumer_root: shared_root.to_path_buf(),
+            shared_root: shared_root.to_path_buf(),
+            scripts_dir: shared_root.join("scripts"),
+        },
+        Programs::default(),
+        Arc::new(RealCommands),
+        SupervisionMode::Supervising,
+        PathBuf::from("/assets"),
+    )
+}
+
+fn publish(root: &std::path::Path, name: &str, age: chrono::Duration) {
+    let dir = root.join(".cerebro/state/sessions");
+    std::fs::create_dir_all(&dir).unwrap();
+    let snapshot = cerebro_tui::ScreenSnapshot {
+        name: name.to_string(),
+        rows: 12,
+        cols: 40,
+        screen: "\u{1b}[31mhello\u{1b}[m".to_string(),
+        updated_at: chrono::Utc::now() - age,
+    };
+    std::fs::write(
+        dir.join(format!("{name}.json")),
+        serde_json::to_string(&snapshot).unwrap(),
+    )
+    .unwrap();
+}
+
+async fn session(root: &std::path::Path, name: &str) -> (StatusCode, serde_json::Value) {
+    let response = service_at(root)
+        .router()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/sessions/{name}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    (
+        status,
+        serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null),
+    )
+}
+
+#[tokio::test]
+async fn a_published_session_screen_is_served_live() {
+    let root = tempfile::tempdir().unwrap();
+    publish(root.path(), "Storm", chrono::Duration::zero());
+
+    let (status, body) = session(root.path(), "Storm").await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["state"], "live");
+    assert_eq!(
+        (body["rows"].as_u64(), body["cols"].as_u64()),
+        (Some(12), Some(40))
+    );
+    assert_eq!(body["screen"], "\u{1b}[31mhello\u{1b}[m");
+}
+
+#[tokio::test]
+async fn a_missing_or_abandoned_session_screen_is_absent() {
+    let root = tempfile::tempdir().unwrap();
+    publish(root.path(), "Rogue", chrono::Duration::seconds(60));
+
+    assert_eq!(session(root.path(), "Storm").await.1["state"], "absent");
+    assert_eq!(session(root.path(), "Rogue").await.1["state"], "absent");
+}
+
+#[tokio::test]
+async fn a_session_name_cannot_leave_the_sessions_directory() {
+    let root = tempfile::tempdir().unwrap();
+
+    let (status, _) = session(root.path(), "..%2Fsecret").await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn an_unreadable_session_screen_is_a_failure_not_an_absence() {
+    let root = tempfile::tempdir().unwrap();
+    let dir = root.path().join(".cerebro/state/sessions");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("Storm.json"), "not json").unwrap();
+
+    let (status, _) = session(root.path(), "Storm").await;
+
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+}

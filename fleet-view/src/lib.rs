@@ -97,8 +97,8 @@ pub use supervisor::{
     SupervisorLease,
 };
 pub use session::{
-    exit_line, key_bytes, materialise, paste_bytes, transcript, Ended, Retained, Session,
-    SessionHost, SessionView, SCROLLBACK_LINES,
+    exit_line, key_bytes, materialise, paste_bytes, transcript, Ended, Retained, ScreenSnapshot,
+    Session, SessionHost, SessionView, SCREEN_REFRESH, SCROLLBACK_LINES,
 };
 pub use app::{
     work_body, work_line_of_cursor, App, AppAction, CopyEndpoint, CopySelection, CopySnapshot,

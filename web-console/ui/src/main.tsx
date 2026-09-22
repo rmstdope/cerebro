@@ -1,5 +1,7 @@
 import { StrictMode, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { Terminal } from "@xterm/xterm";
+import "@xterm/xterm/css/xterm.css";
 import "./styles.css";
 
 type Agent = { name: string; role: string; state: string; phase?: string; bead?: string; since?: string; diagnostic?: string };
@@ -7,6 +9,7 @@ type Bead = { id: string; title: string; status: string; issue_type: string; lab
 type Work = { claimed: Bead[]; planned: Bead[]; being_planned: Bead[]; ux_agreed: Bead[]; unplanned: Bead[]; paused: Bead[]; merged: Bead[] };
 type Snapshot<T> = { state: "fresh"; value: T } | { state: "stale"; value: T; error: string; updated_at: string } | { state: "unavailable"; error: string };
 type Tab = "fleet" | "work";
+type Screen = { state: "live"; rows: number; cols: number; screen: string; updated_at: string } | { state: "absent" };
 
 const notice = "This page lets you inspect the fleet and its work. Start, stop, assign, and priority controls stay in the terminal console.";
 const read = async <T,>(path: string) => {
@@ -16,14 +19,54 @@ const read = async <T,>(path: string) => {
 };
 const age = (since?: string) => since ? `${Math.max(0, Math.floor((Date.now() - Date.parse(since)) / 60000))} minutes ago` : "—";
 
+const running = (agent: Agent) => !["dead", "standby"].includes(agent.state.toLowerCase());
+
+function SessionScreen({ name }: { name: string }) {
+  const host = useRef<HTMLDivElement>(null);
+  const [status, setStatus] = useState<"loading" | "live" | "absent" | "failed">("loading");
+  useEffect(() => {
+    const terminal = new Terminal({ disableStdin: true, cursorBlink: false, fontSize: 12, scrollback: 0 });
+    terminal.open(host.current!);
+    let last = "";
+    let stopped = false;
+    const poll = async () => {
+      try {
+        const response = await fetch(`/api/sessions/${encodeURIComponent(name)}`);
+        if (!response.ok) throw new Error(response.statusText);
+        const screen = await response.json() as Screen;
+        if (stopped) return;
+        if (screen.state === "absent") { setStatus("absent"); last = ""; return; }
+        setStatus("live");
+        if (screen.screen === last) return;
+        last = screen.screen;
+        if (terminal.rows !== screen.rows || terminal.cols !== screen.cols) terminal.resize(screen.cols, screen.rows);
+        terminal.reset();
+        terminal.write(screen.screen);
+      } catch { if (!stopped) setStatus("failed"); }
+    };
+    void poll();
+    const timer = setInterval(() => void poll(), 1000);
+    return () => { stopped = true; clearInterval(timer); terminal.dispose(); };
+  }, [name]);
+  return <section className="session" aria-label={`${name} session`}>
+    <h3>Session</h3>
+    {status === "loading" && <p>Loading session…</p>}
+    {status === "absent" && <p>No screen for this session. It shows here only while the terminal console hosts it.</p>}
+    {status === "failed" && <p>Couldn’t load the session. Retrying…</p>}
+    <div ref={host} className="terminal" hidden={status !== "live"} />
+  </section>;
+}
+
 function Dialog({ item, workflow, onClose }: { item: Agent | Bead; workflow?: string; onClose: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null);
   useEffect(() => { dialog.current?.showModal(); return () => dialog.current?.close(); }, []);
   const agent = "role" in item;
-  return <dialog ref={dialog} className="dialog" aria-label="Read-only details" onClose={onClose} onCancel={onClose}>
+  const session = agent && running(item);
+  return <dialog ref={dialog} className={session ? "dialog wide" : "dialog"} aria-label="Read-only details" onClose={onClose} onCancel={onClose}>
     <header><div><h2>{agent ? item.name : item.title}</h2><p>Read-only details</p></div><button autoFocus onClick={onClose}>Close</button></header>
     <dl>{agent ? <><dt>Role</dt><dd>{item.role}</dd><dt>Status</dt><dd>{item.state}</dd><dt>Current work</dt><dd>{item.bead ?? item.phase ?? "—"}</dd><dt>Since</dt><dd>{age(item.since)}</dd><dt>Waiting for</dt><dd>{item.state === "asking" ? "An answer" : "—"}</dd></> :
       <><dt>Workflow</dt><dd>{workflow ?? item.status}</dd><dt>Priority</dt><dd>{item.priority ?? "Unranked"}</dd><dt>Current owner</dt><dd>{item.assignee ?? "—"}</dd><dt>Attention</dt><dd>{item.labels.includes("human") ? "Awaiting human input" : "—"}</dd><dt>Progress</dt><dd>{item.status}</dd></>}</dl>
+    {session && <SessionScreen name={item.name} />}
   </dialog>;
 }
 

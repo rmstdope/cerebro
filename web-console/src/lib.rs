@@ -9,14 +9,15 @@ use std::{
 };
 
 use axum::{
-    extract::State,
+    extract::{Path, State},
+    http::StatusCode,
     response::sse::{Event, KeepAlive, Sse},
     routing::get,
     Json, Router,
 };
 use cerebro_tui::{
     read_fleet, read_health, read_work, CommandRunner, Commands, FleetHealth, FleetRow, Programs,
-    ReaderPaths, SupervisionMode, WorkBuckets,
+    ReaderPaths, ScreenSnapshot, SupervisionMode, WorkBuckets,
 };
 use chrono::{DateTime, Utc};
 use futures_util::stream;
@@ -24,6 +25,10 @@ use serde::Serialize;
 use tower_http::services::{ServeDir, ServeFile};
 
 const EVENT_POLL_INTERVAL: Duration = Duration::from_secs(2);
+
+/// A published screen older than this is a file a gone fleet view left behind. Three of the
+/// fleet view's `SCREEN_REFRESH` periods (5 s), a literal twin.
+const SCREEN_STALE_SECONDS: i64 = 15;
 
 /// A local HTTP boundary for browser-console reads.
 ///
@@ -134,6 +139,7 @@ impl ReadOnlyService {
             .route("/api/work", get(work_snapshot))
             .route("/api/health", get(health_snapshot))
             .route("/api/events", get(event_stream))
+            .route("/api/sessions/{name}", get(session_screen))
             .fallback_service(
                 ServeDir::new(self.assets_dir.clone()).fallback(ServeFile::new(index)),
             )
@@ -165,6 +171,63 @@ async fn work_snapshot(State(state): State<SnapshotState>) -> Json<Snapshot<Work
 async fn health_snapshot(State(state): State<SnapshotState>) -> Json<Snapshot<FleetHealth>> {
     Json(snapshot(&state.snapshots.health, || {
         read_health(&state.reader_paths, state.commands.as_ref())
+    }))
+}
+
+#[derive(Serialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+enum SessionScreen {
+    Live {
+        rows: u16,
+        cols: u16,
+        screen: String,
+        updated_at: DateTime<Utc>,
+    },
+    Absent,
+}
+
+/// The screen the fleet view last published for NAME's hosted session, read-only. A session the
+/// fleet view does not host - or one it stopped refreshing - is `absent`, never an empty screen.
+async fn session_screen(
+    State(state): State<SnapshotState>,
+    Path(name): Path<String>,
+) -> Result<Json<SessionScreen>, StatusCode> {
+    if name.is_empty()
+        || !name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let path = state
+        .reader_paths
+        .shared_root
+        .join(".cerebro/state/sessions")
+        .join(format!("{name}.json"));
+    let text = match tokio::fs::read_to_string(path).await {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(Json(SessionScreen::Absent))
+        }
+        Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR),
+    };
+    // The fleet view renames a whole file into place, so one that does not parse is a fault.
+    let snapshot = serde_json::from_str::<ScreenSnapshot>(&text)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let snapshot = Some(snapshot).filter(|snapshot| {
+        Utc::now()
+            .signed_duration_since(snapshot.updated_at)
+            .num_seconds()
+            < SCREEN_STALE_SECONDS
+    });
+    Ok(Json(match snapshot {
+        Some(snapshot) => SessionScreen::Live {
+            rows: snapshot.rows,
+            cols: snapshot.cols,
+            screen: snapshot.screen,
+            updated_at: snapshot.updated_at,
+        },
+        None => SessionScreen::Absent,
     }))
 }
 

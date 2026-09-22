@@ -187,7 +187,8 @@ Rules a change must keep:
 - **The lease is a bound loopback listener and nothing else** — no pid file, no heartbeat, no
   timeout. `.cerebro/state/supervisor.json` is diagnosis only.
 - **Only a supervising view writes anything**: session starts and ends, the triage and sweep
-  lines, the worktree tidies, the logs. Board writes (`x`, the priority keys, `a`) are the navigator's own
+  lines, the worktree tidies, the logs, and the hosted sessions' screens under
+  `.cerebro/state/sessions/` (read by `cerebro-web`). Board writes (`x`, the priority keys, `a`) are the navigator's own
   act, run on the one write worker in the order pressed, and are deliberately outside the lease.
 - `ui::draw` reads no file, runs no program and asks no clock, so a `TestBackend` case is an
   assertion about the screen and not about the machine.

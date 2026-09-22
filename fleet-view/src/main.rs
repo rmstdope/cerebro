@@ -1722,6 +1722,11 @@ where
                 now,
             );
             app.set_session_view(view);
+            state.host.publish(
+                &config.paths.shared_root.join(".cerebro/state/sessions"),
+                Instant::now(),
+                now,
+            );
             state.host.flush_returns(Instant::now());
             app.set_exits(state.host.exits());
             // After `host.sync` has reaped, so a name whose child is gone has already left the

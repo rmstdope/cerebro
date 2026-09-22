@@ -10,7 +10,7 @@ chrono = { version = "0.4", features = ["serde"] }
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["net", "rt-multi-thread", "macros", "time"] }
+tokio = { version = "1", features = ["fs", "net", "rt-multi-thread", "macros", "time"] }
 tower-http = { version = "0.6", features = ["fs"] }
 
 [dev-dependencies]

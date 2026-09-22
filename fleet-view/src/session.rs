@@ -83,6 +83,15 @@ impl Recorder {
             Self { dir: dir.to_path_buf(), name: name.to_string(), file, log, written: 0, limit, generation };
         let (rows, cols) = screen.size();
         let mut header = size_sequence(rows, cols);
+        if screen.alternate_screen() {
+            // The normal screen first, so leaving the alternate one restores what the pty has.
+            let mut normal = vt100::Parser::new(rows, cols, 0);
+            *normal.screen_mut() = screen.clone();
+            normal.process(b"\x1b[?1049l");
+            header.extend(normal.screen().contents_formatted());
+            header.extend(normal.screen().cursor_state_formatted());
+            header.extend(b"\x1b[?1049h");
+        }
         header.extend(screen.contents_formatted());
         header.extend(screen.cursor_state_formatted());
         recorder.append(&header)?;
@@ -1349,6 +1358,32 @@ mod tests {
         host.insert("Storm", shell(r#"printf "first\r\n"; sleep 0.3; printf "later\r\n"; sleep 5"#, 12, 40));
         let (_, log) = record_until(&mut host, dir.path(), "Storm", |log| log.contains("later"));
         assert_eq!(log.matches("first").count(), 1, "{log:?}");
+    }
+
+    #[test]
+    fn a_log_begun_on_the_alternate_screen_says_so() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut host = SessionHost::default();
+        host.insert("Storm", shell(r#"printf "shell prompt\033[?1049hfull screen"; sleep 5"#, 12, 40));
+        let seen = probe::wait_until(probe::POLL_BOUND, || {
+            host.sync(Some("Storm"), 12, 40, Utc::now());
+            host.live.get("Storm").is_some_and(|session| {
+                session.parser.read().is_ok_and(|parser| {
+                    parser.screen().alternate_screen() && parser.screen().contents().contains("full screen")
+                })
+            })
+        });
+        assert!(seen, "the child reached the alternate screen");
+        let (_, log) = record_until(&mut host, dir.path(), "Storm", |log| log.contains("full screen"));
+        let mut replay = vt100::Parser::new(12, 40, 0);
+        replay.process(log.as_bytes());
+        assert!(replay.screen().alternate_screen(), "the replay is on the alternate screen: {log:?}");
+        assert!(replay.screen().contents().contains("full screen"), "{log:?}");
+        replay.process(b"\x1b[?1049l");
+        assert!(
+            replay.screen().contents().contains("shell prompt"),
+            "leaving the alternate screen restores the normal one: {log:?}"
+        );
     }
 
     #[test]

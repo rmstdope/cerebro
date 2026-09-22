@@ -25,8 +25,9 @@ function SessionScreen({ name }: { name: string }) {
   const host = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<"loading" | "live" | "absent" | "failed">("loading");
   useEffect(() => {
-    const terminal = new Terminal({ disableStdin: true, cursorBlink: false, fontSize: 12, scrollback: 10000 });
-    // The log carries each pty resize as CSI 8 ; rows ; cols t, in order with the output.
+    // `setWinSizeChars` is what lets CSI 8 ; rows ; cols t reach the handler below: the log
+    // carries each pty resize that way, in order with the output.
+    const terminal = new Terminal({ disableStdin: true, cursorBlink: false, fontSize: 12, scrollback: 10000, windowOptions: { setWinSizeChars: true } });
     terminal.parser.registerCsiHandler({ final: "t" }, params => {
       const [op, rows, cols] = params.map(param => Array.isArray(param) ? param[0] : param);
       if (op === 8 && rows > 0 && cols > 0) terminal.resize(cols, rows);
@@ -48,6 +49,7 @@ function SessionScreen({ name }: { name: string }) {
         if (output.state === "absent") { setStatus("absent"); log = undefined; offset = 0; }
         else {
           setStatus("live");
+          // xterm follows new output while the reader is at the bottom, and leaves them be when not.
           if (output.reset) terminal.reset();
           if (output.data) terminal.write(output.data);
           log = output.log;
@@ -65,7 +67,9 @@ function SessionScreen({ name }: { name: string }) {
     {status === "loading" && <p>Loading session…</p>}
     {status === "absent" && <p>No screen for this session. It shows here only while the terminal console hosts it.</p>}
     {status === "failed" && <p>Couldn’t load the session. Retrying…</p>}
-    <div ref={host} className="terminal" hidden={status !== "live"} />
+    {/* Always laid out, even before the first output: xterm drawing into an element with no
+        layout, or off-screen, leaves its viewport stuck where the first write put it. */}
+    <div ref={host} className="terminal" />
   </section>;
 }
 

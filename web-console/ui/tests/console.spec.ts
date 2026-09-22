@@ -14,8 +14,8 @@ test("loads data and requests the event stream through Vite", async ({ page }) =
 
 const lines = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, i) => `line ${from + i}\r\n`).join("");
 
-async function hostSession(page: import("@playwright/test").Page) {
-  let stream = "\u001b[8;5;40t" + lines(1, 50);
+async function hostSession(page: import("@playwright/test").Page, opening = "\u001b[8;5;40t" + lines(1, 50)) {
+  let stream = opening;
   await page.route("/api/fleet", (route) =>
     route.fulfill({ json: { state: "fresh", value: [{ name: "Storm", role: "producer", state: "working", bead: "cb-1" }] } }),
   );
@@ -51,6 +51,13 @@ test("keeps a scrolled-back session where the reader left it", async ({ page }) 
   await page.waitForTimeout(1500);
 
   expect(await session.rows.innerText()).toBe(before);
+});
+
+test("draws the session at the size its log last set", async ({ page }) => {
+  const session = await hostSession(page, "\u001b[8;5;40t" + "\u001b[8;12;60t" + lines(1, 3));
+  await expect(session.rows).toContainText("line 3");
+
+  await expect(session.rows.locator(":scope > div")).toHaveCount(12);
 });
 
 test("does not offer a session for a dead agent", async ({ page }) => {

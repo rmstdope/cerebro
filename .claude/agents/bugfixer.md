@@ -1,0 +1,1 @@
+../cerebro/agents/bugfixer.md

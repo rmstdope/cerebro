@@ -4,14 +4,14 @@ This is the human's guide to running the fleet: what to start, what each agent w
 where to look when something wants you, and what it costs. You are "the navigator" throughout — the
 agents' word for the one person the shape of every user-facing decision belongs to.
 
-The agents' own instructions live in `.claude/cerebro/agents/<role>.md`, and for the three roles that
-have one, in `.claude/cerebro/skills/`: `plan-bead`, `implement-bead` and the shared
-`beads-workflow` — plus `write-bead`, which Cerebro loads when the navigator asks for a bead and
+The agents' own instructions live in `.claude/cerebro/agents/<role>.md`, and for the roles that
+have one, in `.claude/cerebro/skills/`: `implement-bead`, `agree-experience`,
+`design-the-build`, `fix-bug` and the shared `beads-workflow` — plus `write-bead`, which Cerebro loads when the navigator asks for a bead and
 which you can also run by hand as `/write-bead`, and `project-definition`, which no role loads: you
 run it yourself, once, in a blank repository (the README says when). The verifier, the reviewer and the architect carry their
 whole job in their agent file. You do not need to read any of it to operate this.
 
-![The Cerebro fleet: the humans it answers to, eight agent roles, the bead board and the fleet view](cerebro-fleet.svg)
+![The Cerebro fleet: the humans it answers to, nine agent roles, the bead board and the fleet view](cerebro-fleet.svg)
 
 *The whole thing on one page. Regenerate with `python3 docs/cerebro-fleet.py` when a role or a flow
 changes — the SVG is generated, not drawn by hand.*
@@ -24,26 +24,27 @@ at a time, and each handover is a label rather than a conversation:
 ```
   unplanned ──► planning ──► planned ──► claimed ──► merged ──► verified
                    │            │           │           │           │
-              a planner    ready for   an implementer  a PR    Psylocke and
+              planning     ready for   an implementer  a PR    Psylocke and
               holds it     anyone      is building it  merged  you looked at it
                    └──────────── needs you ◄───────────┘
 ```
 
 Two rules hold that together, and both are load-bearing:
 
-- **A planner never claims.** Claiming means *an implementer is building this*. The fleet view makes a planner its bead's
-  assignee instead, which says the same thing about planning while leaving the bead open and free of
-  any lease; if that session dies, the view gives the bead back (cb-10d.2.2).
+- **Planning roles never claim.** Claiming means *an implementer is building this*. The fleet view
+  assigns planning work without claiming it, which keeps the bead open while making ownership clear;
+  if that session dies, the view gives the bead back (cb-10d.2.2).
 - **Closed is not terminal.** A failed verification reopens a bead at P0 and sends it round again.
 
 ## Who is in the fleet
 
-Eight roles. Seven are interactive sessions you talk to; the eighth is the implementer, of which
+Nine roles. Eight are interactive sessions you talk to; the ninth is the implementer, of which
 your project's roster declares as many as it wants.
 
 | Agent | Role | Runs on | What it is for |
 |---|---|---|---|
-| **Xavier**, **Beast** | `planner` | Opus / high | Turn unplanned beads into plans an implementer can build unattended |
+| **Xavier**, **Beast** | `ux` | Opus / high | Agree the user-facing shape and interaction details |
+| **Gambit**, **Iceman** | `build-design` | Opus / high | Turn agreed UX into buildable plans |
 | **Cerebro** | `orchestrator` | Opus / medium | Watches the fleet, reports on it, ranks the backlog with you, stops implementers, hands a release request to the project's release skill |
 | **Moira** | `user-feedback` | Sonnet | Owns the GitHub issue inbox: acknowledges, triages into beads, keeps reporters told |
 | **Psylocke** | `verifier` | Sonnet | Puts merged work in front of you and records your verdict |
@@ -87,9 +88,9 @@ re-prioritise a bead on the spot, and `x` on a **Sweeps** finding to run the exa
 It ends an implementer that reports `waiting` — its buffer
 kept — and starts a fresh one when a planned bead exists, at most one implementer every 30 seconds.
 It runs the **interactive roles** exactly the same way: a role that writes `waiting` is ended half a
-minute later — its buffer kept, `RET` shows it — and started fresh when its trigger fires: a planner
-when the planned buffer is short and a **ranked** bead is unplanned, or a P0 is unplanned — a
-board of nothing but unranked beads starts Cerebro to rank them and no planner (cb-zgg);
+minute later — its buffer kept, `RET` shows it — and started fresh when its trigger fires: a
+planning role when the planned buffer is short and its queue has work, or when a P0 is waiting — a
+board of nothing but unranked beads starts Cerebro to rank them and no planning role (cb-zgg);
 Psylocke when a merged bead is unverified or a verdict is stale; Moira when an issue moved on GitHub
 or a bead linked to one (`gh-<n>` in its `external_ref`) changed since her last pass, Cypher when an
 outside PR moved, both hourly regardless; Forge hourly too; an implementer when a planned,
@@ -101,7 +102,7 @@ until it goes idle if the mark falls mid-pass (cb-7nx). A role you have not star
 reads `standby` from the moment the view opens and the trigger is what starts it — `k` and `f`
 disarm it, and none of that is written to any
 file. `cerebro-wake-intervals` is the floor between two starts of one role, changeable while the
-fleet runs — **the planners have none**: a short buffer is the fleet already idle, so they start on
+fleet runs — **the planning roles have none**: a short buffer is the fleet already idle, so they start on
 the next five-second tick. What keeps that from looping over a trigger no pass can clear is two
 comparisons rather than a clock: the counts leave out what is parked in your queue (`human`,
 `triage:declined`), and a role is not started again while its trigger names exactly the work its own
@@ -134,7 +135,7 @@ line.
 
 The State column names the
 **phase**: `build`, `gate`, `review`, `ci`, `rebase`, `merge` for an implementer; `plan` for
-a planner; `prepare`/`verify` for Psylocke; `read`/`check`/`walk`/`report` for Cypher; `sweep` for
+the planning roles (`ux` and `build-design`); `prepare`/`verify` for Psylocke; `read`/`check`/`walk`/`report` for Cypher; `sweep` for
 Moira and Cerebro (`release` and `triage` too); `daily`/`weekly` for Forge. The Bead/Phase column shows both
 timers — time on the bead, time in this phase — so one in `ci` for an hour says something is
 stuck. `review` is the implementer waiting on a sub-agent it spawned itself — delta rounds run about a
@@ -174,7 +175,7 @@ the `.claude/cerebro` submodule — so no other consumer of the harness inherits
 to give every clone the same fleet, or ignore it to keep it yours. Copy `.claude/cerebro/agents.conf.example` to `.cerebro/agents.conf` and edit a
 line. Keys are an agent's name, a role, or `default`, most specific first, so
 `default tool=copilot model=gpt-5.5` moves everybody and
-`Beast tool=claude model=opus` moves one planner — which is the cheap way to compare two tools or
+`Beast tool=claude model=opus` moves one `ux` agent — which is the cheap way to compare two tools or
 models on the same queue. It takes effect at the next launch; a session already running keeps the
 tool and model it started with, and the launcher says which key it matched when it starts one.
 
@@ -194,50 +195,11 @@ default model and says
 `launch: external model "research" is unavailable; Beast will use Copilot's default model.` See
 [`docs/ui/cb-2fs-external-model.html`](ui/cb-2fs-external-model.html) for the agreed states.
 
-## Starting a planner — there are two of them
+## Starting planning roles
 
-**Xavier and Beast both hold the planner role** (`scripts/roster --role planner`). One planner keeps
-about two implementers fed; a wider fleet outruns a single planning session, which is what the second
-one is for. Run one or both — nothing breaks with only Xavier up, the buffer simply refills at half
-the rate, and Cerebro will say so on its sweep.
-
-What they divide: nothing. The fleet view hands each planner its bead (`scripts/assign-bead`,
-cb-10d.2.2) — highest priority first, never an unranked one, never one whose blocker has no plan —
-and makes the planner its assignee without a claim, so two planners never share one. If a planning
-session dies still assigned, the view gives the bead back itself.
-
-What they share is **the buffer**, counted in `planned` beads only — what an idle implementer could
-actually claim (`scripts/planner-buffer --count` is the number both the planner and the fleet view are reading).
-  Both planners may therefore fill at the same time, which is what a second planner is *for*; the
-  overshoot is at most one bead each. Counting held beads too was tried and starved the queue: two
-  held candidates were enough to make a small fleet's target look met, and both planners slept over a
-  queue of two.
-
-**Two planners is two sessions asking you questions.** That is the cost, and it is the thing to watch
-before adding the second: if Xavier's row spends most of its time on `asking` rather than `working`,
-the queue is bounded by your answers, and a second planner adds a second row waiting on you rather
-than more plans. If he is mostly `working`, the second one buys you throughput directly.
-
-A planner is started when a P0 is waiting, or when the planned, unclaimed count is below the number of implementers on the roster
-(minus any told to finish) times the project's `planner_buffer_multiple` — absent means one each —
-and never fewer than two; the view hands it **one** bead, P0s first, and the pass plans that bead and ends. There is no interval to wait out: if the buffer
-is still short the fleet view starts the next session within seconds, against a board that has moved
-rather than a planner's memory of it.
-
-**It will interrupt you**, and this is the part worth your attention. The *shape* of anything the
-audience sees — what a feature is from your side, a new pane or dialog, a key or gesture, what a
-control does — is yours to decide, not the agent's. It will propose, usually with a self-contained
-HTML mockup you can open in a browser, and wait for you to choose. Architecture, file layout, test
-shape and ordering it decides by itself.
-
-**It will not interrupt you over a label.** The detail inside a shape you have already agreed —
-wording, colour, sizes, spacing, the empty and error states — the planner decides itself and lists
-every one of them under *Decided by me* in the plan. You overrule any of them in a sentence, and
-Psylocke names that list again when she puts the merged work in front of you.
-
-If you walk away mid-question, it parks that bead with a `human` label and moves to one whose shape
-needs nothing from you, so the queue keeps filling. It will not guess about the shape — and it will
-not park a bead over a button label.
+Planning is split between `ux` and `build-design`. Both are started and supervised the same way as
+the rest of the interactive roles: the fleet view assigns one bead per pass, keeps ownership by
+assignee (not claim), and restarts the next pass when the trigger says more work is ready.
 
 ## Starting builders
 

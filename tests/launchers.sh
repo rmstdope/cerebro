@@ -181,14 +181,12 @@ done <<<"$roster_out"
 pass "roster --implementers matches the implementer rows and excludes interactive names"
 
 # --role exists for the one question a role with more than one agent raises: which of them is it?
-# `plan-bead`'s reclaim loop and `agents/orchestrator.md`'s health check both ask it for the
-# planners.
-role_out="$("$builtin_dir/roster" --role planner)"
-expected_planners="$(printf '%s\n' "$roster_out" | awk -F'\t' '$2 == "planner" {print $1}')"
-[[ "$role_out" == "$expected_planners" ]] \
-  || fail "roster --role planner: got '$role_out', expected '$expected_planners'"
-[[ -n "$role_out" ]] || fail "roster --role planner: no planner on the roster"
-pass "roster --role planner lists the planners in file order"
+role_out="$("$builtin_dir/roster" --role ux)"
+expected_ux="$(printf '%s\n' "$roster_out" | awk -F'\t' '$2 == "ux" {print $1}')"
+[[ "$role_out" == "$expected_ux" ]] \
+  || fail "roster --role ux: got '$role_out', expected '$expected_ux'"
+[[ -n "$role_out" ]] || fail "roster --role ux: no ux agent on the roster"
+pass "roster --role ux lists the role holders in file order"
 
 [[ -z "$("$builtin_dir/roster" --role nobody)" ]] \
   || fail "roster --role nobody: expected no output"
@@ -690,7 +688,7 @@ pass "launch: every roster row reaches the stub with the right actor, agent, nam
 # is declared - the agent files stopped carrying `model:'/`effort:' frontmatter when the fleet moved
 # to GitHub Copilot, where those words mean nothing. The file is written for this case and removed
 # again, because every other case against this fixture asserts what a consumer with none does.
-printf 'planner tool=claude model=opus\n' > "$fixture_dir/.cerebro/agents.conf"
+printf 'ux tool=claude model=opus\n' > "$fixture_dir/.cerebro/agents.conf"
 out="$(run_launcher launch Xavier --model sonnet)"
 rm -f "$fixture_dir/.cerebro/agents.conf"
 before_sonnet="$(line_of "$out" '^ARG:sonnet$' || true)"
@@ -872,12 +870,12 @@ grep -qF 'launch: agents.conf ("Beast") -> claude, fable at high effort' <<<"$er
 pass "agents.conf: a line starts its agent on the tool, model and effort it names"
 
 # A role line, past a comment and a blank.
-agents_conf "# what each agent runs on" "" "planner tool=claude model=opus"
+agents_conf "# what each agent runs on" "" "ux tool=claude model=opus"
 [[ "$(launched_flag Xavier --model)" == "opus" ]] \
   || fail "agents.conf role: expected --model opus, got '$(launched_flag Xavier --model)'"
 [[ -z "$(launched_flag Xavier --effort)" ]] \
   || fail "agents.conf role: a line with no effort= must pass no --effort"
-grep -qF 'launch: agents.conf ("planner") -> claude, opus' <<<"$(launch_stderr Xavier)" \
+grep -qF 'launch: agents.conf ("ux") -> claude, opus' <<<"$(launch_stderr Xavier)" \
   || fail "agents.conf role: expected the sentence naming the role line"
 pass "agents.conf: a role line switches that role, and is named as the one used"
 
@@ -889,8 +887,8 @@ grep -qF 'launch: agents.conf ("default") -> claude, opus' <<<"$(launch_stderr C
   || fail "agents.conf default: expected the sentence to name the default line"
 pass "agents.conf: the default line is used, and named as the one used"
 
-# The most specific line wins outright, so two planners can differ.
-agents_conf "planner tool=claude model=opus effort=high" "Beast tool=claude model=fable"
+# The most specific line wins outright, so two agents sharing one role can differ.
+agents_conf "ux tool=claude model=opus effort=high" "Beast tool=claude model=fable"
 [[ "$(launched_flag Xavier --model)" == "opus" ]] || fail "agents.conf specificity: Xavier keeps the role line"
 [[ "$(launched_flag Beast --model)" == "fable" ]] || fail "agents.conf specificity: Beast takes its own line"
 [[ -z "$(launched_flag Beast --effort)" ]] \
@@ -926,7 +924,7 @@ grep -qF 'launch: agents.conf names no line for Xavier - claude picks its own mo
 pass "a file that names the agent nowhere passes no flags, and names the agent it found nothing for"
 
 # A malformed line for an agent nobody starts costs nothing: only the winning line is validated.
-agents_conf "Wolverine tol=x" "planner tool=claude model=opus"
+agents_conf "Wolverine tol=x" "ux tool=claude model=opus"
 [[ "$(launched_flag Xavier --model)" == "opus" ]] \
   || fail "agents.conf malformed elsewhere: Xavier should launch on its own line"
 pass "a malformed line for an agent nobody starts says nothing and refuses nothing"
@@ -937,7 +935,7 @@ pass "a malformed line for an agent nobody starts says nothing and refuses nothi
 # `scripts/agents-conf's and is passed through unchanged; `launch-refused' says it with its own
 # `cerebro: ' prefix and records it, which is how it reaches the fleet row (cb-ccl).
 refusal_case() {  # refusal_case <line> <name> <sentence>
-  agents_conf "$1" "planner tool=claude model=opus"
+  agents_conf "$1" "ux tool=claude model=opus"
   local out status
   set +e
   out="$(run_launcher_at "$consumer_dir/.claude/cerebro/scripts" launch "$2" 2>&1)"
@@ -1020,8 +1018,8 @@ pass "an unusable agents-conf answer refuses the launch rather than starting on 
 #
 # `.cerebro/models.conf' and `project.conf's `agent_cli' decide nothing on this path any more, and
 # nothing is said about either.
-agents_conf "planner tool=claude model=opus"
-printf 'planner fable\n' > "$consumer_dir/.cerebro/models.conf"
+agents_conf "ux tool=claude model=opus"
+printf 'ux fable\n' > "$consumer_dir/.cerebro/models.conf"
 [[ "$(launched_flag Xavier --model)" == "opus" ]] \
   || fail "models.conf inert: expected opus from agents.conf, got '$(launched_flag Xavier --model)'"
 grep -q 'models.conf' <<<"$(launch_stderr Xavier)" \
@@ -1032,11 +1030,11 @@ rm -f "$consumer_dir/.cerebro/models.conf"
 no_agents_conf
 
 # --- a sync failure aborts the launch: the stub is never reached ---
-# The first run above already symlinked .claude/skills/plan-bead; remove that link before
+# The first run above already symlinked .claude/skills/implement-bead; remove that link before
 # replacing it with a real directory, or `mkdir -p` on an existing symlink-to-directory is a
 # silent no-op and never creates the blocking condition this assertion needs.
-rm -f "$consumer_dir/.claude/skills/plan-bead"
-mkdir -p "$consumer_dir/.claude/skills/plan-bead"   # a real directory, not a symlink — the sync refuses
+rm -f "$consumer_dir/.claude/skills/implement-bead"
+mkdir -p "$consumer_dir/.claude/skills/implement-bead"   # a real directory, not a symlink — the sync refuses
 set +e
 out="$(run_launcher_at "$consumer_dir/.claude/cerebro/scripts" launch Forge 2>&1)"
 status=$?
@@ -1281,7 +1279,7 @@ pass "launch passes exactly the argv agent-cli emits, and adds none of its own"
 # Its own consumer, whose `.cerebro/agents.conf' says `tool=copilot' (cb-94y.2 - `project.conf's
 # `agent_cli' decides nothing on this path any more), with a stub `copilot' first on PATH - which
 # is also what satisfies `agent-cli --check''s `command -v copilot'. Nothing writes
-# .github/agents/planner.agent.md by hand: launch-preflight runs the sync before every launch and
+# .github/agents/ux.agent.md by hand: launch-preflight runs the sync before every launch and
 # it writes both layouts in every consumer (cb-d59.4).
 #
 # `launched_flag' is deliberately NOT reused here - it hard-codes $consumer_dir, and the claude
@@ -1300,7 +1298,7 @@ copilot_launch() {
 
 out="$(copilot_launch Xavier 2>/dev/null)"
 expected="ARG:--agent
-ARG:planner
+ARG:ux
 ARG:--name
 ARG:Xavier
 ARG:--allow-all
@@ -1338,14 +1336,14 @@ grep -qF "launch: agents.conf (\"default\") -> copilot, copilot's own model and 
   || fail "copilot launch, no model=: expected the tool's-own-model sentence, got: $err"
 pass "a copilot launch whose line names no model passes no --model and no --effort, and says so"
 
-printf 'planner tool=copilot model=gpt-5.5 effort=high\n' > "$copilot_consumer/.cerebro/agents.conf"
+printf 'ux tool=copilot model=gpt-5.5 effort=high\n' > "$copilot_consumer/.cerebro/agents.conf"
 err="$(copilot_launch Xavier 2>&1 >/dev/null)"
 out="$(copilot_launch Xavier 2>/dev/null)"
 arg_follows "$out" '^ARG:--model$' '^ARG:gpt-5.5$' \
   || fail "copilot launch with a model: expected --model gpt-5.5, got: $out"
 arg_follows "$out" '^ARG:--effort$' '^ARG:high$' \
   || fail "copilot launch with a model: expected --effort high, got: $out"
-grep -qF 'launch: agents.conf ("planner") -> copilot, gpt-5.5 at high effort' <<<"$err" \
+grep -qF 'launch: agents.conf ("ux") -> copilot, gpt-5.5 at high effort' <<<"$err" \
   || fail "copilot launch with a model: expected the decision line, got: $err"
 pass "a copilot launch takes its tool, model and effort from one agents.conf line"
 
@@ -1375,7 +1373,7 @@ done
 BYOK_STUB
 chmod +x "$copilot_dir/copilot"
 
-printf 'external research openai https://api.openai.com/v1 ${OPENAI_API_KEY} gpt-5.4\nplanner tool=copilot model=research\n' \
+printf 'external research openai https://api.openai.com/v1 ${OPENAI_API_KEY} gpt-5.4\nux tool=copilot model=research\n' \
   > "$copilot_consumer/.cerebro/agents.conf"
 err="$(OPENAI_API_KEY=sentinel-openai-key copilot_launch Xavier 2>&1 >/dev/null)"
 out="$(OPENAI_API_KEY=sentinel-openai-key copilot_launch Xavier 2>/dev/null)"
@@ -1385,13 +1383,13 @@ arg_follows "$out" '^ARG:--model$' '^ARG:gpt-5.4$' \
   || fail "copilot external model: expected the underlying model, got: $out"
 grep -q '^ARG:research$' <<<"$out" \
   && fail "copilot external model: passed the reusable name instead of its underlying model: $out"
-grep -qF 'launch: agents.conf ("planner") -> copilot, external model "research" (OpenAI gpt-5.4)' <<<"$err" \
+grep -qF 'launch: agents.conf ("ux") -> copilot, external model "research" (OpenAI gpt-5.4)' <<<"$err" \
   || fail "copilot external model: expected the exact success sentence, got: $err"
 grep -qF sentinel-openai-key <<<"$out$err" \
   && fail "copilot external model: leaked the API key into captured output"
 pass "a usable external model supplies Copilot's BYOK environment and underlying model without leaking its key"
 
-printf 'external research openai https://api.openai.com/v1 ${OPENAI_API_KEY} gpt-5.4\nplanner tool=copilot model=research\n' \
+printf 'external research openai https://api.openai.com/v1 ${OPENAI_API_KEY} gpt-5.4\nux tool=copilot model=research\n' \
   > "$copilot_consumer/.cerebro/agents.conf"
 err="$(COPILOT_PROVIDER_TYPE=stale COPILOT_PROVIDER_BASE_URL=https://stale.example \
   COPILOT_PROVIDER_API_KEY=sentinel-openai-key COPILOT_PROVIDER_WIRE_API=chat \
@@ -1409,7 +1407,7 @@ grep -qF sentinel-openai-key <<<"$out$err" \
   && fail "copilot unavailable external model: leaked an inherited credential"
 pass "an empty credential reference falls back to Copilot defaults and clears inherited provider state"
 
-printf 'planner tool=copilot model=gpt-5.6\n' > "$copilot_consumer/.cerebro/agents.conf"
+printf 'ux tool=copilot model=gpt-5.6\n' > "$copilot_consumer/.cerebro/agents.conf"
 err="$(COPILOT_PROVIDER_TYPE=stale COPILOT_PROVIDER_BASE_URL=https://stale.example \
   COPILOT_PROVIDER_API_KEY=sentinel-openai-key COPILOT_PROVIDER_WIRE_API=chat \
   copilot_launch Xavier 2>&1 >/dev/null)"
@@ -1420,7 +1418,7 @@ grep -qx 'BYOK=absent' <<<"$out" \
   || fail "ordinary copilot model: inherited provider state leaked, got: $out"
 arg_follows "$out" '^ARG:--model$' '^ARG:gpt-5.6$' \
   || fail "ordinary copilot model: expected its ordinary model, got: $out"
-grep -qF 'launch: agents.conf ("planner") -> copilot, gpt-5.6' <<<"$err" \
+grep -qF 'launch: agents.conf ("ux") -> copilot, gpt-5.6' <<<"$err" \
   || fail "ordinary copilot model: expected its existing message, got: $err"
 pass "an ordinary Copilot model keeps its argv and message while inherited provider state is cleared"
 
@@ -1549,8 +1547,8 @@ grep -q '^ARG:--bead$' <<<"$out" && fail "launch --bead: --bead is not passed to
 pass "launch with --bead claims before exec and names the bead in the prompt"
 
 # cb-10d.2.1: a planning role's bead is assigned, not claimed, and its prompt says so.
-planning_name="$("$fixture_scripts/roster" --role planner | sed -n 1p)"
-[[ -n "$planning_name" ]] || fail "launch --bead: the fixture roster has no planner"
+planning_name="$("$fixture_scripts/roster" --role ux | sed -n 1p)"
+[[ -n "$planning_name" ]] || fail "launch --bead: the fixture roster has no ux role"
 rm -f "$assign_log"
 out="$(run_launcher launch "$planning_name" --bead cb-x 2>/dev/null)" \
   || fail "launch --bead: an assigned planning bead starts the session"

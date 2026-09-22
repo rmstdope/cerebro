@@ -15,7 +15,7 @@
 # Adding a role: one line here and one `agents/<role>.md`; the fleet view, `agent-state`, `launch`
 # and the tests read this file.
 #
-# Adding a *second agent to an existing role* (as `planner` has, Xavier and Beast): one line here,
+# Adding a *second agent to an existing role* (as `ux` has, Xavier and Beast): one line here,
 # and nothing else structural — every reader is name-driven. What it does need is a look at whatever
 # that role does exactly once per fleet rather than once per session; file order is what decides
 # such a question, and Cerebro takes implementer names in it, so it is load-bearing for more than
@@ -93,22 +93,22 @@ usage() {
 
 # NAME        ROLE            (role = the agents/<role>.md file it runs, and the --agent value)
 TABLE="
-Xavier        planner
-Beast         planner
+Xavier        ux
+Beast         ux
 Cerebro       orchestrator
 Moira         user-feedback
 Psylocke      verifier
 Cypher        reviewer
 Forge         architect
 Bishop        bugfixer
+Gambit        build-design
+Iceman        build-design
 Cyclops       implementer
 Storm         implementer
 Wolverine     implementer
 Rogue         implementer
-Gambit        implementer
 Nightcrawler  implementer
 Colossus      implementer
-Iceman        implementer
 Jubilee       implementer
 Phoenix       implementer
 Mystique      implementer
@@ -291,9 +291,8 @@ case "${1:-}" in
     names_where flag standby
     ;;
   --role)
-    # A role can be held by more than one agent (two planners, ah-2p), so "who is the first of
-    # them" is a question with an answer rather than a tautology: file order is the answer.
-    # `plan-bead's reclaim loop and `agents/orchestrator.md's health check ask for the planners.
+    # A role can be held by more than one agent (for example two `ux` rows), so "who is the first
+    # of them" is a question with an answer rather than a tautology: file order is the answer.
     role="${2:-}"
     if [[ -z "$role" ]]; then
       usage

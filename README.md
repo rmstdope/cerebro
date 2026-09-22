@@ -97,7 +97,7 @@ Open the fleet view, from anywhere inside the repository:
 
 The rows the roster marks `autostart` start as it opens, `standby` rows wait for their trigger,
 and `s` on any row starts that agent now. Work is tracked on the board: every bead is created
-unranked and ranked with you; a planner turns it into a plan; an implementer builds it.
+unranked and ranked with you; `ux`/`build-design` plan it; an implementer builds it.
 
 Check: a started row turns green a few seconds later, when the session writes its state file.
 [docs/agent-workflow.md](docs/agent-workflow.md) is what to read next: it is the operating guide
@@ -142,7 +142,7 @@ Each agent is started by a script of its own, run from the consumer repository r
 Every agent starts the same way, by its own name: `launch Xavier`, `launch Cyclops`, `launch Forge`.
 There are no per-role launcher scripts - the roster is the one place the fleet is declared, and
 `launch` is the one place a session is started. A session started this way runs in that terminal,
-outside the fleet view; `.claude/cerebro/scripts/launch-preflight planner Xavier; echo $?` printing
+outside the fleet view; `.claude/cerebro/scripts/launch-preflight ux Xavier; echo $?` printing
 `0` and nothing else says one could start.
 
 Every session starts with Remote Control on and is listed under its agent's name at
@@ -218,8 +218,7 @@ long a bead was held, how long anyone waited at `asking`. Both are covered at gr
 
 ## Skills
 
-`plan-bead` and `implement-bead` are the two roles' procedures; `beads-workflow` is the substrate
-both read.
+`implement-bead` is the implementer procedure; `beads-workflow` is the shared substrate roles read.
 
 ## Sync Script (Skills and Agents)
 
@@ -231,7 +230,7 @@ What it does:
 - Asks `scripts/consumer-root` for the consumer repository root (the enclosing working tree) and exits with an error if this checkout is not mounted at `<consumer>/.claude/cerebro`.
 - Creates `../../.claude/skills/` and `../../.claude/agents/` if they do not exist.
 - Scans `.claude/cerebro/skills/*` for folders that contain `SKILL.md`.
-- Creates/updates symlinks in `.claude/skills/` (for example `.claude/skills/plan-bead -> ../cerebro/skills/plan-bead`), relative rather than absolute, so the same link is correct in the main checkout, in every worktree and on every machine.
+- Creates/updates symlinks in `.claude/skills/` (for example `.claude/skills/implement-bead -> ../cerebro/skills/implement-bead`), relative rather than absolute, so the same link is correct in the main checkout, in every worktree and on every machine.
 - Scans `.claude/cerebro/agents/*.md` and creates/updates symlinks in `.claude/agents/`.
 - Removes the old aggregate symlink `.claude/skills/cerebro` if present.
 - Removes a `.dir-locals.el` link at the consumer root left by a sync from before the fleet view had its own command; a `.dir-locals.el` the project wrote itself is never touched.

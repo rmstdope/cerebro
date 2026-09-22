@@ -27,7 +27,7 @@ its "The project" section is *What this repository is*, above.
 
 ## Four Eye Principle
 
-*Read by `skills/implement-bead` and `skills/plan-bead` by this exact heading; it is the
+*Read by `skills/implement-bead` by this exact heading; it is the
 implementer's whole standing approval to merge without asking. The block between the markers is
 synced from `templates/four-eye-principle.md` by `scripts/four-eye-sync` — edit the template, not
 this copy.*
@@ -105,7 +105,7 @@ Tracked files under `.cerebro/`, one per fact, so every clone has them:
   launch target. Read by `scripts/project-conf`.
 - `roster.conf` — which agents run here, in what order, and `autostart`/`standby` per row. Read by
   `scripts/roster`; absent means the built-in fleet.
-- `traps.md` — traps this project has paid for, read by planners and implementers.
+- `traps.md` — traps this project has paid for, read by planning roles and implementers.
 - `agents.conf` — which model, effort and CLI each session runs on. Committed here so every clone
   runs the same models; `agents.conf.example` is the documented copy.
 
@@ -184,8 +184,9 @@ Load-bearing across files: a change to one must keep the others consistent with 
   `scripts/launch <Name> --bead <id>`; one bead per session.
 - **Nothing merges unreviewed, red or stale**, and the standing approval covers a planned bead
   only (Four Eye Principle, above).
-- **Agents never decide the shape of what a user sees**; only a planner decides the detail inside a
-  shape the navigator has agreed, recorded in the plan's *Decided by me*.
+- **Agents never decide the shape of what a user sees**; only the planning roles (`ux` and
+  `build-design`) decide the detail inside a shape the navigator has agreed, recorded in each plan's
+  *Decided by me*.
 - **No agent takes work off another**, and none acts outside a planned bead.
 - **Closed is not terminal.** A failed verification reopens a bead at P0, and every role describes
   what it does when one comes back.

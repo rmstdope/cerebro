@@ -95,12 +95,12 @@ pass "an untracked dangling link is not a finding"
 # --- a shipped source with no tracked link is a finding ------------------------------------------
 
 fix="$(new_fixture)"
-git_q -C "$fix" rm -q --cached .github/skills/plan-bead >/dev/null
-rm "$fix/.github/skills/plan-bead"
+git_q -C "$fix" rm -q --cached .github/skills/design-the-build >/dev/null
+rm "$fix/.github/skills/design-the-build"
 git_q -C "$fix" commit -q -m "untrack a skill link"
 run "$fix/scripts/tracked-links"
 [[ $status -eq 1 ]] || fail "a skill with no tracked link must exit 1, got $status (output: $out)"
-grep -qF "missing: .github/skills/plan-bead (skills/plan-bead is shipped and has no tracked link)" <<<"$out" \
+grep -qF "missing: .github/skills/design-the-build (skills/design-the-build is shipped and has no tracked link)" <<<"$out" \
   || fail "expected the missing skill link reported, got: $out"
 pass "a skill with no tracked link in a layout is reported"
 

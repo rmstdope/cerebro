@@ -11,7 +11,7 @@ One paragraph: what this application is, who uses it, and what "working" means f
 
 ## Four Eye Principle
 
-*Read by `skills/implement-bead` and `skills/plan-bead` by this exact heading: the implementer's
+*Read by `skills/implement-bead` by this exact heading: the implementer's
 whole standing approval to merge without asking. Delete it and nothing merges. The block between
 the markers is synced from `templates/four-eye-principle.md` by `scripts/four-eye-sync`.*
 

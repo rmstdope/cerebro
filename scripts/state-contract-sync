@@ -26,10 +26,9 @@
 #            silence, and never 2, which a caller reads as its own usage mistake.
 #
 # THE CARRIER LIST IS A DECISION, not a scan - the shape `scripts/four-eye-sync' and
-# `scripts/ci-needed''s skip list use. `agents/implementer.md' and `agents/planner.md' are
-# deliberately NOT carriers: both are thin role files that defer to their skill, and both sessions
-# load that skill, so a copy in the role file would be read twice per session and kept in step for
-# no gain. Each points at its skill's section instead.
+# `scripts/ci-needed''s skip list use. `agents/implementer.md' is deliberately NOT a carrier: it is
+# a thin role file that defers to its skill, so a copy in the role file would be read twice per
+# session and kept in step for no gain. It points at its skill's section instead.
 #
 # THE CONTENT OF THE BLOCK IS DELIBERATELY NOT ASSERTED. That the copies agree is a fact about
 # files; that the contract says the right thing is a decision, and a check on prose content fails on
@@ -82,7 +81,6 @@ CARRIERS=(
   agents/user-feedback.md
   agents/verifier.md
   skills/implement-bead/SKILL.md
-  skills/plan-bead/SKILL.md
   skills/agree-experience/SKILL.md
   skills/design-the-build/SKILL.md
 )

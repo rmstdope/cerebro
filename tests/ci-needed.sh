@@ -145,8 +145,8 @@ done
 pass "docs-notes/, README.md.orig and emacs/README.md are not on the skip list"
 
 # --- everything the gate can see is gated ---
-for p in .github/workflows/ci.yml scripts/ci-needed tests/gate agents/planner.md \
-         skills/plan-bead/SKILL.md templates/consumer-instructions.md CLAUDE.md \
+for p in .github/workflows/ci.yml scripts/ci-needed tests/gate agents/ux.md \
+         skills/design-the-build/SKILL.md templates/consumer-instructions.md CLAUDE.md \
          .cerebro/roster.conf .claude/settings.json hooks/session-state.settings.json \
          githooks/install.sh; do
   run "$p"$'\n'

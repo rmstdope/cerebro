@@ -228,6 +228,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "cerebro-tui",
+ "chrono",
  "serde",
  "tempfile",
  "tokio",

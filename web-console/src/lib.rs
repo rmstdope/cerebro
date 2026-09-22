@@ -5,6 +5,7 @@ use std::{
     path::PathBuf,
     sync::{Arc, Mutex},
 };
+use chrono::{DateTime, Utc};
 
 use axum::{extract::State, routing::get, Json, Router};
 use cerebro_tui::{
@@ -37,16 +38,26 @@ struct SnapshotState {
 
 #[derive(Default)]
 struct SnapshotCache {
-    fleet: Mutex<Option<Vec<FleetRow>>>,
-    work: Mutex<Option<WorkBuckets>>,
-    health: Mutex<Option<FleetHealth>>,
+    fleet: Mutex<Option<CachedSnapshot<Vec<FleetRow>>>>,
+    work: Mutex<Option<CachedSnapshot<WorkBuckets>>>,
+    health: Mutex<Option<CachedSnapshot<FleetHealth>>>,
+}
+
+#[derive(Clone)]
+struct CachedSnapshot<T> {
+    value: T,
+    updated_at: DateTime<Utc>,
 }
 
 #[derive(Serialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 enum Snapshot<T> {
     Fresh { value: T },
-    Stale { value: T, error: String },
+    Stale {
+        value: T,
+        error: String,
+        updated_at: DateTime<Utc>,
+    },
     Unavailable { error: String },
 }
 
@@ -143,7 +154,7 @@ async fn health_snapshot(State(state): State<SnapshotState>) -> Json<Snapshot<Fl
 }
 
 fn snapshot<T>(
-    cache: &Mutex<Option<T>>,
+    cache: &Mutex<Option<CachedSnapshot<T>>>,
     reader: impl FnOnce() -> Result<T, cerebro_tui::ReadError>,
 ) -> Snapshot<T>
 where
@@ -159,13 +170,17 @@ where
     };
     match reader() {
         Ok(value) => {
-            *cache = Some(value.clone());
+            *cache = Some(CachedSnapshot {
+                value: value.clone(),
+                updated_at: Utc::now(),
+            });
             Snapshot::Fresh { value }
         }
         Err(error) => match cache.clone() {
-            Some(value) => Snapshot::Stale {
-                value,
+            Some(snapshot) => Snapshot::Stale {
+                value: snapshot.value,
                 error: error.to_string(),
+                updated_at: snapshot.updated_at,
             },
             None => Snapshot::Unavailable {
                 error: error.to_string(),

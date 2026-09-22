@@ -1,5 +1,5 @@
 use axum::{
-    body::Body,
+    body::{to_bytes, Body},
     http::{Method, Request, StatusCode},
 };
 use cerebro_tui::{Programs, ReaderPaths, RealCommands, SupervisionMode};
@@ -11,7 +11,7 @@ use std::{
 };
 use tower::ServiceExt;
 
-fn service() -> ReadOnlyService {
+fn service(assets_dir: PathBuf) -> ReadOnlyService {
     ReadOnlyService::new(
         ReaderPaths {
             consumer_root: PathBuf::from("/consumer"),
@@ -21,13 +21,13 @@ fn service() -> ReadOnlyService {
         Programs::default(),
         Arc::new(RealCommands),
         SupervisionMode::Supervising,
-        PathBuf::from("/assets"),
+        assets_dir,
     )
 }
 
 #[tokio::test]
 async fn health_is_available_only_through_a_read_request() {
-    let response = service()
+    let response = service(PathBuf::from("/assets"))
         .router()
         .oneshot(
             Request::builder()
@@ -41,7 +41,7 @@ async fn health_is_available_only_through_a_read_request() {
 
     assert_eq!(response.status(), StatusCode::OK);
 
-    let response = service()
+    let response = service(PathBuf::from("/assets"))
         .router()
         .oneshot(
             Request::builder()
@@ -61,7 +61,31 @@ fn public_listener_addresses_are_rejected() {
     let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 7171);
 
     assert_eq!(
-        service().validate_listener_address(address),
+        service(PathBuf::from("/assets")).validate_listener_address(address),
         Err(ServiceError::NonLoopbackAddress(address))
+    );
+}
+
+#[tokio::test]
+async fn browser_paths_fall_back_to_the_application_shell() {
+    let assets = tempfile::tempdir().unwrap();
+    std::fs::write(assets.path().join("index.html"), "browser shell").unwrap();
+
+    let response = service(assets.path().to_path_buf())
+        .router()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/fleet")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        to_bytes(response.into_body(), usize::MAX).await.unwrap(),
+        "browser shell"
     );
 }

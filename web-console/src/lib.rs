@@ -2,7 +2,7 @@ use std::{fmt, net::SocketAddr, path::PathBuf, sync::Arc};
 
 use axum::{http::StatusCode, routing::get, Router};
 use cerebro_tui::{CommandRunner, Commands, Programs, ReaderPaths, SupervisionMode};
-use tower_http::services::ServeDir;
+use tower_http::services::{ServeDir, ServeFile};
 
 /// A local HTTP boundary for browser-console reads.
 ///
@@ -62,9 +62,12 @@ impl ReadOnlyService {
     }
 
     pub fn router(&self) -> Router {
+        let index = self.assets_dir.join("index.html");
         Router::new()
             .route("/api/health", get(health))
-            .fallback_service(ServeDir::new(self.assets_dir.clone()))
+            .fallback_service(
+                ServeDir::new(self.assets_dir.clone()).fallback(ServeFile::new(index)),
+            )
     }
 }
 

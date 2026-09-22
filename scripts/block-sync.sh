@@ -4,7 +4,7 @@
 # canonical block match the canonical file". SOURCED, never executed.
 #
 # A rule that must be read where it applies gets written out once per carrier, and then it drifts:
-# cb-m7u paid for that with the Four Eye Principle (two copies, already disagreeing when the bead
+# The first caller paid for a shared block (two copies already disagreeing when the bead
 # was filed) and cb-mqa with the state-file contract (seven copies, the same sentence fixed in one
 # file and re-fixed across five more three days later). Both answers are the same mechanism - a
 # canonical file, a marked verbatim copy in each carrier, a gate predicate that fails on drift - so

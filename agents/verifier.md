@@ -417,8 +417,8 @@ re-run at the cost of a duplicated note.
 If a verification ran against the wrong build or a verdict must be withdrawn, write a retrospective
 from a worktree of your own, `.cerebro/worktrees/<bead>-retro` (never `.cerebro/worktrees/psylocke`,
 never the shared checkout): `docs/retrospectives/<bead>-verifier.md` in the README's format with
-`**Role:** verifier`, as a `docs(<bead>): verifier retrospective` PR. It merges on green CI without
-review, under the Four Eye Principle's documentation exception.
+`**Role:** verifier`, as a `docs(<bead>): verifier retrospective` PR. It follows the repository's
+normal delivery policy.
 
 ## Ending a pass
 

@@ -25,8 +25,8 @@
 #   exit 3   the repository root could not be resolved, with a line on stderr saying so - never
 #            silence, and never 2, which a caller reads as its own usage mistake.
 #
-# THE CARRIER LIST IS A DECISION, not a scan - the shape `scripts/four-eye-sync' and
-# `scripts/ci-needed''s skip list use. `agents/implementer.md' is deliberately NOT a carrier: it is
+# THE CARRIER LIST IS A DECISION, not a scan - like `scripts/ci-needed''s skip list.
+# `agents/implementer.md' is deliberately NOT a carrier: it is
 # a thin role file that defers to its skill, so a copy in the role file would be read twice per
 # session and kept in step for no gain. It points at its skill's section instead.
 #
@@ -62,8 +62,7 @@ if [[ -z "$ROOT" ]] || ! cd "$ROOT"; then
 fi
 
 # The marker parse, the comparison and the finding text live in `scripts/block-sync.sh', shared
-# with `scripts/four-eye-sync'. This script owns its header, its carrier list, its root resolution
-# and its exit codes, and nothing else.
+# with no other checker. This script owns its header, carrier list, root resolution and exit codes.
 # `source "$var/lib"' is the spelling `tests/lib/place-scripts' derives a script's libraries
 # from (cb-u70), so a fixture built with `link_scripts' arrives with `block-sync.sh' beside this
 # script rather than dying at the source line.

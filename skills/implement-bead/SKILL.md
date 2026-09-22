@@ -16,15 +16,14 @@ outlives your turn. Never kill your own process, shell or terminal. When the bea
 `end-pass` (*Ending a pass*) and say what you did; the fleet view ends you about half a minute later
 and starts a fresh session under your name for the next planned bead.
 
-Read `beads-workflow`, and the consumer's root `CLAUDE.md` for its Four Eye Principle; this is the
-role on top of them.
+Read `beads-workflow` and the consumer's root `CLAUDE.md`; this is the role on top of them.
 
-## Standing approval, and where it comes from
+## Review and delivery
 
-The authority to merge is **the consumer's root `CLAUDE.md` and its Four Eye Principle**: for a
-planned bead, a review sub-agent you spawn yourself is the second pair of eyes, and you merge on the
-conditions stated there. `templates/consumer-instructions.md` is where a project without one starts. Where
-this skill and the project's document disagree, the project's governs.
+For a planned bead, obtain and address one independent, full review of the complete diff and bead.
+Decide whether the review changes warrant another review and its scope; minor, self-contained
+answers do not require a review loop. Unresolved findings or a review that cannot complete go to
+the navigator.
 
 So: RED → GREEN → REFACTOR → COMMIT without stopping, announcing each transition, and still stopping
 on a genuine design question (*When the plan is wrong*). The approval covers a planned bead only;
@@ -115,9 +114,9 @@ corrected").
 | *Building*, before the fast gate | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase gate --pid $PPID` |
 | *The review loop*, before spawning the review sub-agent | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase review --pid $PPID` |
 | *The review loop*, once every finding is answered | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase ci --pid $PPID` |
-| *Red CI*, after each fix-and-push | back to `--phase review` for the new head, then `--phase ci` again |
+| *Red CI*, after each fix-and-push | decide whether its scope warrants `--phase review`; then `--phase ci` again |
 | *The retrospective* opening line onward | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase merge --pid $PPID` |
-| *The retrospective*, if you committed one | back to `--phase review` for the new head, then `--phase ci`, then `--phase merge` again |
+| *The retrospective*, if you committed one | decide whether its scope warrants `--phase review`; then `--phase ci`, then `--phase merge` again |
 | *Merging*, when a `strict` protection asks for a catch-up: GitHub → CI | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase rebase --pid $PPID`, then `... --phase ci ...` |
 | *Asking instead of handing back* | `.claude/cerebro/scripts/agent-state <name> asking --bead <id> --phase <current> --pid $PPID`; on resuming, `working` with the same bead and phase |
 | *Finishing, then going again*, after `bd close`, and the hand-back block | `.claude/cerebro/scripts/end-pass <name> --pid $PPID` |
@@ -350,7 +349,8 @@ bead can wait for a planner. Handing back is always correct.
 
 **Review the implementation being merged, and obtain the review yourself.** Nothing is requested from
 GitHub or waited for. Once the gate is green and the PR is open, spawn a `reviewer` sub-agent and
-wait per *Waiting for a sub-agent*; the approval rests on the Four Eye Principle.
+wait per *Waiting for a sub-agent*. Address its findings, then decide whether the resulting change
+needs a follow-up review.
 
 ```bash
 .claude/cerebro/scripts/agent-state <name> working --bead <id> --phase review --pid $PPID
@@ -371,10 +371,8 @@ open, record the attempts in the bead's notes, hand back, and end the pass. Post
 full with its `reviewed_head` in the heading, and answer every finding.
 
 **The first round is a cold read**: the whole diff, the plan and the checklist, never your
-reasoning. **Later rounds read the delta**: the diff since the last reviewed head, the findings, your
-answers and the checklist. They ask whether the findings were addressed and whether the delta adds
-anything new; a round with nothing blocking ends the review. Every fix is still read by somebody who
-did not write it.
+reasoning. Follow-up review is the producer's decision: use a delta for a focused change or another
+full read when the change is broader.
 
 ### Getting the review
 
@@ -386,7 +384,7 @@ Spawn a sub-agent of type **`reviewer`** on the resolved model; both layouts shi
 - the bead's plan — `bd show <id> --json`,
 - `.claude/cerebro/agents/reviewer.md`, to read as its checklist.
 
-**A delta round gets five**, the same three plus:
+**A follow-up review**, when the changes warrant one, gets five things:
 
 - **the two shas** — the previous `reviewed_head` and the head now — so it takes
   `git diff <reviewed_head>..<head>` **itself**, which makes a misdescribed delta detectable;
@@ -394,10 +392,8 @@ Spawn a sub-agent of type **`reviewer`** on the resolved model; both layouts shi
 
 **Never give it your reasoning**, in either round.
 
-**Which round is decided by what you last pushed**, not how it feels: answering findings or
-greening a red check is a delta round; a rebase, a conflict resolution, an `update-branch` or a
-documentation-only commit is no round at all; anything else — including the first round after a
-hand-back — is a cold read.
+**Choose the follow-up scope from the change.** A small answer to a finding can skip it; a focused
+fix can use a delta, while a broader change gets another full read.
 
 `agents/reviewer.md` tells the sub-agent which of it applies; do not repeat that. Heartbeat before the
 spawn and when the findings land, and do not sleep (*Waiting for a sub-agent*).
@@ -410,13 +406,13 @@ alone:
 
 ```markdown
 **Review (cold read, `reviewed_head`: `<sha>`)** — this pull request was reviewed before merge under
-the Four Eye Principle, by an agent given the diff and the bead's plan, and not the implementer's
-reasoning.
+the producer's review practice, by an agent given the diff and the bead's plan, and not the
+implementer's reasoning.
 
 1. <finding, naming the file and the case>
 ```
 
-A delta round names itself and what it measured from:
+A follow-up review names its scope and what it measured from:
 
 ```markdown
 **Review (delta since `<previous reviewed_head>`, now `<sha>`)** — the findings of the round before
@@ -447,8 +443,8 @@ One comment may answer several. Judge each — a finding can be wrong — and a 
 complete answer. A finding about **approach, scope or what the audience sees** is a hand-back.
 
 Once every finding is answered, write `ci` (state table) and wait for CI per *Waiting, without ending
-your run* — after *Merging*'s merge-state check if anything was pushed since the PR opened. A *Red
-CI* fix returns through the review loop before CI.
+your run* — after *Merging*'s merge-state check if anything was pushed since the PR opened. After a
+*Red CI* fix, decide whether its scope warrants a review before CI.
 
 A review a person or a bot leaves on the PR is answered like any comment; it is not what the approval
 rests on.
@@ -461,14 +457,14 @@ believing it: a wall of identical connection errors is infrastructure.
 
 Re-run a suspected flake only after reproducing it locally once, in the one suite, for that spec.
 
-Every fix returns through the review loop as a **delta round**. Unlike the per-head review budget,
-this one is per bead. On exhaustion, leave the PR open, hand back, and end the pass.
+After every fix, decide whether its scope warrants another review. On exhaustion, leave the PR
+open, hand back, and end the pass.
 
 ## The retrospective
 
 Write `merge` (state table) on entering; it covers the retrospective, the merge, the close and
-cleanup. Committing a retrospective changes the head, so follow the table's phase writes: it needs CI
-again, but **no review round**, being documentation only.
+cleanup. A retrospective added after review needs CI on the current head; decide whether its scope
+warrants a follow-up review before merging.
 
 **When the review is answered and CI is green, before you merge**, ask: *did anything happen that I
 did not expect?* This is not optional; only you saw the run. It goes before the merge because the
@@ -497,7 +493,8 @@ mkdir -p docs/retrospectives          # the first finding in a fresh checkout cr
 git add docs/retrospectives/          # the README too, on the run that creates it
 git commit -m "docs(<bead id>): retrospective — <the one-line symptom>"
 git push
-# then wait for CI again, per *Waiting, without ending your run*, and merge on green
+# wait for CI; if its scope warrants follow-up review, obtain it, address findings and rerun CI
+# merge only when the producer decides no follow-up is needed and the current head is green
 ```
 
 **Stage the directory, not just your file**, or the README copy is lost with the worktree.
@@ -580,9 +577,9 @@ poll waits for your tip and two known fields. Then:
 
 If an update or rebase leaves an empty diff against main, close the PR unmerged.
 
-Immediately before merging, require all three together: the PR's `headRefOid` equals the most
-recently reviewed head, mergeability is not behind or conflicting, and required checks for that head
-are green. A different SHA goes back to the review loop; the others follow the rebase and CI paths.
+Immediately before merging, require all three together: a full review has covered the bead's
+implementation, the producer has decided whether any later change needs follow-up review,
+mergeability is not behind or conflicting, and required checks for the current head are green.
 
 ```bash
 gh pr merge <n> --squash --delete-branch

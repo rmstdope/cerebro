@@ -25,53 +25,13 @@ fleet works on its own source and runs the *working tree* rather than a pinned s
 sections below are the same declaration `templates/consumer-instructions.md` asks of every consumer;
 its "The project" section is *What this repository is*, above.
 
-## Four Eye Principle
+## Producer review
 
-*Read by `skills/produce-bead` by this exact heading; it is the
-producer's whole standing approval to merge without asking. The block between the markers is
-synced from `templates/four-eye-principle.md` by `scripts/four-eye-sync` — edit the template, not
-this copy.*
-
-<!-- four-eye:begin -->
-
-Nothing merges unreviewed and nothing merges red.
-
-An agent's change is reviewed by a **review sub-agent the producer spawns for itself**, given the
-diff and the bead, never the producer's reasoning. It counts when: the review **chain** covers
-the implementation merged, a cold read of the whole change then each delta since the round before;
-every round posted in full on the pull request, naming its kind; every usable round's finding
-answered by a change or posted reply explaining why; every check green. Failed or unusable attempts
-may be retried; three unusable for one head require the navigator. That is the whole standing
-approval, for a producer-held bead only.
-
-Documentation (`docs/`, `README.md` and the like) needs no review. **`agents/` and `skills/` are
-never documentation.** `scripts/app-paths --classify` settles doubt; anything it calls
-`application` needs review.
-
-**A commit that only answers findings does not restart the review.** A delta round gets the two
-shas, takes the delta itself, and treats answers to its findings as **claims to check against the
-code**: were the findings addressed; does the delta introduce anything new? Nothing blocking ends
-the review.
-
-What a commit does, not its size, decides its round:
-
-- **answers findings, or only greens a red check** — delta round;
-- **rebase, conflict resolution or `update-branch`** — none;
-- **documentation only** — none;
-- **anything else** (new behaviour, another approach, unseen work), and the first round after a
-  hand-back — a fresh cold read.
-
-<!-- four-eye:end -->
-
-No review is asked of GitHub, and none is waited for. A review a person or a bot leaves on the
-pull request anyway is read and answered like any other comment; it is not what the approval
-rests on.
-
-Everything else needs the navigator — a change nobody planned, a red or missing check, a finding
-about approach, scope or what the audience sees, a finding answered by neither a change nor a
-reply, a review sub-agent that could not be spawned or returned nothing usable, and any pull
-request that came from outside the fleet, which is Cypher's to review and the navigator's to
-merge.
+Nothing merges red. Before delivery, a producer obtains and addresses one independent, full review
+of the complete diff and bead. If its changes are substantial enough to make another review useful,
+the producer chooses the right follow-up scope and obtains it; minor, self-contained answers need
+not create a review loop. Unresolved findings, a red or missing check, or a reviewer that cannot
+produce a usable result go to the navigator.
 
 ## Work tracking
 
@@ -181,8 +141,8 @@ Load-bearing across files: a change to one must keep the others consistent with 
   from `templates/state-file-contract.md` by `scripts/state-contract-sync`.
 - **A session is started only with a bead nobody holds**, handed to it by the fleet view through
   `scripts/launch <Name> --bead <id>`; one bead per session.
-- **Nothing merges unreviewed, red or stale**, and the standing approval covers a planned bead
-  only (Four Eye Principle, above).
+- **Nothing merges red or with unresolved review findings.** Producers obtain the review their
+  changes need before delivery.
 - **Agents never decide the shape of what a user sees**; only `ux` decides the detail inside a
   shape the navigator has agreed. Producers decide the build and tests, recorded in each plan's
   *Decided by me*.
@@ -261,8 +221,8 @@ Each of these answers one question in one place. Add a caller, never a second co
   reader subscribes to `tests/lib/session-args.cases`.
 - `scripts/jsonl-log.sh` — appending to a JSONL log, and refusing under the protected dir.
 - `scripts/cargo-env.sh` — which cargo variables `launch` strips before spawning a session.
-- `scripts/block-sync.sh` — marker-block parsing for `four-eye-sync` and `state-contract-sync`.
-- `scripts/tracked-links`, `scripts/four-eye-sync`, `scripts/state-contract-sync`,
+- `scripts/block-sync.sh` — marker-block parsing for `state-contract-sync`.
+- `scripts/tracked-links`, `scripts/state-contract-sync`,
   `scripts/marker-readers`, `scripts/portable-snippets` — gate predicates. None of them may join
   `launch-preflight`: a check that refuses there is a fleet that cannot start.
 - `scripts/ci-needed` — which paths skip CI.
@@ -289,5 +249,5 @@ Each of these answers one question in one place. Add a caller, never a second co
   script directory and the docs. The launchers themselves work from anywhere.
 - **Snippets in `skills/` and `agents/` are pasted into whatever shell an agent has.** An unquoted
   `${X:+--flag $X}` word-splits in bash and not in zsh; `scripts/portable-snippets` catches it.
-- The marker blocks synced by `four-eye-sync` and `state-contract-sync` need the blank lines inside
-  the markers: CommonMark ends an HTML block at a blank line.
+- The marker blocks synced by `state-contract-sync` need the blank lines inside the markers:
+  CommonMark ends an HTML block at a blank line.

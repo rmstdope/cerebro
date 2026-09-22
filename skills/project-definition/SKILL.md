@@ -129,7 +129,7 @@ before the next:
 **2. `CLAUDE.md`** from `.claude/cerebro/templates/consumer-instructions.md`: `## The project` becomes
 read-backs 1, 2 and 4 as three paragraphs (drop the italic note and placeholder); one line in
 `## Development practices` names the gate; keep every other template section verbatim,
-`## Four Eye Principle` especially (read by its exact heading). An existing `CLAUDE.md` is **merged**:
+the producer-review guidance especially. An existing `CLAUDE.md` is **merged**:
 append absent template sections, write `## The project`, keep the rest, say which happened.
 
 **3. `.cerebro/roster.conf`** — propose the built-in `TABLE=` from `.claude/cerebro/scripts/roster`

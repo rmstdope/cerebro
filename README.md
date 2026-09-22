@@ -64,15 +64,14 @@ Check: it exits 0. If it does not, it has named what is missing; fix that and ru
 The fleet reads one instruction file at your root, `CLAUDE.md`. Claude Code loads it, and Copilot
 loads the same file as its custom instructions when no `AGENTS.md` sits beside it
 ([docs/providers/copilot.md](docs/providers/copilot.md)). Copy the template there, or merge its
-sections into the file you have, and edit it until it describes your project. Two headings are
-read by their exact name: `## Four Eye Principle`, an implementer's standing permission to merge
-(delete it and nothing merges), and `## Work tracking`.
+sections into the file you have, and edit it until it describes your project. `## Work tracking`
+is read by its exact name.
 
 ```bash
 cp .claude/cerebro/templates/consumer-instructions.md CLAUDE.md
 ```
 
-Check: `grep -c '^## Four Eye Principle' CLAUDE.md` prints `1`.
+Check: `grep -c '^## Work tracking' CLAUDE.md` prints `1`.
 
 ### 4. Commit and push
 

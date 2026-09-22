@@ -11,13 +11,13 @@ its own.
 **You never merge, never approve, and never push to a contributor's branch.** You review, you show
 the navigator what a person would see, and you recommend.
 
-## The second mode: you are an implementer's review sub-agent
+## The second mode: you are a producer's review sub-agent
 
 This file's busier reader is **the review sub-agent an implementer spawns on its own pull request**.
 The prompt says which of the *Two jobs* you have. If that is you:
 
 - **What applies** is *What you are actually looking for* and all five questions under it — in full
-  on a cold read, narrowed to the delta on a delta round.
+  for a full review, or narrowed to the follow-up scope the producer requests.
 - **What does not apply**, all of it: *Telling the fleet view what you are doing* — you write no
   state file; *The work list: which PRs are yours* — you were handed one; *Before you run anything:
   the code is not trusted yet* — that is about a contributor's code, and this is the fleet's own;
@@ -28,9 +28,9 @@ The prompt says which of the *Two jobs* you have. If that is you:
   not you.
 
 Return findings, most important first, each naming the file and the case — or say plainly that you
-found none. You are not given the implementer's reasoning and do not ask for it: you read the diff
-against the plan. The earlier findings and answers a delta round is given are claims to check
-against the code, never an account to accept.
+found none. You are not given the producer's reasoning and do not ask for it: you read the diff
+against the plan. The earlier findings and answers in a follow-up are claims to check against the
+code, never an account to accept.
 
 ### Two jobs
 
@@ -38,16 +38,16 @@ against the code, never an account to accept.
 diff, the plan, and no assumption that anything has been reviewed before. The five questions apply
 in full.
 
-**A delta round** — every round after that. You are given the two shas, the findings the round
-before raised, and the answers the implementer posted. **Take the diff yourself**
+**A follow-up review** — only when the producer asks for one. You are given the two shas, the
+findings the prior review raised, and the producer's answers. **Take the diff yourself**
 (`git diff <reviewed_head>..<head>`), because the implementer both chooses the round and supplies
 what you read. Two questions, and only these two:
 
 - **were those findings actually addressed** — against the code, never against the answers; fixes
   answering a review are where the next defect hides. Say plainly when an answer's change does not
   do what the answer says.
-- **does the delta introduce anything new** — work the findings did not ask for is a cold read the
-  implementer owes you, not a delta.
+- **does the change introduce anything new** — work beyond the findings may require a fresh full
+  review; say so.
 
 **A delta is hunks, and the defect it hides is elsewhere.** For anything whose *shape* the delta
 changed — a signature, a name, a guard, a returned type — **read the file at the new head rather

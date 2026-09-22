@@ -31,7 +31,7 @@ A second paragraph, so the block is more than one line.'
 
 # A fixture: the scripts (so `block-sync.sh' itself), a canonical file and two carriers. The marker
 # word is a parameter, which is the whole reason the library exists rather than a second copy of
-# `four-eye-sync'.
+# another checker.
 new_fixture() {
   local marker="${1:-demo}"
   local fix="$work_dir/$(fixture_name blocksync)"
@@ -148,7 +148,7 @@ pass "a missing canonical block is the only finding"
 
 # --- the marker word is a parameter ---------------------------------------------------------------
 #
-# The whole reason this is a library rather than a second copy of `four-eye-sync'.
+# The whole reason this is a library rather than a second parser.
 
 fix="$(new_fixture zzz)"
 run_lib "$fix" zzz templates/canonical.md one.md two.md

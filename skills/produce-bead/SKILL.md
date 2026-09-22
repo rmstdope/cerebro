@@ -17,9 +17,10 @@ claimed for you; `bugfix` beads stay with the bugfixer.
 3. Design each test with the increment it proves. Work RED -> GREEN -> REFACTOR, beginning every
    increment with its failing test. Use `build`, `gate`, `review`, `ci`, `rebase`, and `merge` as
    the phase changes; heartbeat before long work.
-4. Run the declared gate. Obtain and answer a review sub-agent round under the Four Eye Principle,
-   then rerun required checks. Deliver by this consumer's configured merge convention, close and
-   push the bead, and run `end-pass` last.
+4. Run the declared gate. Obtain and address one independent, full review of the complete diff and
+   bead. Decide whether the review changes warrant another review, and choose its scope; do not
+   loop on minor, self-contained answers. Rerun required checks, deliver by this consumer's
+   configured merge convention, close and push the bead, and run `end-pass` last.
 
 Never take another bead, alter agreed UX, or skip a failing test, review, or required check. Ask
 the navigator only for a genuine UX, scope, or approach decision; otherwise decide and record it.

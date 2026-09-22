@@ -17,12 +17,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use chrono::{DateTime, Utc};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 // --- Roster -----------------------------------------------------------------------------------
 
 /// Whether a roster row is a role held by one interactive session, or an implementer.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub enum AgentKind {
     Interactive,
     Implementer,
@@ -335,7 +335,7 @@ pub type StateInputs = BTreeMap<String, StateObservation>;
 // --- Fleet rows -------------------------------------------------------------------------------
 
 /// The state a fleet row is shown in.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub enum RowState {
     Working,
     Asking,
@@ -536,7 +536,7 @@ pub fn hold_closing_rows(
 }
 
 /// One row of the fleet view.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct FleetRow {
     pub name: String,
     pub role: String,
@@ -681,7 +681,7 @@ fn pid_liveness(pid: u32, name: &str, root: &Path, processes: &[ProcessRow]) -> 
 /// One `bd` issue, as read by `readers::read_beads` (`--brief --json`,
 /// `emacs/cerebro.el:4708-4764`). The JSON field is `issue_type`, not `type` — the live `bd`
 /// shape, not the retired preserved-branch renaming.
-#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct Bead {
     pub id: String,
     pub title: String,
@@ -814,7 +814,7 @@ pub struct GhSnapshot {
 /// step with its bead - CREATED, PLANNED, CLAIMED, MERGED, VERIFIED - and every one of those
 /// happens on the board, so the issue's own `updatedAt` does not move for it. Without this the
 /// hourly floor was the only thing covering them, an hour late (cb-b4m).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct LinkedBead {
     pub id: String,
     pub issue: u64,
@@ -847,7 +847,7 @@ pub fn linked_beads(beads: &[Bead]) -> Vec<LinkedBead> {
 
 /// The panel's seven sections, in the order `emacs/cerebro.el:4652-4764`
 /// (`cerebro--partition-beads`) builds them; a bead's input order is preserved within its bucket.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct WorkBuckets {
     pub claimed: Vec<Bead>,
     pub planned: Vec<Bead>,
@@ -888,7 +888,7 @@ pub struct WorkBuckets {
 /// One row of a planning role's candidate script (`plan-candidates`, `stage-candidates <stage>`),
 /// in the script's own order: priority, then id. The scripts print whole bead rows; only these two
 /// fields are read.
-#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct Candidate {
     pub id: String,
     pub priority: Option<u8>,
@@ -1163,7 +1163,7 @@ pub fn history_line(row: &HistoryRow) -> Option<(String, bool)> {
 ///
 /// **Preserve the script's order everywhere this is rendered.** It is already the order the
 /// report wants, and re-sorting here would be a second opinion about the same question.
-#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct FleetHealth {
     pub since: String,
     pub until: String,
@@ -1182,7 +1182,7 @@ pub struct FleetHealth {
 }
 
 /// One row of the report's `Starts per name` section.
-#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct HealthStarts {
     pub agent: String,
     #[serde(default)]
@@ -1193,7 +1193,7 @@ pub struct HealthStarts {
 
 /// One row of the report's `Passes that held no bead` section. `holds_beads` is false for a role
 /// that never holds one, and such a row is counted nowhere.
-#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct HealthPasses {
     pub agent: String,
     #[serde(default)]
@@ -1205,7 +1205,7 @@ pub struct HealthPasses {
 }
 
 /// One row of the report's `Running now` section.
-#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct HealthRunning {
     pub agent: String,
     pub state: String,
@@ -1220,7 +1220,7 @@ pub struct HealthRunning {
 }
 
 /// One row of the report's `Disarmed or given up on` section.
-#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct HealthDisarmed {
     pub ts: String,
     #[serde(default)]

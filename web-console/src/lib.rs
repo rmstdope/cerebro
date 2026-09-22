@@ -1,7 +1,17 @@
-use std::{fmt, net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{
+    collections::BTreeSet,
+    fmt,
+    net::SocketAddr,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
 
-use axum::{http::StatusCode, routing::get, Router};
-use cerebro_tui::{CommandRunner, Commands, Programs, ReaderPaths, SupervisionMode};
+use axum::{extract::State, routing::get, Json, Router};
+use cerebro_tui::{
+    read_fleet, read_health, read_work, CommandRunner, Commands, FleetHealth, FleetRow, Programs,
+    ReaderPaths, SupervisionMode, WorkBuckets,
+};
+use serde::Serialize;
 use tower_http::services::{ServeDir, ServeFile};
 
 /// A local HTTP boundary for browser-console reads.
@@ -14,6 +24,30 @@ pub struct ReadOnlyService {
     commands: Commands,
     supervision: SupervisionMode,
     assets_dir: PathBuf,
+    snapshots: Arc<SnapshotCache>,
+}
+
+#[derive(Clone)]
+struct SnapshotState {
+    reader_paths: ReaderPaths,
+    programs: Programs,
+    commands: Commands,
+    snapshots: Arc<SnapshotCache>,
+}
+
+#[derive(Default)]
+struct SnapshotCache {
+    fleet: Mutex<Option<Vec<FleetRow>>>,
+    work: Mutex<Option<WorkBuckets>>,
+    health: Mutex<Option<FleetHealth>>,
+}
+
+#[derive(Serialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+enum Snapshot<T> {
+    Fresh { value: T },
+    Stale { value: T, error: String },
+    Unavailable { error: String },
 }
 
 impl ReadOnlyService {
@@ -30,6 +64,7 @@ impl ReadOnlyService {
             commands,
             supervision,
             assets_dir,
+            snapshots: Arc::new(SnapshotCache::default()),
         }
     }
 
@@ -63,16 +98,80 @@ impl ReadOnlyService {
 
     pub fn router(&self) -> Router {
         let index = self.assets_dir.join("index.html");
+        let state = SnapshotState {
+            reader_paths: self.reader_paths.clone(),
+            programs: self.programs.clone(),
+            commands: self.commands.clone(),
+            snapshots: Arc::clone(&self.snapshots),
+        };
         Router::new()
-            .route("/api/health", get(health))
+            .route("/api/fleet", get(fleet_snapshot))
+            .route("/api/work", get(work_snapshot))
+            .route("/api/health", get(health_snapshot))
             .fallback_service(
                 ServeDir::new(self.assets_dir.clone()).fallback(ServeFile::new(index)),
             )
+            .with_state(state)
     }
 }
 
-async fn health() -> StatusCode {
-    StatusCode::OK
+async fn fleet_snapshot(State(state): State<SnapshotState>) -> Json<Snapshot<Vec<FleetRow>>> {
+    Json(snapshot(&state.snapshots.fleet, || {
+        read_fleet(
+            &state.reader_paths,
+            &state.programs,
+            state.commands.as_ref(),
+        )
+    }))
+}
+
+async fn work_snapshot(State(state): State<SnapshotState>) -> Json<Snapshot<WorkBuckets>> {
+    Json(snapshot(&state.snapshots.work, || {
+        read_work(
+            &state.reader_paths,
+            &state.programs,
+            state.commands.as_ref(),
+            &BTreeSet::new(),
+        )
+    }))
+}
+
+async fn health_snapshot(State(state): State<SnapshotState>) -> Json<Snapshot<FleetHealth>> {
+    Json(snapshot(&state.snapshots.health, || {
+        read_health(&state.reader_paths, state.commands.as_ref())
+    }))
+}
+
+fn snapshot<T>(
+    cache: &Mutex<Option<T>>,
+    reader: impl FnOnce() -> Result<T, cerebro_tui::ReadError>,
+) -> Snapshot<T>
+where
+    T: Clone,
+{
+    let mut cache = match cache.lock() {
+        Ok(cache) => cache,
+        Err(_) => {
+            return Snapshot::Unavailable {
+                error: "snapshot cache lock is poisoned".to_string(),
+            }
+        }
+    };
+    match reader() {
+        Ok(value) => {
+            *cache = Some(value.clone());
+            Snapshot::Fresh { value }
+        }
+        Err(error) => match cache.clone() {
+            Some(value) => Snapshot::Stale {
+                value,
+                error: error.to_string(),
+            },
+            None => Snapshot::Unavailable {
+                error: error.to_string(),
+            },
+        },
+    }
 }
 
 #[derive(Debug, Eq, PartialEq)]

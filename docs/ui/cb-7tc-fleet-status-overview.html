@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Fleet status overview</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: system-ui, sans-serif;
+      color: #172033;
+      background: #f5f7fb;
+    }
+    body { margin: 0; }
+    main { max-width: 1120px; margin: auto; padding: 32px 20px 48px; }
+    header, .summary, .agent, .notice { border: 1px solid #d8dee9; background: white; border-radius: 12px; }
+    header { display: flex; justify-content: space-between; align-items: center; padding: 20px 24px; }
+    h1, h2, p { margin: 0; }
+    h1 { font-size: 1.5rem; }
+    h2 { font-size: 1.05rem; margin-bottom: 12px; }
+    .updated { color: #566176; font-size: .9rem; text-align: right; }
+    .summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin: 24px 0; padding: 20px 24px; }
+    .summary strong { display: block; font-size: 1.8rem; margin-bottom: 4px; }
+    .summary span { color: #566176; font-size: .9rem; }
+    .layout { display: grid; grid-template-columns: 2fr 1fr; gap: 24px; }
+    .agents { display: grid; gap: 12px; }
+    .agent { padding: 16px; display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+    .agent p, .notice p { color: #566176; font-size: .92rem; }
+    .status { align-self: center; font-weight: 700; font-size: .9rem; }
+    .working { color: #075f36; }
+    .waiting { color: #87610c; }
+    .idle { color: #566176; }
+    .notice { padding: 20px; height: fit-content; }
+    .notice + .notice { margin-top: 12px; }
+    .warning { border-color: #e7bd61; background: #fff9ed; }
+    @media (max-width: 720px) {
+      header, .summary, .layout { display: block; }
+      .updated { text-align: left; margin-top: 8px; }
+      .summary > div { margin: 14px 0; }
+      .layout > * + * { margin-top: 24px; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>Fleet status</h1>
+        <p>See what the team is working on right now.</p>
+      </div>
+      <p class="updated">Last updated just now<br>Refreshes automatically</p>
+    </header>
+
+    <section class="summary" aria-label="Fleet summary">
+      <div><strong>7</strong><span>People in the fleet</span></div>
+      <div><strong>3</strong><span>Working now</span></div>
+      <div><strong>2</strong><span>Waiting for a reply</span></div>
+      <div><strong>2</strong><span>Available</span></div>
+    </section>
+
+    <div class="layout">
+      <section>
+        <h2>People in the fleet</h2>
+        <div class="agents">
+          <article class="agent">
+            <div><strong>Storm</strong><p>Building the new task summary</p></div>
+            <span class="status working">Working</span>
+          </article>
+          <article class="agent">
+            <div><strong>Xavier</strong><p>Agreeing how the fleet status should look</p></div>
+            <span class="status waiting">Waiting for a reply</span>
+          </article>
+          <article class="agent">
+            <div><strong>Moira</strong><p>Nothing in hand</p></div>
+            <span class="status idle">Available</span>
+          </article>
+          <article class="agent">
+            <div><strong>Forge</strong><p>Reviewing recent work</p></div>
+            <span class="status working">Working</span>
+          </article>
+        </div>
+      </section>
+
+      <aside>
+        <section class="notice">
+          <h2>What needs attention</h2>
+          <p>No one needs a reply right now.</p>
+        </section>
+        <section class="notice warning">
+          <h2>Connection lost</h2>
+          <p>Shown instead if the status has not updated. “Last updated” keeps the time of the last successful update.</p>
+        </section>
+      </aside>
+    </div>
+  </main>
+</body>
+</html>

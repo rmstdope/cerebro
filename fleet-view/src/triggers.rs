@@ -9,9 +9,7 @@ use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
 
-use crate::model::{
-    AgentKind, Candidate, FleetRow, GhSnapshot, LinkedBead, RosterEntry, WorkBuckets,
-};
+use crate::model::{AgentKind, Candidate, FleetRow, GhSnapshot, LinkedBead, RosterEntry, WorkBuckets};
 
 #[cfg(test)]
 use crate::model::{GhAuthor, GhIssue, GhPull};
@@ -19,31 +17,6 @@ use crate::model::{GhAuthor, GhIssue, GhPull};
 /// `cerebro-wake-interval-default`: seconds a role is left alone between two STARTS of it, when
 /// nothing more specific is declared.
 pub const WAKE_INTERVAL_DEFAULT: i64 = 600;
-
-/// `cerebro-planner-buffer-floor`. The shell owner of the whole rule is `scripts/planner-buffer`;
-/// this is a third copy for the same reason the elisp one exists - the trigger runs once per
-/// standby row per five-second tick and may not fork.
-pub const PLANNER_BUFFER_FLOOR: usize = 2;
-
-/// The project.conf key that scales the planner buffer (cb-3in). The shell copy is
-/// `scripts/planner-buffer --print-multiple-key`; the elisp copy is
-/// `cerebro--planner-multiple-key`. ABSENT means 1 - the rule every consumer had before the key
-/// existed.
-pub const PLANNER_MULTIPLE_KEY: &str = "planner_buffer_multiple";
-
-/// RAW as a buffer multiple: `Ok(None)` for a project that declares none, `Ok(Some(n))` for a
-/// whole number above zero, `Err(raw)` for anything else - zero included, since a zero taken at
-/// face value would pin `planner_want` to the floor for ever.
-pub fn parse_planner_multiple(raw: &str) -> Result<Option<usize>, String> {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return Ok(None);
-    }
-    match trimmed.parse::<usize>() {
-        Ok(n) if n > 0 => Ok(Some(n)),
-        _ => Err(trimmed.to_string()),
-    }
-}
 
 /// `cerebro-parked-labels`: a bead wearing one of these is the navigator's rather than a
 /// planner's, and counting it starts a session to find nothing to do.
@@ -273,14 +246,11 @@ pub struct TriggerFacts {
     pub stale_verdicts: usize,
     /// Open beads the second-look script says are reachable by no standby role and need Psylocke.
     pub second_look: usize,
-    /// Implementers on the roster that have not been told to finish. State is deliberately not
-    /// read: a builder between beads has no session (cb-1or.1), so `standby`, `dead`, `idle` and
-    /// `working` all count.
+    /// The target from `scripts/planner-buffer --want`, supplied with the fleet snapshot.
+    pub planner_want: usize,
+    /// Implementers on the roster that have not been told to finish. This supports fingerprints;
+    /// the target itself is resolved by the shell.
     pub implementers: usize,
-    /// The buffer multiple this project declares (`PLANNER_MULTIPLE_KEY`), 1 when it declares
-    /// none. Read once at startup, never per tick - so it is deliberately absent from
-    /// `Fingerprint::Planner`, which compares only what can move under a running view.
-    pub planner_multiple: usize,
     /// What the `gh` reader has to say this tick, for the whole fleet. Per-role filtering happens
     /// in `trigger`, because "what moved" is measured against the role's own last pass - which is
     /// why `M-x cerebro` has to pass a closure here (`emacs/cerebro.el:5955`) and this does not.
@@ -329,7 +299,7 @@ impl TriggerFacts {
         spoken_for: &std::collections::BTreeSet<String>,
         flagged: impl Fn(&str) -> bool,
         gh: GhAnswer,
-        planner_multiple: usize,
+        planner_want: usize,
     ) -> Self {
         let agreed: Vec<_> = buckets
             .ux_agreed
@@ -409,22 +379,19 @@ impl TriggerFacts {
             merged_unverified: buckets.merged.len(),
             stale_verdicts,
             second_look: buckets.second_look.len(),
+            planner_want,
             implementers: roster
                 .iter()
                 .filter(|entry| entry.kind == AgentKind::Implementer && !flagged(&entry.name))
                 .count(),
-            planner_multiple,
             gh,
             linked: buckets.linked.clone(),
         }
     }
 
-    /// How many planned, unclaimed beads the fleet wants: `planner_multiple` per implementer,
-    /// never fewer than `PLANNER_BUFFER_FLOOR` (`cerebro--planner-want`).
+    /// How many planned, unclaimed beads the fleet wants, resolved by the shell owner.
     pub fn planner_want(&self) -> usize {
-        // Saturating, so an absurd declaration cannot wrap to a number BELOW the floor - which
-        // would silently pin the buffer - where elisp would have grown a bignum.
-        self.implementers.saturating_mul(self.planner_multiple).max(PLANNER_BUFFER_FLOOR)
+        self.planner_want
     }
 }
 
@@ -1090,7 +1057,7 @@ mod tests {
         let roster = roster(&[("Xavier", "planner"), ("Cyclops", "implementer")]);
         let mut buckets = partition_beads(beads);
         buckets.candidates = cands(candidates);
-        TriggerFacts::derive(&buckets, &roster, &BTreeSet::new(), |_| false, GhAnswer::Unanswered, 1)
+        TriggerFacts::derive(&buckets, &roster, &BTreeSet::new(), |_| false, GhAnswer::Unanswered, 2)
     }
 
     /// Each role's candidates, as its script would list them.
@@ -1239,7 +1206,7 @@ mod tests {
                 &std::collections::BTreeSet::new(),
                 |_| false,
                 GhAnswer::Unanswered,
-                1,
+                4,
             )
         };
 
@@ -1440,7 +1407,7 @@ mod tests {
         let spoken: BTreeSet<String> = ["cb-2".to_string()].into_iter().collect();
         let roster = roster(&[("Iceman", "build-design")]);
         let without =
-            TriggerFacts::derive(&buckets, &roster, &spoken, |_| false, GhAnswer::Unanswered, 1);
+            TriggerFacts::derive(&buckets, &roster, &spoken, |_| false, GhAnswer::Unanswered, 2);
         assert_eq!(bead_for(&without, "build-design"), Some("cb-3"));
 
         let only_p4 = facts_for(vec![], &[("build-design", vec![("cb-4", 4)])]);
@@ -1592,7 +1559,7 @@ mod tests {
         ]);
         buckets.candidates = cands(&[("planner", vec![("cb-9zz", 0)])]);
         // Storm has been told to finish: it takes no further bead, so it is not counted.
-        let facts = TriggerFacts::derive(&buckets, &roster, &std::collections::BTreeSet::new(), |name| name == "Storm", GhAnswer::Unanswered, 1);
+        let facts = TriggerFacts::derive(&buckets, &roster, &std::collections::BTreeSet::new(), |name| name == "Storm", GhAnswer::Unanswered, 2);
 
         assert_eq!(facts.p0_unplanned, vec!["cb-9zz".to_string()]);
         assert_eq!(facts.planned, 2);
@@ -1669,44 +1636,12 @@ mod tests {
     }
 
     #[test]
-    fn the_buffer_is_one_per_implementer_and_never_fewer_than_the_floor() {
+    fn supplied_planner_target_is_used_unchanged() {
         let mut facts = empty_facts();
-        facts.implementers = 0;
-        assert_eq!(facts.planner_want(), PLANNER_BUFFER_FLOOR);
-        facts.implementers = 4;
-        assert_eq!(facts.planner_want(), 4);
-    }
-
-    #[test]
-    fn a_declared_multiple_scales_the_buffer() {
-        let mut facts = empty_facts();
-        facts.planner_multiple = 2;
-        facts.implementers = 4;
+        facts.planner_want = 2;
+        assert_eq!(facts.planner_want(), 2);
+        facts.planner_want = 8;
         assert_eq!(facts.planner_want(), 8);
-        facts.implementers = 0;
-        assert_eq!(facts.planner_want(), PLANNER_BUFFER_FLOOR);
-        facts.planner_multiple = 1;
-        facts.implementers = 4;
-        assert_eq!(facts.planner_want(), 4);
-        // An absurd declaration saturates rather than wrapping below the floor.
-        facts.planner_multiple = usize::MAX;
-        facts.implementers = 2;
-        assert_eq!(facts.planner_want(), usize::MAX);
-    }
-
-    #[test]
-    fn a_planner_multiple_is_a_whole_number_above_zero() {
-        assert_eq!(parse_planner_multiple("1"), Ok(Some(1)));
-        assert_eq!(parse_planner_multiple("  3  "), Ok(Some(3)));
-        assert_eq!(parse_planner_multiple("01"), Ok(Some(1)));
-        assert_eq!(parse_planner_multiple(""), Ok(None));
-        assert_eq!(parse_planner_multiple("   "), Ok(None));
-        // Zero is refused rather than taken at face value: it would pin the
-        // wanted number to the floor for ever.
-        assert_eq!(parse_planner_multiple("0"), Err("0".to_string()));
-        assert_eq!(parse_planner_multiple("-1"), Err("-1".to_string()));
-        assert_eq!(parse_planner_multiple("1.5"), Err("1.5".to_string()));
-        assert_eq!(parse_planner_multiple("2x"), Err("2x".to_string()));
     }
 
     fn empty_facts() -> TriggerFacts {
@@ -1724,8 +1659,8 @@ mod tests {
             merged_unverified: 0,
             stale_verdicts: 0,
             second_look: 0,
+            planner_want: 4,
             implementers: 4,
-            planner_multiple: 1,
             gh: GhAnswer::Unanswered,
             linked: Vec::new(),
         }

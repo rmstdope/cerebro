@@ -354,18 +354,10 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
     // may act on this checkout. The spacing is read here too - once, in the one place, and only
     // when it will be used: a fork per role per five-second tick is not a thing this view may do.
     let mut spacing = BTreeMap::new();
-    // 1 for a read-only view, which starts nothing and draws no `-> buffer<N`.
-    let mut planner_multiple = 1;
     if app.supervision.may_supervise() {
-        let (declared, mut complaints) =
+        let (declared, complaints) =
             readers::read_role_spacing(&paths, &SPACED_ROLES, commands.as_ref());
         spacing = declared;
-        let (multiple, multiple_complaint) =
-            readers::read_planner_multiple(&paths, commands.as_ref());
-        planner_multiple = multiple;
-        // Onto the same vector, so a bad declaration reaches the header by the path the spacing
-        // complaint already uses.
-        complaints.extend(multiple_complaint);
         if let Some(notice) =
             arm_and_autostart(
                 &mut app,
@@ -382,7 +374,7 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
         }
     }
 
-    let config = LoopConfig { paths, programs: Programs::default(), spacing, planner_multiple };
+    let config = LoopConfig { paths, programs: Programs::default(), spacing };
 
     let mut guard = TerminalGuard::enter(CrosstermTerminal)?;
     let backend = CrosstermBackend::new(io::stdout());
@@ -844,7 +836,7 @@ fn start_due(
     logger: &mut Logger,
     paths: &ReaderPaths,
     spacing: &BTreeMap<String, u64>,
-    planner_multiple: usize,
+    planner_want: usize,
     roster: &[RosterEntry],
     now: DateTime<Utc>,
 ) {
@@ -862,7 +854,7 @@ fn start_due(
         &spoken,
         |name| lifecycle::stop_flag_set(paths, name),
         app.gh_answer(),
-        planner_multiple,
+        planner_want,
     );
 
     let standby: Vec<(String, String)> = app
@@ -1670,8 +1662,6 @@ struct LoopConfig {
     paths: ReaderPaths,
     programs: Programs,
     spacing: BTreeMap<String, u64>,
-    /// The project's declared planner buffer multiple, read once at startup (cb-3in).
-    planner_multiple: usize,
 }
 
 /// Every worker the loop polls or asks. One value, so a tenth is a field rather than a
@@ -1762,22 +1752,25 @@ where
 
         // Each answer updates only its own pane. Neither poll blocks.
         if let Some(result) = workers.fleet.poll() {
-            let succeeded = result.is_ok();
-            match &result {
+            let snapshot = match result {
                 // One successful fleet read proves both halves ran, so it clears both contexts.
-                Ok(_) => {
+                Ok(snapshot) => {
                     state.logger.clear_error("fleet");
                     state.logger.clear_error("roster");
+                    snapshot
                 }
                 Err(error) => {
-                    state.logger.error(&log::reader_context("fleet", error), &error.log_message(), clock())
+                    state.logger.error(&log::reader_context("fleet", &error), &error.log_message(), clock());
+                    app.finish_refresh(Err(error), clock());
+                    continue;
                 }
-            }
-            app.finish_refresh(result, clock());
+            };
+            let planner_want = snapshot.planner_want;
+            app.finish_refresh(Ok(snapshot.rows), clock());
             // On the snapshot just applied, and only when the read succeeded: a failed read says
             // nothing about any agent, and acting on the last good one would end a session on
             // evidence five seconds stale.
-            if succeeded {
+            {
                 let now = clock();
                 supervise(app, &mut state.host, &mut state.ledger, &mut state.logger, &config.paths, now, Instant::now());
                 // After `supervise` and not before: a session ended on this tick must not also be
@@ -1797,7 +1790,7 @@ where
                 // Between the two: a given handover is not an orphan, and a name it starts must
                 // not also be started by a trigger this tick (cb-10d.5).
                 start_given(app, &mut state.host, &mut state.logger, &config.paths, &roster, now);
-                start_due(app, &mut state.host, &mut state.ledger, &mut state.logger, &config.paths, &config.spacing, config.planner_multiple, &roster, now);
+                start_due(app, &mut state.host, &mut state.ledger, &mut state.logger, &config.paths, &config.spacing, planner_want, &roster, now);
                 // And a line into an idle Cerebro, on the same freshly derived rows (cb-kcs.5.2).
                 // After `start_due` for its own reason: a Cerebro started on this very tick has
                 // no session to type into until the next read restates its row.
@@ -3280,7 +3273,7 @@ mod main_tests {
     /// The paths, programs and spacing the loop reads, all pointed at `nowhere()`.
     fn test_config() -> LoopConfig {
         let (paths, programs) = nowhere();
-        LoopConfig { paths, programs, spacing: BTreeMap::new(), planner_multiple: 1 }
+        LoopConfig { paths, programs, spacing: BTreeMap::new() }
     }
 
     /// The nine workers, each pointed at `nowhere()`. A case that needs a specific one writes
@@ -4891,13 +4884,13 @@ mod main_tests {
     }
 
     #[test]
-    fn the_declared_multiple_reaches_the_planner_trigger() {
+    fn the_resolved_target_reaches_the_planner_trigger() {
         let dir = tempfile::tempdir().unwrap();
         let paths = scratch(dir.path(), "sleep 5");
         let now = Utc::now();
         let roster = planner_and_implementers(3);
 
-        // A multiple of 1 - today's rule - wants three, and three are planned.
+        // The snapshot target is three, and three are planned.
         let mut host = SessionHost::default();
         let mut ledger = cerebro_tui::triggers::StartLedger::default();
         let mut app = standby_app(
@@ -4906,14 +4899,14 @@ mod main_tests {
             Some(buffer_of_three()),
             now,
         );
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &std::collections::BTreeMap::new(), 1, &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &std::collections::BTreeMap::new(), 3, &roster, now);
         assert!(!host.is_live("Xavier"), "a satisfied buffer starts nobody");
         assert_eq!(
             app.standby_labels.get("Xavier").map(String::as_str),
             Some("→ buffer<3")
         );
 
-        // A multiple of 2 wants six, so the same board is short.
+        // A target of six makes the same board short.
         let mut host = SessionHost::default();
         let mut ledger = cerebro_tui::triggers::StartLedger::default();
         let mut app = standby_app(
@@ -4922,8 +4915,8 @@ mod main_tests {
             Some(buffer_of_three()),
             now,
         );
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &std::collections::BTreeMap::new(), 2, &roster, now);
-        assert!(host.is_live("Xavier"), "a multiple of 2 makes the same buffer short");
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &std::collections::BTreeMap::new(), 6, &roster, now);
+        assert!(host.is_live("Xavier"), "a target of six makes the same buffer short");
         assert_eq!(app.notice.as_deref(), Some("Started Xavier — buffer 3 of 6."));
         assert_eq!(
             app.standby_labels.get("Xavier").map(String::as_str),
@@ -5093,7 +5086,7 @@ mod main_tests {
         );
         assert_eq!(app.fleet_rows()[0].state, cerebro_tui::model::RowState::Standby);
 
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &std::collections::BTreeMap::new(), 1, &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &std::collections::BTreeMap::new(), 2, &roster, now);
 
         assert!(host.is_live("Xavier"), "the standby planner was started");
         assert!(app.armed.contains("Xavier"), "and stays armed");
@@ -5152,7 +5145,7 @@ mod main_tests {
             &std::collections::BTreeSet::new(),
             |_| false,
             triggers::GhAnswer::Unanswered,
-            1,
+            2,
         );
         let mut ledger = StartLedger::default();
         ledger.note_started(
@@ -5180,7 +5173,7 @@ mod main_tests {
             &mut test_logger(),
             &paths,
             &BTreeMap::new(),
-            1,
+            2,
             &roster,
             now,
         );
@@ -6210,7 +6203,7 @@ mod main_tests {
             now,
         );
 
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &std::collections::BTreeMap::new(), 1, &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &std::collections::BTreeMap::new(), 2, &roster, now);
 
         // The spacing is read INSIDE the loop, so the second planner already sees the first.
         assert!(host.is_live("Xavier"));
@@ -6614,7 +6607,7 @@ mod main_tests {
             now,
         );
 
-        start_due(&mut app, &mut host, &mut ledger, &mut logger, &paths, &BTreeMap::new(), 1, &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut logger, &paths, &BTreeMap::new(), 2, &roster, now);
 
         assert!(host.is_live("Xavier"));
         let line = one_line(dir.path(), "decisions", "start");
@@ -6882,7 +6875,7 @@ mod main_tests {
             now,
         );
 
-        start_due(&mut app, &mut host, &mut ledger, &mut logger, &paths, &spacing, 1, &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut logger, &paths, &spacing, 2, &roster, now);
 
         let lines = log_lines(dir.path(), "evaluations");
         let evaluations: Vec<&String> = lines

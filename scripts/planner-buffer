@@ -22,9 +22,8 @@
 # neither side counts sessions at all: the wanted number is the roster's implementers minus those
 # told to finish.
 #
-# The fleet view keeps a pure copy of the predicate, because a trigger is evaluated once
-# per standby row per five-second tick and cannot afford a subprocess. What replaces a shared
-# implementation there is the `--print-*' modes below, which are what the copy is written from.
+# The fleet view reads `--want` with each fleet snapshot and passes that scalar to its pure
+# triggers. This script is therefore the sole owner of the target rule.
 #
 # It fails LOUDLY - non-zero, a message on stderr, nothing on stdout - when the bead query fails.
 # A reader of this output is deciding whether to start a planning session, and an empty buffer that

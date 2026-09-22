@@ -440,37 +440,6 @@ pub fn read_role_spacing(
     (declared, complaints)
 }
 
-/// The `planner_buffer_multiple` this project declares, and a complaint if it declared something
-/// unusable. 1 when it declares none, which is today's rule (cb-3in).
-///
-/// The same three rules `read_role_spacing` copies: stdout only, a non-zero exit read as
-/// "declared nothing", and a value that is not a whole number above zero returned beside the
-/// value rather than silently replaced.
-///
-/// Runs once, at startup, beside `read_role_spacing` - not per tick and not per row.
-pub fn read_planner_multiple(
-    paths: &ReaderPaths,
-    commands: &dyn CommandRunner,
-) -> (usize, Option<String>) {
-    let program = paths.scripts_dir.join("project-conf");
-    let key = crate::triggers::PLANNER_MULTIPLE_KEY;
-    let Ok(stdout) = commands.run(&program, &[key], Some(&paths.consumer_root), COMMAND_TIMEOUT)
-    else {
-        return (1, None);
-    };
-    let raw = String::from_utf8_lossy(&stdout).trim().to_string();
-    match crate::triggers::parse_planner_multiple(&raw) {
-        Ok(Some(multiple)) => (multiple, None),
-        Ok(None) => (1, None),
-        Err(bad) => (
-            1,
-            Some(format!(
-                "project.conf: {key} is not a whole number above zero (\"{bad}\"); using 1."
-            )),
-        ),
-    }
-}
-
 /// The loopback address this checkout's supervision lease lives at.
 pub fn read_supervisor_endpoint(
     paths: &ReaderPaths,
@@ -775,7 +744,15 @@ pub fn read_gh(
     Ok(GhSnapshot { issues, prs, me: me.clone() })
 }
 
-/// The whole fleet in one read: roster, every state file, the process table - fed to
+/// The fleet rows and their planner target from one successful refresh.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FleetSnapshot {
+    pub rows: Vec<FleetRow>,
+    pub planner_want: usize,
+}
+
+/// The whole fleet in one read: roster, every state file, the process table, and the shell-owned
+/// planner target - fed to
 /// `model::derive_fleet` against the SHARED root, which is both where the state files live and
 /// what `scripts/launch` roots every session's marker sentence at (`scripts/agent-alive:61-107`).
 ///
@@ -787,16 +764,25 @@ pub fn read_fleet(
     paths: &ReaderPaths,
     programs: &Programs,
     commands: &dyn CommandRunner,
-) -> Result<Vec<FleetRow>, ReadError> {
+) -> Result<FleetSnapshot, ReadError> {
     let roster = read_roster(paths, commands)?;
     let states = read_states(paths, &roster);
     let processes = read_processes(programs, commands)?;
-    Ok(model::derive_fleet(
-        &roster,
-        &states,
-        &processes,
-        &paths.shared_root,
-    ))
+    let program = paths.scripts_dir.join("planner-buffer");
+    let args = ["--want"];
+    let output = commands.run(&program, &args, Some(&paths.consumer_root), COMMAND_TIMEOUT)?;
+    let raw = String::from_utf8(output).map_err(|error| ReadError::Invalid {
+        source: Invocation::new(&program, &args),
+        message: error.to_string(),
+    })?;
+    let planner_want = raw.trim().parse().map_err(|error| ReadError::Invalid {
+        source: Invocation::new(&program, &args),
+        message: format!("{:?} is not an unsigned target: {error}", raw.trim()),
+    })?;
+    Ok(FleetSnapshot {
+        rows: model::derive_fleet(&roster, &states, &processes, &paths.shared_root),
+        planner_want,
+    })
 }
 
 /// How long a sweep script may run. Twenty times `COMMAND_TIMEOUT`, and the same number
@@ -1438,6 +1424,8 @@ mod tests {
         let fake = FakeCommands::new(move |call: &Call| {
             if call.program.ends_with("roster") {
                 Ok(b"Xavier\tplanner\tinteractive\nStorm\timplementer\timplementer\n".to_vec())
+            } else if call.program.ends_with("planner-buffer") {
+                Ok(b"2\n".to_vec())
             } else {
                 Ok(ps_table.clone().into_bytes())
             }
@@ -1448,7 +1436,9 @@ mod tests {
             shared_root: shared,
             scripts_dir: dir.path().join("scripts"),
         };
-        let rows = read_fleet(&paths, &Programs::default(), &fake).unwrap();
+        let snapshot = read_fleet(&paths, &Programs::default(), &fake).unwrap();
+        assert_eq!(snapshot.planner_want, 2);
+        let rows = snapshot.rows;
 
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].name, "Xavier");
@@ -1506,6 +1496,28 @@ mod tests {
                 assert!(source.program().ends_with("roster"), "expected the roster to be named: {source}");
             }
             other => panic!("expected the roster failure, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn fleet_reader_requires_a_numeric_planner_target() {
+        let paths = paths_at(Path::new("/consumer"));
+        for target in [b"\n".as_slice(), b"two\n".as_slice()] {
+            let fake = FakeCommands::new(move |call: &Call| {
+                if call.program.ends_with("roster") {
+                    Ok(b"Xavier\tplanner\tinteractive\n".to_vec())
+                } else if call.program.ends_with("planner-buffer") {
+                    Ok(target.to_vec())
+                } else {
+                    Ok(Vec::new())
+                }
+            });
+            match read_fleet(&paths, &Programs::default(), &fake) {
+                Err(ReadError::Invalid { source, .. }) => {
+                    assert!(source.program().ends_with("planner-buffer"));
+                }
+                other => panic!("expected invalid planner target, got {other:?}"),
+            }
         }
     }
 
@@ -1822,37 +1834,6 @@ mod tests {
                 "project.conf: role_start_spacing_implementer is not a whole number of seconds (\"30s\"); using 30.".to_string()
             ]
         );
-    }
-
-    #[test]
-    fn project_conf_declares_the_planner_multiple_and_names_a_bad_one() {
-        let paths = paths_at(Path::new("/consumer"));
-        let declared = FakeCommands::new(|_: &Call| Ok(b"2\n".to_vec()));
-        assert_eq!(read_planner_multiple(&paths, &declared), (2, None));
-
-        let bad = FakeCommands::new(|_: &Call| Ok(b"0\n".to_vec()));
-        assert_eq!(
-            read_planner_multiple(&paths, &bad),
-            (
-                1,
-                Some(
-                    "project.conf: planner_buffer_multiple is not a whole number above zero (\"0\"); using 1."
-                        .to_string()
-                )
-            )
-        );
-
-        // Nothing declared, and a non-zero exit, are the same answer: 1.
-        let absent = FakeCommands::new(|_: &Call| Ok(b"\n".to_vec()));
-        assert_eq!(read_planner_multiple(&paths, &absent), (1, None));
-        let failed = FakeCommands::new(|_: &Call| {
-            Err(ReadError::Exit {
-                source: "project-conf".into(),
-                status: Some(1),
-                stderr: String::new(),
-            })
-        });
-        assert_eq!(read_planner_multiple(&paths, &failed), (1, None));
     }
 
     // --- the gh reader (cb-kcs.4.3) ------------------------------------------------------------

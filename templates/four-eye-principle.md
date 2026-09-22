@@ -1,12 +1,12 @@
 Nothing merges unreviewed and nothing merges red.
 
-An agent's change is reviewed by a **review sub-agent the implementer spawns for itself**, given the
-diff and the bead, never the implementer's reasoning. It counts when: the review **chain** covers
+An agent's change is reviewed by a **review sub-agent the producer spawns for itself**, given the
+diff and the bead, never the producer's reasoning. It counts when: the review **chain** covers
 the implementation merged, a cold read of the whole change then each delta since the round before;
 every round posted in full on the pull request, naming its kind; every usable round's finding
 answered by a change or posted reply explaining why; every check green. Failed or unusable attempts
 may be retried; three unusable for one head require the navigator. That is the whole standing
-approval, for a planned bead only.
+approval, for a producer-held bead only.
 
 Documentation (`docs/`, `README.md` and the like) needs no review. **`agents/` and `skills/` are
 never documentation.** `scripts/app-paths --classify` settles doubt; anything it calls

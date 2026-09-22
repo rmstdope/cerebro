@@ -22,36 +22,35 @@ Work is tracked in **beads** (`bd`), not in GitHub issues. A bead moves through 
 at a time, and each handover is a label rather than a conversation:
 
 ```
-  unplanned ──► planning ──► planned ──► claimed ──► merged ──► verified
-                   │            │           │           │           │
-              planning     ready for   an implementer  a PR    Psylocke and
-              holds it     anyone      is building it  merged  you looked at it
+  unplanned ──► UX agreed ──► claimed ──► merged ──► verified
+                   │             │           │           │
+                UX holds it   a producer    a PR    Psylocke and
+                              is producing  merged  you looked at it
                    └──────────── needs you ◄───────────┘
 ```
 
 Two rules hold that together, and both are load-bearing:
 
-- **Planning roles never claim.** Claiming means *an implementer is building this*. The fleet view
+- **UX never claims.** Claiming means *a producer is building this*. The fleet view
   assigns planning work without claiming it, which keeps the bead open while making ownership clear;
   if that session dies, the view gives the bead back (cb-10d.2.2).
 - **Closed is not terminal.** A failed verification reopens a bead at P0 and sends it round again.
 
 ## Who is in the fleet
 
-Nine roles. Eight are interactive sessions you talk to; the ninth is the implementer, of which
+Eight roles. Seven are interactive sessions you talk to; the eighth is the producer, of which
 your project's roster declares as many as it wants.
 
 | Agent | Role | Runs on | What it is for |
 |---|---|---|---|
 | **Xavier**, **Beast** | `ux` | Opus / high | Agree the user-facing shape and interaction details |
-| **Gambit**, **Iceman** | `build-design` | Opus / high | Turn agreed UX into buildable plans |
-| **Cerebro** | `orchestrator` | Opus / medium | Watches the fleet, reports on it, ranks the backlog with you, stops implementers, hands a release request to the project's release skill |
+| **Cerebro** | `orchestrator` | Opus / medium | Watches the fleet, reports on it, ranks the backlog with you, stops producers, hands a release request to the project's release skill |
 | **Moira** | `user-feedback` | Sonnet | Owns the GitHub issue inbox: acknowledges, triages into beads, keeps reporters told |
 | **Psylocke** | `verifier` | Sonnet | Puts merged work in front of you and records your verdict |
 | **Cypher** | `reviewer` | Opus / high | Reviews pull requests that came from outside the fleet |
 | **Forge** | `architect` | Opus / xhigh | Reads the shape of the codebase and files what it is costing |
 | **Bishop** | `bugfixer` | Sonnet | Takes `bugfix` beads, reproduces with a failing test, fixes, and merges |
-| your implementers | `implementer` | Sonnet | One planned bead each, built test-first, to a merged PR |
+| your producers | `producer` | Sonnet | One UX-agreed bead each: plan it, design its tests, build it test-first, and merge it |
 
 `scripts/roster` is the one declaration of that list — name, role and kind, one line each. Everything
 else derives from it: the fleet view, the launcher, and the state files.
@@ -75,7 +74,7 @@ on `g` or on its next five-second tick.
 |---|---|
 | `s` | start the agent on this row, in a session the view hosts |
 | `k` | kill it, confirming harder when it is mid-bead |
-| `f` | tell an agent to finish — an implementer completes its bead, an interactive role its pass, and neither starts again until you press `s` |
+| `f` | tell an agent to finish — a producer completes its bead, an interactive role its pass, and neither starts again until you press `s` |
 | `RET` | focus the detail window, to type to the agent shown there |
 | `TAB` | cycle list → beads → detail → list |
 | `n` / `p` | next / previous row |
@@ -85,15 +84,15 @@ Planned unclaimed, Being planned, Unplanned, Merged unverified — with `0`–`4
 re-prioritise a bead on the spot, and `x` on a **Sweeps** finding to run the exact `bd close`, `bd update` or
 `bd set-state` it maps to, after confirming.
 
-It ends an implementer that reports `waiting` — its buffer
-kept — and starts a fresh one when a planned bead exists, at most one implementer every 30 seconds.
+It ends a producer that reports `waiting` — its buffer
+kept — and starts a fresh one when a UX-agreed bead exists, at most one producer every 30 seconds.
 It runs the **interactive roles** exactly the same way: a role that writes `waiting` is ended half a
 minute later — its buffer kept, `RET` shows it — and started fresh when its trigger fires: a
 planning role when the planned buffer is short and its queue has work, or when a P0 is waiting — a
 board of nothing but unranked beads starts Cerebro to rank them and no planning role (cb-zgg);
 Psylocke when a merged bead is unverified or a verdict is stale; Moira when an issue moved on GitHub
 or a bead linked to one (`gh-<n>` in its `external_ref`) changed since her last pass, Cypher when an
-outside PR moved, both hourly regardless; Forge hourly too; an implementer when a planned,
+outside PR moved, both hourly regardless; Forge hourly too; a producer when a UX-agreed,
 unclaimed bead exists; Cerebro when an unranked bead appears — an idle, running Cerebro is typed a
 line naming the beads instead, and again every ten minutes while they stay unranked; an idle
 Cerebro is also typed a line every two hours asking it to run the two sweeps that are its own, queued
@@ -134,8 +133,8 @@ does not start that name again, however it is armed, until you press `s`; `RET` 
 line.
 
 The State column names the
-**phase**: `build`, `gate`, `review`, `ci`, `rebase`, `merge` for an implementer; `plan` for
-the planning roles (`ux` and `build-design`); `prepare`/`verify` for Psylocke; `read`/`check`/`walk`/`report` for Cypher; `sweep` for
+**phase**: `design`, `build`, `gate`, `review`, `ci`, `rebase`, `merge` for a producer; `plan` for
+`ux`; `prepare`/`verify` for Psylocke; `read`/`check`/`walk`/`report` for Cypher; `sweep` for
 Moira and Cerebro (`release` and `triage` too); `daily`/`weekly` for Forge. The Bead/Phase column shows both
 timers — time on the bead, time in this phase — so one in `ci` for an hour says something is
 stuck. `review` is the implementer waiting on a sub-agent it spawned itself — delta rounds run about a
@@ -195,31 +194,30 @@ default model and says
 `launch: external model "research" is unavailable; Beast will use Copilot's default model.` See
 [`docs/ui/cb-2fs-external-model.html`](ui/cb-2fs-external-model.html) for the agreed states.
 
-## Starting planning roles
+## Starting UX
 
-Planning is split between `ux` and `build-design`. Both are started and supervised the same way as
-the rest of the interactive roles: the fleet view assigns one bead per pass, keeps ownership by
-assignee (not claim), and restarts the next pass when the trigger says more work is ready.
+UX is started and supervised like the other interactive roles: the fleet view assigns one bead per
+pass, keeps ownership by assignee (not claim), and restarts it when its queue needs attention.
 
-## Starting builders
+## Starting producers
 
-**You** start builders — one session each, `s` in the fleet view or `launch <Name>` in a
+**You** start producers — one session each, `s` in the fleet view or `launch <Name>` in a
 terminal — unless their `.cerebro/roster.conf` line says `autostart`, in which case the fleet view
-starts them for you as it opens. `standby` on an implementer row arms it without starting it, and a
-planned, unclaimed bead is what starts it. There is no flag that puts a running implementer to work: **a
-running implementer is a working one**, and it claims the next planned bead as soon as one exists. If you want another
-builder, start another session.
+starts them for you as it opens. `standby` on a producer row arms it without starting it, and a
+UX-agreed, unclaimed bead is what starts it. There is no flag that puts a running producer to work: **a
+running producer is a working one**, and it claims the next agreed bead as soon as one exists. If you want another
+producer, start another session.
 
-Implementers carry the names your project declares in `.cerebro/roster.conf`, so that a fleet of
+Producers carry the names your project declares in `.cerebro/roster.conf`, so that a fleet of
 them can be talked about without anyone counting session hashes. Declare none and you get
 cerebro's own default — twelve X-Men, Cyclops and Storm and Wolverine and Rogue and on down the
 list — which is a default rather than a rule: nothing in the launcher or the fleet view knows
 what an X-Man is, and a project whose builders are named for itself works exactly the same way.
 
-Each takes a planned bead, creates its own git worktree, works through the plan test-first, opens
-a PR, spawns a reviewer sub-agent and answers what it finds, waits for CI, merges and cleans up.
+Each takes a UX-agreed bead, creates its own git worktree, writes its build and test design, works
+test-first, opens a PR, spawns a reviewer sub-agent and answers what it finds, waits for CI, merges and cleans up.
 Then it reports itself `waiting` and **that session ends**: the fleet view keeps its buffer and
-starts a fresh one under the same name when there is another planned bead. They run on Sonnet,
+starts a fresh one under the same name when there is another UX-agreed bead. They run on Sonnet,
 each with its own context.
 
 The replacement is the point. One bead fills a session with a plan, a diff, a review and three CI

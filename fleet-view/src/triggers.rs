@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use chrono::{DateTime, Utc};
 
 use crate::model::{
-    AgentKind, Candidate, FleetRow, GhSnapshot, LinkedBead, RosterEntry, WorkBuckets,
+    is_builder_role, AgentKind, Candidate, FleetRow, GhSnapshot, LinkedBead, RosterEntry, WorkBuckets,
 };
 
 #[cfg(test)]
@@ -209,7 +209,7 @@ pub const GIVE_UP_AFTER: u32 = 5;
 pub fn wake_interval(role: &str) -> i64 {
     match role {
         "verifier" => 300,
-        "planner" | "implementer" | "bugfixer" | "ux" | "build-design" => 0,
+        "planner" | "implementer" | "producer" | "bugfixer" | "ux" | "build-design" => 0,
         _ => WAKE_INTERVAL_DEFAULT,
     }
 }
@@ -217,7 +217,7 @@ pub fn wake_interval(role: &str) -> i64 {
 /// `cerebro-role-start-spacing`, the fallback for a role the project declares nothing about.
 pub fn default_spacing(role: &str) -> Option<u64> {
     match role {
-        "planner" | "implementer" | "bugfixer" | "ux" | "build-design" => Some(30),
+        "planner" | "implementer" | "producer" | "bugfixer" | "ux" | "build-design" => Some(30),
         _ => None,
     }
 }
@@ -258,6 +258,8 @@ pub struct TriggerFacts {
     /// bead already spoken for (`spoken_for`), in the script's order. `take` removes one handed out
     /// earlier in the same tick (cb-10d.1).
     pub assignable_ids: Vec<String>,
+    /// The legacy implementer queue, kept distinct from producer work.
+    pub implementer_assignable_ids: Vec<String>,
     /// The beads the next bugfixer start may be handed: `WorkBuckets::bugfixable` minus every
     /// bead already spoken for (`spoken_for`), in the script's order. `take` removes one handed
     /// out earlier in the same tick.
@@ -399,6 +401,12 @@ impl TriggerFacts {
                 .filter(|id| !spoken_for.contains(*id))
                 .cloned()
                 .collect(),
+            implementer_assignable_ids: buckets
+                .implementer_assignable
+                .iter()
+                .filter(|id| !spoken_for.contains(*id))
+                .cloned()
+                .collect(),
             bugfixable_ids: buckets
                 .bugfixable
                 .iter()
@@ -469,6 +477,9 @@ pub enum Fingerprint {
         planned_ids: Vec<String>,
         planned_revisions: Vec<(String, Option<DateTime<Utc>>)>,
     },
+    Producer {
+        assignable_ids: Vec<String>,
+    },
     Bugfixer {
         bugfixable_ids: Vec<String>,
     },
@@ -507,6 +518,9 @@ pub fn fingerprint(role: &str, facts: &TriggerFacts) -> Option<Fingerprint> {
         "implementer" => Some(Fingerprint::Implementer {
             planned_ids: facts.planned_ids.clone(),
             planned_revisions: facts.planned_revisions.clone(),
+        }),
+        "producer" => Some(Fingerprint::Producer {
+            assignable_ids: facts.assignable_ids.clone(),
         }),
         "bugfixer" => Some(Fingerprint::Bugfixer {
             bugfixable_ids: facts.bugfixable_ids.clone(),
@@ -609,8 +623,10 @@ fn condition(facts: &TriggerFacts, agent: &AgentFacts<'_>) -> Option<String> {
             (facts.merged_unverified > 0)
                 .then(|| format!("{} merged, unverified", facts.merged_unverified))
         }
-        "implementer" => (!facts.assignable_ids.is_empty())
-            .then(|| format!("{} planned, unclaimed", facts.assignable_ids.len())),
+        "implementer" => (!facts.implementer_assignable_ids.is_empty())
+            .then(|| format!("{} planned, unclaimed", facts.implementer_assignable_ids.len())),
+        "producer" => (!facts.assignable_ids.is_empty())
+            .then(|| format!("{} UX-agreed, unclaimed", facts.assignable_ids.len())),
         "bugfixer" => (!facts.bugfixable_ids.is_empty())
             .then(|| format!("{} bugfix candidate{}", facts.bugfixable_ids.len(), if facts.bugfixable_ids.len() == 1 { "" } else { "s" })),
         "orchestrator" => (!facts.unranked_ids.is_empty())
@@ -823,6 +839,7 @@ pub fn standby_label(
             Some(format!("→ planned {}/{}", facts.planned, facts.planner_want()))
         }
         "implementer" => Some("→ planned".to_string()),
+        "producer" => Some("→ agreed build".to_string()),
         "bugfixer" => Some("→ bugs".to_string()),
         "verifier" => Some("→ merged".to_string()),
         "orchestrator" => Some("→ unranked".to_string()),
@@ -851,7 +868,7 @@ pub fn next_bugfix(facts: &TriggerFacts) -> Option<&str> {
 /// Whether ROLE is started with a bead the view picked: `implementer` (cb-10d.1) and the three
 /// planning roles (cb-10d.2.2).
 pub fn hands_a_bead(role: &str) -> bool {
-    role == "implementer" || role == "bugfixer" || crate::model::PLANNING_ROLES.contains(&role)
+    is_builder_role(role) || role == "bugfixer" || crate::model::PLANNING_ROLES.contains(&role)
 }
 
 /// The first candidate a planning role may be given: not P4 and not unranked (`priority` `None`)
@@ -863,8 +880,11 @@ pub fn first_candidate(candidates: &[Candidate]) -> Option<&Candidate> {
 /// The bead the next start of ROLE is given: an implementer's first assignable bead, a planning
 /// role's `first_candidate`, and `None` for any other role.
 pub fn bead_for<'a>(facts: &'a TriggerFacts, role: &str) -> Option<&'a str> {
-    if role == "implementer" {
+    if role == "producer" {
         return next_bead(facts);
+    }
+    if role == "implementer" {
+        return facts.implementer_assignable_ids.first().map(String::as_str);
     }
     if role == "bugfixer" {
         return next_bugfix(facts);
@@ -877,6 +897,7 @@ impl TriggerFacts {
     /// out earlier in THIS tick is not handed again, to any role.
     pub fn take(&mut self, id: &str) {
         self.assignable_ids.retain(|candidate| candidate != id);
+        self.implementer_assignable_ids.retain(|candidate| candidate != id);
         self.bugfixable_ids.retain(|candidate| candidate != id);
         for list in self.planning_candidates.values_mut() {
             list.retain(|candidate| candidate.id != id);
@@ -1389,6 +1410,7 @@ mod tests {
     fn assignable_facts(assignable: &[&str], spoken: &[&str]) -> TriggerFacts {
         let buckets = WorkBuckets {
             assignable: assignable.iter().map(|id| id.to_string()).collect(),
+            implementer_assignable: assignable.iter().map(|id| id.to_string()).collect(),
             ..WorkBuckets::default()
         };
         TriggerFacts::derive(
@@ -1719,6 +1741,7 @@ mod tests {
             planned_ids: Vec::new(),
             planned_revisions: Vec::new(),
             assignable_ids: Vec::new(),
+            implementer_assignable_ids: Vec::new(),
             bugfixable_ids: Vec::new(),
             unranked_ids: Vec::new(),
             merged_unverified: 0,
@@ -1789,9 +1812,14 @@ mod tests {
 
         let mut planned = empty_facts();
         planned.assignable_ids = vec!["cb-a".into(), "cb-b".into(), "cb-c".into()];
+        planned.implementer_assignable_ids = vec!["cb-p".into()];
         assert_eq!(
             trigger(&planned, agent("implementer"), at(0)),
-            Some("3 planned, unclaimed".to_string())
+            Some("1 planned, unclaimed".to_string())
+        );
+        assert_eq!(
+            trigger(&planned, agent("producer"), at(0)),
+            Some("3 UX-agreed, unclaimed".to_string())
         );
 
         let mut unranked = empty_facts();
@@ -1820,7 +1848,7 @@ mod tests {
         // The planners and the implementers have no floor: a short buffer is the fleet idle.
         assert_eq!(
             trigger(&planned, AgentFacts { started_at: Some(at(0)), ..agent("implementer") }, at(1)),
-            Some("3 planned, unclaimed".to_string())
+            Some("1 planned, unclaimed".to_string())
         );
     }
 
@@ -1837,6 +1865,7 @@ mod tests {
         let mut facts = empty_facts();
         facts.planned_ids = vec!["cb-a".into()];
         facts.assignable_ids = vec!["cb-a".into()];
+        facts.implementer_assignable_ids = vec!["cb-a".into()];
         let print = fingerprint("implementer", &facts).expect("an implementer has one");
         let held = AgentFacts {
             role: "implementer",
@@ -1849,7 +1878,7 @@ mod tests {
         // One more planned bead is work the last pass did not see.
         let mut moved = facts.clone();
         moved.planned_ids.push("cb-b".into());
-        moved.assignable_ids.push("cb-b".into());
+        moved.implementer_assignable_ids.push("cb-b".into());
         assert_eq!(
             trigger(&moved, held, at(120)),
             Some("2 planned, unclaimed".to_string())
@@ -1861,6 +1890,7 @@ mod tests {
         let mut facts = empty_facts();
         facts.planned_ids = vec!["cb-a".into()];
         facts.assignable_ids = vec!["cb-a".into()];
+        facts.implementer_assignable_ids = vec!["cb-a".into()];
         let print = fingerprint("implementer", &facts).expect("an implementer has one");
         // Started, and no end recorded after it: the launch died before it became a pass.
         let never_ran = AgentFacts {
@@ -1885,6 +1915,7 @@ mod tests {
         let mut before = empty_facts();
         before.planned_ids = vec!["cb-a".into()];
         before.assignable_ids = vec!["cb-a".into()];
+        before.implementer_assignable_ids = vec!["cb-a".into()];
         before.planned_revisions = vec![("cb-a".into(), Some(at(10)))];
         let print = fingerprint("implementer", &before).expect("an implementer has one");
         let held = AgentFacts {
@@ -1899,6 +1930,26 @@ mod tests {
         assert_eq!(
             trigger(&after, held, at(180)),
             Some("1 planned, unclaimed".to_string())
+        );
+    }
+
+    #[test]
+    fn a_newly_agreed_bead_breaks_the_producer_guard() {
+        let mut before = empty_facts();
+        before.assignable_ids = vec!["cb-a".into()];
+        let print = fingerprint("producer", &before).expect("a producer has one");
+        let held = AgentFacts {
+            role: "producer",
+            started_at: Some(at(0)),
+            ended_at: Some(at(60)),
+            last_fingerprint: Some(&print),
+        };
+
+        let mut after = before.clone();
+        after.assignable_ids.push("cb-b".into());
+        assert_eq!(
+            trigger(&after, held, at(120)),
+            Some("2 UX-agreed, unclaimed".to_string())
         );
     }
 

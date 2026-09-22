@@ -613,7 +613,8 @@ pub fn read_work(
     planning_roles: &BTreeSet<String>,
 ) -> Result<WorkBuckets, ReadError> {
     let mut buckets = model::partition_beads(read_beads(paths, programs, commands)?);
-    buckets.assignable = read_assignable(paths, commands)?;
+    buckets.assignable = read_assignable(paths, commands, "producer")?;
+    buckets.implementer_assignable = read_assignable(paths, commands, "implementer")?;
     buckets.bugfixable = read_bugfixable(paths, commands)?;
     buckets.second_look = read_second_look(paths, commands)?;
     // Sequential, on this one thread, in `BTreeSet` order: a pool would reorder which error is
@@ -647,12 +648,13 @@ pub fn read_candidates(
     })
 }
 
-/// The beads an implementer may be handed, via `<scripts_dir>/assignable-beads` - the one place
+/// The beads a builder ROLE may be handed, via `<scripts_dir>/assignable-beads` - the one place
 /// that rule lives (cb-10d.1). Ids in the script's order. A failure is returned as itself: an empty
 /// list would say there is nothing to build.
 pub fn read_assignable(
     paths: &ReaderPaths,
     commands: &dyn CommandRunner,
+    role: &str,
 ) -> Result<Vec<String>, ReadError> {
     #[derive(serde::Deserialize)]
     struct Assignable {
@@ -661,7 +663,7 @@ pub fn read_assignable(
         priority: Option<u8>,
     }
     let program = paths.scripts_dir.join("assignable-beads");
-    let args: [&str; 0] = [];
+    let args = [role];
     let stdout = commands.run(&program, &args, None, BD_TIMEOUT)?;
     let parsed: Vec<Assignable> = serde_json::from_slice(&stdout).map_err(|e| ReadError::Invalid {
         source: Invocation::new(&program, &args),
@@ -1537,13 +1539,13 @@ mod tests {
 
         // Exactly one `bd` run, with the panel's whole argv - the shared root, every status,
         // `--readonly` and `--brief`.
-        // Exactly one `bd list`, plus the assignable-beads, bugfix-candidates and
+        // Exactly one `bd list`, both assignable-beads queues, bugfix-candidates and
         // second-look-beads scripts.
         let calls = fake.calls();
         assert_eq!(
             calls.len(),
-            4,
-            "one `bd` answer, not one per bucket, one assignable read, one bugfix-candidates read, and one second-look read"
+            5,
+            "one `bd` answer, both assignable queues, one bugfix-candidates read, and one second-look read"
         );
         assert_eq!(calls[0].args, bd_argv(&paths.shared_root));
     }
@@ -1571,9 +1573,14 @@ mod tests {
 
         let work = read_work(&paths, &Programs::default(), &fake, &BTreeSet::new()).unwrap();
         assert_eq!(work.assignable, ["cb-b", "cb-a"]);
+        assert_eq!(work.implementer_assignable, ["cb-b", "cb-a"]);
         let calls = fake.calls();
-        let call = calls.iter().find(|c| c.program == script).expect("assignable-beads was run");
-        assert!(call.args.is_empty(), "no arguments, got {:?}", call.args);
+        let args: Vec<Vec<String>> = calls
+            .iter()
+            .filter(|c| c.program == script)
+            .map(|c| c.args.clone())
+            .collect();
+        assert_eq!(args, vec![vec!["producer".to_string()], vec!["implementer".to_string()]]);
     }
 
     #[test]
@@ -1687,8 +1694,8 @@ mod tests {
         assert!(work.candidates.is_empty());
         assert_eq!(
             fake.calls().len(),
-            4,
-            "bd list, assignable-beads, bugfix-candidates and second-look-beads, nothing else"
+            5,
+            "bd list, both assignable queues, bugfix-candidates and second-look-beads, nothing else"
         );
     }
 

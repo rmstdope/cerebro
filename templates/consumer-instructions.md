@@ -11,7 +11,7 @@ One paragraph: what this application is, who uses it, and what "working" means f
 
 ## Four Eye Principle
 
-*Read by `skills/implement-bead` by this exact heading: the implementer's
+*Read by `skills/produce-bead` by this exact heading: the producer's
 whole standing approval to merge without asking. Delete it and nothing merges. The block between
 the markers is synced from `templates/four-eye-principle.md` by `scripts/four-eye-sync`.*
 
@@ -19,13 +19,13 @@ the markers is synced from `templates/four-eye-principle.md` by `scripts/four-ey
 
 Nothing merges unreviewed and nothing merges red.
 
-An agent's change is reviewed by a **review sub-agent the implementer spawns for itself**, given the
-diff and the bead, never the implementer's reasoning. It counts when: the review **chain** covers
+An agent's change is reviewed by a **review sub-agent the producer spawns for itself**, given the
+diff and the bead, never the producer's reasoning. It counts when: the review **chain** covers
 the implementation merged, a cold read of the whole change then each delta since the round before;
 every round posted in full on the pull request, naming its kind; every usable round's finding
 answered by a change or posted reply explaining why; every check green. Failed or unusable attempts
 may be retried; three unusable for one head require the navigator. That is the whole standing
-approval, for a planned bead only.
+approval, for a producer-held bead only.
 
 Documentation (`docs/`, `README.md` and the like) needs no review. **`agents/` and `skills/` are
 never documentation.** `scripts/app-paths --classify` settles doubt; anything it calls
@@ -65,7 +65,7 @@ a bead is planned in one session and implemented in another.
 
 ## Development practices
 
-*Read by planners and implementers when deciding how much to build at once and how to test it.*
+*Read by planners and producers when deciding how much to build at once and how to test it.*
 
 - Work is delivered in small increments that stand on their own.
 - Code is written test-first.

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Proves `scripts/assignable-beads`: the one place "which beads may an implementer be given" is
+# Proves `scripts/assignable-beads`: the one place "which UX-agreed beads may a producer be given" is
 # answered (cb-10d.1). The fleet view's work reader and `scripts/assign-bead` both call it, so they
 # cannot disagree about what a builder may take.
 #
@@ -27,7 +27,7 @@ run() {
   STUB_DIR="$stub" PATH="$stub:$PATH" bash "$consumer/.claude/cerebro/scripts/assignable-beads" "$@"
 }
 
-# --- prints the ready planned beads sorted by priority then id ----------------------------------
+# --- prints the ready UX-agreed beads sorted by priority then id -------------------------------
 
 cat > "$stub/ready.json" <<'JSON'
 [{"id":"cb-c","priority":1,"title":"c"},{"id":"cb-b","priority":0,"title":"b"},{"id":"cb-a","priority":1,"title":"a"}]
@@ -36,13 +36,23 @@ out="$(run)"
 [[ "$(jq -c . <<<"$out")" == '[{"id":"cb-b","priority":0},{"id":"cb-a","priority":1},{"id":"cb-c","priority":1}]' ]] \
   || fail "the ready beads come back sorted by priority then id, got $out"
 log="$(cat "$stub/bd.log")"
-for want in --readonly " ready " "--label planned" "--exclude-label human" \
+for want in --readonly " ready " "--label ux:agreed" "--exclude-label planned" "--exclude-label human" \
             "--exclude-label verdict:stale" "--exclude-label bugfix" \
             "--exclude-type epic" "-n 0" "--unassigned"; do
   [[ "$log" == *"$want"* ]] || fail "bd is asked with $want, got: $log"
 done
-pass "prints the ready planned beads sorted by priority then id"
-pass "an assigned planned bead is never assignable (bd ready --unassigned)"
+pass "prints the ready UX-agreed beads sorted by priority then id"
+pass "an assigned UX-agreed bead is never assignable (bd ready --unassigned)"
+
+# --- legacy implementers retain the planned queue ------------------------------------------------
+
+out="$(run implementer)"
+[[ "$(jq -c . <<<"$out")" == '[{"id":"cb-b","priority":0},{"id":"cb-a","priority":1},{"id":"cb-c","priority":1}]' ]] \
+  || fail "the planned queue comes back sorted by priority then id, got $out"
+log="$(cat "$stub/bd.log")"
+[[ "$log" == *"--label planned"* && "$log" != *"--label ux:agreed"* ]] \
+  || fail "an implementer is served the planned queue, got: $log"
+pass "legacy implementers receive planned beads"
 
 # --- any argument is a usage error --------------------------------------------------------------
 

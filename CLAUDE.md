@@ -27,8 +27,8 @@ its "The project" section is *What this repository is*, above.
 
 ## Four Eye Principle
 
-*Read by `skills/implement-bead` by this exact heading; it is the
-implementer's whole standing approval to merge without asking. The block between the markers is
+*Read by `skills/produce-bead` by this exact heading; it is the
+producer's whole standing approval to merge without asking. The block between the markers is
 synced from `templates/four-eye-principle.md` by `scripts/four-eye-sync` — edit the template, not
 this copy.*
 
@@ -36,13 +36,13 @@ this copy.*
 
 Nothing merges unreviewed and nothing merges red.
 
-An agent's change is reviewed by a **review sub-agent the implementer spawns for itself**, given the
-diff and the bead, never the implementer's reasoning. It counts when: the review **chain** covers
+An agent's change is reviewed by a **review sub-agent the producer spawns for itself**, given the
+diff and the bead, never the producer's reasoning. It counts when: the review **chain** covers
 the implementation merged, a cold read of the whole change then each delta since the round before;
 every round posted in full on the pull request, naming its kind; every usable round's finding
 answered by a change or posted reply explaining why; every check green. Failed or unusable attempts
 may be retried; three unusable for one head require the navigator. That is the whole standing
-approval, for a planned bead only.
+approval, for a producer-held bead only.
 
 Documentation (`docs/`, `README.md` and the like) needs no review. **`agents/` and `skills/` are
 never documentation.** `scripts/app-paths --classify` settles doubt; anything it calls
@@ -77,7 +77,7 @@ merge.
 
 Work is tracked in **beads** (`bd`), prefix `cb`; `skills/beads-workflow` carries the commands.
 GitHub issues are the external inbox only. Every bead is created unranked at P4 and ranked with
-the navigator; it is planned in one session and implemented in another.
+the navigator; its UX is agreed in one session and produced in another.
 
 The board syncs through the Dolt remote, not git: no `.beads/*.jsonl` is tracked. A fresh clone
 runs `bd bootstrap` (which refuses if a database already exists, so do not run `bd list` first);
@@ -105,13 +105,13 @@ Tracked files under `.cerebro/`, one per fact, so every clone has them:
   launch target. Read by `scripts/project-conf`.
 - `roster.conf` — which agents run here, in what order, and `autostart`/`standby` per row. Read by
   `scripts/roster`; absent means the built-in fleet.
-- `traps.md` — traps this project has paid for, read by planning roles and implementers.
+- `traps.md` — traps this project has paid for, read by planning roles and producers.
 - `agents.conf` — which model, effort and CLI each session runs on. Committed here so every clone
   runs the same models; `agents.conf.example` is the documented copy.
 
 ## Commands
 
-The whole gate — every `tests/*.sh` plus the locked Cargo tests — is what an implementer runs
+The whole gate — every `tests/*.sh` plus the locked Cargo tests — is what a producer runs
 before opening a pull request and exactly what CI runs:
 
 ```bash
@@ -156,8 +156,7 @@ were tuned against — read it before changing any role. Which names run which r
 | role            | agent file              | skill                | job                                     |
 |-----------------|-------------------------|----------------------|-----------------------------------------|
 | `ux`            | `agents/ux.md`          | `agree-experience`   | agrees what a person will see           |
-| `build-design`  | `agents/build-design.md`| `design-the-build`   | plans the build of an agreed experience |
-| `implementer`   | `agents/implementer.md` | `implement-bead`     | builds one planned bead, reviews, merges|
+| `producer`      | `agents/producer.md`    | `produce-bead`       | designs, tests, builds, reviews and merges one agreed bead |
 | `bugfixer`      | `agents/bugfixer.md`    | `fix-bug`            | reproduces one bug bead with a test, fixes and merges |
 | `orchestrator`  | `agents/orchestrator.md`| `write-bead`         | ranks, files beads, stops implementers  |
 | `verifier`      | `agents/verifier.md`    | —                    | verifies merged beads with the navigator|
@@ -184,8 +183,8 @@ Load-bearing across files: a change to one must keep the others consistent with 
   `scripts/launch <Name> --bead <id>`; one bead per session.
 - **Nothing merges unreviewed, red or stale**, and the standing approval covers a planned bead
   only (Four Eye Principle, above).
-- **Agents never decide the shape of what a user sees**; only the planning roles (`ux` and
-  `build-design`) decide the detail inside a shape the navigator has agreed, recorded in each plan's
+- **Agents never decide the shape of what a user sees**; only `ux` decides the detail inside a
+  shape the navigator has agreed. Producers decide the build and tests, recorded in each plan's
   *Decided by me*.
 - **No agent takes work off another**, and none acts outside a planned bead.
 - **Closed is not terminal.** A failed verification reopens a bead at P0, and every role describes
@@ -251,11 +250,11 @@ Each of these answers one question in one place. Add a caller, never a second co
 - `scripts/agent-state` — the only writer of a state file; `scripts/end-pass` is its one caller
   for ending a pass; `scripts/agent-alive` is the predicate.
 - `scripts/plan-candidates`, `scripts/stage-candidates`, `scripts/assignable-beads` — which
-  beads a planner, a ux/build-design agent, or an implementer may be given.
+  beads a planner, a UX agent, or a producer may be given.
   `scripts/assign-bead` and `scripts/release-bead` are the two writers; `release-bead --ended`
   takes back what a gone session still held.
 - `scripts/bead-delivery.sh` — whether a bead's work reached the default branch.
-- `scripts/planner-buffer` — how many planned beads to keep ahead of the implementers.
+- `scripts/planner-buffer` — the legacy planned-bead buffer for consumers that still use planners.
 - `scripts/work-beads` — the board read, and the epic rule.
 - `scripts/worktree-safety.sh` — whether a worktree can go without losing anything.
 - `scripts/session-marker.sh` — the marker sentence; `scripts/marker-readers` checks every

@@ -53,7 +53,7 @@ make_consumer() {
 # to the fixture and nothing outside $work_dir is ever looked at.
 run_preflight() {
   local consumer="$1"
-  local role="${2:-planner}"
+  local role="${2:-ux}"
   local name="${3:-Xavier}"
   local tool="${4:-claude}"
   PATH="$stub_dir:$PATH" bash "$consumer/.claude/cerebro/scripts/launch-preflight" "$role" "$name" "$tool"
@@ -383,7 +383,7 @@ pass "an unreachable origin stays quiet"
 standalone="$work_dir/x/cerebro"
 mkdir -p "$work_dir/x"
 copy_cerebro_into "$standalone"
-PATH="$stub_dir:$PATH" bash "$standalone/scripts/launch-preflight" planner Xavier claude \
+PATH="$stub_dir:$PATH" bash "$standalone/scripts/launch-preflight" ux Xavier claude \
   || fail "standalone: expected exit 0"
 pass "a standalone clone is untouched"
 
@@ -402,19 +402,31 @@ grep -q "gate_fast" <<<"$out" || fail "no gate: expected the message to name gat
 grep -q "submodule is behind" <<<"$out" && fail "no gate: the message blames the submodule, got: $out"
 pass "an implementer with no fast gate is refused, and the message names the gate"
 
+# --- a producer with no fast gate is refused -------------------------------------------------------
+c="$(make_consumer nogateproducer)"
+set +e
+out="$(run_preflight "$c" producer Storm 2>&1)"
+status=$?
+set -e
+[[ $status -eq 2 ]] || fail "producer no gate: expected exit 2, got $status"
+grep -q "gate_fast" <<<"$out" || fail "producer no gate: expected the message to name gate_fast, got: $out"
+pass "a producer with no fast gate is refused, and the message names the gate"
+
 # --- a planner with no fast gate still launches ----------------------------------------------------
 #
 # A planner, a verifier or the orchestrator has no gate to run; refusing them would take the whole
 # fleet down over a key that does not concern them.
 c="$(make_consumer nogateplanner)"
-run_preflight "$c" planner Xavier || fail "no gate, planner: expected exit 0"
-pass "a planner with no fast gate still launches"
+run_preflight "$c" ux Xavier || fail "no gate, ux: expected exit 0"
+pass "a UX agent with no fast gate still launches"
 
 # --- an implementer with a declared gate launches --------------------------------------------------
 c="$(make_consumer withgate)"
 echo "gate_fast make check" > "$c/.cerebro/project.conf"
 run_preflight "$c" implementer Cyclops || fail "declared gate: expected exit 0"
 pass "an implementer whose project declares a gate launches"
+run_preflight "$c" producer Storm || fail "declared gate, producer: expected exit 0"
+pass "a producer whose project declares a gate launches"
 
 # --- a declaration left at the retired .claude/ path is refused, before anything else (cb-epr) ----
 #
@@ -469,12 +481,12 @@ git_q -C "$work_dir/self-seed" commit -q -m "cerebro, mounted in itself"
 git_q -C "$work_dir/self-seed" push -q "$self_origin" main
 git clone -q "$self_origin" "$self_consumer"
 
-run_preflight "$self_consumer" planner Xavier || fail "self-consumer: expected exit 0"
-[[ -L "$self_consumer/.claude/agents/planner.md" ]] \
-  || fail "self-consumer: expected .claude/agents/planner.md to be a link"
-[[ -f "$self_consumer/.claude/agents/planner.md" ]] \
+run_preflight "$self_consumer" ux Xavier || fail "self-consumer: expected exit 0"
+[[ -L "$self_consumer/.claude/agents/ux.md" ]] \
+  || fail "self-consumer: expected .claude/agents/ux.md to be a link"
+[[ -f "$self_consumer/.claude/agents/ux.md" ]] \
   || fail "self-consumer: the agent link does not resolve"
-[[ -f "$self_consumer/.claude/skills/plan-bead/SKILL.md" ]] \
+[[ -f "$self_consumer/.claude/skills/agree-experience/SKILL.md" ]] \
   || fail "self-consumer: the skill link does not resolve to a SKILL.md"
 pass "cerebro mounted in its own checkout passes the preflight and gets working links"
 

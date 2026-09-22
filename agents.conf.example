@@ -15,7 +15,7 @@
 #     cp .claude/cerebro/agents.conf.example .cerebro/agents.conf
 
 default      tool=claude  model=opus
-implementer  tool=claude  model=sonnet
+producer     tool=claude  model=sonnet
 planner      tool=claude  model=opus     effort=high
 architect    tool=claude  model=opus     effort=high
 

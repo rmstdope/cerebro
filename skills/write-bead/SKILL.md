@@ -59,7 +59,7 @@ see. The flags follow *Writing a good bead* in `beads-workflow`. Report the id a
 
 If the request is a defect to be fixed (wrong behaviour, regression, breakage), file it as
 `--type bug` **and add the `bugfix` label** at creation time. `bugfix` is the routing label that
-sends the bead to the bugfixer flow instead of UX → build-design → implementer.
+sends the bead to the bugfixer flow instead of UX → producer.
 
 ## Offering the ranking, once
 

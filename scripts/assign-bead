@@ -25,6 +25,7 @@
 # Which queue, and how the bead is taken, is decided by ROLE:
 #
 #   implementer   `assignable-beads`               claimed (`--claim`); NAME's when in_progress
+#   producer      `assignable-beads`               claimed (`--claim`); NAME's when in_progress
 #   bugfixer      `bugfix-candidates`              claimed (`--claim`); NAME's when in_progress
 #   planner       `plan-candidates`                assigned; NAME's when open with assignee NAME
 #   ux            `stage-candidates ux`            assigned, likewise
@@ -81,7 +82,7 @@ IFS=$'\t' read -r _ role kind <<<"$entry"
 # By ROLE, not kind: `planner', `ux', `build-design' and `orchestrator' all share the kind
 # `interactive'. `candidates' is the role's own queue; `mode' is how the bead is taken.
 case "$role" in
-  implementer)  candidates=("$script_dir/assignable-beads");              mode=claim ;;
+  implementer|producer) candidates=("$script_dir/assignable-beads" "$role"); mode=claim ;;
   bugfixer)     candidates=("$script_dir/bugfix-candidates");              mode=claim ;;
   planner)      candidates=("$script_dir/plan-candidates");               mode=assign ;;
   ux)           candidates=("$script_dir/stage-candidates" ux);           mode=assign ;;

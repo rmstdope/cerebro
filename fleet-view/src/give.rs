@@ -7,15 +7,17 @@ use std::collections::BTreeMap;
 use unicode_width::UnicodeWidthStr;
 
 use crate::lifecycle::row_is_alive;
-use crate::model::{Bead, FleetRow, Releasing, RowState, PLANNING_ROLES};
+use crate::model::{is_builder_role, Bead, FleetRow, Releasing, RowState, PLANNING_ROLES};
 
 const PLANNED_LABEL: &str = "planned";
 const BUGFIX_LABEL: &str = "bugfix";
+const UX_AGREED_LABEL: &str = "ux:agreed";
 
 /// Which kind of work a role takes from the board.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Stage {
     Builder,
+    Producer,
     Bugfixer,
     Designer,
 }
@@ -23,7 +25,9 @@ pub enum Stage {
 /// `implementer` -> Builder; `bugfixer` -> Bugfixer; the planning roles -> Designer; anything
 /// else -> None.
 pub fn stage_of(role: &str) -> Option<Stage> {
-    if role == "implementer" {
+    if role == "producer" {
+        Some(Stage::Producer)
+    } else if is_builder_role(role) {
         Some(Stage::Builder)
     } else if role == "bugfixer" {
         Some(Stage::Bugfixer)
@@ -72,8 +76,10 @@ fn standing_for(
     }
     let planned = bead.labels.iter().any(|l| l == PLANNED_LABEL);
     let bugfix = bead.labels.iter().any(|l| l == BUGFIX_LABEL);
+    let ux_agreed = bead.labels.iter().any(|l| l == UX_AGREED_LABEL);
     match stage {
         Stage::Builder if !planned => Standing::WrongStage(Stage::Builder),
+        Stage::Producer if !ux_agreed || planned => Standing::WrongStage(Stage::Producer),
         Stage::Bugfixer if !bugfix => Standing::WrongStage(Stage::Bugfixer),
         Stage::Designer if planned => Standing::WrongStage(Stage::Designer),
         _ => Standing::Free,
@@ -228,6 +234,9 @@ pub fn choose(
         Standing::Busy { bead: Some(b) } => Choice::Refuse(busy(cursor, &b)),
         Standing::Busy { bead: None } => Choice::Revalidate,
         Standing::WrongStage(Stage::Builder) => Choice::Refuse(not_planned(open_bead, cursor)),
+        Standing::WrongStage(Stage::Producer) => {
+            Choice::Refuse(format!("{open_bead} is not UX-agreed work for {cursor}"))
+        }
         Standing::WrongStage(Stage::Bugfixer) => Choice::Refuse(not_a_bugfix(open_bead, cursor)),
         Standing::WrongStage(Stage::Designer) => {
             Choice::Refuse(already_planned(open_bead, cursor))
@@ -247,6 +256,7 @@ pub fn row_text(candidate: &Candidate, name_width: usize) -> String {
     match &candidate.standing {
         Standing::Busy { bead: Some(b) } => format!("{name}busy with {b}"),
         Standing::WrongStage(Stage::Builder) => format!("{name}only builds planned work"),
+        Standing::WrongStage(Stage::Producer) => format!("{name}only produces UX-agreed work"),
         Standing::WrongStage(Stage::Bugfixer) => format!("{name}only fixes bugfix-labelled work"),
         Standing::WrongStage(Stage::Designer) => format!("{name}only designs unplanned work"),
         Standing::Free | Standing::Busy { bead: None } => {
@@ -417,15 +427,19 @@ mod tests {
     fn the_stage_decides_the_rest() {
         let rows = vec![
             row("I", "implementer", RowState::Standby, None),
+            row("P", "producer", RowState::Standby, None),
             row("U", "ux", RowState::Standby, None),
             row("G", "build-design", RowState::Standby, None),
         ];
         let (s, r) = none();
         let planned = candidates(&bead("cb-x", &["planned"], None), &rows, &s, &r);
         assert_eq!(planned[0].standing, Standing::Free);
-        assert_eq!(planned[1].standing, Standing::WrongStage(Stage::Designer));
+        assert_eq!(planned[1].standing, Standing::WrongStage(Stage::Producer));
         let unplanned = candidates(&bead("cb-x", &[], None), &rows, &s, &r);
         assert_eq!(unplanned[0].standing, Standing::WrongStage(Stage::Builder));
+        assert_eq!(unplanned[1].standing, Standing::WrongStage(Stage::Producer));
+        let agreed = candidates(&bead("cb-x", &["ux:agreed"], None), &rows, &s, &r);
+        assert_eq!(agreed[1].standing, Standing::Free);
         assert_eq!(unplanned[2].standing, Standing::Free);
     }
 

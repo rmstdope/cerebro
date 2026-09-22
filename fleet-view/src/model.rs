@@ -28,6 +28,11 @@ pub enum AgentKind {
     Implementer,
 }
 
+/// Roles that claim a bead and receive a prepared worktree.
+pub fn is_builder_role(role: &str) -> bool {
+    matches!(role, "implementer" | "producer")
+}
+
 /// One row of `scripts/roster`, in file order.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RosterEntry {
@@ -861,9 +866,12 @@ pub struct WorkBuckets {
     /// against her own last pass. It must come off the raw list: a bead whose verification has
     /// settled appears in NO bucket, and a RELEASED comment is still owed on its issue.
     pub linked: Vec<LinkedBead>,
-    /// The ids an implementer may be handed, in `scripts/assignable-beads`' order (priority, then
+    /// The ids a producer may be handed, in `scripts/assignable-beads`' order (priority, then
     /// id). `partition_beads` leaves it empty; `readers::read_work` fills it (cb-10d.1).
     pub assignable: Vec<String>,
+    /// The ids a legacy implementer may be handed, in `scripts/assignable-beads implementer`
+    /// order. Kept separately so producer fleets do not consume planned work and vice versa.
+    pub implementer_assignable: Vec<String>,
     /// The ids a bugfixer may be handed, in `scripts/bugfix-candidates`' order (priority, then
     /// id). `partition_beads` leaves it empty; `readers::read_work` fills it.
     pub bugfixable: Vec<String>,

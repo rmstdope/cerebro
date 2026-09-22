@@ -1454,8 +1454,11 @@ fn bead_for_start(app: &App, role: &str) -> Option<String> {
     }
     let buckets = app.work.content.value()?;
     let spoken = app.spoken_for();
-    if role == "implementer" {
+    if role == "producer" {
         return buckets.assignable.iter().find(|id| !spoken.contains(*id)).cloned();
+    }
+    if role == "implementer" {
+        return buckets.implementer_assignable.iter().find(|id| !spoken.contains(*id)).cloned();
     }
     if role == "bugfixer" {
         return buckets.bugfixable.iter().find(|id| !spoken.contains(*id)).cloned();
@@ -1613,8 +1616,8 @@ fn arm_and_autostart(
 }
 
 /// The roles a spacing is asked about, once, at startup.
-const SPACED_ROLES: [&str; 7] =
-    ["planner", "implementer", "bugfixer", "verifier", "orchestrator", "ux", "build-design"];
+const SPACED_ROLES: [&str; 8] =
+    ["planner", "implementer", "producer", "bugfixer", "verifier", "orchestrator", "ux", "build-design"];
 
 /// The startup line, naming both halves of the roster's declaration - because the declaration did
 /// both and only one of them is otherwise audible. An empty half drops its clause along with the
@@ -5219,6 +5222,7 @@ mod main_tests {
     fn planned_beads(n: usize) -> cerebro_tui::model::WorkBuckets {
         let mut buckets = planned_only(n);
         buckets.assignable = (0..n).map(|i| format!("cb-p{i}")).collect();
+        buckets.implementer_assignable = buckets.assignable.clone();
         buckets
     }
 

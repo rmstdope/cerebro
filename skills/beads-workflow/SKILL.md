@@ -17,13 +17,13 @@ bd dolt pull                   # other machines' claims arrive only here
 bd show <id> --json            # scope, acceptance criteria, validation, the plan in `design`
 # the fleet view has already claimed it for you (scripts/assign-bead)
 bd heartbeat <id>              # at every phase gate, and before any long wait
-# build in the worktree the fleet view prepared, and merge, by implement-bead
+# build in the worktree the fleet view prepared, and merge, by produce-bead
 bd close <id> --reason "Delivered in PR #NN"
 # then close the parent if that was its last open child - see "Dependencies and breakdown"
 bd dolt push                   # back the bead database up to the remote
 ```
 
-The fleet view gives each implementer its bead through `scripts/assign-bead`, which claims it as
+The fleet view gives each producer its bead through `scripts/assign-bead`, which claims it as
 that agent before the session starts, choosing from:
 
 ```bash
@@ -35,9 +35,9 @@ rather than a plan), `verdict:stale` (waiting for the verifier, not a builder), 
 (bug beads go to the bugfixer flow).
 
 **`bugfix` is a routing label, not decoration.** A bead carrying it is worked by the `bugfixer`
-role directly and does not go through UX, build-design or the implementer planned-bead queue.
+role directly and does not go through UX or the producer queue.
 
-**Only the implementer claims, and the fleet view does it on its behalf.** No other role runs
+**Only the producer claims, and the fleet view does it on its behalf.** No other role runs
 `bd update --claim`, `bd ready --claim` or `bd unclaim` — not the planner, user feedback, the
 orchestrator, or a session the navigator drives by hand. Any other claim looks like a build in
 flight, hides a ready bead and strands a lease when that session ends. Creating, reading, ranking,
@@ -61,7 +61,7 @@ user can see; **implementation** sessions build what the plan says.
 | unplanned | open, no `planned` | — |
 | being planned | open, assigned to a planning agent, no `planned` | the fleet view: `scripts/assign-bead` |
 | planned | open, `planned`, unassigned | planner: write the plan, add `planned`, clear its assignee |
-| being implemented | in_progress, implementer holds the lease | the builder pickup above |
+| being produced | in_progress, producer holds the lease | the producer pickup above |
 | needs the user | open, unassigned, `human`, **`planned` removed** | either role, on anything it must not decide |
 | parked on a UI answer | open, unassigned, `needs-ui-decision` **and** `human` | planner, when the user is away |
 | parked, and asked about already | as either row above, plus `pause:kept` | orchestrator, when the user was asked and left it parked |
@@ -82,11 +82,11 @@ bd dolt push             # or no other machine learns it was released
   it the bead reads as parked just now, for ever.
 - The note is re-read by the orchestrator on every sweep to judge whether the pause still holds, so
   write what would **unblock** it — the question, the answer that settles it — not only what stopped you.
-- Removing `planned` stops the next implementer being handed it and hitting the same wall.
+- Removing `planned` records that the producer must revisit its own build design before resuming.
 - `bd unclaim` matters because `bd update` sets no status: without it the bead stays `in_progress`
   under an agent that has left.
 
-**Exception (written in full in `implement-bead`):** a bead carrying `verification:failed`, handed
+**Exception (written in full in `produce-bead`):** a bead carrying `verification:failed`, handed
 back because nothing is left to implement, runs all three commands but adds **no `human`** and no
 `paused_at`. It is left open, unclaimed, with `verification:failed` and neither `planned` nor
 `plan:revise` — what `scripts/second-look-beads` matches to send it back to the verifier. Only the
@@ -107,7 +107,7 @@ user sends a parked bead back to a planner to interview live, `human` comes off 
 
 ## Claiming, and not colliding
 
-**Implementers claim before exploring.** Reading the bead with `bd show` is not exploring; reading
+**Producers claim before exploring.** Reading the bead with `bd show` is not exploring; reading
 code or asking the navigator is. The claim is atomic, so a failure means somebody else won: do not
 retry.
 
@@ -117,7 +117,7 @@ it writes no Dolt commit, so it costs nothing.
 
 **Never take a bead off another agent.** `in_progress` with an assignee is authoritative;
 `bd update --force` or reassigning over a live claim needs the navigator. The one exception is a
-crashed implementer's bead:
+crashed producer's bead:
 
 ```bash
 bd reclaim --id <bead> --older-than 10m        # one named bead, never a sweep

@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 #
-# The one place the harness answers: "which beads may an implementer be given?" Prints a JSON array
+# The one place the harness answers: "which UX-agreed beads may a producer be given?" Prints a JSON array
 # of {id, priority} on stdout, sorted by priority ascending then by id.
 #
 #     .claude/cerebro/scripts/assignable-beads
 #
-# No modes and no flags; any argument is a usage error. Its two callers are `scripts/assign-bead`,
+# The optional role preserves the legacy implementer queue while producers take UX-agreed work. Its
+# two callers are `scripts/assign-bead`,
 # which refuses a bead that is not on this list, and the fleet view's work reader
-# (`readers::read_assignable`), which picks the bead a standby implementer is started on - so the
-# view and the claim cannot disagree about what a builder may take (cb-10d.1). The rule used to live
-# only in the `bd ready` line of `skills/implement-bead`.
+# (`readers::read_assignable`), which picks the bead a standby producer is started on - so the
+# view and the claim cannot disagree about what a producer may take.
 #
-# Why `bd ready` and not `bd list`: it is exactly the implementer pickup this replaced, and it hides
+# Why `bd ready` and not `bd list`: it is exactly the producer pickup, and it hides
 # a bead with an open blocker, which the view's own `bd list --brief` read cannot tell. `-n 0` is
 # unlimited; the default is 100.
 #
@@ -26,8 +26,9 @@
 
 set -euo pipefail
 
-if [[ $# -gt 0 ]]; then
-  echo "usage: assignable-beads" >&2
+role="${1:-producer}"
+if [[ $# -gt 1 || ( "$role" != "implementer" && "$role" != "producer" ) ]]; then
+  echo "usage: assignable-beads [implementer|producer]" >&2
   exit 2
 fi
 
@@ -35,7 +36,14 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$("$script_dir/consumer-root" --shared)"
 
 # Captured before the pipe, so a failure leaves stdout empty (see `scripts/plan-candidates`).
-if ! raw="$(bd --readonly -C "$root" ready --label planned --exclude-label human \
+labels=()
+if [[ "$role" == "producer" ]]; then
+  labels=(--label ux:agreed --exclude-label planned)
+else
+  labels=(--label planned)
+fi
+
+if ! raw="$(bd --readonly -C "$root" ready "${labels[@]}" --exclude-label human \
         --exclude-label verdict:stale --exclude-label bugfix \
         --exclude-type epic --unassigned --json --brief -n 0)"; then
   echo "assignable-beads: bd ready failed - cannot list the assignable beads" >&2

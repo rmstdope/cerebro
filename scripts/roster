@@ -8,7 +8,8 @@
 # Order matters: interactive agents first, then implementers, in the order the fleet view shows them
 # and the order Cerebro picks the next unused implementer name from. Keep new entries in that shape.
 #
-# KIND is derived, not written: `implementer` when ROLE is `implementer`, `interactive` otherwise.
+# KIND is derived, not written: `implementer` when ROLE is `implementer` or `producer`,
+# `interactive` otherwise.
 # That rule lives here and nowhere else — every reader takes the KIND column rather than
 # re-deriving it.
 #
@@ -117,7 +118,7 @@ Magneto       implementer
 
 kind_of() {
   # $1 = role
-  if [[ "$1" == "implementer" ]]; then
+  if [[ "$1" == "implementer" || "$1" == "producer" ]]; then
     printf 'implementer'
   else
     printf 'interactive'

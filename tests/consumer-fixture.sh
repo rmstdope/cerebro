@@ -96,12 +96,12 @@ CONF
 cat > "$consumer/.cerebro/roster.conf" <<'ROSTER'
 # the Ledger fleet
 
-Ada        planner
+Ada        ux
 Hopper     orchestrator
 Babbage    archivist
 
-Turing     implementer
-Lovelace   implementer
+Turing     producer
+Lovelace   producer
 ROSTER
 
 cat > "$consumer/.claude/agents/archivist.md" <<'AGENT'
@@ -171,7 +171,7 @@ while IFS=$'\t' read -r name role kind; do
   [[ -n "$name" && -n "$role" && -n "$kind" ]] || fail "roster: row missing a field: $name/$role/$kind"
   grep -qx "$name" <<<"$declared_names" \
     || fail "roster: $name is not on the consumer's roster - cerebro's own table leaked in"
-  if [[ "$role" == "implementer" ]]; then
+  if [[ "$role" == "implementer" || "$role" == "producer" ]]; then
     [[ "$kind" == "implementer" ]] || fail "roster: $name has role implementer but kind $kind"
   else
     [[ "$kind" == "interactive" ]] || fail "roster: $name has role $role but kind $kind"
@@ -183,7 +183,7 @@ pass "roster answers entirely from the consumer's file, with KIND still derived"
   || fail "roster --implementers: got $(run_at roster --implementers)"
 [[ "$(run_at roster --role archivist)" == "Babbage" ]] \
   || fail "roster --role archivist: a role cerebro does not ship should still be answered"
-[[ "$(run_at roster --entry Ada)" == "$(printf 'Ada\tplanner\tinteractive')" ]] \
+[[ "$(run_at roster --entry Ada)" == "$(printf 'Ada\tux\tinteractive')" ]] \
   || fail "roster --entry Ada: got $(run_at roster --entry Ada)"
 pass "roster --implementers, --role and --entry all read the consumer's fleet"
 
@@ -312,8 +312,8 @@ printf 'project_name Vendored\ngate_fast true\n' > "$alt/.cerebro/project.conf"
   || fail "project-conf from an alternative mount: got $(run_alt project-conf project_name 2>/dev/null)"
 pass "project facts are the consumer's from an alternative mount, with no change to project-conf"
 
-printf 'Ada  planner\nTuring  implementer\n' > "$alt/.cerebro/roster.conf"
-[[ "$(run_alt roster)" == "$(printf 'Ada\tplanner\tinteractive\nTuring\timplementer\timplementer')" ]] \
+printf 'Ada  ux\nTuring  producer\n' > "$alt/.cerebro/roster.conf"
+[[ "$(run_alt roster)" == "$(printf 'Ada\tux\tinteractive\nTuring\tproducer\timplementer')" ]] \
   || fail "roster from an alternative mount: got $(run_alt roster)"
 pass "the consumer's own fleet is found from an alternative mount"
 

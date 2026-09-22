@@ -11,8 +11,8 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$repo_root/tests/lib/consumer.sh"
 
-consumer="$(consumer_new repo --origin --link assign-bead assignable-beads bugfix-candidates roster consumer-root)"
-printf 'Rogue implementer\nBishop bugfixer\nXavier planner\nBeast ux\nIceman build-design\nCerebro orchestrator\n' > "$consumer/.cerebro/roster.conf"
+consumer="$(consumer_new repo --origin --link assign-bead assignable-beads roster consumer-root)"
+printf 'Rogue implementer\nCyclops producer\nBishop bugfixer\nXavier planner\nBeast ux\nIceman build-design\nCerebro orchestrator\n' > "$consumer/.cerebro/roster.conf"
 state="$consumer/.cerebro/state"
 stub="$work_dir/stub"
 mkdir -p "$stub"
@@ -103,6 +103,15 @@ push_line="$(grep -n -- "dolt push" "$stub/bd.log" | cut -d: -f1)"
 [[ -n "$push_line" && "$claim_line" -lt "$push_line" ]] || fail "the claim comes before the push"
 [[ "$(cat "$state/Rogue.handover")" == "cb-x" ]] || fail "the handover file names cb-x"
 pass "claims as the agent and writes the handover before pushing"
+
+# --- producers use the same claimed-worktree lifecycle -------------------------------------------
+
+reset "$open" "$ready"
+run Cyclops cb-x 2>/dev/null || fail "an assignable producer bead is exit 0"
+grep -q -- "--actor Cyclops .*update cb-x --claim" "$stub/bd.log" \
+  || fail "a producer claims as Cyclops, got: $(cat "$stub/bd.log")"
+[[ "$(cat "$state/Cyclops.handover")" == "cb-x" ]] || fail "a producer handover names cb-x"
+pass "a producer claims its UX-agreed bead and receives a handover"
 
 # --- a bead not in assignable-beads is exit 3 and claims nothing --------------------------------
 

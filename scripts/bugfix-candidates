@@ -1,3 +1,27 @@
 #!/usr/bin/env bash
-printf '%s\n' "$(basename "$0") $*" >> "$STUB_DIR/candidates.log"
-printf '%s' "${CANDIDATES_JSON:-[]}"
+#
+# The one place the harness answers: "which bugfix beads may a bugfixer take?" Prints a JSON array
+# of {id, priority} on stdout, sorted by priority ascending then by id.
+
+set -euo pipefail
+
+if [[ $# -gt 0 ]]; then
+  echo "usage: bugfix-candidates" >&2
+  exit 2
+fi
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+root="$("$script_dir/consumer-root" --shared)"
+
+if ! raw="$(bd --readonly -C "$root" ready --label bugfix --exclude-label human \
+        --exclude-label verdict:stale --exclude-type epic --unassigned --json --brief -n 0)"; then
+  echo "bugfix-candidates: bd ready failed - cannot list the candidates" >&2
+  exit 1
+fi
+
+if ! out="$(printf '%s' "$raw" | jq '[ .[] | {id, priority} ] | sort_by(.priority, .id)' 2>/dev/null)"; then
+  echo "bugfix-candidates: bd ready did not print JSON this script can read" >&2
+  exit 1
+fi
+
+printf '%s\n' "$out"

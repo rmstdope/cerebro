@@ -44,6 +44,10 @@ impl ToggleCommands {
     fn fail(&self) {
         self.fails.store(true, Ordering::SeqCst);
     }
+
+    fn recover(&self) {
+        self.fails.store(false, Ordering::SeqCst);
+    }
 }
 
 impl cerebro_tui::CommandRunner for ToggleCommands {
@@ -140,7 +144,8 @@ async fn work_snapshot_is_available_through_a_read_request() {
     );
 
     commands.fail();
-    let response = router
+    let response = service
+        .router()
         .oneshot(
             Request::builder()
                 .method(Method::GET)
@@ -163,32 +168,35 @@ async fn work_snapshot_is_available_through_a_read_request() {
 }
 
 #[tokio::test]
-async fn failed_initial_snapshot_is_unavailable_not_empty() {
+async fn failed_initial_snapshots_are_unavailable_not_empty() {
     let commands = Arc::new(ToggleCommands {
         fails: AtomicBool::new(true),
     });
 
-    let response = service_with_commands(PathBuf::from("/assets"), commands)
-        .router()
-        .oneshot(
-            Request::builder()
-                .method(Method::GET)
-                .uri("/api/work")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = String::from_utf8(
-        to_bytes(response.into_body(), usize::MAX)
+    let router = service_with_commands(PathBuf::from("/assets"), commands).router();
+    for path in ["/api/fleet", "/api/work", "/api/health"] {
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(path)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
-            .unwrap()
-            .to_vec(),
-    )
-    .unwrap();
-    assert!(body.starts_with(r#"{"state":"unavailable","error":"could not run "#));
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = String::from_utf8(
+            to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(body.starts_with(r#"{"state":"unavailable","error":"could not run "#));
+    }
 }
 
 #[tokio::test]
@@ -196,11 +204,12 @@ async fn fleet_and_health_snapshots_return_typed_fresh_values() {
     let commands = Arc::new(ToggleCommands {
         fails: AtomicBool::new(false),
     });
-    let router = service_with_commands(PathBuf::from("/assets"), commands).router();
+    let service = service_with_commands(PathBuf::from("/assets"), commands.clone());
 
     for path in ["/api/fleet", "/api/health"] {
-        let response = router
-            .clone()
+        commands.recover();
+        let response = service
+            .router()
             .oneshot(
                 Request::builder()
                     .method(Method::GET)
@@ -222,6 +231,31 @@ async fn fleet_and_health_snapshots_return_typed_fresh_values() {
             .unwrap()
             .starts_with(r#"{"state":"fresh","value":"#),
             "{path} did not return a fresh snapshot"
+        );
+
+        commands.fail();
+        let response = service
+            .router()
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(path)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(
+            String::from_utf8(
+                to_bytes(response.into_body(), usize::MAX)
+                    .await
+                    .unwrap()
+                    .to_vec()
+            )
+            .unwrap()
+            .starts_with(r#"{"state":"stale","value":"#),
+            "{path} did not retain its prior snapshot"
         );
     }
 }

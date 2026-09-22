@@ -24,6 +24,7 @@ pub struct ReadOnlyService {
     commands: Commands,
     supervision: SupervisionMode,
     assets_dir: PathBuf,
+    snapshots: Arc<SnapshotCache>,
 }
 
 #[derive(Clone)]
@@ -31,9 +32,14 @@ struct SnapshotState {
     reader_paths: ReaderPaths,
     programs: Programs,
     commands: Commands,
-    fleet_cache: Arc<Mutex<Option<Vec<FleetRow>>>>,
-    work_cache: Arc<Mutex<Option<WorkBuckets>>>,
-    health_cache: Arc<Mutex<Option<FleetHealth>>>,
+    snapshots: Arc<SnapshotCache>,
+}
+
+#[derive(Default)]
+struct SnapshotCache {
+    fleet: Mutex<Option<Vec<FleetRow>>>,
+    work: Mutex<Option<WorkBuckets>>,
+    health: Mutex<Option<FleetHealth>>,
 }
 
 #[derive(Serialize)]
@@ -58,6 +64,7 @@ impl ReadOnlyService {
             commands,
             supervision,
             assets_dir,
+            snapshots: Arc::new(SnapshotCache::default()),
         }
     }
 
@@ -95,9 +102,7 @@ impl ReadOnlyService {
             reader_paths: self.reader_paths.clone(),
             programs: self.programs.clone(),
             commands: self.commands.clone(),
-            fleet_cache: Arc::new(Mutex::new(None)),
-            work_cache: Arc::new(Mutex::new(None)),
-            health_cache: Arc::new(Mutex::new(None)),
+            snapshots: Arc::clone(&self.snapshots),
         };
         Router::new()
             .route("/api/fleet", get(fleet_snapshot))
@@ -111,7 +116,7 @@ impl ReadOnlyService {
 }
 
 async fn fleet_snapshot(State(state): State<SnapshotState>) -> Json<Snapshot<Vec<FleetRow>>> {
-    Json(snapshot(&state.fleet_cache, || {
+    Json(snapshot(&state.snapshots.fleet, || {
         read_fleet(
             &state.reader_paths,
             &state.programs,
@@ -121,7 +126,7 @@ async fn fleet_snapshot(State(state): State<SnapshotState>) -> Json<Snapshot<Vec
 }
 
 async fn work_snapshot(State(state): State<SnapshotState>) -> Json<Snapshot<WorkBuckets>> {
-    Json(snapshot(&state.work_cache, || {
+    Json(snapshot(&state.snapshots.work, || {
         read_work(
             &state.reader_paths,
             &state.programs,
@@ -132,7 +137,7 @@ async fn work_snapshot(State(state): State<SnapshotState>) -> Json<Snapshot<Work
 }
 
 async fn health_snapshot(State(state): State<SnapshotState>) -> Json<Snapshot<FleetHealth>> {
-    Json(snapshot(&state.health_cache, || {
+    Json(snapshot(&state.snapshots.health, || {
         read_health(&state.reader_paths, state.commands.as_ref())
     }))
 }

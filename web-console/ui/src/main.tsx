@@ -37,7 +37,14 @@ function App() {
   const [selected, setSelected] = useState<{ type: "agent" | "bead"; id: string }>();
   const origin = useRef<HTMLElement | null>(null);
   const refresh = async () => { setRefreshing(true); const [f, w] = await Promise.allSettled([read<Agent[]>("/api/fleet"), read<Work>("/api/work")]); if (f.status === "fulfilled") { setFleet(f.value); if (f.value.state === "fresh") setFleetUpdated(Date.now()); else if (f.value.state === "stale") setFleetUpdated(Date.parse(f.value.updated_at)); } else setFleet(previous => previous && previous.state !== "unavailable" ? { state: "stale", value: previous.value, error: f.reason.message, updated_at: new Date(fleetUpdated ?? Date.now()).toISOString() } : { state: "unavailable", error: f.reason.message }); if (w.status === "fulfilled") { setWork(w.value); if (w.value.state === "fresh") setWorkUpdated(Date.now()); else if (w.value.state === "stale") setWorkUpdated(Date.parse(w.value.updated_at)); } else setWork(previous => previous && previous.state !== "unavailable" ? { state: "stale", value: previous.value, error: w.reason.message, updated_at: new Date(workUpdated ?? Date.now()).toISOString() } : { state: "unavailable", error: w.reason.message }); setRefreshing(false); };
-  useEffect(() => { void refresh(); const timer = setInterval(() => void refresh(), 15000); return () => clearInterval(timer); }, []);
+  useEffect(() => {
+    void refresh();
+    const events = new EventSource("/api/events");
+    const update = () => void refresh();
+    events.addEventListener("fleet", update);
+    events.addEventListener("work", update);
+    return () => events.close();
+  }, []);
   const choose = (item: Agent | Bead, event: React.MouseEvent<HTMLButtonElement>) => { origin.current = event.currentTarget; setSelected("role" in item ? { type: "agent", id: item.name } : { type: "bead", id: item.id }); };
   const close = () => { setSelected(undefined); origin.current?.focus(); };
   const stale = fleet?.state === "stale" || work?.state === "stale";

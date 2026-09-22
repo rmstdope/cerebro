@@ -118,6 +118,41 @@ async fn health_is_available_only_through_a_read_request() {
 }
 
 #[tokio::test]
+async fn event_stream_is_available_only_through_a_read_request() {
+    let response = service(PathBuf::from("/assets"))
+        .router()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/api/events")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers().get("content-type").unwrap(),
+        "text/event-stream"
+    );
+
+    let response = service(PathBuf::from("/assets"))
+        .router()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/events")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+}
+
+#[tokio::test]
 async fn work_snapshot_is_available_through_a_read_request() {
     let commands = Arc::new(ToggleCommands {
         fails: AtomicBool::new(false),

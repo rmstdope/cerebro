@@ -7,8 +7,10 @@ edition = "2021"
 axum = "0.8"
 cerebro-tui = { path = "../fleet-view" }
 chrono = { version = "0.4", features = ["serde"] }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 serde = { version = "1", features = ["derive"] }
-tokio = { version = "1", features = ["net", "rt-multi-thread", "macros"] }
+serde_json = "1"
+tokio = { version = "1", features = ["net", "rt-multi-thread", "macros", "time"] }
 tower-http = { version = "0.6", features = ["fs"] }
 
 [dev-dependencies]

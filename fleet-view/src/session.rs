@@ -528,6 +528,60 @@ fn write_publication(dir: &std::path::Path, publication: &PublishedSession) -> s
     std::fs::rename(&partial, dir.join(format!("{}.json", publication.name)))
 }
 
+/// The names a supervising fleet view shows on standby - armed, and not parked by a failed start -
+/// as it publishes them for readers outside this process. Only this view knows them: a kill, a
+/// give-up, a lease handed over or a manual start changes the armed set, never the roster.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct PublishedStandby {
+    pub names: std::collections::BTreeSet<String>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Writes `PublishedStandby` when the names change and every `SCREEN_REFRESH` regardless, so a
+/// reader can tell a live view from a file a gone one left behind.
+#[derive(Default)]
+pub struct StandbyPublisher {
+    last: Option<(std::collections::BTreeSet<String>, Instant)>,
+}
+
+impl StandbyPublisher {
+    pub fn publish(
+        &mut self,
+        path: &std::path::Path,
+        names: std::collections::BTreeSet<String>,
+        now: Instant,
+        at: DateTime<Utc>,
+    ) {
+        let due = self.last.as_ref().is_none_or(|(last, when)| {
+            *last != names || now.saturating_duration_since(*when) >= SCREEN_REFRESH
+        });
+        if !due {
+            return;
+        }
+        let publication = PublishedStandby { names, updated_at: at };
+        if write_atomically(path, &publication).is_ok() {
+            self.last = Some((publication.names, now));
+        }
+    }
+
+    /// Stop refreshing once this view stops supervising, and publish at once if it supervises
+    /// again. The file is left to go stale rather than removed: by now it may be the new
+    /// supervisor's, and a view that does not supervise writes nothing.
+    pub fn withdraw(&mut self) {
+        self.last = None;
+    }
+}
+
+fn write_atomically(path: &std::path::Path, value: &impl serde::Serialize) -> std::io::Result<()> {
+    let dir = path.parent().unwrap_or(std::path::Path::new("."));
+    std::fs::create_dir_all(dir)?;
+    let text = serde_json::to_string(value).map_err(std::io::Error::other)?;
+    let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("publication");
+    let partial = dir.join(format!(".{name}.partial"));
+    std::fs::write(&partial, text)?;
+    std::fs::rename(&partial, path)
+}
+
 /// One agent CLI, in one pty, with one thread draining it.
 ///
 /// The `Arc<RwLock<Parser>>` belongs to this struct rather than to the pty, which is the whole
@@ -1176,6 +1230,37 @@ impl SessionHost {
 mod tests {
     use super::*;
     use crate::probe;
+
+    fn standby_at(path: &std::path::Path) -> Option<PublishedStandby> {
+        std::fs::read_to_string(path).ok().map(|text| serde_json::from_str(&text).unwrap())
+    }
+
+    #[test]
+    fn standby_is_rewritten_when_it_changes_and_on_the_refresh() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state/standby.json");
+        let names = |list: &[&str]| list.iter().map(|name| name.to_string()).collect();
+        let start = Instant::now();
+        let at = |seconds: i64| DateTime::<Utc>::from_timestamp(1_000 + seconds, 0).unwrap();
+        let mut publisher = StandbyPublisher::default();
+
+        publisher.publish(&path, names(&["Moira"]), start, at(0));
+        assert_eq!(standby_at(&path).unwrap(), PublishedStandby { names: names(&["Moira"]), updated_at: at(0) });
+
+        publisher.publish(&path, names(&["Moira"]), start + Duration::from_secs(1), at(1));
+        assert_eq!(standby_at(&path).unwrap().updated_at, at(0), "unchanged and not yet due");
+
+        publisher.publish(&path, names(&[]), start + Duration::from_secs(2), at(2));
+        assert_eq!(standby_at(&path).unwrap(), PublishedStandby { names: names(&[]), updated_at: at(2) });
+
+        publisher.publish(&path, names(&[]), start + Duration::from_secs(2) + SCREEN_REFRESH, at(7));
+        assert_eq!(standby_at(&path).unwrap().updated_at, at(7), "refreshed");
+
+        publisher.withdraw();
+        assert_eq!(standby_at(&path).unwrap().updated_at, at(7), "another view's file is not touched");
+        publisher.publish(&path, names(&[]), start + Duration::from_secs(8), at(8));
+        assert_eq!(standby_at(&path).unwrap().updated_at, at(8), "supervising again publishes at once");
+    }
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)

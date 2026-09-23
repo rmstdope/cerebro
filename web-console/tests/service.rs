@@ -639,3 +639,76 @@ async fn event_streams_share_their_reads() {
     // Three ticks (0 s, 2 s, 4 s), and some slack for streams that tick apart.
     assert!(commands.rosters.load(Ordering::SeqCst) <= 6, "{} reads", commands.rosters.load(Ordering::SeqCst));
 }
+
+/// A roster with two agents and no processes, so a plain derivation calls both dead.
+struct TwoDeadCommands;
+
+impl cerebro_tui::CommandRunner for TwoDeadCommands {
+    fn run(
+        &self,
+        program: &std::path::Path,
+        _args: &[&str],
+        _cwd: Option<&std::path::Path>,
+        _timeout: Duration,
+    ) -> Result<Vec<u8>, cerebro_tui::ReadError> {
+        if program.file_name().is_some_and(|name| name == "roster") {
+            return Ok(b"Storm\tproducer\tinteractive\nMoira\tuser-feedback\tinteractive\n".to_vec());
+        }
+        Ok(if program == std::path::Path::new("ps") { Vec::new() } else { b"[]".to_vec() })
+    }
+}
+
+async fn fleet_states(root: &std::path::Path) -> Vec<(String, String)> {
+    let service = ReadOnlyService::new(
+        ReaderPaths {
+            consumer_root: root.to_path_buf(),
+            shared_root: root.to_path_buf(),
+            scripts_dir: root.join("scripts"),
+        },
+        Programs::default(),
+        Arc::new(TwoDeadCommands),
+        SupervisionMode::Supervising,
+        PathBuf::from("/assets"),
+    );
+    let response = service.router().oneshot(get("/api/fleet")).await.unwrap();
+    let body: serde_json::Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+    body["value"]
+        .as_array()
+        .unwrap_or_else(|| panic!("not a fresh fleet: {body}"))
+        .iter()
+        .map(|row| (row["name"].as_str().unwrap().to_string(), row["state"].as_str().unwrap().to_string()))
+        .collect()
+}
+
+fn publish_standby(root: &std::path::Path, names: &[&str], age: chrono::Duration) {
+    let publication = cerebro_tui::PublishedStandby {
+        names: names.iter().map(|name| name.to_string()).collect(),
+        updated_at: chrono::Utc::now() - age,
+    };
+    std::fs::create_dir_all(root.join(".cerebro/state")).unwrap();
+    std::fs::write(root.join(".cerebro/state/standby.json"), serde_json::to_string(&publication).unwrap()).unwrap();
+}
+
+fn states(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+    pairs.iter().map(|(name, state)| (name.to_string(), state.to_string())).collect()
+}
+
+/// Standby is what the supervising fleet view says it is - its armed set, which a kill, a
+/// give-up or a manual start changes - not what the roster declared.
+#[tokio::test]
+async fn a_dead_agent_the_fleet_view_holds_on_standby_is_reported_standby() {
+    let root = tempfile::tempdir().unwrap();
+    publish_standby(root.path(), &["Moira"], chrono::Duration::zero());
+
+    assert_eq!(fleet_states(root.path()).await, states(&[("Storm", "Dead"), ("Moira", "Standby")]));
+}
+
+#[tokio::test]
+async fn without_a_live_fleet_view_nobody_is_on_standby() {
+    let root = tempfile::tempdir().unwrap();
+    assert_eq!(fleet_states(root.path()).await, states(&[("Storm", "Dead"), ("Moira", "Dead")]));
+
+    publish_standby(root.path(), &["Moira"], chrono::Duration::seconds(60));
+    assert_eq!(fleet_states(root.path()).await, states(&[("Storm", "Dead"), ("Moira", "Dead")]));
+}

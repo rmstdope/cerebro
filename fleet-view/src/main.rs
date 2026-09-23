@@ -341,6 +341,7 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
         told: lifecycle::TriageLedger::default(),
         swept: lifecycle::SweepLedger::default(),
         host: SessionHost::default(),
+        standby: Default::default(),
         logger,
         ledger: StartLedger::default(),
         controller,
@@ -1663,6 +1664,7 @@ struct LoopState {
     told: lifecycle::TriageLedger,
     swept: lifecycle::SweepLedger,
     host: SessionHost,
+    standby: cerebro_tui::StandbyPublisher,
     logger: Logger,
     ledger: StartLedger,
     controller: SupervisorController,
@@ -1729,6 +1731,12 @@ where
             );
             state.host.flush_returns(Instant::now());
             app.set_exits(state.host.exits());
+            let standby = config.paths.shared_root.join(".cerebro/state/standby.json");
+            if app.supervision.may_supervise() {
+                state.standby.publish(&standby, app.standby_names(), Instant::now(), now);
+            } else {
+                state.standby.withdraw();
+            }
             // After `host.sync` has reaped, so a name whose child is gone has already left the
             // set. The give-up path's own `set_exits` gets no companion call: nothing is closing
             // there (cb-m0c).
@@ -3279,6 +3287,7 @@ mod main_tests {
             told: lifecycle::TriageLedger::default(),
             swept: lifecycle::SweepLedger::default(),
             host: SessionHost::default(),
+            standby: Default::default(),
             ledger: StartLedger::default(),
             logger: test_logger(),
             controller: SupervisorController::new(&nowhere().0, &RealCommands),

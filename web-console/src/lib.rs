@@ -191,7 +191,9 @@ impl SnapshotState {
     async fn fleet(&self, fresh: Duration, after: Option<Instant>) -> (Instant, Snapshot<Vec<FleetRow>>) {
         let reader = self.clone();
         snapshot(&self.snapshots.fleet, fresh, after, move || {
-            read_fleet(&reader.reader_paths, &reader.programs, reader.commands.as_ref())
+            let rows = read_fleet(&reader.reader_paths, &reader.programs, reader.commands.as_ref())?;
+            let standby = read_standby(&reader.reader_paths.shared_root.join(".cerebro/state/standby.json"))?;
+            Ok(cerebro_tui::model::apply_standby(rows, &standby, &Default::default()))
         })
         .await
     }
@@ -269,6 +271,24 @@ async fn session_output(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .map(Json)
+}
+
+/// The names the supervising fleet view holds on standby. No publication, or one it stopped
+/// refreshing, means no live view and so nobody on standby; one that does not parse is a fault.
+fn read_standby(path: &std::path::Path) -> Result<std::collections::BTreeSet<String>, cerebro_tui::ReadError> {
+    let invalid = |message: String| cerebro_tui::ReadError::Invalid {
+        source: cerebro_tui::Invocation::new(path, &[]),
+        message,
+    };
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Default::default()),
+        Err(error) => return Err(invalid(error.to_string())),
+    };
+    let publication = serde_json::from_str::<cerebro_tui::PublishedStandby>(&text)
+        .map_err(|error| invalid(error.to_string()))?;
+    let age = Utc::now().signed_duration_since(publication.updated_at).num_seconds();
+    Ok(if age >= SCREEN_STALE_SECONDS { Default::default() } else { publication.names })
 }
 
 fn read_output(

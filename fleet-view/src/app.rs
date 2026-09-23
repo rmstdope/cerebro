@@ -2257,6 +2257,18 @@ impl App {
             .collect()
     }
 
+    /// The names a dead row of which this view draws as `Standby`: armed, not parked, and not
+    /// handed a bead (a handed row is `Starting`). What it publishes for `cerebro-web`.
+    pub fn standby_names(&self) -> BTreeSet<String> {
+        let parked = self.parked_names();
+        let handed = self.starting_beads();
+        self.armed
+            .iter()
+            .filter(|name| !parked.contains(*name) && !handed.contains_key(*name))
+            .cloned()
+            .collect()
+    }
+
     /// Re-run `model::apply_standby` over the rows the fleet pane already holds, with `armed` and
     /// `parked_names` as they are NOW.
     ///
@@ -7104,6 +7116,7 @@ mod tests {
         app.finish_refresh(Ok(vec![dead("Storm"), dead("Rogue"), dead("Xavier")]), at(0));
         let states: Vec<RowState> = app.fleet_rows().iter().map(|r| r.state.clone()).collect();
         assert_eq!(states, vec![RowState::Standby, RowState::Dead, RowState::Dead]);
+        assert_eq!(app.standby_names(), ["Storm".to_string()].into_iter().collect());
     }
 
     #[test]

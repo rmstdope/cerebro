@@ -37,6 +37,11 @@ styled runs. The page shows those lines above the live screen, and the wheel scr
 them. The last 2 MiB of these lines are written again at the top of a new log, so they survive the
 8 MiB restart. A line the CLI draws again, when it re-renders, can appear twice.
 
+Which offline agents are on standby rather than dead is the supervising fleet view's to say, since
+its armed set moves with every kill, give-up and manual start. It publishes those names to
+`.cerebro/state/standby.json`, refreshed every 5 seconds. With no fleet view supervising, or one
+that has stopped refreshing it for 15 seconds, every offline agent shows as dead.
+
 Run the browser smoke test with:
 
 ```bash

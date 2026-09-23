@@ -25,7 +25,9 @@ The UI is React with Tailwind v4 and shadcn/ui on Base UI; the generated compone
 The session scrolls back through its history, which goes back up to 10,000 lines; the view follows
 new output only while it is scrolled to the bottom, which the Follow switch shows and sets. The
 session's box is the size of its screen, as in the terminal console, and follows each pty resize;
-a screen taller or wider than the room is drawn smaller, so all of it shows at once.
+a screen taller or wider than the room is drawn smaller, so all of it shows at once. Text can be
+selected anywhere, the screen included: a CLI's request for mouse reporting is ignored, since
+nothing here types into it.
 The output comes from the fleet view (`cerebro-tui`) that hosts the session. It appends each hosted
 session's pty output to a log under `.cerebro/state/sessions/`, with the pty's resizes recorded in
 the log, and publishes `<name>.json` naming that log. `GET /api/sessions/<name>?log=&from=` serves

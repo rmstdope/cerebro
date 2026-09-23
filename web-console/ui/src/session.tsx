@@ -15,6 +15,9 @@ const SCROLLBACK = 10000;
 const font = "Menlo, Monaco, 'Courier New', monospace";
 const FONT = 12;
 const MIN_FONT = 6;
+// X10, normal, highlight, button-event and any-event tracking, and the UTF-8, SGR, urxvt and
+// SGR-pixel encodings.
+const MOUSE_MODES = new Set([9, 1000, 1001, 1002, 1003, 1005, 1006, 1015, 1016]);
 // xterm's own default colours, so history reads the same as the screen below it.
 const ansi = ["#2e3436", "#cc0000", "#4e9a06", "#c4a000", "#3465a4", "#75507b", "#06989a", "#d3d7cf", "#555753", "#ef2929", "#8ae234", "#fce94f", "#729fcf", "#ad7fa8", "#34e2e2", "#eeeeec"];
 const levels = [0, 95, 135, 175, 215, 255];
@@ -138,6 +141,10 @@ export function SessionScreen({ name }: { name: string }) {
       scroller.scrollTop += event.deltaMode === WheelEvent.DOM_DELTA_LINE ? event.deltaY * 16 : event.deltaY;
     };
     scroller.addEventListener("wheel", onWheel, { capture: true, passive: false });
+    // Nobody here types into the CLI, so its mouse reporting only takes the pointer away from
+    // selecting text on the screen. A sequence mixing it with other modes is left to xterm whole.
+    terminal.parser.registerCsiHandler({ prefix: "?", final: "h" }, params =>
+      params.length > 0 && params.every(param => MOUSE_MODES.has(Array.isArray(param) ? param[0] : param)));
     terminal.parser.registerCsiHandler({ final: "t" }, params => {
       const [op, rows, cols] = params.map(param => Array.isArray(param) ? param[0] : param);
       if (op === 8 && rows > 0 && cols > 0) { terminal.resize(cols, rows); setSize(`${cols}×${rows}`); }

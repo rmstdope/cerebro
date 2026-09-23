@@ -374,3 +374,16 @@ test("a session that goes away says so over its last screen", async ({ page }) =
   const last = (await session.rows.getByText("last row").boundingBox())!;
   expect(box.y + box.height).toBeGreaterThanOrEqual(last.y + last.height);
 });
+
+test("text on a screen whose CLI asked for the mouse can still be selected", async ({ page }) => {
+  const session = await hostSession(page, "\u001b[8;10;60t\u001b[?1049h" + past(1, 5) + "\u001b[?1003h\u001b[?1006h\u001b[3;1Hselect me please");
+  await expect(session.rows).toContainText("select me please");
+
+  const text = (await session.rows.getByText("select me please").boundingBox())!;
+  await page.mouse.move(text.x + 2, text.y + text.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(text.x + text.width - 2, text.y + text.height / 2, { steps: 5 });
+  await page.mouse.up();
+
+  await expect(page.getByRole("region", { name: "Storm session" }).locator(".xterm-selection div")).not.toHaveCount(0);
+});

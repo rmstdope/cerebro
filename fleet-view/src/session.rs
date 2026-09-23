@@ -18,6 +18,7 @@ use chrono::{DateTime, Utc};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
+use crate::history::History;
 use crate::readers::{ReadError, ReaderPaths};
 
 /// How many lines of a finished pass are kept. The navigator's number, agreed in the parent
@@ -36,7 +37,8 @@ pub const LOG_LIMIT: u64 = 8 * 1024 * 1024;
 /// One live session, as `SessionHost::publish` writes it for readers outside this process. `log`
 /// names a file beside it holding the session's pty output as it arrived: it opens with
 /// `CSI 8 ; rows ; cols t` and the screen at the moment recording began, and carries the same
-/// sequence wherever the pty was resized. A new name means a new log, to be read from the start.
+/// sequence wherever the pty was resized, and `crate::history`'s OSC wherever the alternate screen
+/// scrolled a line away. A new name means a new log, to be read from the start.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct PublishedSession {
     pub name: String,
@@ -44,8 +46,9 @@ pub struct PublishedSession {
     pub updated_at: DateTime<Utc>,
 }
 
-/// The file a session's output is appended to. Only ever touched with the session's parser lock
-/// held, so what is in the log and what is in the parser never disagree.
+/// The file a session's output is appended to. Only ever touched with the session's parser and
+/// history locks held, in that order, so what is in the log and what is in the parser never
+/// disagree.
 struct Recorder {
     dir: std::path::PathBuf,
     name: String,
@@ -64,13 +67,15 @@ fn size_sequence(rows: u16, cols: u16) -> Vec<u8> {
 }
 
 impl Recorder {
-    /// Open a new log for NAME in DIR, starting from SCREEN's current state.
+    /// Open a new log for NAME in DIR, starting from the lines HISTORY kept and SCREEN's current
+    /// state.
     fn open(
         dir: &std::path::Path,
         name: &str,
         limit: u64,
         generation: u32,
         screen: &vt100::Screen,
+        history: &History,
     ) -> std::io::Result<Self> {
         std::fs::create_dir_all(dir)?;
         let log = format!(
@@ -83,6 +88,7 @@ impl Recorder {
             Self { dir: dir.to_path_buf(), name: name.to_string(), file, log, written: 0, limit, generation };
         let (rows, cols) = screen.size();
         let mut header = size_sequence(rows, cols);
+        history.retained().for_each(|line| header.extend_from_slice(line));
         if screen.alternate_screen() {
             // The normal screen first, so leaving the alternate one restores what the pty has.
             let mut normal = vt100::Parser::new(rows, cols, 0);
@@ -106,10 +112,10 @@ impl Recorder {
 
     /// Append BYTES, which SCREEN has already processed, starting a fresh log when this one is
     /// full. `Err` drops the recorder; the next `publish` opens a new one.
-    fn record(&mut self, bytes: &[u8], screen: &vt100::Screen) -> std::io::Result<()> {
+    fn record(&mut self, bytes: &[u8], screen: &vt100::Screen, history: &History) -> std::io::Result<()> {
         self.append(bytes)?;
         if self.written > self.limit {
-            let next = Self::open(&self.dir, &self.name, self.limit, self.generation + 1, screen)?;
+            let next = Self::open(&self.dir, &self.name, self.limit, self.generation + 1, screen, history)?;
             drop(std::mem::replace(self, next));
         }
         Ok(())
@@ -124,9 +130,9 @@ impl Drop for Recorder {
 }
 
 /// Append BYTES to the session's log, if it has one, dropping the recorder when that fails.
-fn record(recorder: &Mutex<Option<Recorder>>, bytes: &[u8], screen: &vt100::Screen) {
+fn record(recorder: &Mutex<Option<Recorder>>, bytes: &[u8], screen: &vt100::Screen, history: &History) {
     if let Ok(mut slot) = recorder.lock() {
-        if slot.as_mut().is_some_and(|recorder| recorder.record(bytes, screen).is_err()) {
+        if slot.as_mut().is_some_and(|recorder| recorder.record(bytes, screen, history).is_err()) {
             slot.take();
         }
     }
@@ -537,6 +543,8 @@ pub struct Session {
     seen: Arc<AtomicUsize>,
     size: (u16, u16),
     reader: Option<std::thread::JoinHandle<()>>,
+    /// The lines the child's alternate screen scrolled away, which the log carries.
+    history: Arc<Mutex<History>>,
     /// Where the child's output is also written, once `publish` has started recording it.
     recorder: Arc<Mutex<Option<Recorder>>>,
 }
@@ -602,6 +610,8 @@ impl Session {
         let thread_seen = Arc::clone(&seen);
         let recorder: Arc<Mutex<Option<Recorder>>> = Arc::new(Mutex::new(None));
         let thread_recorder = Arc::clone(&recorder);
+        let history = Arc::new(Mutex::new(History::default()));
+        let thread_history = Arc::clone(&history);
         // Unconditional, whether or not the pane is visible or focused: a child that writes more
         // than the pty buffer holds blocks for ever if nobody drains it.
         let handle = std::thread::spawn(move || {
@@ -611,8 +621,9 @@ impl Session {
                     Ok(0) | Err(_) => break,
                     Ok(count) => {
                         if let Ok(mut parser) = thread_parser.write() {
-                            parser.process(&buffer[..count]);
-                            record(&thread_recorder, &buffer[..count], parser.screen());
+                            let mut history = thread_history.lock().unwrap_or_else(|e| e.into_inner());
+                            let output = history.process(&mut parser, &buffer[..count]);
+                            record(&thread_recorder, &output, parser.screen(), &history);
                         }
                         thread_seen.fetch_add(count, Ordering::SeqCst);
                     }
@@ -628,6 +639,7 @@ impl Session {
             seen,
             size: (rows, cols),
             reader: Some(handle),
+            history,
             recorder,
         })
     }
@@ -648,8 +660,10 @@ impl Session {
             .master
             .resize(portable_pty::PtySize { rows, cols, pixel_width: 0, pixel_height: 0 });
         if let Ok(mut parser) = self.parser.write() {
+            let mut history = self.history.lock().unwrap_or_else(|e| e.into_inner());
+            history.resize(parser.screen().size().0, rows);
             parser.screen_mut().set_size(rows, cols);
-            record(&self.recorder, &size_sequence(rows, cols), parser.screen());
+            record(&self.recorder, &size_sequence(rows, cols), parser.screen(), &history);
         }
     }
 
@@ -687,9 +701,10 @@ impl Session {
     /// the opening screen, or appended after it.
     fn recording(&self, dir: &std::path::Path, limit: u64) -> Option<String> {
         let parser = self.parser.read().ok()?;
+        let history = self.history.lock().unwrap_or_else(|e| e.into_inner());
         let mut slot = self.recorder.lock().ok()?;
         if slot.is_none() {
-            *slot = Recorder::open(dir, &self.name, limit, 0, parser.screen()).ok();
+            *slot = Recorder::open(dir, &self.name, limit, 0, parser.screen(), &history).ok();
         }
         slot.as_ref().map(|recorder| recorder.log.clone())
     }
@@ -1407,6 +1422,19 @@ mod tests {
         assert_ne!(first, second, "the log was replaced");
         assert!(!dir.path().join(&first).exists(), "the full log is removed");
         assert!(log.starts_with("\u{1b}[8;12;40t"), "{log:?}");
+    }
+
+    #[test]
+    fn lines_the_alternate_screen_scrolls_away_outlive_the_log() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut host = SessionHost::default();
+        host.limit_logs(1024);
+        host.insert("Storm", shell(r#"printf "\033[?1049h"; sleep 0.3; i=0; while [ $i -lt 80 ]; do printf "line %s\r\n" $i; i=$((i+1)); sleep 0.01; done; sleep 5"#, 4, 40));
+        let (first, _) = record_until(&mut host, dir.path(), "Storm", |_| true);
+        let (last, log) = record_until(&mut host, dir.path(), "Storm", |log| log.contains("line 79"));
+        assert_ne!(first, last, "the log was replaced");
+        assert!(log.contains(&format!("\u{1b}]{};[{{\"t\":\"line 0\"}}]\u{7}", crate::history::HISTORY_OSC)), "{log:?}");
+        assert!(log.contains("\"line 75\""), "{log:?}");
     }
 
     #[test]

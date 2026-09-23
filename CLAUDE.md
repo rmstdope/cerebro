@@ -171,6 +171,8 @@ The crate is a pure core over a small impure edge, so the tests exercise the cor
   the lease (`reconcile_supervision`, one bool in, one mode out).
 - `readers.rs` — every file and subprocess, behind `CommandRunner`; tests pass `FakeCommands`.
 - `session.rs` — the hosted pty child; it owns the process and kills it on `Drop`.
+- `history.rs` — the lines an alternate screen scrolls out of its region, which the output log
+  carries for the web console.
 - `log.rs` — the only writer of `decisions.jsonl`, `evaluations.jsonl` and `errors.jsonl`; its
   root is a constructor parameter, never resolved.
 - `main.rs` — the terminal and the event loop, under an RAII guard.

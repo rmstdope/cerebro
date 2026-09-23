@@ -71,6 +71,7 @@
 
 pub mod app;
 pub mod give;
+pub mod history;
 pub mod lifecycle;
 pub mod log;
 pub mod model;

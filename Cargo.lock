@@ -219,6 +219,7 @@ dependencies = [
  "thiserror 2.0.20",
  "unicode-width",
  "vt100",
+ "vte",
  "wait-timeout",
 ]
 

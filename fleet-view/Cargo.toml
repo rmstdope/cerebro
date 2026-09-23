@@ -25,6 +25,8 @@ unicode-width = "0.2"
 # its own rect, and this pane needs the border, focus style, scrolled window and range cue
 # `ui::render_pane' gives every other pane.
 vt100 = "0.16.2"
+# The same parser vt100 runs on, so `history` sees the bytes exactly as the screen does.
+vte = "0.15.0"
 # A `roster' or `ps' that never returns must become a visible pane failure rather than an
 # eternal `refreshing...': this is what puts a wall-clock bound on a reader's child.
 wait-timeout = "0.2"

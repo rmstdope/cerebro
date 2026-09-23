@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { type Page, expect, test } from "@playwright/test";
 
 test("loads data and requests the event stream through Vite", async ({ page }) => {
   const fleet = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/fleet");
@@ -9,7 +9,8 @@ test("loads data and requests the event stream through Vite", async ({ page }) =
   expect((await fleet).status()).toBe(200);
   expect((await events).method()).toBe("GET");
   await expect(page.getByRole("heading", { level: 1, name: "Cerebro" })).toBeVisible();
-  await expect(page.getByText("Read-only")).toBeVisible();
+  // Whichever the live fleet view is doing; the pill says one or the other.
+  await expect(page.getByText(/^(Read-only|Supervised)$/)).toBeVisible();
 });
 
 const past = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, i) => `\u001b]7717;[{"t":"old ${from + i}"}]\u0007`).join("");
@@ -340,10 +341,112 @@ test("groups the board by epic, filters it, and opens a bead", async ({ page }) 
 
   await backlog.getByText("Loose bug").click();
   const dialog = page.getByRole("dialog");
+  await expect(dialog).toHaveCount(0);
+  await backlog.getByText("Loose bug").click();
   await expect(dialog).toContainText("cb-7");
   await expect(dialog).toContainText("Backlog");
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
+});
+
+const board = async (page: Page) => {
+  await page.route("/api/fleet", route => route.fulfill(fleetOf()));
+  await page.route("/api/work", route => route.fulfill({ json: { state: "fresh", value: { ...emptyWork,
+    unplanned: [bead("cb-1", "First", { priority: 0 }), bead("cb-2", "Second", { priority: 1 }), bead("cb-3", "Third", { priority: 2 })],
+    claimed: [bead("cb-4", "Fourth", { status: "in_progress", assignee: "Storm" })],
+    merged: [bead("cb-5", "Fifth"), bead("cb-6", "Sixth")],
+  } } }));
+  await page.goto("/");
+  await page.getByRole("button", { name: "work" }).click();
+  await expect(page.getByText("Sixth")).toBeVisible();
+};
+const selectedCard = (page: Page) => page.locator("button[aria-current=true]");
+
+test("a click on a card selects it, and a second click opens it", async ({ page }) => {
+  await board(page);
+  await page.route("/api/beads/cb-2", route => route.fulfill({ json: { id: "cb-2", title: "Second" } }));
+
+  await page.getByText("Second").click();
+  await expect(selectedCard(page)).toContainText("cb-2");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+
+  await page.getByText("Third").click();
+  await expect(selectedCard(page)).toContainText("cb-3");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+
+  await page.getByText("Second").click();
+  await page.getByText("Second").click();
+  await expect(page.getByRole("dialog")).toContainText("cb-2");
+});
+
+test("the arrow keys move around the board and Enter opens the card", async ({ page }) => {
+  await board(page);
+  await page.route("/api/beads/cb-5", route => route.fulfill({ json: { id: "cb-5", title: "Fifth" } }));
+  const press = async (key: string, id: string) => {
+    await page.keyboard.press(key);
+    await expect(selectedCard(page)).toContainText(id);
+  };
+
+  await press("ArrowDown", "cb-1");
+  await press("ArrowDown", "cb-2");
+  await press("ArrowDown", "cb-3");
+  await press("ArrowDown", "cb-3");
+  await press("ArrowRight", "cb-4");
+  await press("ArrowRight", "cb-5");
+  await press("ArrowDown", "cb-6");
+  await press("ArrowUp", "cb-5");
+  await press("ArrowRight", "cb-5");
+  await press("ArrowLeft", "cb-4");
+  await press("ArrowLeft", "cb-1");
+  await press("ArrowRight", "cb-4");
+  await press("ArrowRight", "cb-5");
+
+  await page.keyboard.press("Enter");
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toContainText("cb-5");
+  await page.keyboard.press("ArrowLeft");
+  await expect(selectedCard(page)).toContainText("cb-5");
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+
+  await page.getByRole("group", { name: "Priority" }).getByRole("button", { name: "All" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(dialog).toHaveCount(0);
+
+  await page.getByLabel("Search beads").fill("i");
+  await page.keyboard.press("ArrowLeft");
+  await expect(selectedCard(page)).toContainText("cb-5");
+});
+
+test("an open bead shows everything bd holds about it", async ({ page }) => {
+  await board(page);
+  await page.route("/api/beads/cb-4", route => route.fulfill({ json: {
+    id: "cb-4", title: "Fourth", status: "in_progress", issue_type: "feature", owner: "henrik@example.com",
+    created_at: "2026-09-22T12:58:07Z", created_by: "Henrik", parent: "cb-0", close_reason: "Delivered in PR #1",
+    description: "What it is.\nSecond line.", design: "## Context\nHow it is built.", acceptance_criteria: "It works.", notes: "A note.",
+    metadata: { paused_at: "2026-09-22T13:46:37Z" }, comment_count: 3,
+    dependencies: [{ id: "cb-0", title: "The epic", status: "open", issue_type: "epic", dependency_type: "parent-child" }],
+  } }));
+
+  await page.getByText("Fourth").dblclick();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByRole("region", { name: "Description" })).toContainText("What it is.\nSecond line.");
+  await expect(dialog.getByRole("region", { name: "Design" })).toContainText("How it is built.");
+  await expect(dialog.getByRole("region", { name: "Acceptance criteria" })).toContainText("It works.");
+  await expect(dialog.getByRole("region", { name: "Notes" })).toContainText("A note.");
+  await expect(dialog.getByRole("region", { name: "Depends on" })).toContainText("The epic");
+  await expect(dialog.getByRole("region", { name: "Depends on" })).toContainText("parent-child");
+  for (const text of ["henrik@example.com", "Henrik", "Delivered in PR #1", "paused_at", "comment count", "3"])
+    await expect(dialog).toContainText(text);
+});
+
+test("a bead whose details cannot be read says so", async ({ page }) => {
+  await board(page);
+  await page.route("/api/beads/cb-6", route => route.fulfill({ status: 502, json: { error: "bd timed out" } }));
+
+  await page.getByText("Sixth").dblclick();
+  await expect(page.getByRole("dialog").getByRole("alert")).toContainText("bd timed out");
+  await expect(page.getByRole("dialog")).toContainText("cb-6");
 });
 
 test("a small screen's box still has room for its name and its controls", async ({ page }) => {

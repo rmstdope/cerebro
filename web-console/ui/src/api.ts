@@ -84,3 +84,26 @@ export function epicOf(id: string, epics: Record<string, string> = {}) {
   }
   return id.includes(".") ? { id: id.slice(0, id.lastIndexOf(".")), title: id.slice(0, id.lastIndexOf(".")) } : undefined;
 }
+
+/// Everything `bd show` says about one bead: the board's own fields and whatever else it holds.
+export type BeadRecord = Record<string, unknown> & { id: string; dependencies?: BeadRecord[]; dependents?: BeadRecord[] };
+export type BeadRead = { state: "loading" } | { state: "read"; record: BeadRecord } | { state: "failed"; error: string };
+
+/// ID's whole record, read once when asked for.
+export function useBeadRecord(id: string) {
+  const [read, setRead] = useState<BeadRead>({ state: "loading" });
+  useEffect(() => {
+    let live = true;
+    setRead({ state: "loading" });
+    fetch(`/api/beads/${encodeURIComponent(id)}`)
+      .then(async response => {
+        const body = await response.json().catch(() => ({})) as { error?: string };
+        if (!response.ok) throw new Error(body.error ?? response.statusText);
+        return body as BeadRecord;
+      })
+      .then(record => { if (live) setRead({ state: "read", record }); },
+        error => { if (live) setRead({ state: "failed", error: error instanceof Error ? error.message : String(error) }); });
+    return () => { live = false; };
+  }, [id]);
+  return read;
+}

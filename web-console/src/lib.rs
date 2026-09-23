@@ -17,7 +17,7 @@ use axum::{
     Json, Router,
 };
 use cerebro_tui::{
-    read_fleet, read_health, read_work, CommandRunner, Commands, FleetHealth, FleetRow, Programs,
+    read_bead_record, read_fleet, read_health, read_work, CommandRunner, Commands, FleetHealth, FleetRow, Programs,
     PublishedSession, ReaderPaths, SupervisionMode, WorkBuckets,
 };
 use chrono::{DateTime, Utc};
@@ -170,6 +170,7 @@ impl ReadOnlyService {
             .route("/api/health", get(health_snapshot))
             .route("/api/events", get(event_stream))
             .route("/api/control", get(control_snapshot))
+            .route("/api/beads/{id}", get(bead_record))
             .route("/api/agents/{name}/{action}", post(agent_action))
             .route("/api/sessions/{name}", get(session_output))
             .route(
@@ -271,6 +272,36 @@ fn character_boundary(bytes: &[u8]) -> usize {
         Ok(_) => bytes.len(),
         Err(error) if error.error_len().is_none() => error.valid_up_to(),
         Err(_) => bytes.len(),
+    }
+}
+
+/// Everything `bd` says about bead ID, read fresh each time: the dialog that asks for it is opened
+/// by hand, one bead at a time. An id is a plain name that cannot pass for a `bd` flag; a read
+/// that fails is a 502 carrying why, never an empty bead.
+async fn bead_record(
+    State(state): State<SnapshotState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Map<String, serde_json::Value>>, (StatusCode, Json<serde_json::Value>)> {
+    if !is_plain_name(&id, &['.']) || id.starts_with('-') {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "not a bead id"})),
+        ));
+    }
+    let read = tokio::task::spawn_blocking(move || {
+        read_bead_record(&state.reader_paths, &state.programs, state.commands.as_ref(), &id)
+    })
+    .await;
+    match read {
+        Ok(Ok(record)) => Ok(Json(record)),
+        Ok(Err(error)) => Err((
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({"error": error.to_string()})),
+        )),
+        Err(panic) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": panic.to_string()})),
+        )),
     }
 }
 

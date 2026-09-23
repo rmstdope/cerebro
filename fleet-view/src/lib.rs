@@ -91,7 +91,7 @@ pub use model::{
     StateObservation, StateRecord, WorkBuckets, FleetHealth,
 };
 pub use readers::{
-    read_beads, read_fleet, read_health, read_processes, read_roster, read_states, read_sweeps, read_work,
+    read_bead_record, read_beads, read_fleet, read_health, read_processes, read_roster, read_states, read_sweeps, read_work,
     Judged, CommandRunner,
     Commands, Invocation, Programs, ReadError, ReaderPaths, RealCommands,
 };

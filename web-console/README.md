@@ -15,7 +15,11 @@ The page has two tabs, in a dark and a light theme (the button top right; the fi
 the system). **Fleet** lists the agents down the side, live ones first, each with a status dot, its
 bead and how long it has been in its phase; the chosen agent's CLI session fills the rest. With nobody chosen it shows whoever is asking, else working. **Work** is the board in
 five lanes, searchable, filterable by type and priority, and grouped by epic: a bead's epic is its
-nearest dotted-id ancestor, named from the `epics` map in `/api/work`. An agent that is asking, or
+nearest dotted-id ancestor, named from the `epics` map in `/api/work`. A click selects a card and a
+second click, or `Enter`, opens it; the arrow keys move the selection, up and down within a lane
+and left and right to the nearest lane with a card in it. An open bead shows everything
+`bd show` holds about it, read on opening through `GET /api/beads/<id>` (a 502 carrying the reason
+when `bd` fails). An agent that is asking, or
 a bead waiting for human input, is named in a banner above both tabs.
 
 The UI is React with Tailwind v4 and shadcn/ui on Base UI; the generated components live in

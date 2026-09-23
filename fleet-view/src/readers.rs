@@ -600,6 +600,31 @@ pub fn read_bead_detail(
     })
 }
 
+/// Everything `bd show <id> --json` says about one bead, field for field, for a reader that shows
+/// the whole of it (the web console's bead dialog). Same invocation as `read_bead_detail`; an
+/// empty answer, or one that is not an object, is an error.
+pub fn read_bead_record(
+    paths: &ReaderPaths,
+    programs: &Programs,
+    commands: &dyn CommandRunner,
+    id: &str,
+) -> Result<serde_json::Map<String, serde_json::Value>, ReadError> {
+    let root = paths.shared_root.to_string_lossy().into_owned();
+    let args = ["--readonly", "-C", &root, "show", id, "--json"];
+    let stdout = commands.run(&programs.bd, &args, None, BD_TIMEOUT)?;
+    let invalid = |message: String| ReadError::Invalid {
+        source: Invocation::new(&programs.bd, &args),
+        message,
+    };
+    let rows: Vec<serde_json::Value> =
+        serde_json::from_slice(&stdout).map_err(|e| invalid(e.to_string()))?;
+    match rows.into_iter().next() {
+        Some(serde_json::Value::Object(record)) => Ok(record),
+        Some(_) => Err(invalid("bd show answered with something other than a bead".into())),
+        None => Err(invalid("bd show answered with an empty array".into())),
+    }
+}
+
 /// The whole bead panel in one read: one `bd` answer, partitioned by `model::partition_beads`.
 ///
 /// The only aggregate Work read there is, and the counterpart of `read_fleet` above. A failure of
@@ -2195,6 +2220,27 @@ mod tests {
         );
         assert_eq!(calls[0].timeout, BD_TIMEOUT);
         assert_eq!(calls[0].cwd, None);
+    }
+
+    #[test]
+    fn the_record_reader_keeps_every_field_bd_answers() {
+        let fake = FakeCommands::always(
+            r#"[{"id":"cb-41r","notes":"n","metadata":{"k":"v"},"dependencies":[{"id":"cb-1"}]}]"#,
+        );
+        let paths = paths_at(Path::new("/consumer"));
+
+        let record = read_bead_record(&paths, &Programs::default(), &fake, "cb-41r").unwrap();
+        assert_eq!(record["notes"], "n");
+        assert_eq!(record["metadata"]["k"], "v");
+        assert_eq!(record["dependencies"][0]["id"], "cb-1");
+
+        let root = paths.shared_root.to_string_lossy().into_owned();
+        assert_eq!(
+            fake.calls()[0].args,
+            vec!["--readonly", "-C", &root, "show", "cb-41r", "--json"]
+        );
+        assert!(read_bead_record(&paths, &Programs::default(), &FakeCommands::always("[]"), "x").is_err());
+        assert!(read_bead_record(&paths, &Programs::default(), &FakeCommands::always("[1]"), "x").is_err());
     }
 
     #[test]

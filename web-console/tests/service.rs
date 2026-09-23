@@ -972,3 +972,55 @@ async fn an_agent_whose_stop_flag_is_set_is_reported_finishing() {
         .collect();
     assert_eq!(finishing, vec![("Storm".to_string(), true), ("Moira".to_string(), false)]);
 }
+
+struct BeadShow;
+
+impl cerebro_tui::CommandRunner for BeadShow {
+    fn run(
+        &self,
+        program: &std::path::Path,
+        args: &[&str],
+        _cwd: Option<&std::path::Path>,
+        _timeout: Duration,
+    ) -> Result<Vec<u8>, cerebro_tui::ReadError> {
+        match args {
+            [.., "show", "cb-7.1", "--json"] => {
+                Ok(br#"[{"id":"cb-7.1","notes":"all of it","dependencies":[{"id":"cb-7"}]}]"#.to_vec())
+            }
+            _ => Err(cerebro_tui::ReadError::Spawn {
+                source: cerebro_tui::Invocation::new(program, args),
+                message: "no such bead".to_string(),
+            }),
+        }
+    }
+}
+
+async fn bead(path: &str) -> (StatusCode, serde_json::Value) {
+    let router = service_with_commands(PathBuf::from("/assets"), Arc::new(BeadShow)).router();
+    let response = router.oneshot(get(path)).await.unwrap();
+    let status = response.status();
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    (status, serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null))
+}
+
+#[tokio::test]
+async fn a_bead_is_served_whole() {
+    let (status, body) = bead("/api/beads/cb-7.1").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["notes"], "all of it");
+    assert_eq!(body["dependencies"][0]["id"], "cb-7");
+}
+
+#[tokio::test]
+async fn a_bead_that_cannot_be_read_is_a_failure_with_its_reason() {
+    let (status, body) = bead("/api/beads/cb-nope").await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    assert!(body["error"].as_str().unwrap().contains("no such bead"), "{body}");
+}
+
+#[tokio::test]
+async fn a_bead_id_is_a_plain_name() {
+    for path in ["/api/beads/.hidden", "/api/beads/-rf", "/api/beads/a%20b"] {
+        assert_eq!(bead(path).await.0, StatusCode::BAD_REQUEST, "{path}");
+    }
+}

@@ -37,6 +37,12 @@ styled runs. The page shows those lines above the live screen, and the wheel scr
 them. The last 2 MiB of these lines are written again at the top of a new log, so they survive the
 8 MiB restart. A line the CLI draws again, when it re-renders, can appear twice.
 
+A resize loses lines without scrolling them: the CLI clears the screen and redraws only its newest
+lines. So the fleet view saves the screen before a resize. After the redraw, it keeps the lines at
+the top of the saved screen that the new screen no longer shows, up to the first one it still does.
+The pty is told a new size only after the pane has held it for 150 ms. A window being dragged or
+animated then reaches the CLI as one resize, not as a burst it would draw at the wrong width.
+
 Which offline agents are on standby rather than dead is the supervising fleet view's to say, since
 its armed set moves with every kill, give-up and manual start. It publishes those names to
 `.cerebro/state/standby.json`, refreshed every 5 seconds. With no fleet view supervising, or one

@@ -30,6 +30,11 @@ pub const SCROLLBACK_LINES: usize = 10_000;
 /// (`SCREEN_STALE_SECONDS`), a literal twin.
 pub const SCREEN_REFRESH: Duration = Duration::from_secs(5);
 
+/// How long the pane must hold a new size before the child is told it. A window being dragged
+/// or animated sends a burst of sizes, and a CLI that is still drawing for one of them when the
+/// next arrives wraps its lines at a width it no longer has.
+pub const RESIZE_SETTLE: Duration = Duration::from_millis(150);
+
 /// How large a session's output log may grow before it starts again from the current screen,
 /// which drops the history the old log held.
 pub const LOG_LIMIT: u64 = 8 * 1024 * 1024;
@@ -596,6 +601,8 @@ pub struct Session {
     /// Bytes seen so far. Zero is what `SessionView::Starting` means.
     seen: Arc<AtomicUsize>,
     size: (u16, u16),
+    /// A size the pane has asked for and since when, until it has held for `RESIZE_SETTLE`.
+    asked: Option<((u16, u16), Instant)>,
     reader: Option<std::thread::JoinHandle<()>>,
     /// The lines the child's alternate screen scrolled away, which the log carries.
     history: Arc<Mutex<History>>,
@@ -692,6 +699,7 @@ impl Session {
             parser,
             seen,
             size: (rows, cols),
+            asked: None,
             reader: Some(handle),
             history,
             recorder,
@@ -702,6 +710,25 @@ impl Session {
         &self.name
     }
 
+    /// Ask for the pane's size at AT: the child is told once the same size has held for
+    /// `RESIZE_SETTLE`, and until then keeps the size it has.
+    pub fn request_size(&mut self, rows: u16, cols: u16, at: Instant) {
+        let want = (rows.max(1), cols.max(1));
+        if want == self.size {
+            self.asked = None;
+            return;
+        }
+        match self.asked {
+            Some((size, since)) if size == want => {
+                if at.saturating_duration_since(since) >= RESIZE_SETTLE {
+                    self.asked = None;
+                    self.resize(want.0, want.1);
+                }
+            }
+            _ => self.asked = Some((want, at)),
+        }
+    }
+
     /// Tell the child the pane's size, if it has changed. The navigator chose the pane's real
     /// size over a floor of 80x24 (Q6): a two-row pane means a two-row agent.
     pub fn resize(&mut self, rows: u16, cols: u16) {
@@ -710,15 +737,19 @@ impl Session {
             return;
         }
         self.size = (rows, cols);
-        let _ = self
-            .master
-            .resize(portable_pty::PtySize { rows, cols, pixel_width: 0, pixel_height: 0 });
-        if let Ok(mut parser) = self.parser.write() {
-            let mut history = self.history.lock().unwrap_or_else(|e| e.into_inner());
-            history.resize(parser.screen().size().0, rows);
-            parser.screen_mut().set_size(rows, cols);
-            record(&self.recorder, &size_sequence(rows, cols), parser.screen(), &history);
-        }
+        let size = portable_pty::PtySize { rows, cols, pixel_width: 0, pixel_height: 0 };
+        // The child hears of the size only once the screen before it is taken, under the lock
+        // the reader needs, so its redraw cannot be read first and taken for that screen.
+        let Ok(mut parser) = self.parser.write() else {
+            let _ = self.master.resize(size);
+            return;
+        };
+        let mut history = self.history.lock().unwrap_or_else(|e| e.into_inner());
+        history.resizing(parser.screen());
+        history.resize(parser.screen().size().0, rows);
+        parser.screen_mut().set_size(rows, cols);
+        let _ = self.master.resize(size);
+        record(&self.recorder, &size_sequence(rows, cols), parser.screen(), &history);
     }
 
     /// Send bytes to the child. A write that fails is dropped - the child is on its way out, and
@@ -1207,7 +1238,7 @@ impl SessionHost {
         }
         let Some(name) = selected else { return SessionView::None };
         if let Some(session) = self.live.get_mut(name) {
-            session.resize(rows, cols);
+            session.request_size(rows, cols, Instant::now());
             return match session.screen(rows, cols) {
                 Some(lines) => SessionView::Live { lines, cursor: session.cursor() },
                 // Spawned and silent: never `None`, which would read as "no session at all".
@@ -1492,6 +1523,8 @@ mod tests {
         let mut host = SessionHost::default();
         host.insert("Storm", shell(r#"printf "sized\r\n"; sleep 5"#, 12, 40));
         record_until(&mut host, dir.path(), "Storm", |log| log.contains("sized"));
+        host.sync(Some("Storm"), 20, 60, Utc::now());
+        std::thread::sleep(RESIZE_SETTLE);
         host.sync(Some("Storm"), 20, 60, Utc::now());
         record_until(&mut host, dir.path(), "Storm", |log| log.contains("\u{1b}[8;20;60t"));
     }
@@ -1865,6 +1898,25 @@ mod tests {
         settle(&mut session, "the echoed line", |session| {
             screen_text(session, 24, 80).iter().any(|line| line.contains("got:hi"))
         });
+    }
+
+    #[test]
+    fn a_new_size_reaches_the_child_once_it_has_held() {
+        let mut session = shell("read _", 24, 80);
+        let start = Instant::now();
+        session.request_size(10, 40, start);
+        session.request_size(10, 40, start + RESIZE_SETTLE / 2);
+        assert_eq!(session.size, (24, 80), "not yet settled");
+
+        session.request_size(12, 40, start + RESIZE_SETTLE);
+        assert_eq!(session.size, (24, 80), "a new size starts the wait again");
+        session.request_size(12, 40, start + RESIZE_SETTLE * 2);
+        assert_eq!(session.size, (12, 40));
+
+        session.request_size(24, 80, start + RESIZE_SETTLE * 3);
+        session.request_size(12, 40, start + RESIZE_SETTLE * 3);
+        session.request_size(12, 40, start + RESIZE_SETTLE * 5);
+        assert_eq!(session.size, (12, 40), "a size asked for and dropped again is never sent");
     }
 
     #[test]

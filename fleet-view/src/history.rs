@@ -8,6 +8,10 @@
 //!
 //! Only a line feed at the region's bottom and `CSI S` are watched - what full-screen CLIs scroll
 //! with. The normal screen is left alone: xterm keeps its scrollback itself.
+//!
+//! A resize loses lines without scrolling them: the CLI clears and redraws only its newest lines
+//! into the new size. So the screen is taken before a resize, and once the CLI has redrawn, the
+//! lines from the top of the old screen that the new one no longer shows are kept too.
 
 use std::collections::VecDeque;
 
@@ -30,6 +34,35 @@ pub struct History {
     in_sequence: bool,
     /// Lines taken inside a sequence, written once it ends.
     pending: Vec<Vec<u8>>,
+    /// The alternate screen as it was before a resize, row by row, until the CLI's redraw is
+    /// judged against it.
+    before: Option<Vec<Row>>,
+    /// Whether the screen has been erased since `before` was taken: the redraw has begun.
+    erased: bool,
+    /// Reads ended since the erase with the redraw not yet judged whole.
+    waited: u8,
+    /// Rows dropped from `before` because they scrolled away before the redraw. A redraw that
+    /// shows one again at its top is showing its header.
+    scrolled: String,
+}
+
+/// How many reads a redraw may take before what it shows by then is judged final.
+const REDRAW_READS: u8 = 32;
+
+/// Rows shorter than this, in characters, are shown only when a row of the redraw is the same.
+const SHORT_ROW: usize = 12;
+
+/// One row of a screen taken before a resize: its text reduced to what survives a rewrap, and
+/// the OSC that keeps it.
+struct Row {
+    text: String,
+    osc: Vec<u8>,
+}
+
+/// TEXT without what a CLI pads, borders or truncates a line with, so a line rewrapped at
+/// another width is found again in the concatenated rows it now spans.
+fn bare(text: &str) -> String {
+    text.chars().filter(|c| !c.is_whitespace() && !matches!(c, '┃' | '│' | '…')).collect()
 }
 
 impl Default for History {
@@ -47,6 +80,8 @@ enum Event {
     /// `CSI ? 1049 h`, which clears the alternate screen and with it its region.
     FreshAlternate,
     Reset,
+    /// `CSI 2 J` or `CSI 3 J`: the whole screen erased, as a redraw begins.
+    Erase,
 }
 
 #[derive(Default)]
@@ -88,6 +123,7 @@ impl vte::Perform for Scan {
             ([], 'S') => Some(Event::ScrollUp(first(params, 0).max(1))),
             ([], 'r') => Some(Event::Region(first(params, 0), first(params, 1))),
             ([b'?'], 'h') if params.iter().any(|param| param == [1049]) => Some(Event::FreshAlternate),
+            ([], 'J') if matches!(first(params, 0), 2 | 3) => Some(Event::Erase),
             _ => None,
         };
     }
@@ -198,6 +234,106 @@ impl History {
             limit,
             in_sequence: false,
             pending: Vec::new(),
+            before: None,
+            erased: false,
+            waited: 0,
+            scrolled: String::new(),
+        }
+    }
+
+    /// The pty is about to be resized: take SCREEN as it is, unless a resize before this one is
+    /// still waiting for its redraw, which is then the screen to judge the redraw against.
+    pub fn resizing(&mut self, screen: &vt100::Screen) {
+        if !screen.alternate_screen() || self.before.is_some() {
+            return;
+        }
+        let (rows, cols) = screen.size();
+        let texts = screen.rows(0, cols);
+        self.before = Some(texts.zip(0..rows).map(|(text, row)| Row { text: bare(&text), osc: line(screen, row) }).collect());
+        self.erased = false;
+        self.waited = 0;
+        self.scrolled.clear();
+    }
+
+    /// Judge the redraw on SCREEN against the screen taken before the resize, and keep the lines
+    /// it left out: after the rows it still shows at the top (a header), the run of rows it no
+    /// longer shows, up to the first it does. Below that are lines it still shows and a footer
+    /// that changes on its own, neither of which was lost; a run no shown row ends is that footer.
+    ///
+    /// A run no shown row ends may also be a redraw not yet whole, so it is judged again after
+    /// the next read, until LAST: a scroll, or `REDRAW_READS` reads, after which it is the footer.
+    ///
+    /// Lines lost off the top leave the first line that survived directly under the header. A
+    /// run the new screen does not start with that line is only drawn differently at a new
+    /// width - truncated elsewhere, a timer moved on - and nothing was lost. A screen taken with
+    /// no header cannot say where the redraw's header ends, so the redraw's rows it never held
+    /// are passed over.
+    fn settle(&mut self, screen: &vt100::Screen, last: bool) {
+        let Some(before) = self.before.as_ref() else { return };
+        let (_, cols) = screen.size();
+        let rows: Vec<String> = screen.rows(0, cols).map(|text| bare(&text)).collect();
+        let now: String = rows.concat();
+        // A short row - a timer, one wrapped word - is somewhere in any screen, so it is shown
+        // only as a row of its own.
+        let shown = |text: &str| now.contains(text) && (text.chars().count() >= SHORT_ROW || rows.iter().any(|row| row == text));
+        let mut header = String::new();
+        let mut lost: Vec<Vec<u8>> = Vec::new();
+        let mut survivor = None;
+        for row in before {
+            if row.text.is_empty() {
+                if !lost.is_empty() {
+                    lost.push(row.osc.clone());
+                }
+            } else if !shown(&row.text) {
+                lost.push(row.osc.clone());
+            } else if lost.is_empty() {
+                header.push_str(&row.text);
+            } else {
+                survivor = Some(row.text.as_str());
+                break;
+            }
+        }
+        if survivor.is_none() && !last {
+            return;
+        }
+        let drawn = |row: &str, kept: &str| row.starts_with(kept) || kept.starts_with(row);
+        let under_header = survivor.is_some_and(|survivor| {
+            rows.iter()
+                .filter(|row| !row.is_empty() && !header.contains(row.as_str()) && !self.scrolled.contains(row.as_str()))
+                .find(|row| !header.is_empty() || before.iter().any(|kept| !kept.text.is_empty() && drawn(row, &kept.text)))
+                .is_some_and(|first| drawn(first, survivor))
+        });
+        self.before = None;
+        self.erased = false;
+        // A run that nothing shown follows is the footer, which changes on its own.
+        if !under_header {
+            return;
+        }
+        while lost.last().is_some_and(|osc| osc.ends_with(format!("{HISTORY_OSC};[]\u{7}").as_bytes())) {
+            lost.pop();
+        }
+        self.pending.extend(lost);
+    }
+
+    /// ROWS of SCREEN are about to scroll away and be kept. After a redraw, the redraw is judged
+    /// first; before one, those rows are no longer the redraw's to leave out, so they are
+    /// dropped from the screen taken, which would otherwise keep them a second time.
+    fn scrolling(&mut self, screen: &vt100::Screen, rows: std::ops::RangeInclusive<u16>) {
+        if self.erased {
+            self.settle(screen, true);
+            return;
+        }
+        let Some(before) = self.before.as_mut() else { return };
+        let (_, cols) = screen.size();
+        let texts: Vec<String> = screen.rows(0, cols).map(|text| bare(&text)).collect();
+        for row in rows {
+            let Some(text) = texts.get(usize::from(row)).filter(|text| !text.is_empty()) else { continue };
+            // A narrower screen has cut the row at its new width.
+            let index = before.iter().position(|kept| kept.text == *text).or_else(|| before.iter().position(|kept| kept.text.starts_with(text.as_str())));
+            if let Some(index) = index {
+                before.remove(index);
+                self.scrolled.push_str(text);
+            }
         }
     }
 
@@ -224,10 +360,13 @@ impl History {
                 let (top, bottom) = self.region.unwrap_or((0, rows.saturating_sub(1)));
                 match event {
                     Event::LineFeed if alternate && screen.cursor_position().0 == bottom => {
+                        self.scrolling(screen, top..=top);
                         self.pending.push(line(screen, top));
                     }
                     Event::ScrollUp(count) if alternate => {
-                        self.pending.extend((top..=bottom).take(usize::from(count)).map(|row| line(screen, row)));
+                        let last = bottom.min(top.saturating_add(count.saturating_sub(1)));
+                        self.scrolling(screen, top..=last);
+                        self.pending.extend((top..=last).map(|row| line(screen, row)));
                     }
                     _ => {}
                 }
@@ -241,7 +380,15 @@ impl History {
                         let last = if last == 0 { rows } else { last }.min(rows) - 1;
                         self.region = (first < last).then_some((first, last));
                     }
-                    Event::FreshAlternate | Event::Reset => self.region = None,
+                    Event::FreshAlternate | Event::Reset => {
+                        self.region = None;
+                        self.before = None;
+                        self.erased = false;
+                    }
+                    Event::Erase if self.before.is_some() => {
+                        self.erased = true;
+                        self.waited = 0;
+                    }
                     _ => {}
                 }
             }
@@ -257,6 +404,21 @@ impl History {
         }
         parser.process(&bytes[flushed..]);
         out.extend_from_slice(&bytes[flushed..]);
+        if self.before.is_some() && !self.in_sequence {
+            self.waited = self.waited.saturating_add(1);
+        }
+        // No redraw came - the CLI drew in place, left the alternate screen or exited - so the
+        // screen taken is forgotten rather than judged, long after, against another one.
+        if self.before.is_some() && !self.erased && (self.waited >= REDRAW_READS || !parser.screen().alternate_screen()) {
+            self.before = None;
+        }
+        if self.erased && !self.in_sequence {
+            self.settle(parser.screen(), self.waited >= REDRAW_READS);
+            for osc in std::mem::take(&mut self.pending) {
+                out.extend_from_slice(&osc);
+                self.retain(osc);
+            }
+        }
         out
     }
 
@@ -320,6 +482,191 @@ mod tests {
         replay.process(&log);
         assert_eq!(replay.screen().contents(), parser.screen().contents(), "the OSC changes nothing on screen");
         assert_eq!(history.retained().count(), 1);
+    }
+
+    /// Resize PARSER to ROWS x COLS the way `Session::resize` does.
+    fn resize(history: &mut History, parser: &mut vt100::Parser, rows: u16, cols: u16) {
+        history.resizing(parser.screen());
+        history.resize(parser.screen().size().0, rows);
+        parser.screen_mut().set_size(rows, cols);
+    }
+
+    const FULL: &str = "\x1b[?1049hheader\r\none\r\ntwo\r\nthree\r\nfour\r\nfoot 1s";
+
+    /// A full-screen CLI redraws only its newest lines into a smaller screen, so the ones above
+    /// them leave without ever scrolling.
+    #[test]
+    fn lines_a_redraw_after_a_shrink_leaves_out_are_kept() {
+        let mut parser = vt100::Parser::new(6, 20, 0);
+        let mut history = History::default();
+        feed(&mut history, &mut parser, FULL);
+
+        resize(&mut history, &mut parser, 4, 20);
+        let log = feed(&mut history, &mut parser, "\x1b[H\x1b[2Jheader\r\nthree\r\nfour\r\nfoot 2s");
+
+        assert_eq!(texts(&log), vec!["one", "two"]);
+        let mut replay = vt100::Parser::new(4, 20, 0);
+        replay.process(b"\x1b[?1049h");
+        replay.process(&log);
+        assert_eq!(replay.screen().contents(), parser.screen().contents(), "the OSC changes nothing on screen");
+    }
+
+    #[test]
+    fn a_burst_of_resizes_is_measured_from_the_screen_before_it() {
+        let mut parser = vt100::Parser::new(6, 20, 0);
+        let mut history = History::default();
+        feed(&mut history, &mut parser, FULL);
+
+        resize(&mut history, &mut parser, 5, 20);
+        resize(&mut history, &mut parser, 4, 16);
+        let log = feed(&mut history, &mut parser, "\x1b[H\x1b[2Jheader\r\nthree\r\nfour\r\nfoot 2s");
+
+        assert_eq!(texts(&log), vec!["one", "two"]);
+    }
+
+    #[test]
+    fn a_line_rewrapped_at_a_new_width_is_not_taken_for_lost() {
+        let mut parser = vt100::Parser::new(4, 20, 0);
+        let mut history = History::default();
+        feed(&mut history, &mut parser, "\x1b[?1049hheader\r\nold words\r\nsome long words \u{2503}\r\nfoot");
+
+        resize(&mut history, &mut parser, 4, 10);
+        let log = feed(&mut history, &mut parser, "\x1b[H\x1b[2Jheader\r\nsome long\r\n words\r\nfoot");
+
+        assert_eq!(texts(&log), vec!["old words"]);
+    }
+
+    #[test]
+    fn a_redraw_split_across_reads_is_judged_once_it_is_whole() {
+        let mut parser = vt100::Parser::new(6, 20, 0);
+        let mut history = History::default();
+        feed(&mut history, &mut parser, FULL);
+
+        resize(&mut history, &mut parser, 4, 20);
+        let mut log = feed(&mut history, &mut parser, "\x1b[H\x1b[2Jheader\r\nthr");
+        log.extend(feed(&mut history, &mut parser, "ee\r\nfour\r\nfoot 2s"));
+
+        assert_eq!(texts(&log), vec!["one", "two"]);
+    }
+
+    /// Output the CLI wrote for the old size can still be arriving after the resize; a scroll in
+    /// it comes before the redraw and says nothing about what the redraw leaves out.
+    #[test]
+    fn a_scroll_before_the_redraw_does_not_judge_it() {
+        let mut parser = vt100::Parser::new(6, 20, 0);
+        let mut history = History::default();
+        feed(&mut history, &mut parser, FULL);
+
+        resize(&mut history, &mut parser, 4, 20);
+        let early = feed(&mut history, &mut parser, "\x1b[4;1H\n");
+        let log = feed(&mut history, &mut parser, "\x1b[H\x1b[2Jheader\r\nthree\r\nfour\r\nfoot 2s");
+
+        assert_eq!(texts(&early), vec!["header"]);
+        assert_eq!(texts(&log), vec!["one", "two"]);
+    }
+
+    #[test]
+    fn a_line_scrolled_before_the_redraw_is_kept_once() {
+        let mut parser = vt100::Parser::new(6, 20, 0);
+        let mut history = History::default();
+        feed(&mut history, &mut parser, FULL);
+
+        resize(&mut history, &mut parser, 4, 20);
+        let mut log = feed(&mut history, &mut parser, "\x1b[2;3r\x1b[3;1H\n\x1b[1;4r");
+        log.extend(feed(&mut history, &mut parser, "\x1b[H\x1b[2Jheader\r\nthree\r\nfour\r\nfoot 2s"));
+
+        assert_eq!(texts(&log), vec!["one", "two"]);
+    }
+
+    /// A narrower screen truncates the line a stale scroll takes, and it is still kept once.
+    #[test]
+    fn a_truncated_line_scrolled_before_the_redraw_is_kept_once() {
+        let mut parser = vt100::Parser::new(6, 20, 0);
+        let mut history = History::default();
+        feed(&mut history, &mut parser, "\x1b[?1049hheader\r\nthe first long one\r\ntwo\r\nthree\r\nfour\r\nfoot 1s");
+
+        resize(&mut history, &mut parser, 4, 8);
+        let mut log = feed(&mut history, &mut parser, "\x1b[2;3r\x1b[3;1H\n\x1b[1;4r");
+        log.extend(feed(&mut history, &mut parser, "\x1b[H\x1b[2Jheader\r\nthree\r\nfour\r\nfoot 2s"));
+
+        assert_eq!(texts(&log), vec!["the firs", "two"]);
+    }
+
+    /// A resize no redraw follows - the CLI drew in place, left, or exited - is forgotten, so a
+    /// later erase is not judged against a screen long gone.
+    #[test]
+    fn a_resize_no_redraw_follows_is_forgotten() {
+        let mut parser = vt100::Parser::new(6, 20, 0);
+        let mut history = History::default();
+        feed(&mut history, &mut parser, FULL);
+
+        resize(&mut history, &mut parser, 4, 20);
+        for _ in 0..REDRAW_READS {
+            feed(&mut history, &mut parser, "\x1b[2;1Hthree\x1b[3;1Hfour");
+        }
+        let log = feed(&mut history, &mut parser, "\x1b[H\x1b[2Jheader\r\nfour\r\nfive\r\nfoot 2s");
+        assert!(texts(&log).is_empty(), "{:?}", texts(&log));
+
+        resize(&mut history, &mut parser, 3, 20);
+        feed(&mut history, &mut parser, "\x1b[?1049l\x1b[?1049h");
+        let log = feed(&mut history, &mut parser, "\x1b[H\x1b[2Jheader\r\nfive\r\nfoot");
+        assert!(texts(&log).is_empty(), "a fresh alternate screen starts afresh: {:?}", texts(&log));
+    }
+
+    /// A redraw at another width renders the same lines differently - truncated elsewhere, a
+    /// timer moved on, a rule of another length - so rows can differ that were never lost. A
+    /// line lost off the top leaves the first line that survived directly under the header.
+    #[test]
+    fn rows_a_redraw_only_renders_differently_are_not_taken_for_lost() {
+        let mut parser = vt100::Parser::new(6, 30, 0);
+        let mut history = History::default();
+        feed(&mut history, &mut parser, "\x1b[?1049hlogo\r\nrun x      5s\r\n\r\n\r\nfoot a\r\n> input");
+
+        resize(&mut history, &mut parser, 6, 20);
+        let log = feed(&mut history, &mut parser, "\x1b[H\x1b[2Jlogo\r\nrun x    6s\r\n\r\n\r\nfoot b\r\n> input");
+
+        assert!(texts(&log).is_empty(), "{:?}", texts(&log));
+    }
+
+    #[test]
+    fn a_redraw_that_still_shows_every_line_keeps_nothing() {
+        let mut parser = vt100::Parser::new(6, 20, 0);
+        let mut history = History::default();
+        feed(&mut history, &mut parser, "\x1b[?1049hheader\r\none\r\ntwo\r\n\r\n\r\nfoot 1s");
+
+        resize(&mut history, &mut parser, 5, 20);
+        let log = feed(&mut history, &mut parser, "\x1b[H\x1b[2Jheader\r\none\r\ntwo\r\n\r\nfoot 2s");
+        assert!(texts(&log).is_empty());
+
+        resize(&mut history, &mut parser, 8, 20);
+        let log = feed(&mut history, &mut parser, "\x1b[H\x1b[2Jheader\r\none\r\ntwo\r\n\r\n\r\n\r\n\r\nfoot 3s");
+        assert!(texts(&log).is_empty(), "growing loses nothing");
+    }
+
+    #[test]
+    fn a_resize_on_the_normal_screen_is_left_to_the_terminal() {
+        let mut parser = vt100::Parser::new(6, 20, 0);
+        let mut history = History::default();
+        feed(&mut history, &mut parser, "header\r\none\r\ntwo\r\nthree\r\nfour\r\nfoot");
+
+        resize(&mut history, &mut parser, 4, 20);
+        let log = feed(&mut history, &mut parser, "\x1b[H\x1b[2Jheader\r\nthree\r\nfour\r\nfoot");
+
+        assert!(texts(&log).is_empty());
+    }
+
+    /// A redraw split across reads is judged once it is whole: the lines scrolled after it, or
+    /// the end of a later read, whichever comes first, never a half-drawn screen.
+    #[test]
+    fn lines_left_out_are_kept_before_a_line_scrolled_after_the_redraw() {
+        let mut parser = vt100::Parser::new(6, 20, 0);
+        let mut history = History::default();
+        feed(&mut history, &mut parser, FULL);
+
+        resize(&mut history, &mut parser, 4, 20);
+        let log = feed(&mut history, &mut parser, "\x1b[H\x1b[2Jheader\r\nthree\r\nfour\x1b[2;3r\x1b[3;1H\nfive\x1b[1;4r\x1b[4;1Hfoot");
+
+        assert_eq!(texts(&log), vec!["one", "two", "three"]);
     }
 
     #[test]

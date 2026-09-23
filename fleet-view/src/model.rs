@@ -883,6 +883,9 @@ pub struct WorkBuckets {
     /// was asked for, so a role absent from the map was not asked for - which is not the same as
     /// one with nothing to take.
     pub candidates: BTreeMap<String, Vec<Candidate>>,
+    /// The title of every epic that has a child on the board, keyed by id; a child's epic is its
+    /// id before the last dot. Nothing in the fleet view renders it; the web console groups by it.
+    pub epics: BTreeMap<String, String>,
 }
 
 /// One row of a planning role's candidate script (`plan-candidates`, `stage-candidates <stage>`),
@@ -1036,6 +1039,11 @@ pub fn partition_beads(beads: Vec<Bead>) -> WorkBuckets {
     buckets.linked = linked_beads(&beads);
     let parents = parent_ids(&beads);
     let closed_parents = closed_parent_ids(&beads);
+    buckets.epics = beads
+        .iter()
+        .filter(|bead| bead.issue_type == CONDITIONAL_ISSUE_TYPE && parents.contains(&bead.id))
+        .map(|bead| (bead.id.clone(), bead.title.clone()))
+        .collect();
     for bead in beads {
         if is_bookkeeping(&bead, &parents, &closed_parents) {
             continue;
@@ -1923,6 +1931,23 @@ mod tests {
         assert_eq!(
             buckets.unplanned.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(),
             vec!["b", "a"]
+        );
+    }
+
+    /// Every epic that has a child on the board is named, whether or not it is skipped as
+    /// bookkeeping, so a reader can group the children under their epic's title.
+    #[test]
+    fn partition_beads_names_each_epic_with_children() {
+        let beads = vec![
+            bead("cb-1", "open", "epic", &[]),
+            bead("cb-1.1", "open", "feature", &[]),
+            bead("cb-2", "open", "epic", &[]),
+            bead("cb-3", "open", "feature", &[]),
+        ];
+        let buckets = partition_beads(beads);
+        assert_eq!(
+            buckets.epics,
+            BTreeMap::from([("cb-1".to_string(), "cb-1 title".to_string())])
         );
     }
 

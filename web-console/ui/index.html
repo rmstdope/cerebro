@@ -4,6 +4,11 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Cerebro</title>
+    <script>
+      // Before first paint, so a dark page never flashes light.
+      const theme = localStorage.getItem("cerebro-theme") ?? (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+      document.documentElement.classList.toggle("dark", theme === "dark");
+    </script>
   </head>
   <body>
     <div id="root"></div>

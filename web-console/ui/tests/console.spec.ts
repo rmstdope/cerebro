@@ -8,8 +8,8 @@ test("loads data and requests the event stream through Vite", async ({ page }) =
 
   expect((await fleet).status()).toBe(200);
   expect((await events).method()).toBe("GET");
-  await expect(page.getByRole("heading", { name: "Cerebro" })).toBeVisible();
-  await expect(page.getByText("Fleet and work · read-only")).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "Cerebro" })).toBeVisible();
+  await expect(page.getByText("Read-only")).toBeVisible();
 });
 
 const past = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, i) => `\u001b]7717;[{"t":"old ${from + i}"}]\u0007`).join("");
@@ -163,6 +163,121 @@ test("does not offer a session for a dead agent", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: /Rogue/ }).click();
 
-  await expect(page.getByRole("dialog")).toBeVisible();
+  await expect(page.getByRole("region", { name: "Rogue details" })).toContainText("not running");
   await expect(page.getByRole("region", { name: "Rogue session" })).toHaveCount(0);
+});
+
+const fleetOf = (...agents: object[]) => ({ json: { state: "fresh", value: agents } });
+const bead = (id: string, title: string, extra: object = {}) => ({ id, title, status: "open", issue_type: "feature", labels: [], priority: 2, ...extra });
+const emptyWork = { claimed: [], planned: [], being_planned: [], ux_agreed: [], unplanned: [], paused: [], merged: [] };
+
+test("opens on the agent that is asking, and says so above the page", async ({ page }) => {
+  await page.route("/api/fleet", route => route.fulfill(fleetOf(
+    { name: "Storm", role: "producer", state: "Working", bead: "cb-1" },
+    { name: "Cyclops", role: "producer", state: "Asking", bead: "cb-2" },
+    { name: "Rogue", role: "producer", state: "Dead" },
+  )));
+  await page.route(/\/api\/sessions\//, route => route.fulfill({ json: { state: "absent" } }));
+  await page.goto("/");
+
+  await expect(page.getByRole("region", { name: "Cyclops details" })).toBeVisible();
+  await expect(page.getByText("Cyclops is asking you a question on cb-2")).toBeVisible();
+  await expect(page.getByRole("complementary", { name: "Fleet" })).toContainText("Offline · 1");
+
+  await page.getByRole("button", { name: /Storm/ }).click();
+  await expect(page.getByRole("region", { name: "Storm details" })).toBeVisible();
+  await page.getByRole("button", { name: "View session" }).click();
+  await expect(page.getByRole("region", { name: "Cyclops details" })).toBeVisible();
+});
+
+test("the Follow switch tells whether the session follows, and Bottom returns to it", async ({ page }) => {
+  const session = await hostSession(page, "\u001b[8;5;40t\u001b[?1049h" + past(1, 200) + "live screen");
+  const follow = page.getByRole("switch", { name: "Follow new output" });
+  await expect(session.rows).toContainText("live screen");
+  await expect(follow).toBeChecked();
+
+  await session.screen.evaluate(element => { element.scrollTop = 0; element.dispatchEvent(new Event("scroll")); });
+  await expect(follow).not.toBeChecked();
+
+  await page.getByRole("button", { name: "Jump to the bottom" }).click();
+  await expect(follow).toBeChecked();
+  await expect(session.history.getByText("old 200", { exact: true })).toBeInViewport();
+});
+
+test("the Follow switch reads and sets xterm's own scrollback on the normal screen", async ({ page }) => {
+  const session = await hostSession(page);
+  const follow = page.getByRole("switch", { name: "Follow new output" });
+  await expect(session.rows).toContainText("line 50");
+
+  await page.getByRole("region", { name: "Storm session" }).locator(".xterm-screen").hover();
+  await page.mouse.wheel(0, -2000);
+  await expect(follow).not.toBeChecked();
+  await page.getByRole("button", { name: "Jump to the bottom" }).click();
+  await expect(follow).toBeChecked();
+  await expect(session.rows).toContainText("line 50");
+
+  await follow.click();
+  await expect(follow).not.toBeChecked();
+  session.append(lines(51, 60));
+  await page.waitForTimeout(1500);
+  await expect(session.rows).toContainText("line 50");
+  await expect(session.rows).not.toContainText("line 60");
+  await expect(follow).not.toBeChecked();
+
+  await follow.click();
+  await expect(session.rows).toContainText("line 60");
+});
+
+test("Follow off holds even before the session has any scrollback", async ({ page }) => {
+  const session = await hostSession(page, "\u001b[8;5;40t" + lines(1, 2));
+  const follow = page.getByRole("switch", { name: "Follow new output" });
+  await expect(session.rows).toContainText("line 2");
+
+  await follow.click();
+  session.append(lines(3, 20));
+  await page.waitForTimeout(1500);
+
+  await expect(follow).not.toBeChecked();
+  await expect(session.rows).not.toContainText("line 20");
+});
+
+test("switches between the dark and light themes and remembers the choice", async ({ page }) => {
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.goto("/");
+  await expect(page.locator("html")).toHaveClass(/dark/);
+
+  await page.getByRole("button", { name: "Use the light theme" }).click();
+  await expect(page.locator("html")).not.toHaveClass(/dark/);
+  await page.reload();
+
+  await expect(page.locator("html")).not.toHaveClass(/dark/);
+  await expect(page.getByRole("button", { name: "Use the dark theme" })).toBeVisible();
+});
+
+test("groups the board by epic, filters it, and opens a bead", async ({ page }) => {
+  await page.route("/api/fleet", route => route.fulfill(fleetOf()));
+  await page.route("/api/work", route => route.fulfill({ json: { state: "fresh", value: { ...emptyWork,
+    unplanned: [bead("cb-9.1", "Command palette"), bead("cb-7", "Loose bug", { issue_type: "bug", priority: null })],
+    claimed: [bead("cb-9.2", "Live session view", { status: "in_progress", assignee: "Storm", priority: 1 })],
+    epics: { "cb-9": "Web console" },
+  } } }));
+  await page.goto("/");
+  await page.getByRole("button", { name: "work" }).click();
+
+  const backlog = page.getByRole("region", { name: "Backlog" });
+  await expect(backlog.getByText("Web console")).toBeVisible();
+  await expect(backlog.getByText("No epic")).toBeVisible();
+  await expect(backlog.getByText("unranked")).toBeVisible();
+  await expect(page.getByRole("region", { name: "In progress" })).toContainText("Storm");
+
+  await page.getByRole("group", { name: "Type" }).getByRole("button", { name: "bug", exact: true }).click();
+  await expect(backlog.getByText("Command palette")).toHaveCount(0);
+  await expect(backlog.getByText("Loose bug")).toBeVisible();
+
+  await backlog.getByText("Loose bug").click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toContainText("cb-7");
+  await expect(dialog).toContainText("Backlog");
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
 });

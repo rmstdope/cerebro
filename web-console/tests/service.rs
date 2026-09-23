@@ -223,7 +223,7 @@ async fn work_snapshot_is_available_through_a_read_request() {
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
         to_bytes(response.into_body(), usize::MAX).await.unwrap(),
-        r#"{"state":"fresh","value":{"claimed":[],"planned":[],"being_planned":[],"ux_agreed":[],"unplanned":[],"paused":[],"merged":[],"linked":[],"assignable":[],"implementer_assignable":[],"bugfixable":[],"second_look":[],"candidates":{}}}"#
+        r#"{"state":"fresh","value":{"claimed":[],"planned":[],"being_planned":[],"ux_agreed":[],"unplanned":[],"paused":[],"merged":[],"linked":[],"assignable":[],"implementer_assignable":[],"bugfixable":[],"second_look":[],"candidates":{},"epics":{}}}"#
     );
 
     commands.fail();
@@ -247,7 +247,7 @@ async fn work_snapshot_is_available_through_a_read_request() {
             .to_vec(),
     )
     .unwrap();
-    assert!(body.starts_with(r#"{"state":"stale","value":{"claimed":[],"planned":[],"being_planned":[],"ux_agreed":[],"unplanned":[],"paused":[],"merged":[],"linked":[],"assignable":[],"implementer_assignable":[],"bugfixable":[],"second_look":[],"candidates":{}},"error":"could not run "#));
+    assert!(body.starts_with(r#"{"state":"stale","value":{"claimed":[],"planned":[],"being_planned":[],"ux_agreed":[],"unplanned":[],"paused":[],"merged":[],"linked":[],"assignable":[],"implementer_assignable":[],"bugfixable":[],"second_look":[],"candidates":{},"epics":{}},"error":"could not run "#));
 }
 
 #[tokio::test]

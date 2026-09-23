@@ -73,11 +73,20 @@ export function SessionScreen({ name }: { name: string }) {
       stepPending = buffer.type === "normal" && buffer.baseY === 0;
       if (buffer.type === "normal" && buffer.baseY > 0 && buffer.viewportY >= buffer.baseY) terminal.scrollLines(-1);
     };
+    // Only the reader turns Follow off, by scrolling up. Output that grows the page before
+    // `follow` has run - a resize mid-write fires xterm's scroll - leaves it on.
+    let lastTop = 0;
     const onScroll = () => {
-      if (stepPending && terminal.buffer.active.type === "normal" && terminal.buffer.active.baseY > 0) { holdStill(); return; }
-      track(atBottom());
+      const buffer = terminal.buffer.active;
+      if (stepPending && buffer.type === "normal" && buffer.baseY > 0) { holdStill(); return; }
+      const up = scroller.scrollTop < lastTop;
+      lastTop = scroller.scrollTop;
+      if (atBottom()) track(true);
+      else if (up || (buffer.type === "normal" && buffer.viewportY < buffer.baseY)) track(false);
     };
-    const follow = () => { if (tracking) scroller.scrollTop = scroller.scrollHeight; };
+    // Moves of our own are where the next scroll is measured from, since a reader's scroll in
+    // the same frame arrives in one event with them.
+    const follow = () => { if (tracking) { scroller.scrollTop = scroller.scrollHeight; lastTop = scroller.scrollTop; } };
     scroller.addEventListener("scroll", onScroll);
     terminal.onScroll(onScroll);
     controls.current = {
@@ -111,7 +120,7 @@ export function SessionScreen({ name }: { name: string }) {
       oldest.setStartBefore(history.firstElementChild!);
       oldest.setEndAfter(history.children[excess - 1]);
       oldest.deleteContents();
-      if (!tracking) scroller.scrollTop -= before - history.offsetHeight;
+      if (!tracking) { scroller.scrollTop -= before - history.offsetHeight; lastTop = scroller.scrollTop; }
     };
     // History belongs to the alternate screen; on the normal one xterm keeps its own scrollback.
     const showHistory = () => { history.hidden = terminal.buffer.active.type !== "alternate"; follow(); };

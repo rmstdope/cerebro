@@ -225,7 +225,15 @@ test("the Follow switch tells whether the session follows, and turning it on ret
   await follow.click();
   await expect(follow).toBeChecked();
   await expect(page.getByRole("button", { name: "Jump to the bottom" })).toHaveCount(0);
-  await expect(session.history.getByText("old 200", { exact: true })).toBeInViewport();
+  expect(await session.screen.evaluate(element => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThan(4);
+});
+
+test("Follow stays on while a session larger than the pane loads and resizes", async ({ page }) => {
+  const session = await hostSession(page, "\u001b[8;83;400t\u001b[?1049h" + past(1, 60) + "\u001b[8;52;125t" + past(61, 200) + "live screen");
+  await expect(session.rows).toContainText("live screen");
+
+  await expect(page.getByRole("switch", { name: "Follow new output" })).toBeChecked();
+  expect(await session.screen.evaluate(element => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThan(4);
 });
 
 test("the Follow switch reads and sets xterm's own scrollback on the normal screen", async ({ page }) => {

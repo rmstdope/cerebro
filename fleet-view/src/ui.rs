@@ -688,7 +688,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, now: DateTime<Utc>) {
     // over painting a second, dim block into an unfocused pane. It stays deterministic: the
     // position came from `App`, materialised before the frame.
     if app.session_has_keyboard() {
-        if let SessionView::Live { cursor: (row, col), .. } = &app.session.view {
+        if let SessionView::Live { cursor: (row, col), back: 0, .. } = &app.session.view {
             let inner = Rect {
                 x: session_rect.x + 1,
                 y: session_rect.y + 1,
@@ -1275,7 +1275,10 @@ fn session_title(app: &App, focused: bool) -> Line<'static> {
             } else {
                 live_title(app, &name)
             },
-            Some(if focused { "[F1/F2/F3 leave]" } else { "[Tab to focus]" }),
+            match &app.session.view {
+                SessionView::Live { back, .. } if *back > 0 => Some(format!("[{back} lines back, PgDn returns]")),
+                _ => Some(if focused { "[F1/F2/F3 leave]" } else { "[Tab to focus]" }.to_string()),
+            },
         ),
         SessionView::Ended { at, .. } => (
             // A standby row and its pane use one word for one agent (Q1 of cb-kcs.4.1).
@@ -1284,7 +1287,7 @@ fn session_title(app: &App, focused: bool) -> Line<'static> {
             } else {
                 format!("{name} — ended {}", at.format("%H:%M"))
             },
-            Some("[retained until next start]"),
+            Some("[retained until next start]".to_string()),
         ),
         // No hint: the body's own last line says what to press, and the red title is the report.
         SessionView::Refused { at, .. } => {
@@ -2740,6 +2743,7 @@ mod tests {
         app.set_session_view(SessionView::Live {
             lines: texts.iter().map(|text| Line::from(text.to_string())).collect(),
             cursor: (1, 3),
+            back: 0,
         });
     }
 
@@ -2966,6 +2970,27 @@ mod tests {
         app.focus = PaneFocus::Fleet;
         let rendered = lines(&render(&app, 120, 20));
         assert!(rendered.iter().any(|line| line.contains("[Tab to focus]")), "{rendered:?}");
+    }
+
+    /// Scrolled back, the pane says how far and how to return, and the child's cursor, which is
+    /// on the screen below, is not drawn over a line it is not on.
+    #[test]
+    fn a_scrolled_back_session_says_so_and_draws_no_cursor() {
+        let mut app = supervising();
+        app.selected = Some("Xavier".to_string());
+        app.focus = PaneFocus::Session;
+        app.set_session_view(SessionView::Live {
+            lines: vec![Line::from("one"), Line::from("two")],
+            cursor: (1, 3),
+            back: 20,
+        });
+
+        let mut terminal = Terminal::new(TestBackend::new(120, 20)).unwrap();
+        terminal.draw(|frame| draw(frame, &app, now())).unwrap();
+        let cursor = terminal.get_cursor_position().unwrap();
+        assert_ne!((cursor.x, cursor.y), (LEFT_COLUMN + 1 + 3, 1 + 1 + 1), "no cursor over history");
+        let rendered = lines(&render(&app, 120, 20));
+        assert!(rendered.iter().any(|line| line.contains("[20 lines back, PgDn returns]")), "{rendered:?}");
     }
 
     #[test]
@@ -5853,6 +5878,7 @@ mod tests {
         app.set_session_view(SessionView::Live {
             lines: Vec::new(),
             cursor: (0, 0),
+            back: 0,
         });
 
         let rendered = lines(&render(&app, 140, 30));
@@ -6344,6 +6370,7 @@ mod tests {
         fleet_focus.set_session_view(SessionView::Live {
             lines: Vec::new(),
             cursor: (0, 0),
+            back: 0,
         });
         fleet_focus.focus = PaneFocus::Fleet;
         assert_eq!(

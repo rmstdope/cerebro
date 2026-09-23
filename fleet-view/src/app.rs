@@ -866,9 +866,17 @@ pub fn is_view_key(key: KeyEvent) -> bool {
 pub struct SessionPane {
     pub scroll: usize,
     pub view: SessionView,
+    /// Lines the wheel has asked a live view to scroll back since the last frame, forward when
+    /// negative; the loop hands them to the session, which holds the offset.
+    nudge: isize,
 }
 
 impl SessionPane {
+    /// The wheel's lines since the last call.
+    pub fn take_nudge(&mut self) -> isize {
+        std::mem::take(&mut self.nudge)
+    }
+
     /// The same clamp the reader panes get, against this pane's own geometry alone.
     pub fn clamp_scroll(&mut self, content_lines: usize, viewport_lines: usize) {
         clamp_scroll(&mut self.scroll, content_lines, viewport_lines);
@@ -2591,6 +2599,12 @@ impl App {
                         self.work.scroll.saturating_add(1)
                     };
                 }
+            }
+            MouseTarget::Pane(PaneFocus::Session)
+                if self.pin.is_none() && matches!(self.session.view, SessionView::Live { .. }) =>
+            {
+                let lines = WHEEL_LINES as isize;
+                self.session.nudge += if up { lines } else { -lines };
             }
             MouseTarget::Pane(PaneFocus::Session) => {
                 // The loop clamps this after the next frame, exactly as it does for the arrows.
@@ -5486,6 +5500,7 @@ mod tests {
         app.set_session_view(SessionView::Live {
             lines: vec![Line::from("new session output")],
             cursor: (0, 0),
+            back: 0,
         });
 
         assert!(app.copy.is_none(), "a completed snapshot cannot freeze Session");
@@ -5688,6 +5703,21 @@ mod tests {
 
         app.on_mouse(wheel(true, facts.session.x + 5, facts.session.y + 2), some_metrics(), None, at(0));
         assert_eq!(app.session.scroll, 0);
+    }
+
+    /// Over a live session the wheel scrolls back through what it kept, as PgUp does, rather
+    /// than the offset a live pane is never drawn at.
+    #[test]
+    fn the_wheel_over_a_live_session_asks_for_its_history() {
+        let mut app = mouse_app();
+        let facts = split_facts();
+        app.set_session_view(SessionView::Live { lines: vec![], cursor: (0, 0), back: 0 });
+        app.on_mouse(wheel(true, facts.session.x + 5, facts.session.y + 2), some_metrics(), None, at(0));
+        app.on_mouse(wheel(true, facts.session.x + 5, facts.session.y + 2), some_metrics(), None, at(0));
+        app.on_mouse(wheel(false, facts.session.x + 5, facts.session.y + 2), some_metrics(), None, at(0));
+
+        assert_eq!(app.session.take_nudge(), WHEEL_LINES as isize, "back is up the page");
+        assert_eq!(app.session.take_nudge(), 0, "and taken once");
     }
 
     #[test]
@@ -7423,7 +7453,7 @@ mod tests {
     #[test]
     fn enter_under_fleet_focuses_a_session_that_exists() {
         let views = vec![
-            SessionView::Live { lines: vec![], cursor: (0, 0) },
+            SessionView::Live { lines: vec![], cursor: (0, 0), back: 0 },
             SessionView::Starting,
             SessionView::Ended { lines: Arc::new(vec![]), at: at(0) },
             SessionView::Refused { lines: Arc::new(vec![]), at: at(0) },
@@ -7954,6 +7984,7 @@ mod tests {
         app.set_session_view(SessionView::Live {
             lines: Vec::new(),
             cursor: (0, 0),
+            back: 0,
         });
         assert!(app.session_has_keyboard());
 
@@ -7975,6 +8006,7 @@ mod tests {
         app.set_session_view(SessionView::Live {
             lines: Vec::new(),
             cursor: (0, 0),
+            back: 0,
         });
         assert_eq!(app.session.scroll, 7, "the bead can be scrolled while an agent is live");
 
@@ -7982,6 +8014,7 @@ mod tests {
         app.set_session_view(SessionView::Live {
             lines: Vec::new(),
             cursor: (0, 0),
+            back: 0,
         });
         assert_eq!(app.session.scroll, 0);
     }
@@ -7994,6 +8027,7 @@ mod tests {
         app.set_session_view(SessionView::Live {
             lines: Vec::new(),
             cursor: (0, 0),
+            back: 0,
         });
         app.pin = Some(SessionPin::Bead(BeadDetail {
             bead: detail_bead(),
@@ -8554,6 +8588,7 @@ mod tests {
         app.set_session_view(SessionView::Live {
             lines: Vec::new(),
             cursor: (0, 0),
+            back: 0,
         });
         assert!(app.session_has_keyboard());
 

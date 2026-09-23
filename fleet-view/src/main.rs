@@ -1717,6 +1717,10 @@ where
             let size = terminal.size()?;
             let area = Rect::new(0, 0, size.width, size.height);
             let session = ui::metrics(app, now, area).session;
+            let nudge = app.session.take_nudge();
+            if let (Some(name), true) = (app.selected.as_deref(), nudge != 0) {
+                state.host.scroll(name, nudge);
+            }
             let view = state.host.sync(
                 app.selected.as_deref(),
                 session.viewport_lines as u16,
@@ -1970,6 +1974,7 @@ where
                 Event::Paste(text) => {
                     if let Some(name) = app.selected.clone() {
                         if app.session_has_keyboard() {
+                            state.host.scroll(&name, isize::MIN);
                             state.host.send(&name, &session::paste_bytes(&text));
                         }
                     }
@@ -2190,8 +2195,24 @@ fn route_key(
     // and `Shift-Home` move a divider rather than reaching the agent, so the navigator can resize
     // the pane they are reading an agent in. `app::is_view_key` is the one place that whole set
     // is named.
+    // The page keys scroll the view back through what the child printed, as the web console
+    // does, rather than reach it: an agent redrawing its own viewport for them would redraw
+    // every other reader's copy too.
+    if app.session_has_keyboard()
+        && key.kind != crossterm::event::KeyEventKind::Release
+        && key.modifiers.is_empty()
+        && matches!(key.code, KeyCode::PageUp | KeyCode::PageDown)
+    {
+        if let Some(name) = app.selected.as_deref() {
+            let page = viewport_lines.max(1) as isize;
+            state.host.scroll(name, if key.code == KeyCode::PageUp { page } else { -page });
+        }
+        return AppAction::None;
+    }
     if app.session_has_keyboard() && !cerebro_tui::app::is_view_key(key) {
         if let (Some(name), Some(bytes)) = (app.selected.clone(), session::key_bytes(key)) {
+            // Typing is at the bottom, as in any terminal.
+            state.host.scroll(&name, isize::MIN);
             state.host.send(&name, &bytes);
         }
         return AppAction::None;
@@ -3139,6 +3160,35 @@ mod main_tests {
             assert_eq!(app.selected, Some("Storm".to_string()), "and the selection does not move");
             assert!(app.notice.is_none(), "a focus key says nothing");
         }
+    }
+
+    /// PgUp and PgDn scroll the view back through what the child printed, and never reach it:
+    /// an agent that redrew itself for them would redraw the web console's copy too.
+    #[test]
+    fn page_keys_scroll_a_live_session_and_the_next_key_returns_to_it() {
+        let mut host = SessionHost::default();
+        let mut app = hosting(&mut host);
+        let mut command = portable_pty::CommandBuilder::new("/bin/sh");
+        command.arg("-c");
+        command.arg(r#"stty raw -echo; i=1; while [ $i -le 40 ]; do printf "line %s\r\n" $i; i=$((i+1)); done; printf 'ready\r\n'; cat -v"#);
+        command.env("TERM", "dumb");
+        host.insert("Storm", cerebro_tui::session::Session::spawn_command("Storm", command, 20, 80).unwrap());
+        settle_view(&mut host, &mut app);
+        let press = |code| KeyEvent::new(code, crossterm::event::KeyModifiers::NONE);
+        let back = |host: &mut SessionHost| match host.sync(Some("Storm"), 20, 80, Utc::now()) {
+            cerebro_tui::session::SessionView::Live { back, .. } => back,
+            other => panic!("not live: {other:?}"),
+        };
+
+        drive(&mut app, &mut host, &nowhere().0, vec![press(KeyCode::PageUp), press(KeyCode::PageUp)]);
+        assert_eq!(back(&mut host), 20, "two pages of ten");
+        drive(&mut app, &mut host, &nowhere().0, vec![press(KeyCode::PageDown)]);
+        assert_eq!(back(&mut host), 10);
+
+        drive(&mut app, &mut host, &nowhere().0, vec![press(KeyCode::Char('x'))]);
+        let text = echoed(&mut host, &app, "x");
+        assert!(!text.contains("^[[5~") && !text.contains("^[[6~"), "the page keys stayed here: {text:?}");
+        assert_eq!(back(&mut host), 0, "typing is at the bottom");
     }
 
     /// Only F1-F3 are held back: F4 is still the agent's.
@@ -7907,7 +7957,7 @@ mod main_tests {
         let mut host = SessionHost::default();
         host.insert("Cyclops", forever());
         app.selected = Some("Cyclops".into());
-        app.set_session_view(cerebro_tui::session::SessionView::Live { lines: Vec::new(), cursor: (0, 0) });
+        app.set_session_view(cerebro_tui::session::SessionView::Live { lines: Vec::new(), cursor: (0, 0), back: 0 });
 
         drive_with(&mut app, &mut host, &paths, &programs, vec![ch('x')]);
         assert!(app.confirm.is_none(), "the child took the key, not the prompt");

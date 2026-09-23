@@ -281,6 +281,41 @@ fn colour(from: vt100::Color) -> Option<Color> {
     }
 }
 
+/// A line the history kept, drawn as the row it was.
+fn kept_line(runs: &[crate::history::Run]) -> Line<'static> {
+    use crate::history::Colour;
+    let colour = |from: &Option<Colour>| match from {
+        Some(Colour::Index(index)) => Some(Color::Indexed(*index)),
+        Some(Colour::Rgb(hex)) => {
+            let channel = |at: usize| hex.get(at..at + 2).and_then(|pair| u8::from_str_radix(pair, 16).ok());
+            Some(Color::Rgb(channel(1)?, channel(3)?, channel(5)?))
+        }
+        None => None,
+    };
+    let spans = runs.iter().map(|run| {
+        let mut style = Style::default();
+        if let Some(fg) = colour(&run.style.fg) {
+            style = style.fg(fg);
+        }
+        if let Some(bg) = colour(&run.style.bg) {
+            style = style.bg(bg);
+        }
+        for (on, modifier) in [
+            (run.style.bold, Modifier::BOLD),
+            (run.style.dim, Modifier::DIM),
+            (run.style.italic, Modifier::ITALIC),
+            (run.style.underline, Modifier::UNDERLINED),
+            (run.style.inverse, Modifier::REVERSED),
+        ] {
+            if on {
+                style = style.add_modifier(modifier);
+            }
+        }
+        Span::styled(run.t.clone(), style)
+    });
+    Line::from(spans.collect::<Vec<_>>())
+}
+
 /// One cell's style, in ratatui's vocabulary.
 fn cell_style(cell: &vt100::Cell) -> Style {
     let mut style = Style::default();
@@ -603,6 +638,10 @@ pub struct Session {
     size: (u16, u16),
     /// A size the pane has asked for and since when, until it has held for `RESIZE_SETTLE`.
     asked: Option<((u16, u16), Instant)>,
+    /// How many lines above the bottom the view is scrolled back; 0 follows the child.
+    back: usize,
+    /// Which screen, and how many lines it had kept, when the view was last drawn.
+    mark: Option<(bool, u64)>,
     reader: Option<std::thread::JoinHandle<()>>,
     /// The lines the child's alternate screen scrolled away, which the log carries.
     history: Arc<Mutex<History>>,
@@ -700,6 +739,8 @@ impl Session {
             seen,
             size: (rows, cols),
             asked: None,
+            back: 0,
+            mark: None,
             reader: Some(handle),
             history,
             recorder,
@@ -779,6 +820,52 @@ impl Session {
         }
         let parser = self.parser.read().ok()?;
         Some(materialise(parser.screen(), rows, cols))
+    }
+
+    /// Scroll the view LINES further back, or forward when negative. The next `view` clamps it.
+    pub fn scroll(&mut self, lines: isize) {
+        self.back = self.back.saturating_add_signed(lines);
+    }
+
+    /// The child's screen, or scrolled back `back` lines through what scrolled off it: the lines
+    /// the history kept on the alternate screen - the web console's - and vt100's own scrollback
+    /// on the normal one. Scrolled back, the lines on show stay put while the child writes more.
+    /// `None` before the first byte, and the offset the view was drawn at.
+    pub fn view(&mut self, rows: u16, cols: u16) -> Option<(Vec<Line<'static>>, usize)> {
+        if self.seen.load(Ordering::SeqCst) == 0 {
+            return None;
+        }
+        let mut parser = self.parser.write().ok()?;
+        let history = self.history.lock().unwrap_or_else(|e| e.into_inner());
+        let alternate = parser.screen().alternate_screen();
+        let (depth, kept) = if alternate {
+            (history.depth(), history.kept())
+        } else {
+            (scrollback_depth(&mut parser), history.scrolled_off())
+        };
+        if let Some((was_alternate, was_kept)) = self.mark {
+            if self.back > 0 && was_alternate == alternate {
+                self.back = self.back.saturating_add(kept.saturating_sub(was_kept) as usize);
+            }
+        }
+        self.mark = Some((alternate, kept));
+        self.back = self.back.min(depth);
+        let lines = if self.back == 0 {
+            materialise(parser.screen(), rows, cols)
+        } else if alternate {
+            let screen = materialise(parser.screen(), rows, cols);
+            let end = depth + screen.len() - self.back;
+            let start = end.saturating_sub(usize::from(rows));
+            (start..end)
+                .map(|index| if index < depth { kept_line(&history.runs(index)) } else { screen[index - depth].clone() })
+                .collect()
+        } else {
+            parser.screen_mut().set_scrollback(self.back);
+            let lines = materialise(parser.screen(), rows, cols);
+            parser.screen_mut().set_scrollback(0);
+            lines
+        };
+        Some((lines, self.back))
     }
 
     /// Start recording the child's output to a log in DIR, unless it already is, and return the
@@ -861,8 +948,9 @@ pub enum SessionView {
     None,
     /// Spawned, and the child has printed nothing yet.
     Starting,
-    /// At most the pane's own height, rebuilt every frame - which costs nothing.
-    Live { lines: Vec<Line<'static>>, cursor: (u16, u16) },
+    /// At most the pane's own height, rebuilt every frame - which costs nothing. BACK is how
+    /// many lines above the child's bottom row the view is scrolled; 0 follows it.
+    Live { lines: Vec<Line<'static>>, cursor: (u16, u16), back: usize },
     /// A launch this view attempted and the launcher refused. Kept until that agent is started
     /// again, exactly as a retained pass is, and drawn in a red pane.
     Refused { lines: Arc<Vec<Line<'static>>>, at: DateTime<Utc> },
@@ -1087,6 +1175,13 @@ impl SessionHost {
         self.live.contains_key(name)
     }
 
+    /// Scroll NAME's live view LINES further back, or forward when negative.
+    pub fn scroll(&mut self, name: &str, lines: isize) {
+        if let Some(session) = self.live.get_mut(name) {
+            session.scroll(lines);
+        }
+    }
+
     /// Forward BYTES to NAME's live session, if there is one.
     pub fn send(&mut self, name: &str, bytes: &[u8]) {
         if let Some(session) = self.live.get_mut(name) {
@@ -1239,8 +1334,8 @@ impl SessionHost {
         let Some(name) = selected else { return SessionView::None };
         if let Some(session) = self.live.get_mut(name) {
             session.request_size(rows, cols, Instant::now());
-            return match session.screen(rows, cols) {
-                Some(lines) => SessionView::Live { lines, cursor: session.cursor() },
+            return match session.view(rows, cols) {
+                Some((lines, back)) => SessionView::Live { lines, cursor: session.cursor(), back },
                 // Spawned and silent: never `None`, which would read as "no session at all".
                 None => SessionView::Starting,
             };
@@ -2090,5 +2185,100 @@ mod tests {
         // `s` is the way back: a start clears it, as it clears every other kind.
         host.insert("Xavier", shell("exit 0", 24, 80));
         assert_eq!(host.last_exit("Xavier"), None);
+    }
+
+    /// The view of NAME once PREDICATE holds of its text, read at ROWS x COLS as the loop does.
+    fn view_until(host: &mut SessionHost, name: &str, rows: u16, cols: u16, what: &str, predicate: impl Fn(&[String]) -> bool) -> SessionView {
+        let mut last = SessionView::None;
+        let found = probe::wait_until(probe::POLL_BOUND, || {
+            last = host.sync(Some(name), rows, cols, Utc::now());
+            predicate(&probe::view_text(&last))
+        });
+        assert!(found, "{what}: {:?}", probe::view_text(&last));
+        last
+    }
+
+    const TWENTY: &str = r#"i=0; while [ $i -lt 20 ]; do printf "line %s\r\n" $i; i=$((i+1)); done"#;
+
+    fn back_of(view: &SessionView) -> usize {
+        match view {
+            SessionView::Live { back, .. } => *back,
+            other => panic!("not live: {other:?}"),
+        }
+    }
+
+    /// PgUp in the view scrolls the history it kept, the web console's, and the child sees none of it.
+    #[test]
+    fn a_live_alternate_screen_scrolls_back_through_its_history() {
+        let mut host = SessionHost::default();
+        host.insert("Storm", shell(&format!(r#"printf "\033[?1049h"; {TWENTY}; sleep 5"#), 4, 40));
+        view_until(&mut host, "Storm", 4, 40, "the last line", |rows| rows.iter().any(|row| row == "line 19"));
+
+        host.scroll("Storm", 4);
+        let view = host.sync(Some("Storm"), 4, 40, Utc::now());
+
+        assert_eq!(probe::view_text(&view), vec!["line 13", "line 14", "line 15", "line 16"]);
+        assert_eq!(back_of(&view), 4);
+    }
+
+    #[test]
+    fn a_live_normal_screen_scrolls_back_through_its_scrollback() {
+        let mut host = SessionHost::default();
+        host.insert("Storm", shell(&format!("{TWENTY}; sleep 5"), 4, 40));
+        view_until(&mut host, "Storm", 4, 40, "the last line", |rows| rows.iter().any(|row| row == "line 19"));
+
+        host.scroll("Storm", 4);
+        let view = host.sync(Some("Storm"), 4, 40, Utc::now());
+
+        assert_eq!(probe::view_text(&view), vec!["line 13", "line 14", "line 15", "line 16"]);
+    }
+
+    /// Scrolled back, the lines on show stay put while the child goes on writing.
+    #[test]
+    fn a_scrolled_back_view_holds_still_while_output_arrives() {
+        for alternate in ["", r#"printf "\033[?1049h"; "#] {
+            let dir = tempfile::tempdir().unwrap();
+            let go = dir.path().join("go");
+            let script = format!(
+                r#"{alternate}{TWENTY}; while [ ! -f {go} ]; do sleep 0.02; done; printf "more 1\r\nmore 2\r\nmore 3\r\n"; sleep 5"#,
+                go = go.display()
+            );
+            let mut host = SessionHost::default();
+            host.insert("Storm", shell(&script, 4, 40));
+            view_until(&mut host, "Storm", 4, 40, "the last line", |rows| rows.iter().any(|row| row == "line 19"));
+            host.scroll("Storm", 4);
+            host.sync(Some("Storm"), 4, 40, Utc::now());
+
+            std::fs::write(&go, "").unwrap();
+            let mut view = SessionView::None;
+            let moved_on = probe::wait_until(probe::POLL_BOUND, || {
+                view = host.sync(Some("Storm"), 4, 40, Utc::now());
+                back_of(&view) == 7
+            });
+
+            assert!(moved_on, "{alternate:?}: {view:?}");
+            assert_eq!(probe::view_text(&view), vec!["line 13", "line 14", "line 15", "line 16"], "{alternate:?}");
+        }
+    }
+
+    /// The view scrolls no further than what was kept, and returns to the bottom.
+    #[test]
+    fn a_scrolled_back_view_stops_at_both_ends_and_a_key_returns_it() {
+        let mut host = SessionHost::default();
+        host.insert("Storm", shell(&format!(r#"printf "\033[?1049h"; {TWENTY}; sleep 5"#), 4, 40));
+        view_until(&mut host, "Storm", 4, 40, "the last line", |rows| rows.iter().any(|row| row == "line 19"));
+
+        host.scroll("Storm", 1000);
+        let view = host.sync(Some("Storm"), 4, 40, Utc::now());
+        assert_eq!(back_of(&view), 17, "the seventeen lines kept, no more");
+        assert_eq!(probe::view_text(&view), vec!["line 0", "line 1", "line 2", "line 3"]);
+
+        host.scroll("Storm", -1000);
+        assert_eq!(back_of(&host.sync(Some("Storm"), 4, 40, Utc::now())), 0);
+
+        host.scroll("Storm", 4);
+        host.sync(Some("Storm"), 4, 40, Utc::now());
+        host.send("Storm", b"x");
+        assert_eq!(back_of(&host.sync(Some("Storm"), 4, 40, Utc::now())), 4, "the view's own nudges leave it where it is");
     }
 }

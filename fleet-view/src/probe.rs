@@ -240,6 +240,7 @@ mod tests {
         let view = SessionView::Live {
             lines: vec![Line::from(vec![Span::raw("x"), Span::raw("y")]), Line::from("z")],
             cursor: (0, 0),
+            back: 0,
         };
         assert_eq!(view_text(&view), vec!["xy".to_string(), "z".to_string()]);
     }

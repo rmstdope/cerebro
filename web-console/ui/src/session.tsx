@@ -13,6 +13,8 @@ type Run = { t: string; fg?: number | string; bg?: number | string; bold?: boole
 const HISTORY_OSC = 7717;
 const SCROLLBACK = 10000;
 const font = "Menlo, Monaco, 'Courier New', monospace";
+const FONT = 12;
+const MIN_FONT = 6;
 // xterm's own default colours, so history reads the same as the screen below it.
 const ansi = ["#2e3436", "#cc0000", "#4e9a06", "#c4a000", "#3465a4", "#75507b", "#06989a", "#d3d7cf", "#555753", "#ef2929", "#8ae234", "#fce94f", "#729fcf", "#ad7fa8", "#34e2e2", "#eeeeec"];
 const levels = [0, 95, 135, 175, 215, 255];
@@ -55,7 +57,7 @@ export function SessionScreen({ name }: { name: string }) {
   useEffect(() => {
     // `setWinSizeChars` is what lets CSI 8 ; rows ; cols t reach the handler below: the log
     // carries each pty resize that way, in order with the output.
-    const terminal = new Terminal({ disableStdin: true, cursorBlink: false, fontFamily: font, fontSize: 12, scrollback: SCROLLBACK, windowOptions: { setWinSizeChars: true } });
+    const terminal = new Terminal({ disableStdin: true, cursorBlink: false, fontFamily: font, fontSize: FONT, scrollback: SCROLLBACK, windowOptions: { setWinSizeChars: true } });
     const scroller = screen.current!;
     const history = past.current!;
     // Follow the bottom while the reader is there; leave them be once they scroll back. The
@@ -140,6 +142,37 @@ export function SessionScreen({ name }: { name: string }) {
       return true;
     });
     terminal.open(host.current!);
+    // A screen taller or wider than the pane is drawn in a smaller font, never a larger one than
+    // `FONT`, so all of it shows as it does in the terminal console. In a font, not a CSS scale:
+    // xterm maps the pointer to cells in its own unscaled measurements. Each size is judged once
+    // xterm has drawn it, stepping down until the screen fits; a size that did not fit is not
+    // tried again until the pane or the screen changes.
+    const drawn = host.current!.querySelector<HTMLElement>(".xterm-screen")!;
+    let judged = "";
+    let tooBig = Infinity;
+    const fit = () => {
+      const style = getComputedStyle(scroller);
+      const room = scroller.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
+      const across = scroller.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+      if (!drawn.offsetHeight || !drawn.offsetWidth || room <= 0 || across <= 0) return;
+      const key = `${room}x${across}x${terminal.rows}x${terminal.cols}`;
+      if (key !== judged) { judged = key; tooBig = Infinity; }
+      const size = terminal.options.fontSize ?? FONT;
+      const estimate = Math.floor(size * Math.min(room / drawn.offsetHeight, across / drawn.offsetWidth) * 2) / 2;
+      const fits = drawn.offsetHeight <= room && drawn.offsetWidth <= across;
+      if (!fits) tooBig = Math.min(tooBig, size);
+      const next = fits
+        ? Math.max(size, Math.min(FONT, tooBig - 0.5, estimate))
+        : Math.max(MIN_FONT, Math.min(size - 0.5, estimate));
+      if (next !== size) {
+        terminal.options.fontSize = next;
+        history.style.fontSize = `${next}px`;
+      }
+      follow();
+    };
+    const fitting = new ResizeObserver(fit);
+    fitting.observe(scroller);
+    fitting.observe(drawn);
     let log: string | undefined;
     let offset = 0;
     let stopped = false;
@@ -169,6 +202,7 @@ export function SessionScreen({ name }: { name: string }) {
     return () => {
       stopped = true;
       clearTimeout(timer);
+      fitting.disconnect();
       scroller.removeEventListener("scroll", onScroll);
       scroller.removeEventListener("wheel", onWheel, { capture: true });
       terminal.dispose();
@@ -203,7 +237,7 @@ export function SessionScreen({ name }: { name: string }) {
         layout, or off-screen, leaves its viewport stuck where the first write put it. */}
     <div ref={screen} className="screen min-h-[200px] flex-1 overflow-auto bg-black px-3 py-2 [overflow-anchor:none]">
       <div ref={past} className="history text-[12px] leading-normal whitespace-pre text-white" style={{ fontFamily: font }} />
-      <div ref={host} className="terminal" />
+      <div ref={host} className="terminal overflow-hidden" />
     </div>
   </section>;
 }

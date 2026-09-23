@@ -26,8 +26,15 @@ pub struct History {
     scanner: vte::Parser,
     /// The alternate screen's scroll region, 0-based and inclusive; `None` is the whole screen.
     region: Option<(u16, u16)>,
+    /// The normal screen's, which vt100 keeps apart: while one is set it keeps no scrollback.
+    normal_region: Option<(u16, u16)>,
     retained: VecDeque<Vec<u8>>,
     retained_bytes: usize,
+    /// Every line ever kept, dropped ones included: how far a view held still has to move.
+    kept: u64,
+    /// Every line the normal screen scrolled into the terminal's own scrollback, which stops
+    /// counting once it is full.
+    scrolled_off: u64,
     limit: usize,
     /// Whether the bytes so far end inside an escape sequence, where a line feed still runs but
     /// an OSC spliced in would cut the sequence short.
@@ -136,9 +143,9 @@ impl vte::Perform for Scan {
     }
 }
 
-#[derive(Clone, PartialEq, serde::Serialize)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(untagged)]
-enum Colour {
+pub enum Colour {
     Index(u8),
     Rgb(String),
 }
@@ -151,29 +158,31 @@ fn colour(colour: vt100::Color) -> Option<Colour> {
     }
 }
 
-#[derive(serde::Serialize)]
-struct Run {
-    t: String,
+/// Text in one style, the unit a kept line is written in.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct Run {
+    pub t: String,
     #[serde(flatten)]
-    style: Style,
+    pub style: Style,
 }
 
-#[derive(PartialEq, serde::Serialize)]
-struct Style {
+#[derive(Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct Style {
     #[serde(skip_serializing_if = "Option::is_none")]
-    fg: Option<Colour>,
+    pub fg: Option<Colour>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    bg: Option<Colour>,
+    pub bg: Option<Colour>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
-    bold: bool,
+    pub bold: bool,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
-    dim: bool,
+    pub dim: bool,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
-    italic: bool,
+    pub italic: bool,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
-    underline: bool,
+    pub underline: bool,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
-    inverse: bool,
+    pub inverse: bool,
 }
 
 /// ROW of SCREEN as an OSC holding its text in runs of one style, trailing blanks dropped.
@@ -229,8 +238,11 @@ impl History {
         Self {
             scanner: vte::Parser::new(),
             region: None,
+            normal_region: None,
             retained: VecDeque::new(),
             retained_bytes: 0,
+            kept: 0,
+            scrolled_off: 0,
             limit,
             in_sequence: false,
             pending: Vec::new(),
@@ -368,6 +380,8 @@ impl History {
                         self.scrolling(screen, top..=last);
                         self.pending.extend((top..=last).map(|row| line(screen, row)));
                     }
+                    Event::LineFeed if !alternate && self.normal_region.is_none() && screen.cursor_position().0 + 1 == rows => self.scrolled_off += 1,
+                    Event::ScrollUp(count) if !alternate && self.normal_region.is_none() => self.scrolled_off += u64::from(count.min(rows)),
                     _ => {}
                 }
                 parser.process(&bytes[index..=index]);
@@ -375,12 +389,22 @@ impl History {
                 flushed = index + 1;
                 match event {
                     // What vt100's DECSTBM does, to whichever screen is in use when it arrives.
-                    Event::Region(first, last) if alternate => {
+                    Event::Region(first, last) => {
                         let first = first.max(1) - 1;
                         let last = if last == 0 { rows } else { last }.min(rows) - 1;
-                        self.region = (first < last).then_some((first, last));
+                        if alternate {
+                            self.region = (first < last).then_some((first, last));
+                        } else {
+                            self.normal_region = (first < last && (first, last) != (0, rows - 1)).then_some((first, last));
+                        }
                     }
-                    Event::FreshAlternate | Event::Reset => {
+                    Event::Reset => {
+                        self.normal_region = None;
+                        self.region = None;
+                        self.before = None;
+                        self.erased = false;
+                    }
+                    Event::FreshAlternate => {
                         self.region = None;
                         self.before = None;
                         self.erased = false;
@@ -423,6 +447,7 @@ impl History {
     }
 
     fn retain(&mut self, osc: Vec<u8>) {
+        self.kept += 1;
         self.retained_bytes += osc.len();
         self.retained.push_back(osc);
         while self.retained_bytes > self.limit {
@@ -433,15 +458,40 @@ impl History {
 
     /// The pty was resized from OLD_ROWS to ROWS; vt100 moves the region's bottom the same way.
     pub fn resize(&mut self, old_rows: u16, rows: u16) {
-        if let Some((top, bottom)) = self.region {
+        let moved = |(top, bottom): (u16, u16)| {
             let bottom = if bottom + 1 == old_rows { rows } else { (bottom + 1).min(rows) } - 1;
-            self.region = Some((if bottom < top { 0 } else { top }, bottom));
-        }
+            (if bottom < top { 0 } else { top }, bottom)
+        };
+        self.region = self.region.map(moved);
+        self.normal_region = self.normal_region.map(moved).filter(|&region| region != (0, rows - 1));
     }
 
     /// The history lines kept, oldest first, each a complete OSC.
     pub fn retained(&self) -> impl Iterator<Item = &[u8]> {
         self.retained.iter().map(Vec::as_slice)
+    }
+
+    /// How many lines are kept now.
+    pub fn depth(&self) -> usize {
+        self.retained.len()
+    }
+
+    /// How many lines were ever kept.
+    pub fn kept(&self) -> u64 {
+        self.kept
+    }
+
+    /// How many lines the normal screen ever scrolled off.
+    pub fn scrolled_off(&self) -> u64 {
+        self.scrolled_off
+    }
+
+    /// The runs of the kept line at INDEX, oldest first.
+    pub fn runs(&self, index: usize) -> Vec<Run> {
+        let Some(osc) = self.retained.get(index) else { return Vec::new() };
+        let prefix = format!("\u{1b}]{HISTORY_OSC};");
+        let body = osc.strip_prefix(prefix.as_bytes()).and_then(|body| body.strip_suffix(b"\x07")).unwrap_or_default();
+        serde_json::from_slice(body).unwrap_or_default()
     }
 }
 
@@ -468,6 +518,30 @@ mod tests {
 
     fn feed(history: &mut History, parser: &mut vt100::Parser, bytes: &str) -> Vec<u8> {
         history.process(parser, bytes.as_bytes())
+    }
+
+    /// The terminal's own scrollback stops growing once full, so the lines it took are counted.
+    #[test]
+    fn lines_the_normal_screen_scrolls_off_are_counted_and_not_kept() {
+        let mut parser = vt100::Parser::new(3, 20, 2);
+        let mut history = History::default();
+        feed(&mut history, &mut parser, "one\r\ntwo\r\nthree\r\nfour\r\nfive\r\nsix\x1b[2S");
+
+        assert_eq!(history.scrolled_off(), 5);
+        assert_eq!(history.depth(), 0);
+    }
+
+    /// vt100 keeps no scrollback for a screen scrolling inside a region, nor more of a `CSI S`
+    /// than the screen holds.
+    #[test]
+    fn only_what_reaches_the_normal_screens_scrollback_is_counted() {
+        let mut parser = vt100::Parser::new(3, 20, 100);
+        let mut history = History::default();
+        feed(&mut history, &mut parser, "\x1b[2;3r\x1b[3;1Hone\ntwo\n\x1b[5S\x1b[r\x1b[9S");
+
+        assert_eq!(history.scrolled_off(), 3);
+        parser.screen_mut().set_scrollback(100);
+        assert_eq!(parser.screen().scrollback(), 3, "vt100 kept as many");
     }
 
     #[test]

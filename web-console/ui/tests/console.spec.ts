@@ -236,6 +236,16 @@ test("Follow stays on while a session larger than the pane loads and resizes", a
   expect(await session.screen.evaluate(element => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThan(4);
 });
 
+test("a screen taller than the pane is drawn small enough to show all of it", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 600 });
+  const rows = Array.from({ length: 52 }, (_, i) => `\u001b[${i + 1};1Hrow ${i + 1}`).join("");
+  const session = await hostSession(page, "\u001b[8;52;125t\u001b[?1049h" + past(1, 30) + rows);
+  await expect(session.rows).toContainText("row 52");
+
+  await expect(session.rows.getByText("row 1", { exact: true })).toBeInViewport({ ratio: 0.9 });
+  await expect(session.rows.getByText("row 52", { exact: true })).toBeInViewport({ ratio: 0.9 });
+});
+
 test("the Follow switch reads and sets xterm's own scrollback on the normal screen", async ({ page }) => {
   const session = await hostSession(page);
   const follow = page.getByRole("switch", { name: "Follow new output" });

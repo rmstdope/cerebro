@@ -44,23 +44,17 @@ pub struct Inbox {
 impl Inbox {
     /// Listen at `<temp>/cerebro-<pid>/<file>` and write what arrives through WRITER.
     pub fn open(file: &str, writer: Writer) -> std::io::Result<Self> {
-        let dir = std::env::temp_dir().join(format!("cerebro-{}", std::process::id()));
-        // Again if the last inbox before this one took the directory away in between.
-        let mut tries = 3;
-        loop {
-            let opened = std::fs::create_dir_all(&dir)
-                .and_then(|()| std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)))
-                .and_then(|()| Self::open_at(&dir.join(file), Arc::clone(&writer)));
-            match opened {
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound && tries > 1 => tries -= 1,
-                opened => return opened,
-            }
-        }
+        let (listener, path) = bind(file)?;
+        Ok(Self::serve(listener, path, writer))
     }
 
+    #[cfg(test)]
     fn open_at(path: &Path, writer: Writer) -> std::io::Result<Self> {
         let _ = std::fs::remove_file(path);
-        let listener = UnixListener::bind(path)?;
+        Ok(Self::serve(UnixListener::bind(path)?, path.to_path_buf(), writer))
+    }
+
+    fn serve(listener: UnixListener, path: PathBuf, writer: Writer) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let thread_stop = Arc::clone(&stop);
         let (typed, typing) = std::sync::mpsc::sync_channel::<Vec<u8>>(QUEUED);
@@ -98,11 +92,42 @@ impl Inbox {
                 let _ = stream.write_all(&[u8::from(taken)]);
             }
         });
-        Ok(Self { path: path.to_path_buf(), stop })
+        Self { path, stop }
     }
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+}
+
+/// A listener at `<temp>/cerebro-<pid>/<file>`, in a directory only this user can enter.
+pub fn bind(file: &str) -> std::io::Result<(UnixListener, PathBuf)> {
+    let dir = std::env::temp_dir().join(format!("cerebro-{}", std::process::id()));
+    let path = dir.join(file);
+    // Again if the last socket before this one took the directory away in between.
+    let mut tries = 3;
+    loop {
+        let bound = std::fs::create_dir_all(&dir)
+            .and_then(|()| std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)))
+            .and_then(|()| {
+                let _ = std::fs::remove_file(&path);
+                UnixListener::bind(&path)
+            });
+        match bound {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound && tries > 1 => tries -= 1,
+            bound => return bound.map(|listener| (listener, path)),
+        }
+    }
+}
+
+/// Stop a listener serving PATH by connecting to it once STOP is set, then take its file away,
+/// and the directory with the last of them.
+pub fn close(path: &Path, stop: &AtomicBool) {
+    stop.store(true, Ordering::SeqCst);
+    let _ = UnixStream::connect(path);
+    let _ = std::fs::remove_file(path);
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::remove_dir(dir);
     }
 }
 
@@ -127,15 +152,8 @@ pub fn framed(bytes: &[u8]) -> Vec<u8> {
 }
 
 impl Drop for Inbox {
-    /// A connection of its own wakes the listener to stop; then the file goes, and the directory
-    /// with the last of them.
     fn drop(&mut self) {
-        self.stop.store(true, Ordering::SeqCst);
-        let _ = UnixStream::connect(&self.path);
-        let _ = std::fs::remove_file(&self.path);
-        if let Some(dir) = self.path.parent() {
-            let _ = std::fs::remove_dir(dir);
-        }
+        close(&self.path, &self.stop);
     }
 }
 

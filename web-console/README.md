@@ -36,6 +36,21 @@ can type into a session. The service hands the bytes to the Unix socket the flee
 as `input` in `<name>.json`, which writes them to the pty. What xterm answers a CLI's queries
 with, every time a log is replayed, is never sent. Typing into one session from both consoles at
 once is not guarded against.
+
+The chosen agent's header has the terminal console's `s`, `f` and `k` as buttons: **Start** an
+agent that is not running, **Finish after this pass** (or **Keep going** once its stop flag is set)
+and **Kill**, which is **Disarm** on a standby agent and **Stop starting** on one being started. The
+same keys work on the chosen agent while nothing is being typed, and `⌘K` lists every action on
+every agent. A kill, disarm or stop asks first, in a dialog `y` confirms. The page posts
+`POST /api/agents/<name>/<start|finish|resume|kill|disarm|stop>`, with the same header and host checks as
+typing, and the service hands it to the supervising fleet view's control socket, named as `control`
+in `standby.json`. The fleet view does it by the same rules as its keys and the page shows its
+answer; a refusal is the sentence its header would have shown. A kill, disarm or stop is done
+only if the row still calls for that one, so a disarm confirmed on an agent started since kills
+nothing. With no fleet view supervising, the
+buttons are disabled and the header says **Read-only** rather than **Supervised**.
+`GET /api/control` says which, and `/api/events` sends `control` when it changes. An agent whose
+stop flag is set is reported with `finishing: true`.
 The output comes from the fleet view (`cerebro-tui`) that hosts the session. It appends each hosted
 session's pty output to a log under `.cerebro/state/sessions/`, with the pty's resizes recorded in
 the log, and publishes `<name>.json` naming that log. `GET /api/sessions/<name>?log=&from=` serves

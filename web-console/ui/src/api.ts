@@ -11,6 +11,8 @@ export type Agent = {
   pid?: number | null;
   sessions?: number;
   diagnostic?: string | null;
+  /// Its stop flag is set: it stops after this pass, and the fleet view won't start it.
+  finishing?: boolean;
 };
 export type Bead = { id: string; title: string; status: string; issue_type: string; labels: string[]; priority?: number | null; assignee?: string | null };
 export type Work = {

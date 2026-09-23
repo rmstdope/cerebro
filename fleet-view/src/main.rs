@@ -345,6 +345,7 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
         logger,
         ledger: StartLedger::default(),
         controller,
+        control: None,
     };
 
     // Raw mode and the alternate screen are entered HERE and nowhere else, under a guard whose
@@ -1668,6 +1669,8 @@ struct LoopState {
     logger: Logger,
     ledger: StartLedger,
     controller: SupervisorController,
+    /// The web console's way to start, finish and kill, open only while this view supervises.
+    control: Option<cerebro_tui::control::Control>,
 }
 
 /// What the loop READS and never changes.
@@ -1737,9 +1740,23 @@ where
             app.set_exits(state.host.exits());
             let standby = config.paths.shared_root.join(".cerebro/state/standby.json");
             if app.supervision.may_supervise() {
-                state.standby.publish(&standby, app.standby_names(), Instant::now(), now);
+                if state.control.is_none() {
+                    match cerebro_tui::control::Control::open() {
+                        Ok(control) => state.control = Some(control),
+                        Err(error) => state.logger.error("control", &error.to_string(), now),
+                    }
+                }
+                let control = state.control.as_ref().map(|control| control.path().display().to_string());
+                state.standby.publish(&standby, app.standby_names(), control, Instant::now(), now);
             } else {
+                state.control = None;
                 state.standby.withdraw();
+            }
+            let asked = state.control.as_ref().map(|control| control.take()).unwrap_or_default();
+            for asked in asked {
+                let (action, reply) = web_request(&asked.request, app, state, config, now);
+                asked.answer(reply);
+                dispatch(action, app, workers, &clock);
             }
             // After `host.sync` has reaped, so a name whose child is gone has already left the
             // set. The give-up path's own `set_exits` gets no companion call: nothing is closing
@@ -2087,71 +2104,7 @@ fn route_key(
         if !confirmed {
             return AppAction::None;
         }
-        return match prompt {
-            app::Prompt::Kill { name, .. } => {
-                // `k` means stay gone at every state, not only on a standby row: a name still
-                // armed is started again by its own trigger within five seconds, on the bead the
-                // kill just stranded (cb-op0). The stop flag is left alone - `k` is not a retire.
-                let disarmed = app.armed.remove(&name);
-                // Only when the name actually left the set: `k` on a session started outside
-                // this view, or a second `k` on the same row, disarmed nothing, and a line
-                // saying it did is a false positive in the file read to answer "why did this
-                // row stop".
-                if disarmed {
-                    log_disarm(&mut state.logger, app, &name, "kill", now);
-                }
-                // A killed session that never reported keeps its claim - the prompt promised the
-                // bead stays claimed - so the view's record goes, and `give_back` has nothing to
-                // undo (cb-10d.1).
-                app.handed.remove(&name);
-                // And its handover file, or the orphan path would give the bead back a minute
-                // later under a session the navigator killed on purpose.
-                let _ = std::fs::remove_file(lifecycle::handover_path(&config.paths, &name));
-                state.host.kill(&config.paths, &name);
-                // A killed agent must not wait up to five seconds to disappear from the fleet.
-                AppAction::RefreshFleet
-            }
-            app::Prompt::Stop { name, .. } => {
-                // `k` on a starting row: stop the start, disarm the name, give the bead back.
-                if app.armed.remove(&name) {
-                    log_disarm(&mut state.logger, app, &name, "kill", now);
-                }
-                let bead = app.handed.remove(&name);
-                state.host.kill(&config.paths, &name);
-                if let Some(bead) = bead {
-                    queue_give_back(app, &mut state.logger, &name, &bead, lifecycle::GiveBack::Stopped, now);
-                }
-                AppAction::RefreshFleet
-            }
-            app::Prompt::Disarm { name, .. } => {
-                if app.armed.remove(&name) {
-                    log_disarm(&mut state.logger, app, &name, "standby", now);
-                }
-                app.set_notice(lifecycle::disarm_notice(&name));
-                // So the row goes grey at once rather than up to five seconds later.
-                AppAction::RefreshFleet
-            }
-            // The one prompt that writes to the shared board rather than to this checkout's
-            // sessions. The `sweep` line is written BEFORE the command runs, exactly as
-            // `cerebro-sweep-act` writes it: a decision the view made is worth keeping whether or
-            // not the write then succeeded.
-            app::Prompt::Sweep { finding, .. } => {
-                state.logger.write(
-                    log::Event::Sweep,
-                    now,
-                    &[(
-                        "command",
-                        serde_json::Value::from(
-                            cerebro_tui::sweeps::finding_command(&finding, &config.programs.bd)
-                                .join(" "),
-                        ),
-                    )],
-                );
-                let request = app::WriteRequest::Finding { finding };
-                app.begin_write(&request, &config.programs.bd);
-                AppAction::Write(request)
-            }
-        };
+        return carry_out(prompt, app, state, config, now);
     }
     // The give list owns the keyboard while it is open, as a prompt does (cb-10d.5). It can only
     // be open under Work focus.
@@ -2318,6 +2271,82 @@ fn route_key(
     action
 }
 
+/// Do what a confirmed prompt asked: `y` on the header's question, or a kill the web console
+/// already confirmed.
+fn carry_out(
+    prompt: app::Prompt,
+    app: &mut App,
+    state: &mut LoopState,
+    config: &LoopConfig,
+    now: DateTime<Utc>,
+) -> AppAction {
+    match prompt {
+        app::Prompt::Kill { name, .. } => {
+            // `k` means stay gone at every state, not only on a standby row: a name still
+            // armed is started again by its own trigger within five seconds, on the bead the
+            // kill just stranded (cb-op0). The stop flag is left alone - `k` is not a retire.
+            let disarmed = app.armed.remove(&name);
+            // Only when the name actually left the set: `k` on a session started outside
+            // this view, or a second `k` on the same row, disarmed nothing, and a line
+            // saying it did is a false positive in the file read to answer "why did this
+            // row stop".
+            if disarmed {
+                log_disarm(&mut state.logger, app, &name, "kill", now);
+            }
+            // A killed session that never reported keeps its claim - the prompt promised the
+            // bead stays claimed - so the view's record goes, and `give_back` has nothing to
+            // undo (cb-10d.1).
+            app.handed.remove(&name);
+            // And its handover file, or the orphan path would give the bead back a minute
+            // later under a session the navigator killed on purpose.
+            let _ = std::fs::remove_file(lifecycle::handover_path(&config.paths, &name));
+            state.host.kill(&config.paths, &name);
+            // A killed agent must not wait up to five seconds to disappear from the fleet.
+            AppAction::RefreshFleet
+        }
+        app::Prompt::Stop { name, .. } => {
+            // `k` on a starting row: stop the start, disarm the name, give the bead back.
+            if app.armed.remove(&name) {
+                log_disarm(&mut state.logger, app, &name, "kill", now);
+            }
+            let bead = app.handed.remove(&name);
+            state.host.kill(&config.paths, &name);
+            if let Some(bead) = bead {
+                queue_give_back(app, &mut state.logger, &name, &bead, lifecycle::GiveBack::Stopped, now);
+            }
+            AppAction::RefreshFleet
+        }
+        app::Prompt::Disarm { name, .. } => {
+            if app.armed.remove(&name) {
+                log_disarm(&mut state.logger, app, &name, "standby", now);
+            }
+            app.set_notice(lifecycle::disarm_notice(&name));
+            // So the row goes grey at once rather than up to five seconds later.
+            AppAction::RefreshFleet
+        }
+        // The one prompt that writes to the shared board rather than to this checkout's
+        // sessions. The `sweep` line is written BEFORE the command runs, exactly as
+        // `cerebro-sweep-act` writes it: a decision the view made is worth keeping whether or
+        // not the write then succeeded.
+        app::Prompt::Sweep { finding, .. } => {
+            state.logger.write(
+                log::Event::Sweep,
+                now,
+                &[(
+                    "command",
+                    serde_json::Value::from(
+                        cerebro_tui::sweeps::finding_command(&finding, &config.programs.bd)
+                            .join(" "),
+                    ),
+                )],
+            );
+            let request = app::WriteRequest::Finding { finding };
+            app.begin_write(&request, &config.programs.bd);
+            AppAction::Write(request)
+        }
+    }
+}
+
 /// Build the `Situation`, ask `lifecycle`, and carry out what it said.
 ///
 /// Each of the three sets at most one notice, and each ends with `RefreshFleet` when it changed
@@ -2333,7 +2362,59 @@ fn lifecycle_key(
     now: DateTime<Utc>,
 ) -> AppAction {
     let Some(name) = app.selected.clone() else { return AppAction::None };
-    let row = app.selected_row().cloned();
+    if key == 's' {
+        // Whatever the outcome: the pane is the agent's again, which is the rule the
+        // navigator chose. `f` and `k` leave a pinned bead alone.
+        app.drop_pin();
+    }
+    match lifecycle_act(key, &name, app, host, ledger, logger, paths, now) {
+        Acted::Done { text, refresh } => {
+            app.set_notice(text);
+            if refresh { AppAction::RefreshFleet } else { AppAction::None }
+        }
+        Acted::Refused(text) => {
+            app.set_notice(text);
+            AppAction::None
+        }
+        // The red Session pane is the report; a gold line saying the same thing twice is not.
+        Acted::Failed(_) => AppAction::RefreshFleet,
+        Acted::Ask(prompt) => {
+            app.confirm = Some(prompt);
+            AppAction::None
+        }
+        Acted::Nothing => AppAction::None,
+    }
+}
+
+/// What a lifecycle key did about one agent, before anybody says so: the header for a key, the
+/// reply for the web console.
+#[derive(Debug)]
+enum Acted {
+    /// It acted: TEXT is what to say, REFRESH whether the fleet changed.
+    Done { text: String, refresh: bool },
+    /// The key was refused, or its write failed: TEXT says why.
+    Refused(String),
+    /// A start was attempted and failed; already logged and shown in the Session pane.
+    Failed(String),
+    /// `k`: the question to confirm first.
+    Ask(app::Prompt),
+    Nothing,
+}
+
+/// `s`, `f` or `k` on NAME, by `lifecycle`'s rules.
+#[allow(clippy::too_many_arguments)]
+fn lifecycle_act(
+    key: char,
+    name: &str,
+    app: &mut App,
+    host: &mut SessionHost,
+    ledger: &mut StartLedger,
+    logger: &mut Logger,
+    paths: &ReaderPaths,
+    now: DateTime<Utc>,
+) -> Acted {
+    let name = name.to_string();
+    let row = app.fleet_rows().iter().find(|row| row.name == name).cloned();
     let situation = lifecycle::Situation {
         mode: &app.supervision,
         row: row.as_ref(),
@@ -2341,14 +2422,7 @@ fn lifecycle_key(
         stop_flag: lifecycle::stop_flag_set(paths, &name),
     };
     match key {
-        's' => {
-            // Decided before the drop below: `situation` borrows `app.supervision`, and
-            // `drop_bead_detail` takes the whole of `app`.
-            let outcome = lifecycle::start_outcome(situation);
-            // Whatever the outcome: the pane is the agent's again, which is the rule the
-            // navigator chose. `f` and `k` leave a pinned bead alone.
-            app.drop_pin();
-            match outcome {
+        's' => match lifecycle::start_outcome(situation) {
             lifecycle::StartOutcome::Launch { clears_flag } => {
                 let bead = bead_for_start(app, &role_of(app, &name));
                 match lifecycle::start(host, paths, &name, clears_flag, bead.as_deref()) {
@@ -2367,70 +2441,108 @@ fn lifecycle_key(
                             app.handed.insert(name.clone(), id.clone());
                         }
                         log_start(logger, &name, &role_of(app, &name), None, bead.as_deref(), now);
-                        app.set_notice(line);
+                        Acted::Done { text: line, refresh: true }
                     }
-                    // The red Session pane is the report; a gold line saying the same thing twice
-                    // is not. A refusal of the KEY is not an error and writes nothing; a launch
-                    // that was attempted and failed is one.
+                    // A refusal of the KEY is not an error and writes nothing; a launch that was
+                    // attempted and failed is one.
                     Err(error) => {
                         logger.error(&format!("start {name}"), &error.to_string(), now);
                         host.note_refusal(&name, &error.to_string(), now);
+                        Acted::Failed(error.to_string())
                     }
                 }
-                AppAction::RefreshFleet
             }
-            lifecycle::StartOutcome::Refuse(text) => {
-                app.set_notice(text);
-                AppAction::None
-            }
-            lifecycle::StartOutcome::Ignore => AppAction::None,
-            }
-        }
+            lifecycle::StartOutcome::Refuse(text) => Acted::Refused(text),
+            lifecycle::StartOutcome::Ignore => Acted::Nothing,
+        },
         'f' => {
             let (result, line) = match lifecycle::finish_outcome(situation) {
                 lifecycle::FinishOutcome::Write => (
-                    Some(lifecycle::write_stop_flag(paths, &name)),
+                    lifecycle::write_stop_flag(paths, &name),
                     format!("{name} will finish after this pass."),
                 ),
                 lifecycle::FinishOutcome::Clear => (
-                    Some(lifecycle::clear_stop_flag(paths, &name)),
+                    lifecycle::clear_stop_flag(paths, &name),
                     format!("{name} will keep going."),
                 ),
-                lifecycle::FinishOutcome::Refuse(text) => (None, text),
-                lifecycle::FinishOutcome::Ignore => return AppAction::None,
+                lifecycle::FinishOutcome::Refuse(text) => return Acted::Refused(text),
+                lifecycle::FinishOutcome::Ignore => return Acted::Nothing,
             };
             match result {
                 // A key that reported success over a file it did not write is the one failure `f`
                 // can have, so the io error is the notice.
-                Some(Err(error)) => app.set_notice(error.to_string()),
-                Some(Ok(())) => app.set_notice(line),
-                None => app.set_notice(line),
+                Err(error) => Acted::Refused(error.to_string()),
+                Ok(()) => Acted::Done { text: line, refresh: false },
             }
-            AppAction::None
         }
         'k' => match lifecycle::kill_outcome(situation) {
-            lifecycle::KillOutcome::Confirm { prompt, disarm } => {
-                // `k` asks two different questions: a live session is killed, a standby row is
-                // disarmed. WHICH is `lifecycle`'s answer, beside the sentence it wrote, so the
-                // prompt and the action it confirms cannot part company.
-                app.confirm = Some(if disarm {
-                    app::Prompt::Disarm { name, text: prompt }
-                } else {
-                    app::Prompt::Kill { name, text: prompt }
-                });
-                AppAction::None
-            }
+            // `k` asks two different questions: a live session is killed, a standby row is
+            // disarmed. WHICH is `lifecycle`'s answer, beside the sentence it wrote, so the
+            // prompt and the action it confirms cannot part company.
+            lifecycle::KillOutcome::Confirm { prompt, disarm } => Acted::Ask(if disarm {
+                app::Prompt::Disarm { name, text: prompt }
+            } else {
+                app::Prompt::Kill { name, text: prompt }
+            }),
             lifecycle::KillOutcome::ConfirmStop { prompt } => {
-                app.confirm = Some(app::Prompt::Stop { name, text: prompt });
-                AppAction::None
+                Acted::Ask(app::Prompt::Stop { name, text: prompt })
             }
-            lifecycle::KillOutcome::Refuse(text) => {
-                app.set_notice(text);
-                AppAction::None
-            }
-            lifecycle::KillOutcome::Ignore => AppAction::None,
+            lifecycle::KillOutcome::Refuse(text) => Acted::Refused(text),
+            lifecycle::KillOutcome::Ignore => Acted::Nothing,
         },
-        _ => AppAction::None,
+        _ => Acted::Nothing,
+    }
+}
+
+/// What the web console asked through the control socket, done as the key would do it - with
+/// `k` already confirmed there, and `f` said as which way it should go rather than as a toggle,
+/// so a second click cannot undo the first.
+fn web_request(
+    request: &cerebro_tui::control::Request,
+    app: &mut App,
+    state: &mut LoopState,
+    config: &LoopConfig,
+    now: DateTime<Utc>,
+) -> (AppAction, cerebro_tui::control::Reply) {
+    use cerebro_tui::control::{Action, Reply};
+    let name = request.name.as_str();
+    if !app.fleet_rows().iter().any(|row| row.name == name) {
+        return (AppAction::None, Reply::refused(format!("There is no agent called {name} in this fleet.")));
+    }
+    let flagged = lifecycle::stop_flag_set(&config.paths, name);
+    let key = match request.action {
+        Action::Start => 's',
+        Action::Finish if flagged && app.supervision.may_supervise() => {
+            return (AppAction::None, Reply::done(format!("{name} will finish after this pass.")));
+        }
+        Action::Resume if !flagged && app.supervision.may_supervise() => {
+            return (AppAction::None, Reply::done(format!("{name} will keep going.")));
+        }
+        Action::Finish | Action::Resume => 'f',
+        Action::Kill | Action::Disarm | Action::Stop => 'k',
+    };
+    let acted = lifecycle_act(key, name, app, &mut state.host, &mut state.ledger, &mut state.logger, &config.paths, now);
+    match acted {
+        Acted::Done { text, refresh } => (if refresh { AppAction::RefreshFleet } else { AppAction::None }, Reply::done(text)),
+        Acted::Refused(text) => (AppAction::None, Reply::refused(text)),
+        Acted::Failed(text) => (AppAction::RefreshFleet, Reply::refused(text)),
+        Acted::Nothing => (AppAction::None, Reply::refused(format!("There is nothing to do about {name}."))),
+        Acted::Ask(prompt) => {
+            // Only what was confirmed: the row may have moved on since the page asked, and a
+            // disarm confirmed on a standby row must not kill the session started since.
+            let text = match (&prompt, request.action) {
+                (app::Prompt::Kill { .. }, Action::Kill) => format!("{name} was killed."),
+                (app::Prompt::Stop { .. }, Action::Stop) => format!("{name}'s start was stopped."),
+                (app::Prompt::Disarm { .. }, Action::Disarm) => lifecycle::disarm_notice(name),
+                _ => {
+                    return (
+                        AppAction::None,
+                        Reply::refused(format!("{name} changed before this arrived, so nothing was done. Ask again.")),
+                    )
+                }
+            };
+            (carry_out(prompt, app, state, config, now), Reply::done(text))
+        }
     }
 }
 
@@ -3341,6 +3453,7 @@ mod main_tests {
             ledger: StartLedger::default(),
             logger: test_logger(),
             controller: SupervisorController::new(&nowhere().0, &RealCommands),
+            control: None,
         }
     }
 
@@ -4665,6 +4778,170 @@ mod main_tests {
             app.notice.as_deref(),
             Some("Started Cyclops, and cleared a stale stop flag.")
         );
+    }
+
+    /// What the web console asked through the control socket, as the loop answers it.
+    fn ask_web(
+        app: &mut App,
+        host: &mut SessionHost,
+        paths: &ReaderPaths,
+        name: &str,
+        action: cerebro_tui::control::Action,
+    ) -> cerebro_tui::control::Reply {
+        let config = LoopConfig { paths: paths.clone(), ..test_config() };
+        let mut state = LoopState { host: std::mem::take(host), ..test_state() };
+        let request = cerebro_tui::control::Request { name: name.to_string(), action };
+        let (_, reply) = web_request(&request, app, &mut state, &config, Utc::now());
+        *host = std::mem::take(&mut state.host);
+        reply
+    }
+
+    #[test]
+    fn a_kill_from_the_web_is_already_confirmed_and_leaves_the_views_keyboard_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let mut app = standby_app(
+            supervising(),
+            vec![fleet_row("Cyclops", AgentKind::Implementer, RowState::Working)],
+            None,
+            Utc::now(),
+        );
+        let mut host = SessionHost::default();
+        host.insert("Cyclops", forever());
+
+        let reply = ask_web(&mut app, &mut host, &paths, "Cyclops", cerebro_tui::control::Action::Kill);
+
+        assert_eq!(reply, cerebro_tui::control::Reply::done("Cyclops was killed."));
+        assert_eq!(app.confirm, None, "nothing waits for a y in the view");
+        assert!(!app.armed.contains("Cyclops"), "a kill disarms, as k does");
+        settle_gone(&mut host, "Cyclops");
+    }
+
+    #[test]
+    fn a_kill_from_the_web_on_a_standby_row_disarms_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let mut app = standby_app(
+            supervising(),
+            vec![planner_row("Xavier", cerebro_tui::model::RowState::Dead)],
+            None,
+            Utc::now(),
+        );
+        let mut host = SessionHost::default();
+
+        let reply = ask_web(&mut app, &mut host, &paths, "Xavier", cerebro_tui::control::Action::Disarm);
+
+        assert_eq!(reply, cerebro_tui::control::Reply::done("Xavier is disarmed; the view will not bring it back."));
+        assert!(!app.armed.contains("Xavier"));
+    }
+
+    #[test]
+    fn a_disarm_confirmed_on_a_row_that_has_since_started_kills_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let mut app = standby_app(
+            supervising(),
+            vec![fleet_row("Cyclops", AgentKind::Implementer, RowState::Working)],
+            None,
+            Utc::now(),
+        );
+        let mut host = SessionHost::default();
+        host.insert("Cyclops", forever());
+
+        let reply = ask_web(&mut app, &mut host, &paths, "Cyclops", cerebro_tui::control::Action::Disarm);
+
+        assert!(!reply.done, "{reply:?}");
+        assert!(host.is_live("Cyclops"), "the session it was not asked to kill runs on");
+        assert!(app.armed.contains("Cyclops"));
+        host.kill(&paths, "Cyclops");
+        settle_gone(&mut host, "Cyclops");
+    }
+
+    #[test]
+    fn finish_and_resume_from_the_web_say_which_way_rather_than_toggle() {
+        use cerebro_tui::control::Action;
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let mut app = lifecycle_app(
+            SupervisionMode::Supervising,
+            vec![fleet_row("Cyclops", AgentKind::Implementer, RowState::Working)],
+        );
+        let mut host = SessionHost::default();
+        host.insert("Cyclops", forever());
+
+        for _ in 0..2 {
+            let reply = ask_web(&mut app, &mut host, &paths, "Cyclops", Action::Finish);
+            assert_eq!(reply.text, "Cyclops will finish after this pass.");
+            assert!(cerebro_tui::lifecycle::stop_flag_set(&paths, "Cyclops"), "a second click keeps the flag");
+        }
+        for _ in 0..2 {
+            let reply = ask_web(&mut app, &mut host, &paths, "Cyclops", Action::Resume);
+            assert_eq!(reply.text, "Cyclops will keep going.");
+            assert!(!cerebro_tui::lifecycle::stop_flag_set(&paths, "Cyclops"));
+        }
+        assert_eq!(app.notice, None, "the web hears it; the view's header is left alone");
+    }
+
+    #[test]
+    fn the_web_starts_the_agent_it_names_not_the_one_the_view_has_selected() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let mut app = lifecycle_app(
+            SupervisionMode::Supervising,
+            vec![
+                fleet_row("Cyclops", AgentKind::Implementer, RowState::Dead),
+                fleet_row("Storm", AgentKind::Implementer, RowState::Dead),
+            ],
+        );
+        app.selected = Some("Storm".to_string());
+        let mut host = SessionHost::default();
+
+        let reply = ask_web(&mut app, &mut host, &paths, "Cyclops", cerebro_tui::control::Action::Start);
+
+        assert!(reply.done && reply.text.starts_with("Started Cyclops"), "{reply:?}");
+        assert!(host.is_live("Cyclops") && !host.is_live("Storm"));
+        assert_eq!(app.selected.as_deref(), Some("Storm"));
+        host.kill(&paths, "Cyclops");
+        settle_gone(&mut host, "Cyclops");
+    }
+
+    #[test]
+    fn a_read_only_view_refuses_the_web_as_it_refuses_the_keys() {
+        use cerebro_tui::control::Action;
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let read_only = SupervisionMode::ReadOnly(cerebro_tui::supervisor::ReadOnlyReason::OwnedBy);
+        for action in [Action::Start, Action::Finish, Action::Resume, Action::Kill, Action::Disarm, Action::Stop] {
+            let mut app = lifecycle_app(
+                read_only.clone(),
+                vec![fleet_row("Cyclops", AgentKind::Implementer, RowState::Dead)],
+            );
+            let mut host = SessionHost::default();
+            let reply = ask_web(&mut app, &mut host, &paths, "Cyclops", action);
+            assert_eq!(
+                reply,
+                cerebro_tui::control::Reply::refused("This view is read-only; it starts and stops nothing"),
+                "for {action:?}"
+            );
+            assert_eq!(host.live_count(), 0);
+            assert!(!cerebro_tui::lifecycle::stop_flag_set(&paths, "Cyclops"));
+        }
+    }
+
+    #[test]
+    fn the_web_cannot_name_an_agent_the_fleet_does_not_have() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let mut app = lifecycle_app(
+            SupervisionMode::Supervising,
+            vec![fleet_row("Cyclops", AgentKind::Implementer, RowState::Dead)],
+        );
+        let mut host = SessionHost::default();
+
+        let reply = ask_web(&mut app, &mut host, &paths, "Nobody", cerebro_tui::control::Action::Start);
+
+        assert!(!reply.done);
+        assert_eq!(host.live_count(), 0);
     }
 
     #[test]

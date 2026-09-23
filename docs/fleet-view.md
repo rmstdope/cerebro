@@ -245,6 +245,11 @@ and the view holds still while output arrives, titled `[n lines back, PgDn retur
 cursor. Any key that does reach the agent returns it to the bottom. A published session also
 takes typing from the web console: `src/inbox.rs` listens on a Unix socket per session, named as
 `input` in its `<name>.json`, and writes each connection's bytes to the pty as the keyboard does.
+A supervising view also takes the web console's start, finish and kill: `src/control.rs` listens
+on one socket, named as `control` in `standby.json`, and the loop answers each request every frame
+with what `s`, `f` or `k` on that row would have done and said, without touching the selection. A
+kill, disarm or stop arrives already confirmed, and is refused if the row now calls for another;
+`finish` and `resume` name which way the stop flag goes rather than toggling it.
 Since cb-lor **arriving
 at the Fleet pane by `Tab` or `F1` drops a bead pinned in the Session pane** by `Enter` on a Work row
 (cb-41r), so that pane goes back to drawing the selected agent, at its top; `F2` and `F3` leave a

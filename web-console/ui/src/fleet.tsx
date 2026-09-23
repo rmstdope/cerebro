@@ -1,10 +1,11 @@
 import { useState } from "react";
-import { Search } from "lucide-react";
+import { Flag, Search } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { type Agent, type Bead, running, since, stateOf } from "./api";
 import { SessionScreen } from "./session";
+import { ActionBar, FinishingStrip, type Offer, offersFor, SaidLine, type Said } from "./actions";
 
 const tones: Record<string, { dot: string; text: string; badge: string }> = {
   working: { dot: "bg-emerald-500 animate-breathe", text: "text-muted-foreground", badge: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400" },
@@ -35,7 +36,7 @@ export function FleetSidebar({ agents, selected, now, onSelect }: { agents: Agen
       className={cn("flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left transition-colors hover:bg-muted", active && "bg-muted ring-1 ring-border", !running(agent) && "py-1.5", stateOf(agent) === "dead" && "opacity-60")}>
       <StatusDot agent={agent} />
       <span className="min-w-0 flex-1">
-        <span className="block font-medium">{agent.name}</span>
+        <span className="flex items-center gap-1.5 font-medium">{agent.name}{agent.finishing && <Flag aria-label="finishing after this pass" className="size-3 text-amber-500" />}</span>
         {running(agent) && <span className={cn("block truncate text-xs", tone(agent).text)}>{agent.role} · {activity(agent)}</span>}
       </span>
       {running(agent)
@@ -66,7 +67,9 @@ export function FleetSidebar({ agents, selected, now, onSelect }: { agents: Agen
   </aside>;
 }
 
-export function AgentPane({ agent, bead, now }: { agent: Agent; bead?: Bead; now: number }) {
+export type Controls = { supervised: boolean; busy: boolean; said?: Said; onAct: (offer: Offer) => void };
+
+export function AgentPane({ agent, bead, now, controls }: { agent: Agent; bead?: Bead; now: number; controls: Controls }) {
   const phaseAge = since(now, agent.phase_since ?? agent.since);
   return <section aria-label={`${agent.name} details`} className="flex min-h-0 min-w-0 flex-1 flex-col gap-4">
     <div className="flex flex-wrap items-start justify-between gap-4">
@@ -83,12 +86,15 @@ export function AgentPane({ agent, bead, now }: { agent: Agent; bead?: Bead; now
         </p>
         {agent.diagnostic && <p className="mt-1 text-sm text-amber-700 dark:text-amber-300">{agent.diagnostic}</p>}
       </div>
+      <ActionBar agent={agent} supervised={controls.supervised} busy={controls.busy} onAct={controls.onAct} />
       <dl className="grid grid-cols-3 gap-6 text-xs">
         <div><dt className="text-muted-foreground">Since</dt><dd className="mt-0.5">{agent.since ? new Date(agent.since).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—"}</dd></div>
         <div><dt className="text-muted-foreground">Sessions</dt><dd className="mt-0.5">{agent.sessions ?? "—"}</dd></div>
         <div><dt className="text-muted-foreground">PID</dt><dd className="mt-0.5 font-mono">{agent.pid ?? "—"}</dd></div>
       </dl>
     </div>
+    <FinishingStrip agent={agent} supervised={controls.supervised} onResume={() => { const offer = offersFor(agent).find(item => item.action === "resume"); if (offer) controls.onAct(offer); }} />
+    <SaidLine said={controls.said} />
     {running(agent)
       ? <SessionScreen key={agent.name} name={agent.name} />
       : <div className="grid flex-1 place-items-center rounded-xl border border-dashed text-sm text-muted-foreground">{stateOf(agent) === "standby" ? `${agent.name} is on standby: the fleet view starts it when there is work for it.` : `${agent.name} is not running, so there is no session to show.`}</div>}

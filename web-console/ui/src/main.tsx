@@ -1,16 +1,37 @@
-import { StrictMode, useEffect, useState } from "react";
+import { StrictMode, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { BrainCircuit, Eye, MessageCircleQuestion, Moon, RefreshCw, Sun, TriangleAlert } from "lucide-react";
+import { BrainCircuit, Command, Eye, MessageCircleQuestion, Moon, RefreshCw, ShieldCheck, Sun, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { type Agent, type Work, epicOf, running, since, stateOf, useNow, useSnapshot, valueOf } from "./api";
 import { AgentPane, FleetSidebar } from "./fleet";
+import { Palette, offersFor, typingInto, unsupervised, useLifecycle } from "./actions";
 import { BeadDialog, WorkBoard, lanesOf } from "./work";
 import "./index.css";
 
 type Tab = "fleet" | "work";
-const notice = "This page lets you inspect the fleet and its work. Start, stop, assign, and priority controls stay in the terminal console.";
+const notice = "This page lets you inspect the fleet and its work. " + unsupervised;
+const controlling = "Start, finish and kill (s, f, k, or ⌘K) are done by the fleet view supervising this checkout. Assign and priority controls stay in the terminal console.";
+
+/// Whether a fleet view supervises this checkout and takes the console's start, finish and kill.
+function useSupervised() {
+  const [supervised, setSupervised] = useState(false);
+  const retry = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const refresh = async () => {
+    clearTimeout(retry.current);
+    let known = false;
+    try {
+      const response = await fetch("/api/control");
+      const state = response.ok ? await response.json() as { supervised?: boolean; error?: string } : undefined;
+      // An answer that could not be read says nothing either way, so the last one stands and it
+      // is asked again until one can.
+      if (state && !state.error) { setSupervised(state.supervised === true); known = true; }
+    } catch { /* asked again below */ }
+    if (!known) retry.current = setTimeout(() => void refresh(), 3000);
+  };
+  return [supervised, refresh] as const;
+}
 
 function useTheme() {
   const [dark, setDark] = useState(() => document.documentElement.classList.contains("dark"));
@@ -34,12 +55,16 @@ function App() {
   const [openBead, setOpenBead] = useState<string>();
   const [dark, toggleTheme] = useTheme();
   const now = useNow();
-  const refresh = async () => { setRefreshing(true); await Promise.all([fleet.refresh(), work.refresh()]); setRefreshing(false); };
+  const [supervised, refreshControl] = useSupervised();
+  const [palette, setPalette] = useState(false);
+  const lifecycle = useLifecycle(supervised, () => { void fleet.refresh(); void work.refresh(); });
+  const refresh = async () => { setRefreshing(true); await Promise.all([fleet.refresh(), work.refresh(), refreshControl()]); setRefreshing(false); };
   useEffect(() => {
     void refresh();
     const events = new EventSource("/api/events");
     events.addEventListener("fleet", () => void fleet.refresh());
     events.addEventListener("work", () => void work.refresh());
+    events.addEventListener("control", () => void refreshControl());
     return () => events.close();
   }, []);
   const show = (next: Tab) => { setTab(next); sessionStorage.setItem("cerebro-tab", next); };
@@ -51,6 +76,28 @@ function App() {
   const beads = lanes.flatMap(lane => lane.beads);
   const agent = agents.find(item => item.name === chosen) ?? firstAgent(agents);
   const bead = openBead ? beads.find(item => item.id === openBead) : undefined;
+  // The fleet view's keys: s, f and k on the chosen agent while nobody is typing, and ⌘K for
+  // every action on every agent - from anywhere, since no session binds ⌘.
+  const keys = useRef({ agent, tab, lifecycle, open: false });
+  keys.current = { agent, tab, lifecycle, open: palette || lifecycle.asking || bead !== undefined };
+  useEffect(() => {
+    const press = (event: KeyboardEvent) => {
+      const { agent, tab, lifecycle, open } = keys.current;
+      if (event.key.toLowerCase() === "k" && (event.metaKey || (event.ctrlKey && !typingInto(event.target)))) {
+        event.preventDefault();
+        event.stopPropagation();
+        setPalette(true);
+        return;
+      }
+      if (open || tab !== "fleet" || !agent || event.metaKey || event.ctrlKey || event.altKey || typingInto(event.target)) return;
+      const offer = offersFor(agent).find(item => item.key === event.key);
+      if (!offer) return;
+      event.preventDefault();
+      lifecycle.perform(agent, offer);
+    };
+    window.addEventListener("keydown", press, true);
+    return () => window.removeEventListener("keydown", press, true);
+  }, []);
   useEffect(() => { if (openBead && board && !bead) setOpenBead(undefined); }, [board]);
 
   const asking = agents.filter(item => stateOf(item) === "asking");
@@ -69,9 +116,12 @@ function App() {
         </nav>
         <div className="ml-auto flex items-center gap-3 text-sm text-muted-foreground">
           <Tooltip>
-            <TooltipTrigger render={<span className="hidden items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs sm:inline-flex" />}><Eye className="size-3.5" />Read-only</TooltipTrigger>
-            <TooltipContent side="bottom">{notice}</TooltipContent>
+            <TooltipTrigger render={<span className="hidden items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs sm:inline-flex" />}>
+              {supervised ? <><ShieldCheck className="size-3.5 text-emerald-500" />Supervised</> : <><Eye className="size-3.5" />Read-only</>}
+            </TooltipTrigger>
+            <TooltipContent side="bottom">{supervised ? controlling : notice}</TooltipContent>
           </Tooltip>
+          <Button variant="outline" size="sm" onClick={() => setPalette(true)} aria-label="Actions" className="hidden text-muted-foreground sm:inline-flex"><Command />K</Button>
           <span className="hidden items-center gap-1.5 sm:inline-flex">
             <span className={cn("size-1.5 rounded-full", stale ? "bg-amber-400" : updated ? "bg-emerald-500" : "bg-zinc-400")} />
             {updated ? `${stale ? "Stale" : "Live"} · updated ${since(now, updated)} ago` : "Connecting…"}
@@ -104,7 +154,8 @@ function App() {
           : <>
             <FleetSidebar agents={agents} selected={agent?.name} now={now} onSelect={choose} />
             <main className="flex min-h-0 min-w-0 flex-1 flex-col p-5">
-              {agent && <AgentPane agent={agent} bead={agent.bead ? beads.find(item => item.id === agent.bead) : undefined} now={now} />}
+              {agent && <AgentPane agent={agent} bead={agent.bead ? beads.find(item => item.id === agent.bead) : undefined} now={now}
+                controls={{ supervised, busy: lifecycle.busy, said: lifecycle.said, onAct: offer => lifecycle.perform(agent, offer) }} />}
             </main>
           </>}
       </div>}
@@ -113,6 +164,9 @@ function App() {
         : !board ? <p className="p-5 text-sm">Couldn’t load work. Try refreshing this page.</p>
         : <WorkBoard work={board} agents={agents} onOpen={setOpenBead} />)}
 
+      {lifecycle.dialog}
+      <Palette open={palette} agents={agents} selected={agent?.name} supervised={supervised} onClose={() => setPalette(false)}
+        onAct={(target, offer) => { choose(target.name); lifecycle.perform(target, offer); }} />
       {bead && <BeadDialog bead={bead} lane={lanes.find(lane => lane.beads.some(item => item.id === bead.id))?.name}
         epic={epicOf(bead.id, board?.epics)?.title} onClose={() => setOpenBead(undefined)} />}
     </div>

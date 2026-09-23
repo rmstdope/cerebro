@@ -70,6 +70,7 @@
 //! `tests/lib/` table for two views to answer.
 
 pub mod app;
+pub mod control;
 pub mod give;
 pub mod history;
 pub mod inbox;

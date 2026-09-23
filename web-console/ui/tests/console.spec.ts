@@ -513,3 +513,134 @@ test("what is typed while a refused paste is still going out goes with the paste
   await page.keyboard.type("z");
   await expect.poll(() => typed.slice(1).join("")).toBe("z");
 });
+
+type Asked = { path: string; header: string | null };
+
+/// A fleet, a fleet view that does or does not supervise it, and a record of what was asked of it.
+async function controlled(page: import("@playwright/test").Page, agents: object[], supervised = true, reply = (path: string) => ({ done: true, text: `did ${path}` })) {
+  const asked: Asked[] = [];
+  await page.route("/api/fleet", (route) => route.fulfill({ json: { state: "fresh", value: agents } }));
+  await page.route("/api/control", (route) => route.fulfill({ json: { supervised } }));
+  await page.route(/\/api\/sessions\//, (route) => route.fulfill({ json: { state: "absent" } }));
+  await page.route(/\/api\/agents\//, (route) => {
+    const path = new URL(route.request().url()).pathname;
+    asked.push({ path, header: route.request().headers()["x-cerebro-input"] ?? null });
+    return route.fulfill({ json: reply(path) });
+  });
+  await page.goto("/");
+  return asked;
+}
+
+const storm = { name: "Storm", role: "producer", state: "Working", bead: "cb-1" };
+const moira = { name: "Moira", role: "user-feedback", state: "Standby" };
+
+test("the action bar asks the supervising fleet view, and says what it answered", async ({ page }) => {
+  const asked = await controlled(page, [storm], true, () => ({ done: true, text: "Storm will finish after this pass." }));
+  await expect(page.getByText("Supervised")).toBeVisible();
+
+  await page.getByRole("toolbar", { name: "Storm actions" }).getByRole("button", { name: /Finish after this pass/ }).click();
+
+  await expect(page.getByRole("status", { name: "Action result" })).toHaveText("Storm will finish after this pass.");
+  expect(asked).toEqual([{ path: "/api/agents/Storm/finish", header: "1" }]);
+});
+
+test("a kill asks first, names the bead, and y confirms it", async ({ page }) => {
+  const asked = await controlled(page, [storm]);
+  await expect(page.getByRole("toolbar", { name: "Storm actions" })).toBeVisible();
+
+  await page.keyboard.press("k");
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toContainText("Kill Storm?");
+  await expect(dialog).toContainText("Its bead cb-1 stays claimed.");
+  expect(asked).toEqual([]);
+  await page.keyboard.press("y");
+
+  await expect(dialog).toBeHidden();
+  await expect.poll(() => asked.map(item => item.path)).toEqual(["/api/agents/Storm/kill"]);
+});
+
+test("a cancelled kill asks nothing of the fleet view", async ({ page }) => {
+  const asked = await controlled(page, [storm]);
+  await page.getByRole("toolbar", { name: "Storm actions" }).getByRole("button", { name: /Kill/ }).click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+
+  await page.keyboard.press("Escape");
+
+  await expect(page.getByRole("dialog")).toBeHidden();
+  await page.waitForTimeout(300);
+  expect(asked).toEqual([]);
+});
+
+test("keys typed into a session are the session's, not the page's", async ({ page }) => {
+  const asked = await controlled(page, [storm]);
+  const typed: string[] = [];
+  await page.route("/api/sessions/Storm/input", async (route) => { typed.push(route.request().postData() ?? ""); await route.fulfill({ status: 204 }); });
+  await page.route(/\/api\/sessions\/Storm(\?|$)/, (route) => route.fulfill({ json: { state: "live", log: "Storm.1-0-0.log", reset: true, data: "\u001b[8;5;40tready", offset: 21, more: false } }));
+  await page.reload();
+  const region = page.getByRole("region", { name: "Storm session" });
+  await expect(region.locator(".xterm-rows")).toContainText("ready");
+
+  await region.locator(".xterm-screen").click();
+  await page.keyboard.press("f");
+
+  await expect.poll(() => typed.join("")).toBe("f");
+  expect(asked).toEqual([]);
+});
+
+test("⌘K finds any action on any agent", async ({ page }) => {
+  const asked = await controlled(page, [storm, moira]);
+  await expect(page.getByRole("toolbar", { name: "Storm actions" })).toBeVisible();
+
+  await page.keyboard.press("Meta+k");
+  const palette = page.getByRole("listbox", { name: "Actions" });
+  await expect(palette.getByRole("option", { name: /Kill Storm/ })).toBeVisible();
+  await page.getByRole("combobox", { name: "Find an action" }).fill("disarm");
+  await expect(palette.getByRole("option")).toHaveText([/Disarm Moira/]);
+  await page.keyboard.press("Enter");
+
+  await expect(page.getByRole("dialog")).toContainText("Disarm Moira?");
+  await page.getByRole("button", { name: /Disarm Moira/ }).click();
+  await expect.poll(() => asked.map(item => item.path)).toEqual(["/api/agents/Moira/disarm"]);
+  await expect(page.getByRole("heading", { level: 2, name: "Moira" })).toBeVisible();
+});
+
+test("with no fleet view supervising, nothing can be done and the page says why", async ({ page }) => {
+  const asked = await controlled(page, [storm], false);
+  const toolbar = page.getByRole("toolbar", { name: "Storm actions" });
+
+  await expect(page.getByText("Read-only")).toBeVisible();
+  await expect(toolbar.getByRole("button", { name: /Kill/ })).toBeDisabled();
+  await page.keyboard.press("f");
+
+  await expect(page.getByRole("status", { name: "Action result" })).toContainText("No fleet view is supervising");
+  expect(asked).toEqual([]);
+});
+
+test("an agent that will finish after this pass says so and can be kept going", async ({ page }) => {
+  const asked = await controlled(page, [{ ...storm, finishing: true }]);
+  await expect(page.getByText("Storm will stop when this pass ends")).toBeVisible();
+  await expect(page.getByRole("toolbar", { name: "Storm actions" }).getByRole("button", { name: /Keep going/ })).toBeVisible();
+
+  await page.getByRole("button", { name: "Keep it running" }).click();
+
+  await expect.poll(() => asked.map(item => item.path)).toEqual(["/api/agents/Storm/resume"]);
+});
+
+test("an agent that is not running can be started", async ({ page }) => {
+  const asked = await controlled(page, [{ name: "Rogue", role: "producer", state: "Dead" }]);
+
+  await page.getByRole("toolbar", { name: "Rogue actions" }).getByRole("button", { name: /Start/ }).click();
+
+  await expect.poll(() => asked.map(item => item.path)).toEqual(["/api/agents/Rogue/start"]);
+});
+
+test("a supervision answer that could not be read is asked again", async ({ page }) => {
+  const readable = Date.now() + 1500;
+  await page.route("/api/fleet", (route) => route.fulfill({ json: { state: "fresh", value: [storm] } }));
+  await page.route(/\/api\/sessions\//, (route) => route.fulfill({ json: { state: "absent" } }));
+  await page.route("/api/control", (route) => route.fulfill({ json: Date.now() < readable ? { supervised: false, error: "unreadable" } : { supervised: true } }));
+  await page.goto("/");
+  await expect(page.getByText("Read-only")).toBeVisible();
+
+  await expect(page.getByText("Supervised")).toBeVisible({ timeout: 8000 });
+});

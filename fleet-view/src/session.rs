@@ -577,6 +577,9 @@ fn write_publication(dir: &std::path::Path, publication: &PublishedSession) -> s
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct PublishedStandby {
     pub names: std::collections::BTreeSet<String>,
+    /// The socket that asks this view to start, finish or kill (`control`), while it has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub control: Option<String>,
     pub updated_at: DateTime<Utc>,
 }
 
@@ -584,7 +587,7 @@ pub struct PublishedStandby {
 /// reader can tell a live view from a file a gone one left behind.
 #[derive(Default)]
 pub struct StandbyPublisher {
-    last: Option<(std::collections::BTreeSet<String>, Instant)>,
+    last: Option<(std::collections::BTreeSet<String>, Option<String>, Instant)>,
 }
 
 impl StandbyPublisher {
@@ -592,18 +595,19 @@ impl StandbyPublisher {
         &mut self,
         path: &std::path::Path,
         names: std::collections::BTreeSet<String>,
+        control: Option<String>,
         now: Instant,
         at: DateTime<Utc>,
     ) {
-        let due = self.last.as_ref().is_none_or(|(last, when)| {
-            *last != names || now.saturating_duration_since(*when) >= SCREEN_REFRESH
+        let due = self.last.as_ref().is_none_or(|(last, socket, when)| {
+            *last != names || *socket != control || now.saturating_duration_since(*when) >= SCREEN_REFRESH
         });
         if !due {
             return;
         }
-        let publication = PublishedStandby { names, updated_at: at };
+        let publication = PublishedStandby { names, control, updated_at: at };
         if write_atomically(path, &publication).is_ok() {
-            self.last = Some((publication.names, now));
+            self.last = Some((publication.names, publication.control, now));
         }
     }
 
@@ -1392,22 +1396,24 @@ mod tests {
         let at = |seconds: i64| DateTime::<Utc>::from_timestamp(1_000 + seconds, 0).unwrap();
         let mut publisher = StandbyPublisher::default();
 
-        publisher.publish(&path, names(&["Moira"]), start, at(0));
-        assert_eq!(standby_at(&path).unwrap(), PublishedStandby { names: names(&["Moira"]), updated_at: at(0) });
+        publisher.publish(&path, names(&["Moira"]), None, start, at(0));
+        assert_eq!(standby_at(&path).unwrap(), PublishedStandby { names: names(&["Moira"]), control: None, updated_at: at(0) });
 
-        publisher.publish(&path, names(&["Moira"]), start + Duration::from_secs(1), at(1));
+        publisher.publish(&path, names(&["Moira"]), None, start + Duration::from_secs(1), at(1));
         assert_eq!(standby_at(&path).unwrap().updated_at, at(0), "unchanged and not yet due");
 
-        publisher.publish(&path, names(&[]), start + Duration::from_secs(2), at(2));
-        assert_eq!(standby_at(&path).unwrap(), PublishedStandby { names: names(&[]), updated_at: at(2) });
+        publisher.publish(&path, names(&[]), None, start + Duration::from_secs(2), at(2));
+        assert_eq!(standby_at(&path).unwrap(), PublishedStandby { names: names(&[]), control: None, updated_at: at(2) });
 
-        publisher.publish(&path, names(&[]), start + Duration::from_secs(2) + SCREEN_REFRESH, at(7));
+        publisher.publish(&path, names(&[]), None, start + Duration::from_secs(2) + SCREEN_REFRESH, at(7));
         assert_eq!(standby_at(&path).unwrap().updated_at, at(7), "refreshed");
 
         publisher.withdraw();
         assert_eq!(standby_at(&path).unwrap().updated_at, at(7), "another view's file is not touched");
-        publisher.publish(&path, names(&[]), start + Duration::from_secs(8), at(8));
+        publisher.publish(&path, names(&[]), None, start + Duration::from_secs(8), at(8));
         assert_eq!(standby_at(&path).unwrap().updated_at, at(8), "supervising again publishes at once");
+        publisher.publish(&path, names(&[]), Some("/tmp/c.sock".into()), start + Duration::from_secs(9), at(9));
+        assert_eq!(standby_at(&path).unwrap().control.as_deref(), Some("/tmp/c.sock"), "a control socket, at once");
     }
 
     fn key(code: KeyCode) -> KeyEvent {

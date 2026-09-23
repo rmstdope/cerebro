@@ -686,6 +686,7 @@ async fn fleet_states(root: &std::path::Path) -> Vec<(String, String)> {
 fn publish_standby(root: &std::path::Path, names: &[&str], age: chrono::Duration) {
     let publication = cerebro_tui::PublishedStandby {
         names: names.iter().map(|name| name.to_string()).collect(),
+        control: None,
         updated_at: chrono::Utc::now() - age,
     };
     std::fs::create_dir_all(root.join(".cerebro/state")).unwrap();
@@ -814,4 +815,160 @@ async fn a_session_nobody_hosts_cannot_be_typed_into() {
     publish(root.path(), "Old", chrono::Duration::seconds(60), b"");
     assert_eq!(type_into(root.path(), typing("Old", &[], b"x")).await, StatusCode::NOT_FOUND);
     assert_eq!(type_into(root.path(), typing("..", &[], b"x")).await, StatusCode::BAD_REQUEST);
+}
+
+/// A supervising fleet view's publication, naming SOCKET as its control socket.
+fn publish_control(root: &std::path::Path, socket: Option<&std::path::Path>, age: chrono::Duration) {
+    let publication = cerebro_tui::PublishedStandby {
+        names: Default::default(),
+        control: socket.map(|socket| socket.to_string_lossy().into_owned()),
+        updated_at: chrono::Utc::now() - age,
+    };
+    std::fs::create_dir_all(root.join(".cerebro/state")).unwrap();
+    std::fs::write(root.join(".cerebro/state/standby.json"), serde_json::to_string(&publication).unwrap()).unwrap();
+}
+
+fn acting(name: &str, action: &str, headers: &[(&str, &str)]) -> Request<Body> {
+    let mut request = Request::builder()
+        .method(Method::POST)
+        .uri(format!("/api/agents/{name}/{action}"))
+        .header("host", "localhost:5173")
+        .header("x-cerebro-input", "1");
+    for (key, value) in headers {
+        request = request.header(*key, *value);
+    }
+    request.body(Body::empty()).unwrap()
+}
+
+async fn act(root: &std::path::Path, request: Request<Body>) -> (StatusCode, serde_json::Value) {
+    let response = service_at(root).router().oneshot(request).await.unwrap();
+    let status = response.status();
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    (status, serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null))
+}
+
+#[tokio::test]
+async fn an_action_is_done_by_the_supervising_fleet_view_and_its_answer_returned() {
+    let root = tempfile::tempdir().unwrap();
+    let socket = root.path().join("control.sock");
+    let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+    publish_control(root.path(), Some(&socket), chrono::Duration::zero());
+    let view = std::thread::spawn(move || {
+        use std::io::Write as _;
+        let (mut stream, _) = listener.accept().unwrap();
+        let asked = cerebro_tui::inbox::message(&mut stream).unwrap();
+        let reply = cerebro_tui::control::Reply::done("Storm was killed.");
+        stream.write_all(&cerebro_tui::inbox::framed(&serde_json::to_vec(&reply).unwrap())).unwrap();
+        serde_json::from_slice::<cerebro_tui::control::Request>(&asked).unwrap()
+    });
+
+    let (status, body) = act(root.path(), acting("Storm", "kill", &[("origin", "http://localhost:5173")])).await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, serde_json::json!({"done": true, "text": "Storm was killed."}));
+    assert_eq!(
+        view.join().unwrap(),
+        cerebro_tui::control::Request { name: "Storm".into(), action: cerebro_tui::control::Action::Kill }
+    );
+}
+
+#[tokio::test]
+async fn with_no_supervising_fleet_view_nothing_is_done() {
+    let root = tempfile::tempdir().unwrap();
+    let (status, body) = act(root.path(), acting("Storm", "start", &[])).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(body["done"], false);
+
+    // A view that stopped refreshing, or one that is read-only and names no socket.
+    let socket = root.path().join("control.sock");
+    let _listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+    publish_control(root.path(), Some(&socket), chrono::Duration::seconds(60));
+    assert_eq!(act(root.path(), acting("Storm", "start", &[])).await.0, StatusCode::SERVICE_UNAVAILABLE);
+    publish_control(root.path(), None, chrono::Duration::zero());
+    assert_eq!(act(root.path(), acting("Storm", "start", &[])).await.0, StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[tokio::test]
+async fn only_this_console_may_act_and_only_as_it_knows_how() {
+    let root = tempfile::tempdir().unwrap();
+    let socket = root.path().join("control.sock");
+    let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    publish_control(root.path(), Some(&socket), chrono::Duration::zero());
+
+    let cross_site = act(root.path(), acting("Storm", "kill", &[("origin", "https://evil.example")])).await.0;
+    let mut unmarked = acting("Storm", "kill", &[]);
+    unmarked.headers_mut().remove("x-cerebro-input");
+    let unmarked = act(root.path(), unmarked).await.0;
+    let unknown = act(root.path(), acting("Storm", "explode", &[])).await.0;
+    let dotted = act(root.path(), acting("..", "kill", &[])).await.0;
+
+    assert_eq!(cross_site, StatusCode::FORBIDDEN);
+    assert_eq!(unmarked, StatusCode::FORBIDDEN);
+    assert_eq!(unknown, StatusCode::NOT_FOUND);
+    assert_eq!(dotted, StatusCode::BAD_REQUEST);
+    assert!(listener.accept().is_err(), "nothing reached the fleet view");
+}
+
+#[tokio::test]
+async fn the_console_says_whether_a_fleet_view_takes_its_actions() {
+    let root = tempfile::tempdir().unwrap();
+    let supervised = |root: std::path::PathBuf| async move {
+        let response = service_at(&root).router().oneshot(get("/api/control")).await.unwrap();
+        let body: serde_json::Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+        body["supervised"].as_bool().unwrap()
+    };
+
+    assert!(!supervised(root.path().to_path_buf()).await);
+    publish_control(root.path(), Some(&root.path().join("control.sock")), chrono::Duration::zero());
+    assert!(supervised(root.path().to_path_buf()).await);
+    publish_control(root.path(), Some(&root.path().join("control.sock")), chrono::Duration::seconds(60));
+    assert!(!supervised(root.path().to_path_buf()).await);
+}
+
+#[tokio::test]
+async fn a_publication_that_cannot_be_read_is_a_fault_not_an_unsupervised_checkout() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(root.path().join(".cerebro/state")).unwrap();
+    std::fs::write(root.path().join(".cerebro/state/standby.json"), "{ not json").unwrap();
+
+    let response = service_at(root.path()).router().oneshot(get("/api/control")).await.unwrap();
+    let body: serde_json::Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+    let (status, acted) = act(root.path(), acting("Storm", "start", &[])).await;
+
+    assert!(body["error"].is_string(), "{body}");
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert!(acted["text"].as_str().unwrap().starts_with("Couldn’t read"), "{acted}");
+}
+
+#[tokio::test]
+async fn an_agent_whose_stop_flag_is_set_is_reported_finishing() {
+    let root = tempfile::tempdir().unwrap();
+    let paths = ReaderPaths {
+        consumer_root: root.path().to_path_buf(),
+        shared_root: root.path().to_path_buf(),
+        scripts_dir: root.path().join("scripts"),
+    };
+    cerebro_tui::lifecycle::write_stop_flag(&paths, "Storm").unwrap();
+    let service = ReadOnlyService::new(
+        paths,
+        Programs::default(),
+        Arc::new(TwoDeadCommands),
+        SupervisionMode::Supervising,
+        PathBuf::from("/assets"),
+    );
+
+    let response = service.router().oneshot(get("/api/fleet")).await.unwrap();
+    let body: serde_json::Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+
+    let finishing: Vec<(String, bool)> = body["value"]
+        .as_array()
+        .unwrap_or_else(|| panic!("not a fresh fleet: {body}"))
+        .iter()
+        .map(|row| (row["name"].as_str().unwrap().to_string(), row["finishing"].as_bool().unwrap_or(false)))
+        .collect();
+    assert_eq!(finishing, vec![("Storm".to_string(), true), ("Moira".to_string(), false)]);
 }

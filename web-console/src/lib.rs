@@ -41,11 +41,12 @@ const INPUT_LIMIT: usize = 256 * 1024;
 /// without the browser asking this service first, and this service never says yes.
 const INPUT_HEADER: &str = "x-cerebro-input";
 
-/// A local HTTP boundary for browser-console reads, and for typing into a session the fleet view
-/// hosts, which is the one thing it writes.
+/// A local HTTP boundary for browser-console reads. It writes nothing itself: typing goes to the
+/// session's inbox and start, finish and kill to the supervising fleet view's control socket, so
+/// the fleet view stays the one process that acts on its sessions.
 ///
-/// Reader and supervision dependencies are supplied rather than rediscovered so future endpoints
-/// can reuse the fleet view's bounded, read-only abstractions without gaining lifecycle access.
+/// Reader and supervision dependencies are supplied rather than rediscovered so endpoints reuse
+/// the fleet view's bounded abstractions.
 pub struct ReadOnlyService {
     reader_paths: ReaderPaths,
     programs: Programs,
@@ -65,7 +66,7 @@ struct SnapshotState {
 
 #[derive(Default)]
 struct SnapshotCache {
-    fleet: Slot<Vec<FleetRow>>,
+    fleet: Slot<Vec<Agent>>,
     work: Slot<WorkBuckets>,
     health: Slot<FleetHealth>,
 }
@@ -168,6 +169,8 @@ impl ReadOnlyService {
             .route("/api/work", get(work_snapshot))
             .route("/api/health", get(health_snapshot))
             .route("/api/events", get(event_stream))
+            .route("/api/control", get(control_snapshot))
+            .route("/api/agents/{name}/{action}", post(agent_action))
             .route("/api/sessions/{name}", get(session_output))
             .route(
                 "/api/sessions/{name}/input",
@@ -180,7 +183,7 @@ impl ReadOnlyService {
     }
 }
 
-async fn fleet_snapshot(State(state): State<SnapshotState>) -> Json<Snapshot<Vec<FleetRow>>> {
+async fn fleet_snapshot(State(state): State<SnapshotState>) -> Json<Snapshot<Vec<Agent>>> {
     Json(state.fleet(Duration::ZERO, None).await.1)
 }
 
@@ -201,12 +204,18 @@ async fn health_snapshot(State(state): State<SnapshotState>) -> Json<Snapshot<Fl
 
 impl SnapshotState {
     /// The fleet, and when its read finished, on `snapshot`'s terms.
-    async fn fleet(&self, fresh: Duration, after: Option<Instant>) -> (Instant, Snapshot<Vec<FleetRow>>) {
+    async fn fleet(&self, fresh: Duration, after: Option<Instant>) -> (Instant, Snapshot<Vec<Agent>>) {
         let reader = self.clone();
         snapshot(&self.snapshots.fleet, fresh, after, move || {
             let rows = read_fleet(&reader.reader_paths, &reader.programs, reader.commands.as_ref())?;
-            let standby = read_standby(&reader.reader_paths.shared_root.join(".cerebro/state/standby.json"))?;
-            Ok(cerebro_tui::model::apply_standby(rows, &standby, &Default::default()))
+            let standby = read_standby(&standby_path(&reader.reader_paths))?;
+            Ok(cerebro_tui::model::apply_standby(rows, &standby, &Default::default())
+                .into_iter()
+                .map(|row| Agent {
+                    finishing: cerebro_tui::lifecycle::stop_flag_set(&reader.reader_paths, &row.name),
+                    row,
+                })
+                .collect())
         })
         .await
     }
@@ -354,22 +363,112 @@ fn write_input(dir: &std::path::Path, name: &str, bytes: &[u8]) -> StatusCode {
     }
 }
 
-/// The names the supervising fleet view holds on standby. No publication, or one it stopped
-/// refreshing, means no live view and so nobody on standby; one that does not parse is a fault.
-fn read_standby(path: &std::path::Path) -> Result<std::collections::BTreeSet<String>, cerebro_tui::ReadError> {
+/// An agent as the console shows it: the fleet view's row, and whether its stop flag is set.
+#[derive(Clone, Serialize)]
+pub struct Agent {
+    #[serde(flatten)]
+    row: FleetRow,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    finishing: bool,
+}
+
+fn standby_path(paths: &ReaderPaths) -> std::path::PathBuf {
+    paths.shared_root.join(".cerebro/state/standby.json")
+}
+
+/// What the supervising fleet view publishes. No publication, or one it stopped refreshing,
+/// means no live view; one that does not parse is a fault.
+fn read_publication(path: &std::path::Path) -> Result<Option<cerebro_tui::PublishedStandby>, cerebro_tui::ReadError> {
     let invalid = |message: String| cerebro_tui::ReadError::Invalid {
         source: cerebro_tui::Invocation::new(path, &[]),
         message,
     };
     let text = match std::fs::read_to_string(path) {
         Ok(text) => text,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Default::default()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(invalid(error.to_string())),
     };
     let publication = serde_json::from_str::<cerebro_tui::PublishedStandby>(&text)
         .map_err(|error| invalid(error.to_string()))?;
     let age = Utc::now().signed_duration_since(publication.updated_at).num_seconds();
-    Ok(if age >= SCREEN_STALE_SECONDS { Default::default() } else { publication.names })
+    Ok((age < SCREEN_STALE_SECONDS).then_some(publication))
+}
+
+/// The names the supervising fleet view holds on standby; nobody, with no live view.
+fn read_standby(path: &std::path::Path) -> Result<std::collections::BTreeSet<String>, cerebro_tui::ReadError> {
+    Ok(read_publication(path)?.map(|publication| publication.names).unwrap_or_default())
+}
+
+/// The socket a live, supervising fleet view takes start, finish and kill requests on; none with
+/// no such view, and an error when its publication cannot be read.
+fn control_socket(paths: &ReaderPaths) -> Result<Option<String>, String> {
+    read_publication(&standby_path(paths))
+        .map(|publication| publication.and_then(|publication| publication.control))
+        .map_err(|error| error.to_string())
+}
+
+async fn read_control(paths: &ReaderPaths) -> Result<Option<String>, String> {
+    let paths = paths.clone();
+    tokio::task::spawn_blocking(move || control_socket(&paths))
+        .await
+        .unwrap_or_else(|panic| Err(panic.to_string()))
+}
+
+#[derive(Serialize)]
+struct ControlState {
+    /// A fleet view supervises this checkout and will take start, finish and kill requests.
+    supervised: bool,
+    /// Why that could not be told; `supervised` is false then, but it is not known to be.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+async fn control_snapshot(State(state): State<SnapshotState>) -> Json<ControlState> {
+    Json(match read_control(&state.reader_paths).await {
+        Ok(socket) => ControlState { supervised: socket.is_some(), error: None },
+        Err(error) => ControlState { supervised: false, error: Some(error) },
+    })
+}
+
+/// Start, finish, resume or kill NAME, by asking the fleet view that supervises this checkout -
+/// the one process allowed to - and answering with what it did. A kill arrives confirmed: the
+/// page asked first.
+async fn agent_action(
+    State(state): State<SnapshotState>,
+    Path((name, action)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> (StatusCode, Json<cerebro_tui::control::Reply>) {
+    use cerebro_tui::control::{Action, Reply, Request};
+    let refused = |status, text: &str| (status, Json(Reply::refused(text)));
+    let Ok(action) = serde_json::from_value::<Action>(serde_json::Value::String(action)) else {
+        return refused(StatusCode::NOT_FOUND, "There is no such action.");
+    };
+    if !is_plain_name(&name, &[]) {
+        return refused(StatusCode::BAD_REQUEST, "That is not an agent's name.");
+    }
+    if !from_this_console(&headers) {
+        return refused(StatusCode::FORBIDDEN, "Only this console's own page may do that.");
+    }
+    let socket = match read_control(&state.reader_paths).await {
+        Err(error) => {
+            return refused(StatusCode::SERVICE_UNAVAILABLE, &format!("Couldn’t read the fleet view’s publication: {error}"));
+        }
+        Ok(None) => {
+            return refused(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "No fleet view is supervising this checkout, so nothing can be started, finished or killed from here.",
+            );
+        }
+        Ok(Some(socket)) => socket,
+    };
+    let asked = tokio::task::spawn_blocking(move || {
+        cerebro_tui::control::ask(std::path::Path::new(&socket), &Request { name, action })
+    })
+    .await;
+    match asked {
+        Ok(Ok(reply)) => (StatusCode::OK, Json(reply)),
+        _ => refused(StatusCode::SERVICE_UNAVAILABLE, "The fleet view did not answer."),
+    }
 }
 
 fn read_output(
@@ -442,6 +541,7 @@ async fn event_stream(
             initialized: false,
             fleet_seen: None,
             work_seen: None,
+            supervised: None,
         },
         |mut stream| async move {
             loop {
@@ -467,6 +567,15 @@ async fn event_stream(
                 if stream.events.observe("work", &work) {
                     stream.pending.push_back("work");
                 }
+
+                // A publication that could not be read says nothing either way, but the good read
+                // after it is news: the page may have been told nothing since.
+                let seen = read_control(&stream.state.reader_paths).await.map(|socket| socket.is_some()).map_err(|_| ());
+                if seen.is_ok() && stream.supervised.replace(seen).is_some_and(|prior| prior != seen) {
+                    stream.pending.push_back("control");
+                } else if seen.is_err() {
+                    stream.supervised = Some(seen);
+                }
                 if !stream.initialized {
                     stream.initialized = true;
                     return Some((Ok(Event::default().comment("snapshot baseline")), stream));
@@ -486,6 +595,9 @@ struct EventState {
     /// When the read behind the last fleet and work answers this stream saw finished.
     fleet_seen: Option<Instant>,
     work_seen: Option<Instant>,
+    /// Whether a fleet view took control requests, as this stream last read it, or that it could
+    /// not be read.
+    supervised: Option<Result<bool, ()>>,
 }
 
 #[derive(Default)]

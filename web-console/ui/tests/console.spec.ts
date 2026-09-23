@@ -246,6 +246,28 @@ test("a screen taller than the pane is drawn small enough to show all of it", as
   await expect(session.rows.getByText("row 52", { exact: true })).toBeInViewport({ ratio: 0.9 });
 });
 
+test("the session's box is the size of its screen, and follows it when the pty resizes", async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  const session = await hostSession(page, "\u001b[8;20;100t\u001b[?1049h" + past(1, 30) + "\u001b[20;1Hlast row");
+  await expect(session.rows).toContainText("last row");
+  const box = async () => {
+    const screen = await session.screen.boundingBox();
+    const drawn = await session.screen.locator(".xterm-screen").boundingBox();
+    return { rows: screen!.height - drawn!.height, cols: screen!.width - drawn!.width };
+  };
+  // Only the box's padding, and a scrollbar, around the drawn screen.
+  await expect.poll(async () => (await box()).rows).toBeLessThan(20);
+  await expect.poll(async () => (await box()).cols).toBeLessThan(45);
+  const wide = (await session.screen.boundingBox())!;
+
+  session.append("\u001b[8;10;70t\u001b[10;1Hsmaller");
+  await expect(session.rows).toContainText("smaller");
+  await expect.poll(async () => (await session.screen.boundingBox())!.width).toBeLessThan(wide.width * 0.8);
+  await expect.poll(async () => (await session.screen.boundingBox())!.height).toBeLessThan(wide.height * 0.7);
+  await expect.poll(async () => (await box()).rows).toBeLessThan(20);
+  await expect.poll(async () => (await box()).cols).toBeLessThan(45);
+});
+
 test("the Follow switch reads and sets xterm's own scrollback on the normal screen", async ({ page }) => {
   const session = await hostSession(page);
   const follow = page.getByRole("switch", { name: "Follow new output" });
@@ -322,4 +344,33 @@ test("groups the board by epic, filters it, and opens a bead", async ({ page }) 
   await expect(dialog).toContainText("Backlog");
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
+});
+
+test("a small screen's box still has room for its name and its controls", async ({ page }) => {
+  const session = await hostSession(page, "\u001b[8;10;20t" + lines(1, 3));
+  await expect(session.rows).toContainText("line 3");
+  const region = page.getByRole("region", { name: "Storm session" });
+
+  await expect(region.getByText("Storm · 20×10")).toBeVisible();
+  const name = await region.getByText("Storm · 20×10").evaluate(e => e.scrollWidth <= e.clientWidth);
+  expect(name).toBe(true);
+  await expect(region.getByRole("button", { name: "Full screen" })).toBeInViewport({ ratio: 1 });
+  const card = (await region.boundingBox())!;
+  const button = (await region.getByRole("button", { name: "Full screen" }).boundingBox())!;
+  expect(button.x + button.width).toBeLessThanOrEqual(card.x + card.width);
+});
+
+test("a session that goes away says so over its last screen", async ({ page }) => {
+  let absent = false;
+  const session = await hostSession(page, "\u001b[8;20;100t\u001b[?1049h" + past(1, 30) + "\u001b[20;1Hlast row");
+  await expect(session.rows).toContainText("last row");
+  await page.route(/\/api\/sessions\/Storm/, route => absent ? route.fulfill({ json: { state: "absent" } }) : route.fallback());
+  absent = true;
+
+  const message = page.getByText("No screen for this session.", { exact: false });
+  await expect(message).toBeInViewport({ ratio: 1 });
+  await expect(message).toBeVisible();
+  const box = (await message.boundingBox())!;
+  const last = (await session.rows.getByText("last row").boundingBox())!;
+  expect(box.y + box.height).toBeGreaterThanOrEqual(last.y + last.height);
 });

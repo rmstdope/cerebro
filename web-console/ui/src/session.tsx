@@ -45,7 +45,9 @@ function historyLine(runs: Run[]) {
 type Controls = { follow: (on: boolean) => void; text: () => string };
 
 export function SessionScreen({ name }: { name: string }) {
-  const frame = useRef<HTMLElement>(null);
+  const frame = useRef<HTMLDivElement>(null);
+  const card = useRef<HTMLElement>(null);
+  const bar = useRef<HTMLElement>(null);
   const host = useRef<HTMLDivElement>(null);
   const screen = useRef<HTMLDivElement>(null);
   const past = useRef<HTMLDivElement>(null);
@@ -142,24 +144,29 @@ export function SessionScreen({ name }: { name: string }) {
       return true;
     });
     terminal.open(host.current!);
-    // A screen taller or wider than the pane is drawn in a smaller font, never a larger one than
-    // `FONT`, so all of it shows as it does in the terminal console. In a font, not a CSS scale:
-    // xterm maps the pointer to cells in its own unscaled measurements. Each size is judged once
-    // xterm has drawn it, stepping down until the screen fits; a size that did not fit is not
-    // tried again until the pane or the screen changes.
+    // The box is the size of the screen, as the terminal console's pane is. A screen taller or
+    // wider than the room there is is drawn in a smaller font, never a larger one than `FONT`,
+    // so all of it shows. In a font, not a CSS scale: xterm maps the pointer to cells in its own
+    // unscaled measurements. Each size is judged once xterm has drawn it, stepping down until
+    // the screen fits; a size that did not fit is not tried again until the room or the screen
+    // changes.
     const drawn = host.current!.querySelector<HTMLElement>(".xterm-screen")!;
     let judged = "";
     let tooBig = Infinity;
     const fit = () => {
+      const room = frame.current!, box = card.current!;
       const style = getComputedStyle(scroller);
-      const room = scroller.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
-      const across = scroller.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
-      if (!drawn.offsetHeight || !drawn.offsetWidth || room <= 0 || across <= 0) return;
-      const key = `${room}x${across}x${terminal.rows}x${terminal.cols}`;
+      const padY = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+      const padX = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight) + scroller.offsetWidth - scroller.clientWidth;
+      const tall = room.clientHeight - bar.current!.offsetHeight - (box.offsetHeight - box.clientHeight);
+      const wide = room.clientWidth - (box.offsetWidth - box.clientWidth);
+      const down = tall - padY, across = wide - padX;
+      if (!drawn.offsetHeight || !drawn.offsetWidth || down <= 0 || across <= 0) return;
+      const key = `${down}x${across}x${terminal.rows}x${terminal.cols}`;
       if (key !== judged) { judged = key; tooBig = Infinity; }
       const size = terminal.options.fontSize ?? FONT;
-      const estimate = Math.floor(size * Math.min(room / drawn.offsetHeight, across / drawn.offsetWidth) * 2) / 2;
-      const fits = drawn.offsetHeight <= room && drawn.offsetWidth <= across;
+      const estimate = Math.floor(size * Math.min(down / drawn.offsetHeight, across / drawn.offsetWidth) * 2) / 2;
+      const fits = drawn.offsetHeight <= down && drawn.offsetWidth <= across;
       if (!fits) tooBig = Math.min(tooBig, size);
       const next = fits
         ? Math.max(size, Math.min(FONT, tooBig - 0.5, estimate))
@@ -168,10 +175,12 @@ export function SessionScreen({ name }: { name: string }) {
         terminal.options.fontSize = next;
         history.style.fontSize = `${next}px`;
       }
+      scroller.style.height = `${Math.min(tall, drawn.offsetHeight + padY)}px`;
+      scroller.style.width = `${Math.min(wide, drawn.offsetWidth + padX)}px`;
       follow();
     };
     const fitting = new ResizeObserver(fit);
-    fitting.observe(scroller);
+    fitting.observe(frame.current!);
     fitting.observe(drawn);
     let log: string | undefined;
     let offset = 0;
@@ -220,12 +229,14 @@ export function SessionScreen({ name }: { name: string }) {
   const message = status === "loading" ? "Loading session…"
     : status === "absent" ? "No screen for this session. It shows here only while the terminal console hosts it."
     : status === "failed" ? "Couldn’t load the session. Retrying…" : undefined;
-  return <section ref={frame} aria-label={`${name} session`} className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border bg-card shadow-lg shadow-black/10 dark:shadow-black/40">
-    <header className="flex h-10 shrink-0 items-center gap-2 border-b px-3 text-xs text-muted-foreground">
-      <SquareTerminal className="size-3.5" />
-      <span className="font-mono">{name}{size ? ` · ${size}` : ""}</span>
-      {message && <span className="ml-2 text-foreground/80">{message}</span>}
-      <div className="ml-auto flex items-center gap-1">
+  // The room is what the box may grow to. The header never sets the box's width, but keeps
+  // enough of it for the name and the controls.
+  return <div ref={frame} className="flex min-h-0 flex-1 flex-col items-start bg-background">
+   <section ref={card} aria-label={`${name} session`} className="relative flex max-h-full max-w-full min-w-[min(26rem,100%)] flex-col overflow-hidden rounded-xl border bg-card shadow-lg shadow-black/10 dark:shadow-black/40">
+    <header ref={bar} className="flex h-10 shrink-0 items-center gap-2 overflow-hidden border-b px-3 text-xs text-muted-foreground [contain:inline-size]">
+      <SquareTerminal className="size-3.5 shrink-0" />
+      <span className="truncate font-mono">{name}{size ? ` · ${size}` : ""}</span>
+      <div className="ml-auto flex shrink-0 items-center gap-1">
         <label className="mr-2 flex cursor-pointer items-center gap-2">Follow
           <Switch size="sm" checked={following} onCheckedChange={on => controls.current?.follow(on)} aria-label="Follow new output" />
         </label>
@@ -233,11 +244,14 @@ export function SessionScreen({ name }: { name: string }) {
         <Button variant="ghost" size="icon-xs" onClick={() => void frame.current?.requestFullscreen?.()} aria-label="Full screen"><Maximize2 /></Button>
       </div>
     </header>
+    {/* Over the box and outside its scroll, so it covers a screen that is no longer there. */}
+    {message && <p className="absolute inset-x-0 top-10 bottom-0 bg-black px-3 py-2 text-xs text-white/80">{message}</p>}
     {/* Always laid out, even before the first output: xterm drawing into an element with no
         layout, or off-screen, leaves its viewport stuck where the first write put it. */}
-    <div ref={screen} className="screen min-h-[200px] flex-1 overflow-auto bg-black px-3 py-2 [overflow-anchor:none]">
+    <div ref={screen} className="screen min-w-full shrink-0 overflow-auto bg-black px-3 py-2 [overflow-anchor:none] [scrollbar-gutter:stable]">
       <div ref={past} className="history text-[12px] leading-normal whitespace-pre text-white" style={{ fontFamily: font }} />
       <div ref={host} className="terminal overflow-hidden" />
     </div>
-  </section>;
+   </section>
+  </div>;
 }

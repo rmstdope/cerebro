@@ -12,11 +12,14 @@ const tones: Record<string, { dot: string; text: string; badge: string }> = {
   idle: { dot: "bg-sky-400", text: "text-muted-foreground", badge: "bg-sky-500/15 text-sky-700 dark:text-sky-300" },
   waiting: { dot: "bg-zinc-400", text: "text-muted-foreground", badge: "bg-zinc-500/15 text-zinc-700 dark:text-zinc-300" },
 };
-const offline = { dot: "border border-zinc-400 dark:border-zinc-600", text: "text-muted-foreground", badge: "bg-muted text-muted-foreground" };
-const tone = (agent: Agent) => running(agent) ? tones[stateOf(agent)] ?? tones.waiting : offline;
+const offline: Record<string, { dot: string; text: string; badge: string }> = {
+  standby: { dot: "border-2 border-dashed border-sky-500 dark:border-sky-400", text: "text-sky-700 dark:text-sky-300", badge: "bg-sky-500/10 text-sky-700 dark:text-sky-300" },
+  dead: { dot: "bg-rose-500/70", text: "text-rose-700 dark:text-rose-400", badge: "bg-rose-500/15 text-rose-700 dark:text-rose-400" },
+};
+const tone = (agent: Agent) => running(agent) ? tones[stateOf(agent)] ?? tones.waiting : offline[stateOf(agent)] ?? offline.dead;
 
 export function StatusDot({ agent, className }: { agent: Agent; className?: string }) {
-  return <span aria-hidden className={cn("inline-block size-2.5 shrink-0 rounded-full", tone(agent).dot, className)} />;
+  return <span aria-hidden data-state={stateOf(agent)} className={cn("inline-block size-2.5 shrink-0 rounded-full", tone(agent).dot, className)} />;
 }
 
 const activity = (agent: Agent) => stateOf(agent) === "asking" ? "asking you" : agent.phase ?? stateOf(agent);
@@ -25,11 +28,11 @@ export function FleetSidebar({ agents, selected, now, onSelect }: { agents: Agen
   const [filter, setFilter] = useState("");
   const shown = agents.filter(agent => `${agent.name} ${agent.role} ${agent.bead ?? ""}`.toLowerCase().includes(filter.toLowerCase()));
   const live = shown.filter(running);
-  const gone = shown.filter(agent => !running(agent));
+  const gone = shown.filter(agent => !running(agent)).sort((a, b) => Number(stateOf(a) !== "standby") - Number(stateOf(b) !== "standby"));
   const row = (agent: Agent) => {
     const active = agent.name === selected;
     return <button key={agent.name} onClick={() => onSelect(agent.name)} aria-current={active || undefined}
-      className={cn("flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left transition-colors hover:bg-muted", active && "bg-muted ring-1 ring-border", !running(agent) && "py-1.5 opacity-60")}>
+      className={cn("flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left transition-colors hover:bg-muted", active && "bg-muted ring-1 ring-border", !running(agent) && "py-1.5", stateOf(agent) === "dead" && "opacity-60")}>
       <StatusDot agent={agent} />
       <span className="min-w-0 flex-1">
         <span className="block font-medium">{agent.name}</span>
@@ -40,7 +43,7 @@ export function FleetSidebar({ agents, selected, now, onSelect }: { agents: Agen
             {agent.bead && <span className="block font-mono text-foreground/80">{agent.bead}</span>}
             <span className="block text-muted-foreground">{since(now, agent.phase_since ?? agent.since)}</span>
           </span>
-        : <span className="text-xs text-muted-foreground">{agent.role}</span>}
+        : <span className="text-right text-xs text-muted-foreground">{agent.role} · <span className={tone(agent).text}>{stateOf(agent)}</span></span>}
     </button>;
   };
   const heading = (text: string) => <p className="px-2 pt-3 pb-1 text-[11px] font-medium tracking-wider text-muted-foreground uppercase">{text}</p>;
@@ -58,7 +61,7 @@ export function FleetSidebar({ agents, selected, now, onSelect }: { agents: Agen
       {gone.length > 0 && <>{heading(`Offline · ${gone.length}`)}{gone.map(row)}</>}
     </nav>
     <footer className="flex flex-wrap gap-x-3 gap-y-1 border-t p-3 text-[11px] text-muted-foreground">
-      {Object.entries(tones).map(([state, { dot }]) => <span key={state} className="inline-flex items-center gap-1"><span className={cn("size-2 rounded-full", dot.replace("animate-breathe", ""))} />{state}</span>)}
+      {Object.entries({ ...tones, ...offline }).map(([state, { dot }]) => <span key={state} className="inline-flex items-center gap-1"><span className={cn("size-2 rounded-full", dot.replace("animate-breathe", ""))} />{state}</span>)}
     </footer>
   </aside>;
 }
@@ -88,6 +91,6 @@ export function AgentPane({ agent, bead, now }: { agent: Agent; bead?: Bead; now
     </div>
     {running(agent)
       ? <SessionScreen key={agent.name} name={agent.name} />
-      : <div className="grid flex-1 place-items-center rounded-xl border border-dashed text-sm text-muted-foreground">{agent.name} is not running, so there is no session to show.</div>}
+      : <div className="grid flex-1 place-items-center rounded-xl border border-dashed text-sm text-muted-foreground">{stateOf(agent) === "standby" ? `${agent.name} is on standby: the fleet view starts it when there is work for it.` : `${agent.name} is not running, so there is no session to show.`}</div>}
   </section>;
 }

@@ -167,6 +167,29 @@ test("does not offer a session for a dead agent", async ({ page }) => {
   await expect(page.getByRole("region", { name: "Rogue session" })).toHaveCount(0);
 });
 
+test("tells a standby agent from a dead one in the offline list", async ({ page }) => {
+  await page.route("/api/fleet", route => route.fulfill(fleetOf(
+    { name: "Rogue", role: "producer", state: "Dead" },
+    { name: "Moira", role: "user-feedback", state: "Standby" },
+  )));
+  await page.goto("/");
+
+  const fleet = page.getByRole("complementary", { name: "Fleet" });
+  await expect(fleet).toContainText("Offline · 2");
+  const moira = fleet.getByRole("button", { name: /Moira/ });
+  const rogue = fleet.getByRole("button", { name: /Rogue/ });
+  await expect(moira).toContainText("standby");
+  await expect(rogue).toContainText("dead");
+  await expect(moira.locator("[data-state]")).toHaveAttribute("data-state", "standby");
+  await expect(rogue.locator("[data-state]")).toHaveAttribute("data-state", "dead");
+  await expect(fleet.getByRole("button").filter({ hasText: /Moira|Rogue/ }).first()).toContainText("Moira");
+
+  await moira.click();
+  await expect(page.getByRole("region", { name: "Moira details" })).toContainText("on standby");
+  await rogue.click();
+  await expect(page.getByRole("region", { name: "Rogue details" })).toContainText("not running");
+});
+
 const fleetOf = (...agents: object[]) => ({ json: { state: "fresh", value: agents } });
 const bead = (id: string, title: string, extra: object = {}) => ({ id, title, status: "open", issue_type: "feature", labels: [], priority: 2, ...extra });
 const emptyWork = { claimed: [], planned: [], being_planned: [], ux_agreed: [], unplanned: [], paused: [], merged: [] };

@@ -4,8 +4,8 @@ use std::{
     fmt,
     net::SocketAddr,
     path::PathBuf,
-    sync::{Arc, Mutex},
-    time::Duration,
+    sync::Arc,
+    time::{Duration, Instant},
 };
 
 use axum::{
@@ -56,9 +56,26 @@ struct SnapshotState {
 
 #[derive(Default)]
 struct SnapshotCache {
-    fleet: Mutex<Option<CachedSnapshot<Vec<FleetRow>>>>,
-    work: Mutex<Option<CachedSnapshot<WorkBuckets>>>,
-    health: Mutex<Option<CachedSnapshot<FleetHealth>>>,
+    fleet: Slot<Vec<FleetRow>>,
+    work: Slot<WorkBuckets>,
+    health: Slot<FleetHealth>,
+}
+
+/// One endpoint's reads, one at a time. The lock is held for the length of a read, so whoever
+/// waits on it arrived while that read ran, and takes its answer rather than queueing another.
+type Slot<T> = tokio::sync::Mutex<SlotState<T>>;
+
+struct SlotState<T> {
+    /// The last good read, which a failed one is served as stale.
+    cache: Option<CachedSnapshot<T>>,
+    /// The last answer, and when its read finished.
+    last: Option<(Instant, Snapshot<T>)>,
+}
+
+impl<T> Default for SlotState<T> {
+    fn default() -> Self {
+        Self { cache: None, last: None }
+    }
 }
 
 #[derive(Clone)]
@@ -67,7 +84,7 @@ struct CachedSnapshot<T> {
     updated_at: DateTime<Utc>,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 enum Snapshot<T> {
     Fresh {
@@ -151,30 +168,47 @@ impl ReadOnlyService {
 }
 
 async fn fleet_snapshot(State(state): State<SnapshotState>) -> Json<Snapshot<Vec<FleetRow>>> {
-    Json(snapshot(&state.snapshots.fleet, || {
-        read_fleet(
-            &state.reader_paths,
-            &state.programs,
-            state.commands.as_ref(),
-        )
-    }))
+    Json(state.fleet(Duration::ZERO, None).await.1)
 }
 
 async fn work_snapshot(State(state): State<SnapshotState>) -> Json<Snapshot<WorkBuckets>> {
-    Json(snapshot(&state.snapshots.work, || {
-        read_work(
-            &state.reader_paths,
-            &state.programs,
-            state.commands.as_ref(),
-            &BTreeSet::new(),
-        )
-    }))
+    Json(state.work(Duration::ZERO, None).await.1)
 }
 
 async fn health_snapshot(State(state): State<SnapshotState>) -> Json<Snapshot<FleetHealth>> {
-    Json(snapshot(&state.snapshots.health, || {
-        read_health(&state.reader_paths, state.commands.as_ref())
-    }))
+    let reader = state.clone();
+    Json(
+        snapshot(&state.snapshots.health, Duration::ZERO, None, move || {
+            read_health(&reader.reader_paths, reader.commands.as_ref())
+        })
+        .await
+        .1,
+    )
+}
+
+impl SnapshotState {
+    /// The fleet, and when its read finished, on `snapshot`'s terms.
+    async fn fleet(&self, fresh: Duration, after: Option<Instant>) -> (Instant, Snapshot<Vec<FleetRow>>) {
+        let reader = self.clone();
+        snapshot(&self.snapshots.fleet, fresh, after, move || {
+            read_fleet(&reader.reader_paths, &reader.programs, reader.commands.as_ref())
+        })
+        .await
+    }
+
+    /// The work board, on the same terms as `fleet`.
+    async fn work(&self, fresh: Duration, after: Option<Instant>) -> (Instant, Snapshot<WorkBuckets>) {
+        let reader = self.clone();
+        snapshot(&self.snapshots.work, fresh, after, move || {
+            read_work(
+                &reader.reader_paths,
+                &reader.programs,
+                reader.commands.as_ref(),
+                &BTreeSet::new(),
+            )
+        })
+        .await
+    }
 }
 
 #[derive(Serialize)]
@@ -297,9 +331,16 @@ async fn event_stream(
         EventState {
             state,
             events: EventChanges::default(),
-            interval: tokio::time::interval(EVENT_POLL_INTERVAL),
+            interval: {
+                // After a slow read, the next tick is an interval on, not a burst of the missed ones.
+                let mut interval = tokio::time::interval(EVENT_POLL_INTERVAL);
+                interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                interval
+            },
             pending: VecDeque::new(),
             initialized: false,
+            fleet_seen: None,
+            work_seen: None,
         },
         |mut stream| async move {
             loop {
@@ -311,25 +352,17 @@ async fn event_stream(
                 }
 
                 stream.interval.tick().await;
-                let fleet = snapshot(&stream.state.snapshots.fleet, || {
-                    read_fleet(
-                        &stream.state.reader_paths,
-                        &stream.state.programs,
-                        stream.state.commands.as_ref(),
-                    )
-                });
+                // A read another stream made this interval will do: every open page polls, and
+                // one read each per interval is more than `bd` can answer. Never the answer this
+                // stream saw last, though, or a change would wait a tick more to be seen.
+                let (seen, fleet) = stream.state.fleet(EVENT_POLL_INTERVAL, stream.fleet_seen).await;
+                stream.fleet_seen = Some(seen);
                 if stream.events.observe("fleet", &fleet) {
                     stream.pending.push_back("fleet");
                 }
 
-                let work = snapshot(&stream.state.snapshots.work, || {
-                    read_work(
-                        &stream.state.reader_paths,
-                        &stream.state.programs,
-                        stream.state.commands.as_ref(),
-                        &BTreeSet::new(),
-                    )
-                });
+                let (seen, work) = stream.state.work(EVENT_POLL_INTERVAL, stream.work_seen).await;
+                stream.work_seen = Some(seen);
                 if stream.events.observe("work", &work) {
                     stream.pending.push_back("work");
                 }
@@ -349,6 +382,9 @@ struct EventState {
     interval: tokio::time::Interval,
     pending: VecDeque<&'static str>,
     initialized: bool,
+    /// When the read behind the last fleet and work answers this stream saw finished.
+    fleet_seen: Option<Instant>,
+    work_seen: Option<Instant>,
 }
 
 #[derive(Default)]
@@ -371,30 +407,40 @@ impl EventChanges {
     }
 }
 
-fn snapshot<T>(
-    cache: &Mutex<Option<CachedSnapshot<T>>>,
-    reader: impl FnOnce() -> Result<T, cerebro_tui::ReadError>,
-) -> Snapshot<T>
+/// SLOT's answer, and when its read finished: the last one, if that read finished no more than
+/// FRESH before this call (or after it, while this call waited on the slot) and after AFTER; else
+/// READER's, run off the async workers.
+async fn snapshot<T>(
+    slot: &Slot<T>,
+    fresh: Duration,
+    after: Option<Instant>,
+    reader: impl FnOnce() -> Result<T, cerebro_tui::ReadError> + Send + 'static,
+) -> (Instant, Snapshot<T>)
 where
-    T: Clone,
+    T: Clone + Send + 'static,
 {
-    let mut cache = match cache.lock() {
-        Ok(cache) => cache,
-        Err(_) => {
-            return Snapshot::Unavailable {
-                error: "snapshot cache lock is poisoned".to_string(),
-            }
+    let arrived = Instant::now();
+    let mut slot = slot.lock().await;
+    if let Some((finished, answer)) = &slot.last {
+        if arrived.saturating_duration_since(*finished) <= fresh && after.is_none_or(|seen| *finished > seen) {
+            return (*finished, answer.clone());
         }
-    };
-    match reader() {
+    }
+    let read = tokio::task::spawn_blocking(reader)
+        .await
+        .unwrap_or_else(|panic| Err(cerebro_tui::ReadError::Invalid {
+            source: cerebro_tui::Invocation::new(std::path::Path::new("reader"), &[]),
+            message: panic.to_string(),
+        }));
+    let answer = match read {
         Ok(value) => {
-            *cache = Some(CachedSnapshot {
+            slot.cache = Some(CachedSnapshot {
                 value: value.clone(),
                 updated_at: Utc::now(),
             });
             Snapshot::Fresh { value }
         }
-        Err(error) => match cache.clone() {
+        Err(error) => match slot.cache.clone() {
             Some(snapshot) => Snapshot::Stale {
                 value: snapshot.value,
                 error: error.to_string(),
@@ -404,7 +450,10 @@ where
                 error: error.to_string(),
             },
         },
-    }
+    };
+    let finished = Instant::now();
+    slot.last = Some((finished, answer.clone()));
+    (finished, answer)
 }
 
 #[derive(Debug, Eq, PartialEq)]

@@ -556,3 +556,86 @@ async fn an_unreadable_publication_is_a_failure_not_an_absence() {
 
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
 }
+
+/// A reader that takes its time, counting each fleet read by its one `roster` run.
+struct SlowCommands {
+    rosters: std::sync::atomic::AtomicUsize,
+    delay: Duration,
+}
+
+impl cerebro_tui::CommandRunner for SlowCommands {
+    fn run(
+        &self,
+        program: &std::path::Path,
+        _args: &[&str],
+        _cwd: Option<&std::path::Path>,
+        _timeout: Duration,
+    ) -> Result<Vec<u8>, cerebro_tui::ReadError> {
+        if program.file_name().is_some_and(|name| name == "roster") {
+            self.rosters.fetch_add(1, Ordering::SeqCst);
+            std::thread::sleep(self.delay);
+            return Ok(b"Storm\tproducer\tinteractive\n".to_vec());
+        }
+        Ok(if program == std::path::Path::new("ps") { Vec::new() } else { b"[]".to_vec() })
+    }
+}
+
+fn get(path: &str) -> Request<Body> {
+    Request::builder().method(Method::GET).uri(path).body(Body::empty()).unwrap()
+}
+
+/// Requests that arrive while a read is running share it, rather than queueing one read each
+/// behind it: a queue that grows faster than it drains is a service that never answers.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn requests_during_a_read_share_it() {
+    let commands = Arc::new(SlowCommands { rosters: Default::default(), delay: Duration::from_millis(400) });
+    let router = service_with_commands(PathBuf::from("/assets"), commands.clone()).router();
+
+    let requests: Vec<_> = (0..6).map(|_| tokio::spawn(router.clone().oneshot(get("/api/fleet")))).collect();
+    for request in requests {
+        assert_eq!(request.await.unwrap().unwrap().status(), StatusCode::OK);
+    }
+
+    assert!(commands.rosters.load(Ordering::SeqCst) <= 2, "{} reads", commands.rosters.load(Ordering::SeqCst));
+}
+
+/// A read runs off the async workers, so a slow `bd` holds up nothing but the requests that need it.
+#[tokio::test]
+async fn a_slow_read_does_not_hold_up_other_requests() {
+    let commands = Arc::new(SlowCommands { rosters: Default::default(), delay: Duration::from_millis(1500) });
+    let router = service_with_commands(PathBuf::from("/assets"), commands.clone()).router();
+    let start = std::time::Instant::now();
+
+    // One thread: a read that blocks it holds up everything else until it is done.
+    let (slow, other) = tokio::join!(router.clone().oneshot(get("/api/fleet")), async {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        router.clone().oneshot(get("/api/sessions/Storm")).await.unwrap();
+        start.elapsed()
+    });
+
+    assert!(other < Duration::from_millis(1000), "a session request waited {other:?} behind a fleet read");
+    assert_eq!(slow.unwrap().status(), StatusCode::OK);
+}
+
+/// However many pages are open, their event streams read the fleet about once an interval between
+/// them, not once an interval each.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn event_streams_share_their_reads() {
+    let commands = Arc::new(SlowCommands { rosters: Default::default(), delay: Duration::from_millis(50) });
+    let router = service_with_commands(PathBuf::from("/assets"), commands.clone()).router();
+    let mut bodies = Vec::new();
+    for _ in 0..5 {
+        bodies.push(router.clone().oneshot(get("/api/events")).await.unwrap().into_body());
+    }
+    let drain = bodies.into_iter().map(|mut body| tokio::spawn(async move {
+        while let Some(Ok(_)) = body.frame().await {}
+    })).collect::<Vec<_>>();
+
+    tokio::time::sleep(Duration::from_millis(4500)).await;
+    for task in drain {
+        task.abort();
+    }
+
+    // Three ticks (0 s, 2 s, 4 s), and some slack for streams that tick apart.
+    assert!(commands.rosters.load(Ordering::SeqCst) <= 6, "{} reads", commands.rosters.load(Ordering::SeqCst));
+}

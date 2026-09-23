@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
-import { ArrowDownToLine, Check, Copy, Maximize2, SquareTerminal } from "lucide-react";
+import { Check, Copy, Maximize2, SquareTerminal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 
@@ -187,7 +187,6 @@ export function SessionScreen({ name }: { name: string }) {
           <Switch size="sm" checked={following} onCheckedChange={on => controls.current?.follow(on)} aria-label="Follow new output" />
         </label>
         <Button variant="ghost" size="xs" onClick={() => void copy()} aria-label="Copy session text">{copied ? <Check /> : <Copy />}{copied ? "Copied" : "Copy"}</Button>
-        <Button variant="ghost" size="xs" onClick={() => controls.current?.follow(true)} aria-label="Jump to the bottom"><ArrowDownToLine />Bottom</Button>
         <Button variant="ghost" size="icon-xs" onClick={() => void frame.current?.requestFullscreen?.()} aria-label="Full screen"><Maximize2 /></Button>
       </div>
     </header>

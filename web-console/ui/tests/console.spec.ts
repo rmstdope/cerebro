@@ -213,7 +213,7 @@ test("opens on the agent that is asking, and says so above the page", async ({ p
   await expect(page.getByRole("region", { name: "Cyclops details" })).toBeVisible();
 });
 
-test("the Follow switch tells whether the session follows, and Bottom returns to it", async ({ page }) => {
+test("the Follow switch tells whether the session follows, and turning it on returns to the bottom", async ({ page }) => {
   const session = await hostSession(page, "\u001b[8;5;40t\u001b[?1049h" + past(1, 200) + "live screen");
   const follow = page.getByRole("switch", { name: "Follow new output" });
   await expect(session.rows).toContainText("live screen");
@@ -222,8 +222,9 @@ test("the Follow switch tells whether the session follows, and Bottom returns to
   await session.screen.evaluate(element => { element.scrollTop = 0; element.dispatchEvent(new Event("scroll")); });
   await expect(follow).not.toBeChecked();
 
-  await page.getByRole("button", { name: "Jump to the bottom" }).click();
+  await follow.click();
   await expect(follow).toBeChecked();
+  await expect(page.getByRole("button", { name: "Jump to the bottom" })).toHaveCount(0);
   await expect(session.history.getByText("old 200", { exact: true })).toBeInViewport();
 });
 
@@ -235,7 +236,7 @@ test("the Follow switch reads and sets xterm's own scrollback on the normal scre
   await page.getByRole("region", { name: "Storm session" }).locator(".xterm-screen").hover();
   await page.mouse.wheel(0, -2000);
   await expect(follow).not.toBeChecked();
-  await page.getByRole("button", { name: "Jump to the bottom" }).click();
+  await follow.click();
   await expect(follow).toBeChecked();
   await expect(session.rows).toContainText("line 50");
 

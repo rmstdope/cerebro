@@ -15,9 +15,11 @@ const SCROLLBACK = 10000;
 const font = "Menlo, Monaco, 'Courier New', monospace";
 const FONT = 12;
 const MIN_FONT = 6;
-// X10, normal, highlight, button-event and any-event tracking, and the UTF-8, SGR, urxvt and
-// SGR-pixel encodings.
-const MOUSE_MODES = new Set([9, 1000, 1001, 1002, 1003, 1005, 1006, 1015, 1016]);
+// The most one request types, well inside what the service takes.
+const INPUT_CHUNK = 64 * 1024;
+// X10, normal, highlight, button-event and any-event mouse tracking, the UTF-8, SGR, urxvt and
+// SGR-pixel encodings, and focus reporting.
+const REPORTING_MODES = new Set([9, 1000, 1001, 1002, 1003, 1004, 1005, 1006, 1015, 1016]);
 // xterm's own default colours, so history reads the same as the screen below it.
 const ansi = ["#2e3436", "#cc0000", "#4e9a06", "#c4a000", "#3465a4", "#75507b", "#06989a", "#d3d7cf", "#555753", "#ef2929", "#8ae234", "#fce94f", "#729fcf", "#ad7fa8", "#34e2e2", "#eeeeec"];
 const levels = [0, 95, 135, 175, 215, 255];
@@ -59,10 +61,16 @@ export function SessionScreen({ name }: { name: string }) {
   const [following, setFollowing] = useState(true);
   const [size, setSize] = useState<string>();
   const [copied, setCopied] = useState(false);
+  const [refused, setRefused] = useState(false);
+  useEffect(() => {
+    if (!refused) return;
+    const shown = setTimeout(() => setRefused(false), 4000);
+    return () => clearTimeout(shown);
+  }, [refused]);
   useEffect(() => {
     // `setWinSizeChars` is what lets CSI 8 ; rows ; cols t reach the handler below: the log
     // carries each pty resize that way, in order with the output.
-    const terminal = new Terminal({ disableStdin: true, cursorBlink: false, fontFamily: font, fontSize: FONT, scrollback: SCROLLBACK, windowOptions: { setWinSizeChars: true } });
+    const terminal = new Terminal({ cursorBlink: false, altClickMovesCursor: false, fontFamily: font, fontSize: FONT, scrollback: SCROLLBACK, windowOptions: { setWinSizeChars: true } });
     const scroller = screen.current!;
     const history = past.current!;
     // Follow the bottom while the reader is there; leave them be once they scroll back. The
@@ -141,10 +149,55 @@ export function SessionScreen({ name }: { name: string }) {
       scroller.scrollTop += event.deltaMode === WheelEvent.DOM_DELTA_LINE ? event.deltaY * 16 : event.deltaY;
     };
     scroller.addEventListener("wheel", onWheel, { capture: true, passive: false });
-    // Nobody here types into the CLI, so its mouse reporting only takes the pointer away from
-    // selecting text on the screen. A sequence mixing it with other modes is left to xterm whole.
+    // Only the keyboard reaches the CLI, as in the terminal console: its mouse reporting would
+    // take the pointer away from selecting text, and focus reports would be typing nobody did.
+    // A sequence mixing them with other modes is left to xterm whole.
     terminal.parser.registerCsiHandler({ prefix: "?", final: "h" }, params =>
-      params.length > 0 && params.every(param => MOUSE_MODES.has(Array.isArray(param) ? param[0] : param)));
+      params.length > 0 && params.every(param => REPORTING_MODES.has(Array.isArray(param) ? param[0] : param)));
+    // What is typed goes to the agent in the order it was typed, one request at a time and
+    // none larger than `INPUT_CHUNK` bytes, and returns the reader to the bottom, where typing is
+    // in any terminal. Each piece knows the first and last inputs in it; once one is refused,
+    // every piece holding the rest of those inputs is dropped rather than sent with a hole in it,
+    // and the header says so.
+    const unsent: { body: string; size: number; from: number; to: number }[] = [];
+    let inputs = 0;
+    let sending = false;
+    const utf8 = (point: number) => point < 0x80 ? 1 : point < 0x800 ? 2 : point < 0x10000 ? 3 : 4;
+    const queue = (data: string) => {
+      const input = ++inputs;
+      for (const character of data) {
+        const size = utf8(character.codePointAt(0)!);
+        const last = unsent[unsent.length - 1];
+        if (last && last.size + size <= INPUT_CHUNK) { last.body += character; last.size += size; last.to = input; }
+        else unsent.push({ body: character, size, from: input, to: input });
+      }
+    };
+    const send = async () => {
+      if (sending) return;
+      sending = true;
+      while (unsent.length) {
+        const { body, to } = unsent.shift()!;
+        const typed = await fetch(`/api/sessions/${encodeURIComponent(name)}/input`, { method: "POST", headers: { "content-type": "application/octet-stream", "x-cerebro-input": "1" }, body })
+          .then(response => response.ok, () => false);
+        if (typed) continue;
+        while (unsent.length && unsent[0].from <= to) unsent.shift();
+        if (!stopped) setRefused(true);
+      }
+      sending = false;
+    };
+    // xterm also answers the CLI's queries - where the cursor is, what colours it draws - through
+    // the same event, every time the log is replayed. Only what xterm itself calls user input,
+    // which it announces just before, is typing. Not public API: the typing tests fail without it.
+    let typing = false;
+    (terminal as unknown as { _core: { coreService: { onUserInput: (listener: () => void) => void } } })
+      ._core.coreService.onUserInput(() => { typing = true; });
+    terminal.onData(data => {
+      if (!typing) return;
+      typing = false;
+      queue(data);
+      void send();
+      if (!tracking) controls.current?.follow(true);
+    });
     terminal.parser.registerCsiHandler({ final: "t" }, params => {
       const [op, rows, cols] = params.map(param => Array.isArray(param) ? param[0] : param);
       if (op === 8 && rows > 0 && cols > 0) { terminal.resize(cols, rows); setSize(`${cols}×${rows}`); }
@@ -243,6 +296,7 @@ export function SessionScreen({ name }: { name: string }) {
     <header ref={bar} className="flex h-10 shrink-0 items-center gap-2 overflow-hidden border-b px-3 text-xs text-muted-foreground [contain:inline-size]">
       <SquareTerminal className="size-3.5 shrink-0" />
       <span className="truncate font-mono">{name}{size ? ` · ${size}` : ""}</span>
+      {refused && <span role="status" className="truncate text-amber-700 dark:text-amber-300">Not typed: the session didn’t take it</span>}
       <div className="ml-auto flex shrink-0 items-center gap-1">
         <label className="mr-2 flex cursor-pointer items-center gap-2">Follow
           <Switch size="sm" checked={following} onCheckedChange={on => controls.current?.follow(on)} aria-label="Follow new output" />

@@ -20,7 +20,7 @@ async function hostSession(page: import("@playwright/test").Page, opening = "\u0
   await page.route("/api/fleet", (route) =>
     route.fulfill({ json: { state: "fresh", value: [{ name: "Storm", role: "producer", state: "working", bead: "cb-1" }] } }),
   );
-  await page.route(/\/api\/sessions\/Storm/, (route) => {
+  await page.route(/\/api\/sessions\/Storm(\?|$)/, (route) => {
     const query = new URL(route.request().url()).searchParams;
     const reset = !query.has("log");
     const from = reset ? 0 : Number(query.get("from"));
@@ -386,4 +386,130 @@ test("text on a screen whose CLI asked for the mouse can still be selected", asy
   await page.mouse.up();
 
   await expect(page.getByRole("region", { name: "Storm session" }).locator(".xterm-selection div")).not.toHaveCount(0);
+});
+
+test("what is typed into a focused session goes to its agent, in order", async ({ page }) => {
+  const typed: string[] = [];
+  const headers: Record<string, string>[] = [];
+  const session = await hostSession(page, "\u001b[8;10;60t\u001b[?1004h" + lines(1, 3));
+  await page.route("/api/sessions/Storm/input", async route => {
+    headers.push(route.request().headers());
+    typed.push(route.request().postData() ?? "");
+    await new Promise(resolve => setTimeout(resolve, 50));
+    await route.fulfill({ status: 204 });
+  });
+  await expect(session.rows).toContainText("line 3");
+
+  await page.getByRole("region", { name: "Storm session" }).locator(".xterm-screen").click();
+  await page.keyboard.type("hello there");
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Control+C");
+
+  await expect.poll(() => typed.join("")).toBe("hello there\r\u0003");
+  expect(headers.every(header => header["x-cerebro-input"] === "1")).toBe(true);
+});
+
+test("typing into a session scrolled back returns it to the bottom", async ({ page }) => {
+  const session = await hostSession(page);
+  await page.route("/api/sessions/Storm/input", route => route.fulfill({ status: 204 }));
+  const follow = page.getByRole("switch", { name: "Follow new output" });
+  await expect(session.rows).toContainText("line 50");
+  await page.getByRole("region", { name: "Storm session" }).locator(".xterm-screen").hover();
+  await page.mouse.wheel(0, -2000);
+  await expect(follow).not.toBeChecked();
+
+  await page.getByRole("region", { name: "Storm session" }).locator(".xterm-screen").click();
+  await page.keyboard.type("x");
+
+  await expect(follow).toBeChecked();
+  await expect(session.rows).toContainText("line 50");
+});
+
+test("what the screen answers the CLI's queries is not typed into the agent", async ({ page }) => {
+  const typed: string[] = [];
+  await page.route("/api/sessions/Storm/input", route => { typed.push(route.request().postData() ?? ""); return route.fulfill({ status: 204 }); });
+  const session = await hostSession(page, "\u001b[8;10;60t\u001b[6n\u001b[c\u001b[>c\u001b[5n\u001b]11;?\u0007\u001b[?2004$p" + lines(1, 3));
+  await expect(session.rows).toContainText("line 3");
+  session.append("\u001b[6n" + lines(4, 4));
+  await expect(session.rows).toContainText("line 4");
+
+  await page.getByRole("region", { name: "Storm session" }).locator(".xterm-screen").click();
+  await page.keyboard.type("x");
+  await page.waitForTimeout(700);
+
+  expect(typed.join("")).toBe("x");
+});
+
+test("a long paste is typed in pieces, in order, and what is refused says so", async ({ page }) => {
+  const typed: string[] = [];
+  let refuse = false;
+  const session = await hostSession(page, "\u001b[8;10;60t" + lines(1, 3));
+  await page.route("/api/sessions/Storm/input", route => {
+    typed.push(route.request().postData() ?? "");
+    return route.fulfill({ status: refuse ? 503 : 204 });
+  });
+  await expect(session.rows).toContainText("line 3");
+  await page.getByRole("region", { name: "Storm session" }).locator(".xterm-screen").click();
+  const text = "é".repeat(50_000) + "end";
+
+  await page.evaluate(text => {
+    const event = new ClipboardEvent("paste", { clipboardData: new DataTransfer(), bubbles: true, cancelable: true });
+    event.clipboardData!.setData("text/plain", text);
+    document.querySelector(".xterm-helper-textarea")!.dispatchEvent(event);
+  }, text);
+
+  await expect.poll(() => typed.join("")).toBe(text);
+  expect(typed.length).toBeGreaterThan(1);
+  expect(typed.every(body => new TextEncoder().encode(body).length <= 64 * 1024)).toBe(true);
+  await expect(page.getByRole("status").filter({ hasText: "Not typed" })).toHaveCount(0);
+
+  refuse = true;
+  await page.keyboard.type("x");
+  await expect(page.getByRole("status").filter({ hasText: "Not typed" })).toBeVisible();
+});
+
+test("a paste whose piece is refused sends none of the rest of it", async ({ page }) => {
+  const typed: string[] = [];
+  const session = await hostSession(page, "\u001b[8;10;60t" + lines(1, 3));
+  await page.route("/api/sessions/Storm/input", route => {
+    typed.push(route.request().postData() ?? "");
+    return route.fulfill({ status: typed.length === 2 ? 503 : 204 });
+  });
+  await expect(session.rows).toContainText("line 3");
+  await page.getByRole("region", { name: "Storm session" }).locator(".xterm-screen").click();
+
+  await page.evaluate(text => {
+    const event = new ClipboardEvent("paste", { clipboardData: new DataTransfer(), bubbles: true, cancelable: true });
+    event.clipboardData!.setData("text/plain", text);
+    document.querySelector(".xterm-helper-textarea")!.dispatchEvent(event);
+  }, "x".repeat(200_000));
+  await expect(page.getByRole("status").filter({ hasText: "Not typed" })).toBeVisible();
+  await page.keyboard.type("after");
+
+  await expect.poll(() => typed.slice(2).join("")).toBe("after");
+});
+
+test("what is typed while a refused paste is still going out goes with the paste's rest", async ({ page }) => {
+  const typed: string[] = [];
+  let answer: (() => void) | undefined;
+  const session = await hostSession(page, "\u001b[8;10;60t" + lines(1, 3));
+  await page.route("/api/sessions/Storm/input", async route => {
+    typed.push(route.request().postData() ?? "");
+    if (typed.length === 1) await new Promise<void>(resolve => { answer = resolve; });
+    return route.fulfill({ status: typed.length === 1 ? 503 : 204 });
+  });
+  await expect(session.rows).toContainText("line 3");
+  await page.getByRole("region", { name: "Storm session" }).locator(".xterm-screen").click();
+  await page.evaluate(text => {
+    const event = new ClipboardEvent("paste", { clipboardData: new DataTransfer(), bubbles: true, cancelable: true });
+    event.clipboardData!.setData("text/plain", text);
+    document.querySelector(".xterm-helper-textarea")!.dispatchEvent(event);
+  }, "x".repeat(100_000));
+  await expect.poll(() => answer).toBeDefined();
+  await page.keyboard.type("y");
+  answer!();
+  await expect(page.getByRole("status").filter({ hasText: "Not typed" })).toBeVisible();
+
+  await page.keyboard.type("z");
+  await expect.poll(() => typed.slice(1).join("")).toBe("z");
 });

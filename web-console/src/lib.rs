@@ -9,10 +9,11 @@ use std::{
 };
 
 use axum::{
-    extract::{Path, Query, State},
-    http::StatusCode,
+    body::Bytes,
+    extract::{DefaultBodyLimit, Path, Query, State},
+    http::{header, HeaderMap, StatusCode},
     response::sse::{Event, KeepAlive, Sse},
-    routing::get,
+    routing::{get, post},
     Json, Router,
 };
 use cerebro_tui::{
@@ -33,7 +34,15 @@ const SCREEN_STALE_SECONDS: i64 = 15;
 /// The most session output one response carries; a reader behind by more asks again.
 const OUTPUT_CHUNK: u64 = 512 * 1024;
 
-/// A local HTTP boundary for browser-console reads.
+/// The most one request may type into a session: a large paste, and no more.
+const INPUT_LIMIT: usize = 256 * 1024;
+
+/// The header the console's own page sets on what it types. A page on another site cannot set it
+/// without the browser asking this service first, and this service never says yes.
+const INPUT_HEADER: &str = "x-cerebro-input";
+
+/// A local HTTP boundary for browser-console reads, and for typing into a session the fleet view
+/// hosts, which is the one thing it writes.
 ///
 /// Reader and supervision dependencies are supplied rather than rediscovered so future endpoints
 /// can reuse the fleet view's bounded, read-only abstractions without gaining lifecycle access.
@@ -160,6 +169,10 @@ impl ReadOnlyService {
             .route("/api/health", get(health_snapshot))
             .route("/api/events", get(event_stream))
             .route("/api/sessions/{name}", get(session_output))
+            .route(
+                "/api/sessions/{name}/input",
+                post(session_input).layer(DefaultBodyLimit::max(INPUT_LIMIT)),
+            )
             .fallback_service(
                 ServeDir::new(self.assets_dir.clone()).fallback(ServeFile::new(index)),
             )
@@ -271,6 +284,74 @@ async fn session_output(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .map(Json)
+}
+
+/// Type BODY into NAME's session, through the inbox the fleet view hosting it publishes.
+async fn session_input(
+    State(state): State<SnapshotState>,
+    Path(name): Path<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> StatusCode {
+    if !is_plain_name(&name, &[]) {
+        return StatusCode::BAD_REQUEST;
+    }
+    if !from_this_console(&headers) {
+        return StatusCode::FORBIDDEN;
+    }
+    let dir = state.reader_paths.shared_root.join(".cerebro/state/sessions");
+    tokio::task::spawn_blocking(move || write_input(&dir, &name, &body))
+        .await
+        .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+/// Whether a request came from this console's own page: it carries `INPUT_HEADER`, and it names
+/// this machine as the host it asked for, and as its origin if it gives one - so neither another
+/// site nor a name rebound to this address can type into a session.
+fn from_this_console(headers: &HeaderMap) -> bool {
+    let text = |name| headers.get(name).and_then(|value| value.to_str().ok());
+    let loopback = |authority: &str| {
+        let host = match authority.rsplit_once(':') {
+            Some((host, port)) if !host.is_empty() && port.chars().all(|c| c.is_ascii_digit()) && !authority.ends_with(']') => host,
+            _ => authority,
+        };
+        let host = host.trim_start_matches('[').trim_end_matches(']');
+        host.eq_ignore_ascii_case("localhost")
+            || host.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback())
+    };
+    let origin = match text(header::ORIGIN.as_str()) {
+        None => true,
+        Some(origin) => origin
+            .split_once("://")
+            .is_some_and(|(scheme, rest)| matches!(scheme, "http" | "https") && loopback(rest.trim_end_matches('/'))),
+    };
+    text(INPUT_HEADER) == Some("1") && text(header::HOST.as_str()).is_some_and(loopback) && origin
+}
+
+fn write_input(dir: &std::path::Path, name: &str, bytes: &[u8]) -> StatusCode {
+    use std::io::Write;
+    let Ok(text) = std::fs::read_to_string(dir.join(format!("{name}.json"))) else {
+        return StatusCode::NOT_FOUND;
+    };
+    let Ok(publication) = serde_json::from_str::<PublishedSession>(&text) else {
+        return StatusCode::INTERNAL_SERVER_ERROR;
+    };
+    let age = Utc::now().signed_duration_since(publication.updated_at).num_seconds();
+    let Some(input) = publication.input.filter(|_| age < SCREEN_STALE_SECONDS) else {
+        return StatusCode::NOT_FOUND;
+    };
+    let Ok(mut stream) = std::os::unix::net::UnixStream::connect(input) else {
+        return StatusCode::SERVICE_UNAVAILABLE;
+    };
+    use std::io::Read;
+    let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+    let mut taken = [0u8; 1];
+    // The inbox answers 1 once the message is queued for the pty, and 0 when too much waits.
+    match stream.write_all(&cerebro_tui::inbox::framed(bytes)).and_then(|()| stream.read_exact(&mut taken)) {
+        Ok(()) if taken == [1] => StatusCode::NO_CONTENT,
+        _ => StatusCode::SERVICE_UNAVAILABLE,
+    }
 }
 
 /// The names the supervising fleet view holds on standby. No publication, or one it stopped

@@ -400,6 +400,7 @@ fn publish(root: &std::path::Path, name: &str, age: chrono::Duration, log: &[u8]
         name: name.to_string(),
         log: file.clone(),
         updated_at: chrono::Utc::now() - age,
+        input: None,
     };
     std::fs::write(
         dir.join(format!("{name}.json")),
@@ -533,6 +534,7 @@ async fn a_publication_naming_a_log_elsewhere_is_refused() {
         name: "Storm".to_string(),
         log: "../../secret".to_string(),
         updated_at: chrono::Utc::now(),
+        input: None,
     };
     std::fs::write(
         dir.join("Storm.json"),
@@ -711,4 +713,105 @@ async fn without_a_live_fleet_view_nobody_is_on_standby() {
 
     publish_standby(root.path(), &["Moira"], chrono::Duration::seconds(60));
     assert_eq!(fleet_states(root.path()).await, states(&[("Storm", "Dead"), ("Moira", "Dead")]));
+}
+
+/// A live session whose publication says where to type, and the listener standing in for it.
+fn publish_with_inbox(root: &std::path::Path, name: &str) -> std::os::unix::net::UnixListener {
+    let dir = root.join(".cerebro/state/sessions");
+    std::fs::create_dir_all(&dir).unwrap();
+    let socket = root.join("in.sock");
+    let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+    let publication = cerebro_tui::PublishedSession {
+        name: name.to_string(),
+        log: format!("{name}.1-0-0.log"),
+        updated_at: chrono::Utc::now(),
+        input: Some(socket.to_string_lossy().into_owned()),
+    };
+    std::fs::write(dir.join(format!("{name}.json")), serde_json::to_string(&publication).unwrap()).unwrap();
+    listener
+}
+
+fn typing(name: &str, headers: &[(&str, &str)], body: &'static [u8]) -> Request<Body> {
+    let mut request = Request::builder()
+        .method(Method::POST)
+        .uri(format!("/api/sessions/{name}/input"))
+        .header("host", "127.0.0.1:7171")
+        .header("content-type", "application/octet-stream")
+        .header("x-cerebro-input", "1");
+    for (key, value) in headers {
+        request = request.header(*key, *value);
+    }
+    request.body(Body::from(body)).unwrap()
+}
+
+async fn type_into(root: &std::path::Path, request: Request<Body>) -> StatusCode {
+    service_at(root).router().oneshot(request).await.unwrap().status()
+}
+
+/// The stand-in inbox, answering each message it reads with TAKEN.
+fn answering(listener: std::os::unix::net::UnixListener, taken: u8) -> std::thread::JoinHandle<Vec<u8>> {
+    std::thread::spawn(move || {
+        use std::io::Write as _;
+        let (mut stream, _) = listener.accept().unwrap();
+        let message = cerebro_tui::inbox::message(&mut stream).unwrap();
+        stream.write_all(&[taken]).unwrap();
+        message
+    })
+}
+
+#[tokio::test]
+async fn what_the_browser_types_reaches_the_session() {
+    let root = tempfile::tempdir().unwrap();
+    let inbox = answering(publish_with_inbox(root.path(), "Storm"), 1);
+
+    let status = type_into(root.path(), typing("Storm", &[("origin", "http://localhost:5173")], b"hello\r")).await;
+
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(inbox.join().unwrap(), b"hello\r");
+}
+
+#[tokio::test]
+async fn typing_a_session_refuses_is_a_failure() {
+    let root = tempfile::tempdir().unwrap();
+    let inbox = answering(publish_with_inbox(root.path(), "Storm"), 0);
+
+    let status = type_into(root.path(), typing("Storm", &[], b"hello\r")).await;
+
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    inbox.join().unwrap();
+}
+
+#[tokio::test]
+async fn only_this_console_may_type() {
+    let root = tempfile::tempdir().unwrap();
+    let listener = publish_with_inbox(root.path(), "Storm");
+    listener.set_nonblocking(true).unwrap();
+    let forged = |headers: &[(&str, &str)]| {
+        let mut request = typing("Storm", headers, b"rm -rf /\r");
+        if headers.iter().any(|(key, _)| *key == "drop") {
+            request.headers_mut().remove("x-cerebro-input");
+        }
+        request
+    };
+
+    // A form or a simple fetch from another site cannot set the header without asking first.
+    assert_eq!(type_into(root.path(), forged(&[("drop", "")])).await, StatusCode::FORBIDDEN);
+    assert_eq!(type_into(root.path(), forged(&[("origin", "https://evil.example")])).await, StatusCode::FORBIDDEN);
+    // A name that resolves here but was not asked for here.
+    let mut rebound = forged(&[]);
+    rebound.headers_mut().insert("host", "evil.example:7171".parse().unwrap());
+    assert_eq!(type_into(root.path(), rebound).await, StatusCode::FORBIDDEN);
+
+    assert!(listener.accept().is_err(), "nothing reached the session");
+}
+
+#[tokio::test]
+async fn a_session_nobody_hosts_cannot_be_typed_into() {
+    let root = tempfile::tempdir().unwrap();
+    assert_eq!(type_into(root.path(), typing("Storm", &[], b"x")).await, StatusCode::NOT_FOUND);
+    publish(root.path(), "Rogue", chrono::Duration::zero(), b"");
+    assert_eq!(type_into(root.path(), typing("Rogue", &[], b"x")).await, StatusCode::NOT_FOUND);
+    publish(root.path(), "Old", chrono::Duration::seconds(60), b"");
+    assert_eq!(type_into(root.path(), typing("Old", &[], b"x")).await, StatusCode::NOT_FOUND);
+    assert_eq!(type_into(root.path(), typing("..", &[], b"x")).await, StatusCode::BAD_REQUEST);
 }

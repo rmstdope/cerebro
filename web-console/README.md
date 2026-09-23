@@ -1,6 +1,6 @@
 # Cerebro web console
 
-For development, run the read-only Rust service and Vite in separate terminals from the repository
+For development, run the Rust service and Vite in separate terminals from the repository
 root:
 
 ```bash
@@ -13,8 +13,7 @@ Open <http://127.0.0.1:5173>. Vite proxies `/api` requests to the Rust service a
 
 The page has two tabs, in a dark and a light theme (the button top right; the first visit follows
 the system). **Fleet** lists the agents down the side, live ones first, each with a status dot, its
-bead and how long it has been in its phase; the chosen agent's CLI session fills the rest,
-read-only. With nobody chosen it shows whoever is asking, else working. **Work** is the board in
+bead and how long it has been in its phase; the chosen agent's CLI session fills the rest. With nobody chosen it shows whoever is asking, else working. **Work** is the board in
 five lanes, searchable, filterable by type and priority, and grouped by epic: a bead's epic is its
 nearest dotted-id ancestor, named from the `epics` map in `/api/work`. An agent that is asking, or
 a bead waiting for human input, is named in a banner above both tabs.
@@ -26,8 +25,17 @@ The session scrolls back through its history, which goes back up to 10,000 lines
 new output only while it is scrolled to the bottom, which the Follow switch shows and sets. The
 session's box is the size of its screen, as in the terminal console, and follows each pty resize;
 a screen taller or wider than the room is drawn smaller, so all of it shows at once. Text can be
-selected anywhere, the screen included: a CLI's request for mouse reporting is ignored, since
-nothing here types into it.
+selected anywhere, the screen included: a CLI's requests for mouse and focus reporting are
+ignored, so only the keyboard reaches it, as in the terminal console.
+
+Clicking the screen gives it the keyboard: what is typed or pasted there goes to the agent, and
+returns a scrolled-back view to the bottom. The pty keeps the terminal console's size. The page
+posts xterm's own bytes to `POST /api/sessions/<name>/input`, which refuses a request without the
+`X-Cerebro-Input: 1` header or naming a host or origin other than this machine, so no other site
+can type into a session. The service hands the bytes to the Unix socket the fleet view publishes
+as `input` in `<name>.json`, which writes them to the pty. What xterm answers a CLI's queries
+with, every time a log is replayed, is never sent. Typing into one session from both consoles at
+once is not guarded against.
 The output comes from the fleet view (`cerebro-tui`) that hosts the session. It appends each hosted
 session's pty output to a log under `.cerebro/state/sessions/`, with the pty's resizes recorded in
 the log, and publishes `<name>.json` naming that log. `GET /api/sessions/<name>?log=&from=` serves

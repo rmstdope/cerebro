@@ -242,7 +242,10 @@ agent, and `F1`/`F2`/`F3` are the only way out (cb-lmk, narrowing cb-3v5). `PgUp
 wheel over a live session do not reach the agent: they scroll the view back through what it
 printed — the lines the web console keeps for a full-screen CLI, or the terminal's own scrollback —
 and the view holds still while output arrives, titled `[n lines back, PgDn returns]` and with no
-cursor. Any key that does reach the agent returns it to the bottom. Since cb-lor **arriving
+cursor. Any key that does reach the agent returns it to the bottom. A published session also
+takes typing from the web console: `src/inbox.rs` listens on a Unix socket per session, named as
+`input` in its `<name>.json`, and writes each connection's bytes to the pty as the keyboard does.
+Since cb-lor **arriving
 at the Fleet pane by `Tab` or `F1` drops a bead pinned in the Session pane** by `Enter` on a Work row
 (cb-41r), so that pane goes back to drawing the selected agent, at its top; `F2` and `F3` leave a
 pinned bead alone, and `Enter` on the same Work row re-opens it. `↑`/`↓`/`PgUp`/`PgDn` move only the focused widget:

@@ -49,6 +49,9 @@ pub struct PublishedSession {
     pub name: String,
     pub log: String,
     pub updated_at: DateTime<Utc>,
+    /// The Unix socket whose connections type into the session, as `crate::inbox` reads them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input: Option<String>,
 }
 
 /// The file a session's output is appended to. Only ever touched with the session's parser and
@@ -631,7 +634,7 @@ pub struct Session {
     name: String,
     child: Box<dyn portable_pty::Child + Send + Sync>,
     master: Box<dyn portable_pty::MasterPty + Send>,
-    writer: Box<dyn Write + Send>,
+    writer: crate::inbox::Writer,
     parser: Arc<RwLock<vt100::Parser>>,
     /// Bytes seen so far. Zero is what `SessionView::Starting` means.
     seen: Arc<AtomicUsize>,
@@ -647,6 +650,8 @@ pub struct Session {
     history: Arc<Mutex<History>>,
     /// Where the child's output is also written, once `publish` has started recording it.
     recorder: Arc<Mutex<Option<Recorder>>>,
+    /// Where readers outside this process type in, opened with the recording.
+    inbox: Mutex<Option<crate::inbox::Inbox>>,
 }
 
 impl std::fmt::Debug for Session {
@@ -734,7 +739,7 @@ impl Session {
             name: name.to_string(),
             child,
             master: pair.master,
-            writer,
+            writer: Arc::new(Mutex::new(writer)),
             parser,
             seen,
             size: (rows, cols),
@@ -744,6 +749,7 @@ impl Session {
             reader: Some(handle),
             history,
             recorder,
+            inbox: Mutex::new(None),
         })
     }
 
@@ -795,9 +801,16 @@ impl Session {
 
     /// Send bytes to the child. A write that fails is dropped - the child is on its way out, and
     /// the exit is what the pane will show.
+    /// Dropped while the web console's typing holds the pty, which may be for as long as the
+    /// child is not reading: this is the view's own thread, and nothing may stop it.
     pub fn send(&mut self, bytes: &[u8]) {
-        if self.writer.write_all(bytes).is_ok() {
-            let _ = self.writer.flush();
+        let mut writer = match self.writer.try_lock() {
+            Ok(writer) => writer,
+            Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) => return,
+        };
+        if writer.write_all(bytes).is_ok() {
+            let _ = writer.flush();
         }
     }
 
@@ -871,14 +884,23 @@ impl Session {
     /// Start recording the child's output to a log in DIR, unless it already is, and return the
     /// log's name. Taken under the parser lock, so every byte lands in the log exactly once: in
     /// the opening screen, or appended after it.
-    fn recording(&self, dir: &std::path::Path, limit: u64) -> Option<String> {
+    /// The log, and the inbox once there is one: a session is typed into from outside only
+    /// while it is published.
+    fn recording(&self, dir: &std::path::Path, limit: u64) -> Option<(String, Option<String>)> {
         let parser = self.parser.read().ok()?;
         let history = self.history.lock().unwrap_or_else(|e| e.into_inner());
         let mut slot = self.recorder.lock().ok()?;
         if slot.is_none() {
             *slot = Recorder::open(dir, &self.name, limit, 0, parser.screen(), &history).ok();
         }
-        slot.as_ref().map(|recorder| recorder.log.clone())
+        let log = slot.as_ref().map(|recorder| recorder.log.clone())?;
+        let mut inbox = self.inbox.lock().unwrap_or_else(|e| e.into_inner());
+        if inbox.is_none() {
+            let file = format!("{}.sock", log.trim_end_matches(".log"));
+            *inbox = crate::inbox::Inbox::open(&file, Arc::clone(&self.writer)).ok();
+        }
+        let input = inbox.as_ref().map(|inbox| inbox.path().to_string_lossy().into_owned());
+        Some((log, input))
     }
 
     /// Where the child's cursor is, as (row, column) inside the pane's inner rect.
@@ -1243,7 +1265,7 @@ impl SessionHost {
         }
         let limit = self.log_limit.unwrap_or(LOG_LIMIT);
         for (name, session) in &self.live {
-            let Some(log) = session.recording(dir, limit) else { continue };
+            let Some((log, input)) = session.recording(dir, limit) else { continue };
             let due = match self.published.get(name) {
                 None => true,
                 Some((last, when)) => {
@@ -1254,7 +1276,7 @@ impl SessionHost {
                 continue;
             }
             let publication =
-                PublishedSession { name: name.clone(), log: log.clone(), updated_at: at };
+                PublishedSession { name: name.clone(), log: log.clone(), updated_at: at, input };
             if write_publication(dir, &publication).is_ok() {
                 self.published.insert(name.clone(), (log, now));
             }
@@ -1577,6 +1599,53 @@ mod tests {
         assert_eq!(published(dir.path(), "Storm").unwrap().name, "Storm");
     }
 
+    /// What the web console types reaches the child as the view's own keyboard does.
+    #[test]
+    fn a_recorded_session_takes_input_through_its_published_inbox() {
+        use std::io::Write as _;
+        let dir = tempfile::tempdir().unwrap();
+        let mut host = SessionHost::default();
+        host.insert("Storm", shell(r#"stty -echo; printf "ready\r\n"; read line; printf "got %s\r\n" "$line"; sleep 5"#, 12, 40));
+        record_until(&mut host, dir.path(), "Storm", |log| log.contains("ready"));
+        let inbox = published(dir.path(), "Storm").unwrap().input.expect("a live session publishes where to type");
+
+        let mut stream = std::os::unix::net::UnixStream::connect(&inbox).unwrap();
+        stream.write_all(&crate::inbox::framed(b"hello\r")).unwrap();
+        let mut taken = [0u8; 1];
+        std::io::Read::read_exact(&mut stream, &mut taken).unwrap();
+        assert_eq!(taken, [1], "the inbox says it took the message");
+        drop(stream);
+
+        record_until(&mut host, dir.path(), "Storm", |log| log.contains("got hello"));
+    }
+
+    /// The web console's typing may hold the pty for as long as the child is not reading; the
+    /// view's own thread must not wait for it.
+    #[test]
+    fn the_views_own_keys_never_wait_for_the_web_consoles_typing() {
+        let mut session = shell("sleep 5", 12, 40);
+        let writer = Arc::clone(&session.writer);
+        let held = writer.lock().unwrap();
+
+        session.send(b"x");
+
+        drop(held);
+    }
+
+    #[test]
+    fn a_session_that_is_gone_takes_no_more_input() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut host = SessionHost::default();
+        host.insert("Storm", shell(r#"printf "ready\r\n"; sleep 5"#, 12, 40));
+        record_until(&mut host, dir.path(), "Storm", |log| log.contains("ready"));
+        let inbox = published(dir.path(), "Storm").unwrap().input.unwrap();
+
+        drop(host);
+
+        assert!(std::os::unix::net::UnixStream::connect(&inbox).is_err());
+        assert!(!std::path::Path::new(&inbox).exists());
+    }
+
     #[test]
     fn output_is_recorded_once_whenever_recording_begins() {
         let dir = tempfile::tempdir().unwrap();
@@ -1706,11 +1775,13 @@ mod tests {
             name: "Rogue".into(),
             log: "Rogue.1-0-0.log".into(),
             updated_at: Utc::now() - chrono::Duration::seconds(60),
+            input: None,
         };
         let fresh = PublishedSession {
             name: "Storm".into(),
             log: "Storm.2-0-0.log".into(),
             updated_at: Utc::now(),
+            input: None,
         };
         write_publication(dir.path(), &stale).unwrap();
         write_publication(dir.path(), &fresh).unwrap();

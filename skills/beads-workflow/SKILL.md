@@ -53,19 +53,49 @@ assignee when done. `plan-bead` has the commands.
 
 ## The lifecycle a bead moves through
 
-A UX session owns the decisions a person sees. A producer then turns that UX-agreed bead into a
-build and test plan before implementing it; legacy planning and implementation roles remain
-supported for consumers that still use them.
+Routing is fixed: no agent chooses who is next. Each role leaves a **label** (or a `bd set-state`
+verification state) and the fleet view's candidate scripts read those labels to decide which role
+is started and given the bead. The one table below is the whole route; every role reads it, and a
+role that touches a label not in it is changing the pipeline for every consumer.
 
-| State | How it looks | Who moves it, and how |
-|---|---|---|
-| unplanned | open, no `planned` | — |
-| being planned | open, assigned to a planning agent, no `planned` | the fleet view: `scripts/assign-bead` |
-| planned | open, `planned`, unassigned | legacy planner: write its plan, add `planned`, and clear its assignee |
-| being produced | in_progress, producer holds the lease | the producer writes its missing build/test plan, adds `planned` while retaining its claim, then implements it |
-| needs the user | open, unassigned, `human`, **`planned` removed** | either role, on anything it must not decide |
-| parked on a UI answer | open, unassigned, `needs-ui-decision` **and** `human` | planner, when the user is away |
-| parked, and asked about already | as either row above, plus `pause:kept` | orchestrator, when the user was asked and left it parked |
+```
+  filed (P4) ──► ranked ──► ux:agreed ──► claimed ──► closed ──► verification=passed
+      │                        ▲             │                          │
+   bugfix ─────────────────────┼──────► Bishop (bugfixer)               │
+                               │                                        │
+                    human / needs-ui-decision ◄──── parked ◄── reopened at P0 (failed)
+```
+
+| A bead that is… | looks like | is put there by | is taken by |
+|---|---|---|---|
+| **unranked** | open, priority 4 | whoever filed it: `write-bead` (Cerebro), Moira, Forge, Psylocke's follow-up | Cerebro ranks it with the navigator (`--priority`); no other role touches a P4 bead |
+| **asked about, not ranked** | P4, `triage:declined` | Cerebro, when the navigator was away | nobody, until the navigator removes the label or Cerebro ranks it |
+| **a bug** | `bugfix` (set at filing, never removed) | `write-bead` or Moira | Bishop, through `scripts/bugfix-candidates`; UX and producers never see it |
+| **waiting for UX** | ranked, no `ux:agreed`, unassigned | ranking | a `ux` agent, through `scripts/stage-candidates ux`; the fleet view assigns without claiming |
+| **being designed** | open, assigned to a `ux` agent, not `in_progress` | `scripts/assign-bead` | that agent only; it clears the assignee when its pass ends, or the fleet view does when the session dies |
+| **UX-agreed** | `ux:agreed`, unassigned, no `planned` | the `ux` agent (`agree-experience`); children of a split parent inherit it | a producer, through `scripts/assignable-beads`, claimed for it by the fleet view |
+| **being produced** | `in_progress`, assignee is the producer | `scripts/assign-bead` | that producer only. It writes `design`, adds `planned` while keeping its claim, builds, merges, closes |
+| **waiting on the navigator** | open, unassigned, `human`, `planned` removed | any role escalating; `scripts/producer-park`; a `ux` agent parking | nobody: `bd human list` and the fleet view's *Waiting on you*. Every candidate script excludes `human`. The navigator (or Cerebro's unpark sweep) removes it |
+| **parked on a UI question** | `needs-ui-decision` **and** `human` | `producer-park … ux` or a `ux` agent when nobody answered | as above; when `human` comes off, `needs-ui-decision` tells the next `ux` agent which question it holds, and that agent removes it when it records |
+| **asked about and left parked** | as above, plus `pause:kept` | Cerebro alone | Cerebro alone; it stops the sweep asking twice |
+| **merged, unverified** | closed, no `verification` state | the producer's `bd close` | Psylocke, through `scripts/work-beads`; a child of an epic waits until the whole family is closed |
+| **not worth a look** | `verification=not-needed` | Psylocke, from `scripts/app-paths --classify` | nobody; terminal |
+| **verified** | `verification=passed`, `verified_at=<sha>` | Psylocke (`verifier-pass-epic-family` for a family) | nobody, unless main moves past it |
+| **overtaken since verified** | `verdict:stale` | `scripts/sweep-verdicts.sh` | Psylocke re-verifies and removes it; every other candidate script excludes it |
+| **failed, build at fault** | reopened, P0, `verification:failed`, `planned` kept | `scripts/reopen-failed --fault build` | a producer, as ordinary rework against the same design |
+| **failed, plan at fault** | reopened, P0, `verification:failed`, `plan:revise`, `planned` removed | `scripts/reopen-failed --fault plan` | a `ux` agent, which amends the agreed experience in place |
+| **handed back, nothing to build** | `verification:failed`, neither `planned` nor `plan:revise`, `human` **not** added | a producer (see the exception below) | Psylocke, through `scripts/second-look-beads` |
+| **a refactoring** | `refactoring`, title `Refactoring: …` | Forge | ranked and routed like any other bead; the label is Forge's own index |
+| **an epic with children** | type `epic`, at least one child | anyone splitting | nobody: `scripts/work-beads` skips it while it has a child. A childless epic is real work and routes normally. Whoever closes the last child closes it |
+
+Three rules that the table depends on:
+
+- **Only `assign-bead` claims, and only for a producer or bugfixer.** An assignee on an open bead
+  means a `ux` agent holds it; `in_progress` means a builder does.
+- **`human` is the one queue the navigator reads.** A bead parked for any reason carries it, or it
+  waits for ever unseen. `needs-ui-decision` alone is not a queue.
+- **P4 stops everything.** No candidate script ever offers an unranked bead, so a bead nobody ranks
+  is a bead nobody works.
 
 The plan lives in the bead's `design` field (`bd update <id> --design-file plan.md`). Read it with
 `bd show <id> --json`: the pretty renderer mangles Markdown tables.

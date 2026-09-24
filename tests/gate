@@ -45,7 +45,9 @@ fi
 echo "== cargo test =="
 # The Rust workspace (fleet-view/, cb-vyp.1) is gated the same way as everything else: locked, so
 # a gate never resolves a dependency crates.io was not asked to fix in place, and --all-targets so
-# a test-only compile error cannot hide behind a green `cargo build`.
+# a test-only compile error cannot hide behind a green `cargo build`. This includes the
+# `item_adjacency` integration target, which compares changed Rust items with their merge-base
+# metadata and rejects a doc-comment or attribute reparenting.
 if ! cargo test --workspace --all-targets --locked; then
   echo "FAILED: cargo test" >&2
   status=1

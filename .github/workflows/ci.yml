@@ -64,11 +64,16 @@ jobs:
     if: ${{ !cancelled() && needs.changes.outputs.run != 'false' }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The Rust item-adjacency integration target compares source metadata to merge-base.
+          # A full history keeps origin/main available even after the PR merge commit is checked out.
+          fetch-depth: 0
 
       - uses: dtolnay/rust-toolchain@stable
 
       # Locked, same as tests/gate: never let CI resolve a dependency crates.io was not asked to
       # fix in place, and --all-targets so a test-only compile error cannot hide behind a green
-      # `cargo build`.
+      # `cargo build`. That includes the item-adjacency integration target, which reads the
+      # merge-base fetched above.
       - name: cargo test
         run: cargo test --workspace --all-targets --locked

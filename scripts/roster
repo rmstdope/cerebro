@@ -121,7 +121,7 @@ policy_of() {
   # Linked-script fixtures from before the shared declaration retain this
   # compatibility fallback. Real checkouts always read the table above.
   case "$want" in
-    planner|ux|producer|bugfixer) printf '%s' "$want"; return 0 ;;
+    ux|producer|bugfixer) printf '%s' "$want"; return 0 ;;
   esac
   return 1
 }

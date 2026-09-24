@@ -265,7 +265,7 @@ fi
 # `launch` can read its stderr into its own refusal without ever printing a row as if it were a
 # diagnosis. It is true today by accident - every `echo ... >&2` is followed by an exit - and this is
 # what stops it becoming untrue.
-for mode_args in "" "--entry Xavier" "--implementers" "--role planner"; do
+for mode_args in "" "--entry Xavier" "--implementers" "--role ux"; do
   set +e
   err="$("$builtin_dir/roster" $mode_args 2>&1 >/dev/null)"
   status=$?
@@ -299,15 +299,15 @@ pass "consumer roster: a missing consumer file falls back to the built-in table"
 cat > "$consumer_roster_file" <<'ROSTER'
 # a consumer's own fleet: comments and blank lines are ignored
 
-Ada           planner
-Grace         planner
+Ada           ux
+Grace         ux
 Hopper        orchestrator
 
 Turing        producer
 Lovelace      producer
 ROSTER
 
-expected_rows="$(printf 'Ada\tplanner\tinteractive\nGrace\tplanner\tinteractive\nHopper\torchestrator\tinteractive\nTuring\tproducer\timplementer\nLovelace\tproducer\timplementer')"
+expected_rows="$(printf 'Ada\tux\tinteractive\nGrace\tux\tinteractive\nHopper\torchestrator\tinteractive\nTuring\tproducer\timplementer\nLovelace\tproducer\timplementer')"
 [[ "$("$roster_at")" == "$expected_rows" ]] \
   || fail "consumer roster: expected the consumer's rows in file order, got: $("$roster_at")"
 pass "consumer roster: replaces the built-in table, in file order, past comments and blanks"
@@ -330,11 +330,11 @@ while IFS=$'\t' read -r c_name _ c_kind; do
       && fail "consumer roster --implementers: contains $c_name, whose kind is $c_kind"
   fi
 done <<<"$("$roster_at")"
-[[ "$("$roster_at" --role planner)" == "$(printf 'Ada\nGrace')" ]] \
-  || fail "consumer roster --role planner: got $("$roster_at" --role planner)"
-[[ "$("$roster_at" --role planner | sed -n 1p)" == "Ada" ]] \
-  || fail "consumer roster --role planner: file order not preserved"
-[[ "$("$roster_at" --entry Grace)" == "$(printf 'Grace\tplanner\tinteractive')" ]] \
+[[ "$("$roster_at" --role ux)" == "$(printf 'Ada\nGrace')" ]] \
+  || fail "consumer roster --role ux: got $("$roster_at" --role ux)"
+[[ "$("$roster_at" --role ux | sed -n 1p)" == "Ada" ]] \
+  || fail "consumer roster --role ux: file order not preserved"
+[[ "$("$roster_at" --entry Grace)" == "$(printf 'Grace\tux\tinteractive')" ]] \
   || fail "consumer roster --entry Grace: got $("$roster_at" --entry Grace)"
 set +e
 "$roster_at" --entry Xavier >/dev/null 2>&1
@@ -354,12 +354,12 @@ pass "consumer roster: all four modes read it, and KIND is still derived"
 # The word is exposed through `--autostart` alone. The default output stays NAME<TAB>ROLE<TAB>KIND
 # because `launch`, `agent-state` and `cerebro--parse-fleet` all assume exactly three fields.
 cat > "$consumer_roster_file" <<'ROSTER'
-Ada           planner        autostart
-Grace         planner        standby
+Ada           ux        autostart
+Grace         ux        standby
 Hopper        reviewer       standby
 Turing        producer    autostart
 ROSTER
-expected_rows="$(printf 'Ada\tplanner\tinteractive\nGrace\tplanner\tinteractive\nHopper\treviewer\tinteractive\nTuring\tproducer\timplementer')"
+expected_rows="$(printf 'Ada\tux\tinteractive\nGrace\tux\tinteractive\nHopper\treviewer\tinteractive\nTuring\tproducer\timplementer')"
 [[ "$("$roster_at")" == "$expected_rows" ]] \
   || fail "roster autostart: default output should still be three columns, got: $("$roster_at")"
 pass "roster: the autostart column leaves the default three-column output alone"
@@ -377,10 +377,10 @@ pass "roster --standby lists the declared names, in file order"
 
 [[ "$("$roster_at" --implementers)" == "Turing" ]] \
   || fail "roster --implementers with the column: got $("$roster_at" --implementers)"
-[[ "$("$roster_at" --entry Ada)" == "$(printf 'Ada\tplanner\tinteractive')" ]] \
+[[ "$("$roster_at" --entry Ada)" == "$(printf 'Ada\tux\tinteractive')" ]] \
   || fail "roster --entry with the column: got $("$roster_at" --entry Ada)"
-[[ "$("$roster_at" --role planner)" == "$(printf 'Ada\nGrace')" ]] \
-  || fail "roster --role with the column: got $("$roster_at" --role planner)"
+[[ "$("$roster_at" --role ux)" == "$(printf 'Ada\nGrace')" ]] \
+  || fail "roster --role with the column: got $("$roster_at" --role ux)"
 pass "roster: the other modes read a row that carries the word"
 
 # The built-in table declares no autostart: a consumer that has not adopted the column sees nothing.
@@ -403,7 +403,7 @@ pass "roster --standby is silent, and exits 0, when no row declares it"
 # A third word that is not `autostart` refuses - and the refusal is the parser's, so every mode
 # refuses, not only the one that reads the column. `exit` inside a `$( )` ends the subshell alone,
 # which is what this asserts is propagated.
-printf 'Ada  planner  autostrat\n' > "$consumer_roster_file"
+printf 'Ada  ux  autostrat\n' > "$consumer_roster_file"
 for mode in "" "--autostart" "--standby" "--entry Ada" "--implementers"; do
   set +e
   # shellcheck disable=SC2086
@@ -425,7 +425,7 @@ for mode in "" "--autostart" "--standby" "--entry Ada" "--implementers"; do
 done
 pass "roster: a third word that is neither autostart nor standby refuses, naming the file, line and word"
 
-printf 'Ada  planner  autostart  extra\n' > "$consumer_roster_file"
+printf 'Ada  ux  autostart  extra\n' > "$consumer_roster_file"
 set +e
 out="$("$roster_at" 2>/dev/null)"
 status=$?
@@ -439,7 +439,7 @@ pass "roster: a fourth word refuses"
 
 # The two words are mutually exclusive, and need no rule of their own: `autostart standby` on one
 # row is a fourth word, which already refuses.
-printf 'Ada  planner  autostart  standby\n' > "$consumer_roster_file"
+printf 'Ada  ux  autostart  standby\n' > "$consumer_roster_file"
 set +e
 out="$("$roster_at" 2>/dev/null)"
 status=$?
@@ -469,7 +469,7 @@ pass "roster: retired build-design and implementer roles refuse with producer mi
 # `standby` on an implementer row arms it like any other (cb-1or.2): since cb-1or.1 the implementer
 # trigger is a real condition - a planned, unclaimed bead - so the refusal that stood here guarded
 # nothing. The word is accepted in every mode, and the default output stays three columns.
-printf 'Ada  planner\nTuring  producer  standby\n' > "$consumer_roster_file"
+printf 'Ada  ux\nTuring  producer  standby\n' > "$consumer_roster_file"
 [[ "$("$roster_at" --standby)" == "Turing" ]] \
   || fail "roster --standby: expected Turing, got: $("$roster_at" --standby)"
 "$roster_at" >/dev/null 2>&1 || fail "roster: a standby implementer row should be accepted"
@@ -486,14 +486,14 @@ rm -f "$consumer_roster_file"
 # The loop body was `[[ "$kind" == "implementer" ]] && printf ...', whose status is the whole
 # `while' loop's and so this script's - so a roster ending in an INTERACTIVE row printed exactly the
 # right names and exited 1. Every caller got away with it only because the built-in table ends in
-# implementers; `planner-buffer' reads it as a `for' word list, where a non-zero status is invisible,
+# implementers; `ux-buffer' reads it as a `for' word list, where a non-zero status is invisible,
 # and the assignment form two hundred lines above would have aborted this suite.
 #
 # `--role', `--autostart' and `--standby' ask the same question of a different field and can grow
 # the same defect independently - two of them did, separately, and were fixed separately. So all
 # four are held to the one rule here, against one roster whose LAST row matches none of them while
 # every mode still has something to print: a regression to "prints nothing, exits 0" fails too.
-printf 'Turing  producer  autostart\nAda  planner  standby\nHopper  orchestrator\n' \
+printf 'Turing  producer  autostart\nAda  ux  standby\nHopper  orchestrator\n' \
   > "$consumer_roster_file"
 
 set +e
@@ -506,13 +506,13 @@ set -e
   || fail "roster --implementers with a non-implementer row last: expected Turing, got: $implementers_tail"
 
 set +e
-role_tail="$("$roster_at" --role planner)"
+role_tail="$("$roster_at" --role ux)"
 status=$?
 set -e
 [[ $status -eq 0 ]] \
-  || fail "roster --role with a non-planner row last: expected exit 0, got $status"
+  || fail "roster --role with a non-ux row last: expected exit 0, got $status"
 [[ "$role_tail" == "Ada" ]] \
-  || fail "roster --role with a non-planner row last: expected Ada, got: $role_tail"
+  || fail "roster --role with a non-ux row last: expected Ada, got: $role_tail"
 
 set +e
 autostart_tail="$("$roster_at" --autostart)"
@@ -555,21 +555,21 @@ ln -s "$(command -v dirname)" "$bare_path_dir/dirname"
 ln -s "$(command -v bash)" "$bare_path_dir/bash"
 out="$(PATH="$bare_path_dir" "$(command -v bash)" "$roster_at")"
 [[ "$out" == "$roster_out" ]] || fail "roster under a narrowed PATH: got: $out"
-printf 'Ada  planner\n' > "$consumer_roster_file"
+printf 'Ada  ux\n' > "$consumer_roster_file"
 out="$(PATH="$bare_path_dir" "$(command -v bash)" "$roster_at")"
-[[ "$out" == "$(printf 'Ada\tplanner\tinteractive')" ]] \
+[[ "$out" == "$(printf 'Ada\tux\tinteractive')" ]] \
   || fail "roster under a narrowed PATH with a consumer file: got: $out"
 rm -f "$consumer_roster_file"
 pass "roster reads the consumer file with PATH narrowed to dirname and bash - no git crept in"
 
 # `--autostart` is the same parser and the same builtins, so it survives the narrowed PATH too.
-printf 'Ada  planner  autostart\n' > "$consumer_roster_file"
+printf 'Ada  ux  autostart\n' > "$consumer_roster_file"
 out="$(PATH="$bare_path_dir" "$(command -v bash)" "$roster_at" --autostart)"
 [[ "$out" == "Ada" ]] || fail "roster --autostart under a narrowed PATH: got: $out"
 rm -f "$consumer_roster_file"
 pass "roster --autostart needs nothing but bash"
 
-printf 'Ada  planner  standby\n' > "$consumer_roster_file"
+printf 'Ada  ux  standby\n' > "$consumer_roster_file"
 out="$(PATH="$bare_path_dir" "$(command -v bash)" "$roster_at" --standby)"
 [[ "$out" == "Ada" ]] || fail "roster --standby under a narrowed PATH: got: $out"
 rm -f "$consumer_roster_file"
@@ -581,7 +581,7 @@ pass "roster --standby needs nothing but bash"
 # still has its fleet at `.cerebro/cerebro-roster' must NOT silently fall back to the built-in table:
 # absence is the documented "run the X-Men" signal, and a stale path would borrow it - nineteen
 # names, most of which the project does not run, with nothing said anywhere.
-printf 'Ada  planner\n' > "$roster_consumer/.cerebro/cerebro-roster"
+printf 'Ada  ux\n' > "$roster_consumer/.cerebro/cerebro-roster"
 set +e
 out="$("$roster_at" 2>/dev/null)"
 status=$?
@@ -622,8 +622,8 @@ alt_roster_at="$alt_consumer/vendor/cerebro/scripts/roster"
 [[ "$("$alt_roster_at")" == "$roster_out" ]] \
   || fail "alternative mount with no consumer file: expected the built-in table"
 mkdir -p "$alt_consumer/.cerebro"
-printf 'Ada  planner\nTuring  producer\n' > "$alt_consumer/.cerebro/roster.conf"
-[[ "$("$alt_roster_at")" == "$(printf 'Ada\tplanner\tinteractive\nTuring\tproducer\timplementer')" ]] \
+printf 'Ada  ux\nTuring  producer\n' > "$alt_consumer/.cerebro/roster.conf"
+[[ "$("$alt_roster_at")" == "$(printf 'Ada\tux\tinteractive\nTuring\tproducer\timplementer')" ]] \
   || fail "alternative mount: expected the consumer's roster, got: $("$alt_roster_at")"
 pass "roster finds a consumer file from a submodule mounted at vendor/cerebro"
 
@@ -775,7 +775,7 @@ broken_dir="$(consumer_new broken-roster --copy)"
 broken_scripts="$broken_dir/.cerebro/cerebro/scripts"
 cat > "$broken_scripts/roster" <<'BROKEN'
 #!/usr/bin/env bash
-printf 'Xavier\tplanner\tinteractive\n'
+printf 'Xavier\tux\tinteractive\n'
 printf 'Cyclops\timplementer\timplementer\n'
 echo "roster: failed with status 1 while pretending to be broken" >&2
 exit 1
@@ -1158,14 +1158,14 @@ pass "self-consumer roster: a missing file falls back to the built-in table"
 
 cat > "$self_cerebro/.cerebro/roster.conf" <<'ROSTER'
 # the fleet this checkout runs
-Ada           planner
+Ada           ux
 Hopper        orchestrator
 
 Turing        producer
 ROSTER
 
 self_rows="$("$self_roster_at")"
-[[ "$self_rows" == "$(printf 'Ada\tplanner\tinteractive\nHopper\torchestrator\tinteractive\nTuring\tproducer\timplementer')" ]] \
+[[ "$self_rows" == "$(printf 'Ada\tux\tinteractive\nHopper\torchestrator\tinteractive\nTuring\tproducer\timplementer')" ]] \
   || fail "self-consumer roster: expected the declared fleet, got: $self_rows"
 pass "self-consumer roster: the checkout's own file replaces the built-in table"
 
@@ -1176,7 +1176,7 @@ pass "self-consumer roster: every mode reads the same declaration"
 # The self-consumer candidate refuses the old path for the same reason (cb-epr): this repository is
 # a consumer of itself, so it is the one that would notice the move last.
 rm -f "$self_cerebro/.cerebro/roster.conf"
-printf 'Ada  planner\n' > "$self_cerebro/.cerebro/cerebro-roster"
+printf 'Ada  ux\n' > "$self_cerebro/.cerebro/cerebro-roster"
 set +e
 "$self_roster_at" >/dev/null 2>&1
 status=$?

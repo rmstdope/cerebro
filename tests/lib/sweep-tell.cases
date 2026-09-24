@@ -42,7 +42,7 @@
 # role          kind         state    hosted since_mark_s pending expect
 
 # Not an orchestrator, not an interactive kind: nothing recorded, nothing forgotten.
-planner         interactive  idle     yes    0            no      none
+ux              interactive  idle     yes    0            no      none
 implementer     interactive  idle     yes    7200         no      none
 orchestrator    implementer  idle     yes    7200         no      none
 

@@ -153,8 +153,9 @@ if ! out="$(jq -n \
 
   # A literal list, and the reason: an orchestrator, an architect, a reviewer and a user-feedback
   # session do their whole job without ever writing a bead into their state file, so every one of
-  # their passes is a no-op by the rule below and none of them is a problem.
-  | ["producer", "planner", "verifier"] as $holders
+  # their passes is a no-op by the rule below and none of them is a problem. A producer and a
+  # bugfixer hold a bead by claim, a UX agent by assignee, the verifier by the one it is verifying.
+  | ["producer", "bugfixer", "ux", "verifier"] as $holders
 
   | ($D | map(select(.event == "start" and inwindow))
         | group_by(.agent)

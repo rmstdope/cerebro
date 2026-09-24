@@ -175,7 +175,7 @@ pass "keeps a childless epic and drops a parented one, asking bd children per ep
 
 # --- the prefilter: a child in the list settles its parent with no bd call (cb-hzl) -------------
 #
-# `scripts/planner-buffer` runs this on every planner pass, so the epic loop may not cost one `bd`
+# the fleet view runs this on every tick, so the epic loop may not cost one `bd`
 # call per epic on a board with eleven of them. Any bead whose id is `<epic>.<n>` proves that epic
 # has a child, and the prefilter is what turns the ordinary case - a split epic listed beside its
 # own children - into no call at all.

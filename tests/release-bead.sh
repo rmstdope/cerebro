@@ -12,7 +12,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$repo_root/tests/lib/consumer.sh"
 
 consumer="$(consumer_new repo --link release-bead roster consumer-root)"
-printf 'Rogue producer\nXavier planner\nIceman ux\n' > "$consumer/.cerebro/roster.conf"
+printf 'Rogue producer\nXavier ux\nIceman ux\n' > "$consumer/.cerebro/roster.conf"
 scripts="$consumer/.cerebro/cerebro/scripts"
 state="$consumer/.cerebro/state"
 mkdir -p "$state"

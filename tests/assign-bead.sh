@@ -12,7 +12,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$repo_root/tests/lib/consumer.sh"
 
 consumer="$(consumer_new repo --origin --link assign-bead assignable-beads roster consumer-root)"
-printf 'Rogue producer\nCyclops producer\nBishop bugfixer\nXavier planner\nBeast ux\nIceman ux\nCerebro orchestrator\n' > "$consumer/.cerebro/roster.conf"
+printf 'Rogue producer\nCyclops producer\nBishop bugfixer\nBeast ux\nIceman ux\nCerebro orchestrator\n' > "$consumer/.cerebro/roster.conf"
 state="$consumer/.cerebro/state"
 stub="$work_dir/stub"
 mkdir -p "$stub"
@@ -40,7 +40,7 @@ chmod +x "$stub/bd"
 # cb-10d.2.1: stub candidate scripts for the planning roles, placed in the fixture's own scripts
 # directory (nothing real is linked there under these names). Each logs its name and arguments and
 # prints $CANDIDATES_JSON.
-for cand in plan-candidates stage-candidates bugfix-candidates; do
+for cand in stage-candidates bugfix-candidates; do
   cat > "$consumer/.cerebro/cerebro/scripts/$cand" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$(basename "$0") $*" >> "$STUB_DIR/candidates.log"
@@ -166,12 +166,6 @@ CANDIDATES_JSON="$candidates" run Beast cb-x 2>/dev/null || fail "a ux agent is 
 grep -q -- "--actor Beast .*update cb-x --assignee Beast --if-assignee" "$stub/bd.log" || fail "a ux agent is assigned as Beast"
 pass "a ux agent is assigned from the ux queue"
 
-reset "$unassigned"
-CANDIDATES_JSON="$candidates" run Xavier cb-x 2>/dev/null || fail "a planner is exit 0"
-[[ "$(cat "$stub/candidates.log")" == "plan-candidates " ]] \
-  || fail "a planner is served from plan-candidates, got: '$(cat "$stub/candidates.log")'"
-! grep -q -- "--claim" "$stub/bd.log" || fail "a planner's bead is not claimed"
-pass "a planner is assigned from plan-candidates"
 
 reset "$unassigned"
 CANDIDATES_JSON="$candidates" run Bishop cb-x 2>/dev/null || fail "a bugfixer is exit 0"

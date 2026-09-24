@@ -28,7 +28,7 @@ cleanup_add "$stub_dir"
 consumer="$(consumer_new repo --link reopen-failed consumer-root)"
 git_q -C "$consumer" commit -q --allow-empty -m "init"
 
-# The dispatching stub from tests/plan-candidates.sh:39-63, with ONE addition: `show` consumes
+# The dispatching stub tests/stage-candidates.sh also uses, with ONE addition: `show` consumes
 # stdout.show.1, then stdout.show.2, ... in order, falling back to stdout.show once the numbered
 # files run out. Without it the parent walk reads the same bead's JSON for ever and this suite hangs
 # rather than fails.

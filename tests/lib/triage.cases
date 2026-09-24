@@ -67,7 +67,7 @@ orchestrator    interactive  dead     yes    cb-1        -        -          180
 orchestrator    interactive  standby  yes    cb-1        -        -          1800     10        none
 
 # Never a role that is not the orchestrator, and never an implementer kind.
-planner         interactive  idle     yes    cb-1        -        -          1800     10        none
+ux              interactive  idle     yes    cb-1        -        -          1800     10        none
 implementer     interactive  idle     yes    cb-1        -        -          1800     10        none
 orchestrator    implementer  idle     yes    cb-1        -        -          1800     10        none
 

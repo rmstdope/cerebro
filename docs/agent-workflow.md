@@ -275,8 +275,10 @@ cut a minor release
 ```
 
 It is called Cerebro because it finds the mutants and points them at the work. Since the fleet view
-took over the timed sweeps, what is left for a Cerebro session is ranking the unranked backlog with
-you, handing a release request to the project's release skill, diagnosing a stuck producer, and
+took over the timed sweeps, what is left for a Cerebro session is triaging the unranked backlog
+with you — one bead at a time: it makes sure the bead is understood (asking what the filing left
+out and writing the answers back), ranks it on a summary you can judge without opening it, and
+then splits it into children where one producer could not deliver it in one pass — handing a release request to the project's release skill, diagnosing a stuck producer, and
 anything needing a forced reassignment — which is why most days you will not run one
 at all.
 

@@ -1948,23 +1948,6 @@ mod tests {
     /// already exists: `human`, exact `planned` and an assignee all win over it, because the
     /// fleet view hands both cb-lz5 agents their bead by assignee and a bead must show under
     /// `Being planned` while one of them has it (cb-10d.2.2).
-    /// `ux:none` is the navigator's word at filing that there is nothing to agree, so it lands
-    /// where an agreed bead does and loses to the same buckets (cb-uump).
-    #[test]
-    fn partition_beads_treats_ux_none_as_past_the_ux_stage() {
-        let buckets = partition_beads(vec![
-            bead("none", "open", "task", &["ux:none"]),
-            bead("none-planned", "open", "task", &["ux:none", "planned"]),
-            bead("none-paused", "open", "task", &["ux:none", "human"]),
-            bead("plain", "open", "task", &[]),
-        ]);
-        let ids = |v: &Vec<Bead>| v.iter().map(|b| b.id.clone()).collect::<Vec<_>>();
-        assert_eq!(ids(&buckets.ux_agreed), vec!["none"]);
-        assert_eq!(ids(&buckets.planned), vec!["none-planned"]);
-        assert_eq!(ids(&buckets.paused), vec!["none-paused"]);
-        assert_eq!(ids(&buckets.unplanned), vec!["plain"]);
-    }
-
     #[test]
     fn partition_beads_puts_an_agreed_bead_in_its_own_bucket() {
         let beads = vec![
@@ -1980,6 +1963,23 @@ mod tests {
         assert_eq!(ids(&buckets.planned), vec!["agreed-planned"]);
         assert_eq!(ids(&buckets.being_planned), vec!["agreed-held"]);
         assert_eq!(ids(&buckets.paused), vec!["agreed-paused"]);
+        assert_eq!(ids(&buckets.unplanned), vec!["plain"]);
+    }
+
+    /// `ux:none` is the navigator's word at filing that there is nothing to agree, so it lands
+    /// where an agreed bead does and loses to the same buckets (cb-uump).
+    #[test]
+    fn partition_beads_treats_ux_none_as_past_the_ux_stage() {
+        let buckets = partition_beads(vec![
+            bead("none", "open", "task", &["ux:none"]),
+            bead("none-planned", "open", "task", &["ux:none", "planned"]),
+            bead("none-paused", "open", "task", &["ux:none", "human"]),
+            bead("plain", "open", "task", &[]),
+        ]);
+        let ids = |v: &Vec<Bead>| v.iter().map(|b| b.id.clone()).collect::<Vec<_>>();
+        assert_eq!(ids(&buckets.ux_agreed), vec!["none"]);
+        assert_eq!(ids(&buckets.planned), vec!["none-planned"]);
+        assert_eq!(ids(&buckets.paused), vec!["none-paused"]);
         assert_eq!(ids(&buckets.unplanned), vec!["plain"]);
     }
 

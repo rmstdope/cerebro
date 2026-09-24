@@ -71,7 +71,7 @@ source "$script_dir/block-sync.sh"
 
 CANONICAL="templates/state-file-contract.md"
 
-# The nine documents a session actually loads. See the header for why the two thin role files are
+# The seven documents a session actually loads. See the header for why the thin role files are
 # not among them.
 CARRIERS=(
   agents/architect.md

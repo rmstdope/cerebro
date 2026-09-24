@@ -16,8 +16,11 @@ claimed for you; `bugfix` beads stay with the bugfixer.
    person sees changes, so design from the description and the acceptance line it was filed with. If the build turns out to touch anything a person sees, hand it to UX
    (`producer-park … ux`, below) rather than deciding the shape yourself.
    The agreed experience is fixed. Decide the architecture, files,
-   increments, test plan, validation, and any non-UX details. Write those decisions to the bead's
-   `design` field under the usual eight plan headings, then add `planned`. A missing `design` field
+   increments, test plan, validation, and any non-UX details. Read `.cerebro/traps.md` at the
+   consumer root if it exists: a trap is a fact a plan cannot be written correctly without, so
+   name every trap the bead touches and what the plan does about it; a missing file is ordinary.
+   Write those decisions to the bead's `design` field under the eight headings of *The plan*,
+   below, then add `planned`. A missing `design` field
    or `planned` label is the normal producer input, never a reason to return it for build design.
    A bead carrying `verification:failed` **and** `planned` is rework: the navigator saw the build
    fail against a design that was judged right. Read the dated failure note, amend the existing
@@ -35,8 +38,80 @@ claimed for you; `bugfix` beads stay with the bugfixer.
    the phase changes; heartbeat before long work.
 4. Run the declared gate. Obtain and address one independent, full review of the complete diff and
    bead. Decide whether the review changes warrant another review, and choose its scope; do not
-   loop on minor, self-contained answers. Rerun required checks, deliver by this consumer's
-   configured merge convention, close and push the bead, and run `end-pass` last.
+   loop on minor, self-contained answers. Rerun required checks, write *The retrospective* if one
+   is due, deliver by this consumer's configured merge convention, close and push the bead, and
+   run `end-pass` last.
+
+## The plan
+
+Written to the bead with `bd update <id> --design-file <file>`, and read back with
+`bd show <id> --json` (the pretty renderer mangles tables). Every heading below is present,
+spelled exactly, as a `##` heading at the top level of the `design` field; where one does not
+apply, write **"None."** and say why. The verifier briefs the navigator from *User-facing
+decisions*, and the review sub-agent reads the diff against it, so a plan without them leaves
+both reading nothing.
+
+    ## Context
+    ## Files to change, and what to reuse
+    ## Increments
+    ## The test plan
+    ## User-facing decisions
+    ## Out of scope
+    ## Validation
+    ## Known traps
+
+1. **Context**: why the work exists and what changes when it lands.
+2. **Files to change, and what to reuse**: concrete paths, and the existing functions and patterns
+   to build on. It also carries the design of the code: the public surface of anything new, in the
+   project's language; where state lives, who owns it and what invalidates it; which layer each
+   piece belongs in when the work crosses the project's layers, and why.
+3. **Increments**: small, ordered, each naming the failing test that opens it.
+4. **The test plan**: each kind of test the project runs, with names and what each pins, and which
+   suites must run.
+5. **User-facing decisions**, with two `###` subsections, both always present:
+   - `### Agreed with the navigator`: a pointer, never a summary, since a paraphrase drifts: one
+     line naming the `acceptance` field, the mockup path, and every string a person reads, quoted
+     verbatim from the acceptance.
+   - `### Decided by me`: every detail you decided inside the agreed shape (wording the acceptance
+     leaves open, sizes, an empty or error state it does not name), one line each, the value as it
+     ships and why. The navigator can overrule any line here; nobody else decides any of it.
+
+   "None." under both for a bead with no user-facing surface, `ux:none` included.
+6. **Out of scope**: what a reader might assume is included and is not.
+7. **Validation**: the exact commands, and any human check, that prove the acceptance.
+8. **Known traps**: the entries of `.cerebro/traps.md` this bead touches, with what the plan does
+   about each, or "None.".
+
+## The retrospective
+
+Only you saw the run. **When the review is answered and CI is green, before you merge**, ask: did
+anything happen that I did not expect? Worth recording: a failure nothing prepared you for; green
+locally and red in CI; a tool not behaving as documented; a rule you could not follow; time lost
+to something avoidable. Not worth it: a normal bead, a RED that was meant to be red, an answered
+finding, anything already written in `docs/retrospectives/`. If nothing qualifies, **write no
+file** and say so in your closing message: *"retrospective: nothing to record."*
+
+One file per bead, `docs/retrospectives/<bead id>.md`, never appended to another bead's; two
+findings are two sections of your one file. It lives under `docs/` because `.cerebro/state/` is
+gitignored, and it rides on the bead's own pull request:
+
+```bash
+grep -rl "<a word from your symptom>" docs/retrospectives/ 2>/dev/null || echo "nothing like it yet"
+mkdir -p docs/retrospectives
+[ -f docs/retrospectives/README.md ] || \
+  cp .cerebro/cerebro/templates/retrospectives-README.md docs/retrospectives/README.md
+git add docs/retrospectives/
+git commit -m "docs(<bead id>): retrospective — <the one-line symptom>"
+git push
+```
+
+The grep comes first so *Seen before* is real. Stage the directory, not just your file, or the
+README copy is lost with the worktree. The README is the format: **What happened**, **Why** (or
+"not established"), **Cost**, **Prevent by** (a file, a section, a step or a check; "be careful"
+is not a prevention), **Seen before**. Be specific enough to act on. **Record; do not fix**:
+changing the rules, the skills or CI is the navigator's, and Forge reads these files to propose
+it. A retrospective is a commit after the review, so it needs CI on the new head; decide whether
+its scope warrants a follow-up review before merging, as with any post-review change.
 
 Never take another bead, alter agreed UX, or skip a failing test, review, or required check. Ask
 the navigator only for a genuine UX, scope, or approach decision; otherwise decide and record it.
@@ -84,5 +159,7 @@ corrected").
 Every write names your bead and pid:
 `.cerebro/cerebro/scripts/agent-state <name> working --bead <id> --phase <phase> --pid $PPID`.
 The phases, in order, are `design`, `build`, `gate`, `review`, `ci`, `rebase` and `merge`; a
-question is `asking` with the same bead and phase. Delivered, parked or handed back:
+question is `asking` with the same bead and phase. `merge` covers the retrospective, the merge,
+the close and the cleanup; a retrospective that warrants a follow-up review goes back through
+`review` and `ci` first. Delivered, parked or handed back:
 `.cerebro/cerebro/scripts/end-pass <name> --pid $PPID`, last.

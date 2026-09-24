@@ -80,7 +80,7 @@ role that touches a label not in it is changing the pipeline for every consumer.
 | **sent back to UX by a producer** | `needs-ui-decision`, no `ux:agreed`, no `human`, a `## Sent back to the UX stage` note | `scripts/producer-park … ux` | a `ux` agent, as an ordinary UX candidate; it amends the record and re-adds `ux:agreed` |
 | **parked on a UI question** | `needs-ui-decision` **and** `human` | a `ux` agent when nobody answered, or a second return of the same question | as *waiting on the navigator*; when `human` comes off, `needs-ui-decision` tells the next `ux` agent which question it holds, and that agent removes it when it records |
 | **asked about and left parked** | as above, plus `pause:kept` | Cerebro alone | Cerebro alone; it stops the sweep asking twice |
-| **merged, unverified** | closed, no `verification` state | the producer's `bd close` | Psylocke, through `scripts/work-beads`; a child of an epic waits until the whole family is closed |
+| **merged, unverified** | closed, no `verification` state | the producer's `bd close` | Psylocke, through `scripts/work-beads`, a child of an epic included; the family is swept for the whole once every child is closed |
 | **not worth a look** | `verification=not-needed` | Psylocke, from `scripts/app-paths --classify` | nobody; terminal |
 | **verified** | `verification=passed`, `verified_at=<sha>` | Psylocke (`verifier-pass-epic-family` for a family) | nobody, unless main moves past it |
 | **overtaken since verified** | `verdict:stale` | `scripts/sweep-verdicts.sh` | Psylocke re-verifies and removes it; every other candidate script excludes it |

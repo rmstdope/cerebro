@@ -49,7 +49,19 @@ When you have all three, file the bead without asking for approval.
 
 ## Filing it
 
-Write the description to a file first:
+Write the description to a file first. It opens with `## Outcome` — the first of the three things,
+in the navigator's words — so that the verifier can quote it back when the work is done and ask
+whether the problem was solved, not only whether the acceptance was met:
+
+```markdown
+## Outcome
+<what improves, and for whom>
+
+## Scope
+<what is in, what is out; a yes to the third question is recorded here>
+```
+
+Then:
 
 ```bash
 bd create "<the title>" --type task -p 4 --body-file /tmp/bead-body.md \

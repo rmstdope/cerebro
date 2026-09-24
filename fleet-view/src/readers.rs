@@ -667,7 +667,7 @@ pub fn read_candidates(
     })
 }
 
-/// The beads a producer may be handed, via `<scripts_dir>/assignable-beads` - the one place
+/// The beads a builder ROLE may be handed, via `<scripts_dir>/assignable-beads` - the one place
 /// that rule lives (cb-10d.1). Ids in the script's order. A failure is returned as itself: an empty
 /// list would say there is nothing to build.
 pub fn read_assignable(
@@ -1641,21 +1641,15 @@ mod tests {
                 Ok(b"".to_vec())
             } else if call.program == plan_c {
                 Ok(br#"[{"id":"cb-p","priority":1}]"#.to_vec())
-            } else if call.program == stage_c && call.args == ["build-design"] {
-                Ok(br#"[{"id":"cb-b","priority":2,"title":"ignored","labels":["ux:agreed"]}]"#.to_vec())
             } else if call.program == stage_c && call.args == ["ux"] {
                 Ok(br#"[{"id":"cb-u","priority":0},{"id":"cb-v","priority":null}]"#.to_vec())
             } else {
                 Ok(BUCKETED_BEADS.as_bytes().to_vec())
             }
         });
-        let roles: BTreeSet<String> = ["build-design", "ux"].iter().map(|r| r.to_string()).collect();
+        let roles: BTreeSet<String> = ["ux"].iter().map(|r| r.to_string()).collect();
 
         let work = read_work(&paths, &Programs::default(), &fake, &roles).unwrap();
-        assert_eq!(
-            work.candidates.get("build-design"),
-            Some(&vec![model::Candidate { id: "cb-b".into(), priority: Some(2) }])
-        );
         assert_eq!(
             work.candidates.get("ux"),
             Some(&vec![
@@ -1668,7 +1662,7 @@ mod tests {
         assert!(calls.iter().all(|c| c.program != plan), "plan-candidates was not asked for");
         let stage_args: Vec<Vec<String>> =
             calls.iter().filter(|c| c.program == stage).map(|c| c.args.clone()).collect();
-        assert_eq!(stage_args, vec![vec!["build-design".to_string()], vec!["ux".to_string()]]);
+        assert_eq!(stage_args, vec![vec!["ux".to_string()]]);
     }
 
     #[test]

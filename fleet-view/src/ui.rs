@@ -2428,7 +2428,7 @@ mod tests {
         app.copy_mode = true;
         app.finish_refresh(
             Ok((0..30)
-                .map(|index| row(&format!("Agent-{index}"), "implementer", RowState::Idle))
+                .map(|index| row(&format!("Agent-{index}"), "producer", RowState::Idle))
                 .collect()),
             at(86_400),
         );
@@ -2443,7 +2443,7 @@ mod tests {
         app.copy.as_mut().expect("copy is retained").snapshot.scroll = 1;
         app.finish_refresh(
             Ok((0..30)
-                .map(|index| row(&format!("Refreshed-{index}"), "implementer", RowState::Idle))
+                .map(|index| row(&format!("Refreshed-{index}"), "producer", RowState::Idle))
                 .collect()),
             at(86_401),
         );
@@ -2591,9 +2591,9 @@ mod tests {
             let mut app = App::default();
             app.finish_refresh(
                 Ok(vec![
-                    row("Storm", "implementer", RowState::Dead),
-                    row("Rogue", "implementer", RowState::Dead),
-                    row("Gambit", "implementer", RowState::Dead),
+                    row("Storm", "producer", RowState::Dead),
+                    row("Rogue", "producer", RowState::Dead),
+                    row("Gambit", "producer", RowState::Dead),
                 ]),
                 now(),
             );
@@ -2683,7 +2683,7 @@ mod tests {
                 row("Psylocke", "verifier", RowState::Dead),
                 FleetRow {
                     since: Some(now()),
-                    ..row("Storm", "implementer", RowState::Waiting)
+                    ..row("Storm", "producer", RowState::Waiting)
                 },
             ]),
             at(86_400),
@@ -2787,12 +2787,12 @@ mod tests {
 
     // ---- cb-10d.1: the starting row ------------------------------------------------------------
 
-    /// A supervising app whose one implementer, Rogue, was handed cb-4xz and holds ROW_STATE.
+    /// A supervising app whose one producer, Rogue, was handed cb-4xz and holds ROW_STATE.
     fn handed_app(row_state: RowState) -> App {
         let mut app = App::new();
         app.set_supervision(SupervisionMode::Supervising);
         app.handed.insert("Rogue".into(), "cb-4xz".into());
-        app.finish_refresh(Ok(vec![row("Rogue", "implementer", row_state)]), at(86_400));
+        app.finish_refresh(Ok(vec![row("Rogue", "producer", row_state)]), at(86_400));
         app.selected = Some("Rogue".to_string());
         app
     }
@@ -3191,7 +3191,7 @@ mod tests {
     fn a_flagged_working_row_carries_a_gold_marker() {
         let mut app = App::new();
         app.finish_refresh(
-            Ok(vec![working("Cyclops", "implementer", "build", "cb-21g")]),
+            Ok(vec![working("Cyclops", "producer", "build", "cb-21g")]),
             at(86_400),
         );
         app.flagged = ["Cyclops".to_string()].into_iter().collect();
@@ -3216,10 +3216,10 @@ mod tests {
         let mut app = App::new();
         app.finish_refresh(
             Ok(vec![
-                working("Cyclops", "implementer", "build", "cb-21g"),
+                working("Cyclops", "producer", "build", "cb-21g"),
                 row("Psylocke", "verifier", RowState::Asking),
-                row("Rogue", "implementer", RowState::Idle),
-                row("Storm", "implementer", RowState::Waiting),
+                row("Rogue", "producer", RowState::Idle),
+                row("Storm", "producer", RowState::Waiting),
                 row("Beast", "planner", RowState::Dead),
                 row("Cypher", "reviewer", RowState::Up),
                 row("Moira", "user-feedback", RowState::Unknown("reticulating".into())),
@@ -3249,7 +3249,7 @@ mod tests {
     fn a_flagged_standby_row_keeps_its_countdown() {
         let mut app = App::new();
         app.armed = ["Rogue"].into_iter().map(String::from).collect();
-        app.finish_refresh(Ok(vec![row("Rogue", "implementer", RowState::Dead)]), at(86_400));
+        app.finish_refresh(Ok(vec![row("Rogue", "producer", RowState::Dead)]), at(86_400));
         app.set_standby_labels(
             [("Rogue".to_string(), "\u{21bb} retry in 30s, 2 failed".to_string())]
                 .into_iter()
@@ -3279,7 +3279,7 @@ mod tests {
             Ok(vec![FleetRow {
                 diagnostic: Some("pid 4242 names Cyclops but not this consumer's root".into()),
                 sessions: 2,
-                ..working("Cyclops", "implementer", "build", "cb-21g")
+                ..working("Cyclops", "producer", "build", "cb-21g")
             }]),
             at(86_400),
         );
@@ -3299,7 +3299,7 @@ mod tests {
         app.finish_refresh(
             Ok(vec![FleetRow {
                 sessions: 2,
-                ..working("Cyclops", "implementer", "build", "cb-123")
+                ..working("Cyclops", "producer", "build", "cb-123")
             }]),
             at(86_400),
         );
@@ -3332,9 +3332,9 @@ mod tests {
     /// A roster of the shape the navigator actually watches, for the narrow column arithmetic.
     fn roster_rows() -> Vec<FleetRow> {
         vec![
-            working("Wolverine", "implementer", "build", "cb-hjf"),
+            working("Wolverine", "producer", "build", "cb-hjf"),
             row("Cerebro", "orchestrator", RowState::Idle),
-            row("Rogue", "build-design", RowState::Standby),
+            row("Rogue", "planner", RowState::Standby),
             row("Jubilee", "ux", RowState::Idle),
         ]
     }
@@ -3380,7 +3380,7 @@ mod tests {
         assert!(line_with(&rendered, "AGENT").contains("ROLE"));
         let wolverine = line_with(&rendered, "● Wolverine");
         assert!(
-            wolverine.contains("implemen… "),
+            wolverine.contains("producer  "),
             "the role is cut with an ellipsis, and one cell of the column is always the gap so it \
              never runs into the state word: {wolverine:?}"
         );
@@ -3394,10 +3394,10 @@ mod tests {
         // None of them is slack, so none of them may be spent on the role: a bead id clipped at
         // the border reads as a different, valid bead id.
         let mut app = App::new();
-        let mut wolverine = working("Wolverine", "implementer", "working", "cb-hjf");
+        let mut wolverine = working("Wolverine", "producer", "working", "cb-hjf");
         wolverine.sessions = 2;
         wolverine.diagnostic = Some("not this consumer".into());
-        app.finish_refresh(Ok(vec![wolverine, row("Rogue", "build-design", RowState::Idle)]), at(86_400));
+        app.finish_refresh(Ok(vec![wolverine, row("Rogue", "planner", RowState::Idle)]), at(86_400));
         app.flagged = ["Wolverine".to_string()].into_iter().collect();
 
         let rendered = lines(&render(&app, 100, 20));
@@ -3439,7 +3439,7 @@ mod tests {
     fn a_pane_too_narrow_for_a_role_is_exactly_todays_row() {
         // Names and state words that leave the two floors no slack at all to give away.
         let rows = vec![
-            working("Wolverinexxx", "implementer", "rebasing", "cb-hjf"),
+            working("Wolverinexxx", "producer", "rebasing", "cb-hjf"),
             row("Nightcrawler", "orchestrator", RowState::Standby),
         ];
         let narrow = columns(&rows, 30, &BTreeMap::new(), &BTreeMap::new(), &BTreeSet::new(), now(), &BTreeMap::new());
@@ -3504,11 +3504,11 @@ mod tests {
         let buffer = render(&app, 100, 20);
 
         assert!(
-            style_where(&buffer, "implemen…").add_modifier.contains(Modifier::DIM),
+            style_where(&buffer, "producer").add_modifier.contains(Modifier::DIM),
             "the role reads as a column to scan down, not as news on the row"
         );
         assert!(
-            !style_where(&buffer, "Wolverine implemen…").add_modifier.contains(Modifier::DIM),
+            !style_where(&buffer, "Wolverine producer").add_modifier.contains(Modifier::DIM),
             "the name beside it is at full strength"
         );
     }
@@ -3594,7 +3594,7 @@ mod tests {
         app.set_session_view(SessionView::Refused {
             lines: std::sync::Arc::new(vec![
                 Line::from(Span::styled(
-                    "agents/implementer.md is missing".to_string(),
+                    "agents/producer.md is missing".to_string(),
                     Style::default().fg(RED),
                 )),
                 Line::from(""),
@@ -3613,7 +3613,7 @@ mod tests {
             "a refused launch carries no hint: {rendered:?}"
         );
         assert!(
-            rendered.iter().any(|line| line.contains("agents/implementer.md is missing")),
+            rendered.iter().any(|line| line.contains("agents/producer.md is missing")),
             "{rendered:?}"
         );
         assert!(
@@ -3829,7 +3829,7 @@ mod tests {
         app.finish_refresh(
             Ok(vec![
                 row("Beast", "planner", RowState::Unknown("perplexed".into())),
-                row("Storm", "implementer", RowState::Unknown("absolutely-baffled".into())),
+                row("Storm", "producer", RowState::Unknown("absolutely-baffled".into())),
             ]),
             at(86_400),
         );
@@ -3974,7 +3974,7 @@ mod tests {
                 diagnostic: Some("bad json".into()),
                 ..row("Beast", "planner", RowState::Invalid)
             },
-            row("Storm", "implementer", RowState::Idle),
+            row("Storm", "producer", RowState::Idle),
         ];
         let mut app = App::new();
         app.finish_refresh(Ok(rows.clone()), at(86_400));
@@ -4008,7 +4008,7 @@ mod tests {
                 diagnostic: Some("bad json".into()),
                 ..row("Beast", "planner", RowState::Invalid)
             },
-            row("Storm", "implementer", RowState::Idle),
+            row("Storm", "producer", RowState::Idle),
         ];
 
         let mut fresh = App::new();
@@ -4180,8 +4180,8 @@ mod tests {
         let mut app = App::new();
         app.finish_refresh(
             Ok(vec![
-                row("A", "implementer", RowState::Dead),
-                row("B", "implementer", RowState::Dead),
+                row("A", "producer", RowState::Dead),
+                row("B", "producer", RowState::Dead),
             ]),
             at(0),
         );
@@ -4606,7 +4606,7 @@ mod tests {
         let mut app = App::new();
         app.finish_refresh(
             Ok((0..30)
-                .map(|i| row(&format!("A{i:02}"), "implementer", RowState::Dead))
+                .map(|i| row(&format!("A{i:02}"), "producer", RowState::Dead))
                 .collect()),
             at(0),
         );
@@ -4643,7 +4643,7 @@ mod tests {
         let mut app = App::new();
         app.finish_refresh(
             Ok((0..30)
-                .map(|i| row(&format!("A{i:02}"), "implementer", RowState::Dead))
+                .map(|i| row(&format!("A{i:02}"), "producer", RowState::Dead))
                 .collect()),
             at(0),
         );
@@ -4678,7 +4678,7 @@ mod tests {
 
         // The Session pane gets the same cue from the same helper, at no extra cost.
         let mut app = App::with_supervision(SupervisionMode::Supervising);
-        app.finish_refresh(Ok(vec![row("Storm", "implementer", RowState::Idle)]), at(0));
+        app.finish_refresh(Ok(vec![row("Storm", "producer", RowState::Idle)]), at(0));
         let rendered = body(&render(&app, 99, 12));
         assert!(
             rendered.iter().any(|line| line.contains("Rows 1–2 of 4")),
@@ -4687,7 +4687,7 @@ mod tests {
 
         // A retained pass is a document like any other, and gets the same cue from the same rule.
         let mut app = App::with_supervision(SupervisionMode::Supervising);
-        app.finish_refresh(Ok(vec![row("Storm", "implementer", RowState::Idle)]), at(0));
+        app.finish_refresh(Ok(vec![row("Storm", "producer", RowState::Idle)]), at(0));
         app.selected = Some("Storm".to_string());
         ended(&mut app, 40);
         let rendered = lines(&render(&app, 99, 12));
@@ -4702,7 +4702,7 @@ mod tests {
         let mut app = both_populated();
         app.finish_refresh(
             Ok((0..30)
-                .map(|i| row(&format!("A{i:02}"), "implementer", RowState::Dead))
+                .map(|i| row(&format!("A{i:02}"), "producer", RowState::Dead))
                 .collect()),
             at(0),
         );
@@ -4741,7 +4741,7 @@ mod tests {
 
         // And the Session pane's offset is its own third: moving it moves neither of the others.
         let mut app = App::with_supervision(SupervisionMode::Supervising);
-        app.finish_refresh(Ok(vec![row("Storm", "implementer", RowState::Idle)]), at(0));
+        app.finish_refresh(Ok(vec![row("Storm", "producer", RowState::Idle)]), at(0));
         // Short enough that the session's own body is clipped and its offset has somewhere to go.
         let flat = body(&render(&app, 99, 12));
         assert!(flat.iter().any(|line| line.contains("No live session.")));
@@ -5295,10 +5295,10 @@ mod tests {
     /// cuts `↻ retry in 30s, 2 failed`. The navigator ranked that as its own question rather than
     /// this bead\'s (2026-09-09).
     #[test]
-    fn a_ten_implementer_fleet_reads_its_whole_stage_note() {
+    fn a_ten_producer_fleet_reads_its_whole_stage_note() {
         let mut app = App::new();
         app.armed = ["Beast"].into_iter().map(String::from).collect();
-        app.finish_refresh(Ok(vec![row("Beast", "build-design", RowState::Dead)]), at(86_400));
+        app.finish_refresh(Ok(vec![row("Beast", "planner", RowState::Dead)]), at(86_400));
         app.set_standby_labels(
             [("Beast".to_string(), "→ planned 10/10".to_string())]
                 .into_iter()
@@ -5324,7 +5324,7 @@ mod tests {
     }
 
     #[test]
-    fn a_ten_implementer_fleet_still_reads_its_whole_condition() {
+    fn a_ten_producer_fleet_still_reads_its_whole_condition() {
         // `→ buffer<10` is eleven cells; the column takes them rather than truncating to the lie
         // `→ buffer<1`.
         let mut app = App::new();
@@ -6452,7 +6452,7 @@ mod tests {
     fn stuck_row() -> FleetRow {
         FleetRow {
             turn_ended: Some(now() - chrono::Duration::minutes(529)),
-            ..working("Storm", "implementer", "ci", "cb-ykz.2")
+            ..working("Storm", "producer", "ci", "cb-ykz.2")
         }
     }
 
@@ -6519,7 +6519,7 @@ mod tests {
     #[test]
     fn an_ordinary_working_row_is_unchanged() {
         let mut app = App::new();
-        app.finish_refresh(Ok(vec![working("Storm", "implementer", "ci", "cb-ykz.2")]), now());
+        app.finish_refresh(Ok(vec![working("Storm", "producer", "ci", "cb-ykz.2")]), now());
 
         let buffer = render(&app, 80, 24);
         let rendered = body(&buffer);
@@ -6689,16 +6689,16 @@ mod tests {
         }
         app.finish_refresh(
             Ok(vec![
-                row("Rogue", "implementer", RowState::Dead),
-                row("Storm", "implementer", RowState::Dead),
-                working("Cyclops", "implementer", "build", "cb-9su"),
+                row("Rogue", "producer", RowState::Dead),
+                row("Storm", "producer", RowState::Dead),
+                working("Cyclops", "producer", "build", "cb-9su"),
                 row("Xavier", "ux", RowState::Dead),
             ]),
             at(86_400),
         );
         app.finish_work_refresh(
             Ok(WorkBuckets {
-                planned: vec![give_bead_row("cb-44b", &["planned"]), give_bead_row("cb-55c", &["planned"])],
+                planned: vec![give_bead_row("cb-44b", &["ux:agreed"]), give_bead_row("cb-55c", &["ux:agreed"])],
                 ..WorkBuckets::default()
             }),
             at(86_400),
@@ -6722,8 +6722,8 @@ mod tests {
         let at = rows.iter().position(|l| l.contains("cb-44b") && !l.contains("Give")).expect("the bead row");
         // The split Work pane is 38 cells inside, so the two widest rows are cut with `…`.
         let expected = [
-            "    → Rogue    implementer  standby",
-            "      Storm    implementer  standby",
+            "    → Rogue    producer  standby",
+            "      Storm    producer  standby",
             "      Cyclops  busy with cb-9su",
             "      Xavier   only designs unpla",
         ];
@@ -6734,7 +6734,7 @@ mod tests {
         assert_eq!(style_where(&buffer, "→ Rogue").bg, Some(SELECTED_BG));
         assert!(style_where(&buffer, "Cyclops  busy").add_modifier.contains(Modifier::DIM));
         assert!(style_where(&buffer, "Xavier   only").add_modifier.contains(Modifier::DIM));
-        assert!(!style_where(&buffer, "Storm    impl").add_modifier.contains(Modifier::DIM));
+        assert!(!style_where(&buffer, "Storm    prod").add_modifier.contains(Modifier::DIM));
     }
 
     #[test]
@@ -6743,7 +6743,7 @@ mod tests {
         let buffer = render(&app, 60, 40);
         let rows = body(&buffer);
         let at = rows.iter().position(|l| l.contains("cb-44b") && !l.contains("Give")).expect("the bead row");
-        assert!(rows[at + 1].starts_with("    → Rogue    implementer  standby"), "{:?}", rows[at + 1]);
+        assert!(rows[at + 1].starts_with("    → Rogue    producer  standby"), "{:?}", rows[at + 1]);
         assert!(rows[at + 4].starts_with("      Xavier   only designs unplanned work"), "{:?}", rows[at + 4]);
         let narrow = render(&app, 40, 40);
         assert!(body_has_cut_give_row(&narrow), "{:#?}", body(&narrow));

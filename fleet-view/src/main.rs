@@ -1459,9 +1459,6 @@ fn bead_for_start(app: &App, role: &str) -> Option<String> {
     if role == "producer" {
         return buckets.assignable.iter().find(|id| !spoken.contains(*id)).cloned();
     }
-    if role == "implementer" {
-        return buckets.implementer_assignable.iter().find(|id| !spoken.contains(*id)).cloned();
-    }
     if role == "bugfixer" {
         return buckets.bugfixable.iter().find(|id| !spoken.contains(*id)).cloned();
     }
@@ -5373,7 +5370,7 @@ mod main_tests {
     /// is what the bead is named after, and nothing pinned it.
     #[test]
     fn a_finished_ux_pass_leaves_the_row_on_standby() {
-        for role in ["ux", "build-design"] {
+        for role in ["ux", "ux"] {
             let dir = tempfile::tempdir().unwrap();
             let paths = scratch(dir.path(), "sleep 5");
             let now = Utc::now();
@@ -5547,7 +5544,7 @@ mod main_tests {
 
     fn implementer_row(name: &str, state: cerebro_tui::model::RowState) -> cerebro_tui::model::FleetRow {
         cerebro_tui::model::FleetRow {
-            role: "implementer".into(),
+            role: "producer".into(),
             ..fleet_row(name, cerebro_tui::model::AgentKind::Implementer, state)
         }
     }
@@ -5557,7 +5554,7 @@ mod main_tests {
             .iter()
             .map(|name| cerebro_tui::model::RosterEntry {
                 name: (*name).to_string(),
-                role: "implementer".to_string(),
+                role: "producer".to_string(),
                 kind: cerebro_tui::model::AgentKind::Implementer,
             })
             .collect()
@@ -5681,7 +5678,7 @@ mod main_tests {
         settle_gone(&mut host, "Beast");
     }
 
-    /// Two standby build-designers and two candidates: each is handed its own bead in one tick,
+    /// Two standby uxers and two candidates: each is handed its own bead in one tick,
     /// the second never offered the first's (cb-10d.2.2).
     #[test]
     fn two_planners_are_given_two_different_beads() {
@@ -5694,13 +5691,13 @@ mod main_tests {
             .iter()
             .map(|name| RosterEntry {
                 name: (*name).into(),
-                role: "build-design".into(),
+                role: "ux".into(),
                 kind: AgentKind::Interactive,
             })
             .collect();
         let mut buckets = cerebro_tui::model::WorkBuckets::default();
         buckets.candidates = [(
-            "build-design".to_string(),
+            "ux".to_string(),
             vec![
                 cerebro_tui::model::Candidate { id: "cb-a".into(), priority: Some(2) },
                 cerebro_tui::model::Candidate { id: "cb-b".into(), priority: Some(2) },
@@ -5711,13 +5708,13 @@ mod main_tests {
         let mut app = standby_app(
             supervising(),
             vec![
-                staged_row("Iceman", "build-design", RowState::Dead),
-                staged_row("Gambit", "build-design", RowState::Dead),
+                staged_row("Iceman", "ux", RowState::Dead),
+                staged_row("Gambit", "ux", RowState::Dead),
             ],
             Some(buckets),
             now,
         );
-        let spacing: BTreeMap<String, u64> = [("build-design".to_string(), 0u64)].into_iter().collect();
+        let spacing: BTreeMap<String, u64> = [("ux".to_string(), 0u64)].into_iter().collect();
 
         start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &spacing, 1, &roster, now);
 
@@ -6223,7 +6220,7 @@ mod main_tests {
         let host = SessionHost::default();
         let roster = vec![RosterEntry {
             name: "Iceman".into(),
-            role: "build-design".into(),
+            role: "ux".into(),
             kind: AgentKind::Interactive,
         }];
         let buckets = cerebro_tui::model::partition_beads(vec![cerebro_tui::model::Bead {
@@ -6240,7 +6237,7 @@ mod main_tests {
         }]);
         let mut app = standby_app(
             supervising(),
-            vec![staged_row("Iceman", "build-design", RowState::Dead)],
+            vec![staged_row("Iceman", "ux", RowState::Dead)],
             Some(buckets),
             now,
         );
@@ -6274,7 +6271,7 @@ mod main_tests {
         let host = SessionHost::default();
         let roster = vec![RosterEntry {
             name: "Iceman".into(),
-            role: "build-design".into(),
+            role: "ux".into(),
             kind: AgentKind::Interactive,
         }];
         let file = dir.path().join(".cerebro/state/Iceman.handover");
@@ -6287,7 +6284,7 @@ mod main_tests {
             .unwrap();
         let mut app = standby_app(
             supervising(),
-            vec![staged_row("Iceman", "build-design", RowState::Dead)],
+            vec![staged_row("Iceman", "ux", RowState::Dead)],
             None,
             now,
         );

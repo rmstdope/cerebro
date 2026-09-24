@@ -427,8 +427,9 @@ step prose used to drop, and a reopened bead with an assignee is picked up by no
 - **`--fault build`** (the default): `planned` stays, and **it adds `plan:revise` to nothing**. A
   producer takes the bead as rework against the same design (`scripts/assignable-beads` offers a
   planned bead only when `verification:failed` sits beside it).
-- **`--fault plan`**: `planned` comes off and `plan:revise` goes on; a `ux` agent revises the
-  agreed experience in place.
+- **`--fault plan`**: `planned`, `ux:agreed` and `ux:none` come off and `plan:revise` goes on, so
+  the bead is a UX candidate again; a `ux` agent revises the agreed experience in place and
+  re-adds `ux:agreed`.
 
 `plan:revise` is what the `ux` stage looks for and you are the only role that sets it; removing
 `planned` alone means nothing to it. The script walks up closed ancestors, refuses a cycle, and is safe to

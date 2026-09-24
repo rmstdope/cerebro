@@ -9,7 +9,9 @@
 #   --sha       the full 40-hex commit the verification ran against; becomes `verified_at`
 #               metadata and, abbreviated, the "at <short sha>" in the note and the reasons
 #   --notes     what the navigator saw, in full; becomes the appended failure note
-#   --fault     `plan`  the design asked for the wrong thing -> remove `planned', add `plan:revise'
+#   --fault     `plan`  the design asked for the wrong thing -> remove `planned', `ux:agreed' and
+#               `ux:none', add `plan:revise' (cb-b26a: with a stage label still on, the ux stage
+#               refuses the bead and a producer takes it at P0)
 #               `build` the design was fine, the build was not -> neither label is touched
 #   --reason    the one-line reason for `bd reopen'. Optional; defaults to the FIRST LINE of --notes
 #
@@ -170,7 +172,8 @@ bd -C "$root" update "$bead" --remove-label "second-look" \
   || die_step "removing second-look" "$bead"
 
 if [[ "$fault" == "plan" ]]; then
-  bd -C "$root" update "$bead" --remove-label planned --add-label "plan:revise" \
+  bd -C "$root" update "$bead" --remove-label planned --remove-label ux:agreed --remove-label ux:none \
+      --add-label "plan:revise" \
     || die_step "the plan:revise label flip" "$bead"
 fi
 

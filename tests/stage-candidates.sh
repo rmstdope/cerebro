@@ -130,6 +130,7 @@ labelled='[{"id":"tt-plain","issue_type":"task","priority":2,"labels":[]},
            {"id":"tt-failed","issue_type":"task","priority":2,"labels":["verification:failed"]},
            {"id":"tt-bugfix","issue_type":"bug","priority":2,"labels":["bugfix"]},
            {"id":"tt-revise","issue_type":"task","priority":2,"labels":["verification:failed","plan:revise"]},
+           {"id":"tt-revise-agreed","issue_type":"task","priority":2,"labels":["ux:agreed","verification:failed","plan:revise"]},
            {"id":"tt-stale","issue_type":"task","priority":2,"labels":["verdict:stale","plan:revise"]},
            {"id":"tt-agreed-planned","issue_type":"task","priority":2,"labels":["ux:agreed","planned"]},
            {"id":"tt-agreed-held","issue_type":"task","priority":2,"labels":["ux:agreed","planning:Beast"]},
@@ -143,6 +144,13 @@ ids="$(run ux | ids_of)"
 [ "$ids" = "tt-held tt-held-x tt-ideas tt-plain tt-revise " ] \
   || fail "the ux stage listed '$ids', not the five beads still needing a designer (a planning label holds nothing since cb-10d.2.2)"
 pass "the ux stage takes what is not yet agreed"
+
+# --- a plan-fault bead reaches this stage only once its stage label is gone (cb-b26a) -----------
+#
+# `reopen-failed --fault plan` removes `ux:agreed` and `ux:none` for exactly this reason: with the
+# stage label still on, the bead is not a ux candidate here and IS a producer's in assignable-beads.
+case " $ids " in *" tt-revise-agreed "*) fail "the ux stage listed a plan:revise bead still carrying ux:agreed: '$ids'";; esac
+pass "a plan:revise bead is a ux candidate only without its stage label, which reopen-failed removes"
 
 # --- ux:none is the navigator's word that there is nothing to agree ------------------------------
 case " $ids " in *" tt-none "*) fail "the ux stage kept a bead filed as touching nothing a person sees: '$ids'";; esac

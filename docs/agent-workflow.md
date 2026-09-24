@@ -22,7 +22,7 @@ Work is tracked in **beads** (`bd`), not in GitHub issues. A bead moves through 
 at a time, and each handover is a label rather than a conversation:
 
 ```
-  unplanned ──► UX agreed ──► claimed ──► merged ──► verified
+  unplanned ──► ready to produce ──► claimed ──► merged ──► verified
                    │             │           │           │
                 UX holds it   a producer    a PR    Psylocke and
                               is producing  merged  you looked at it

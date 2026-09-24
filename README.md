@@ -144,7 +144,7 @@ Each agent is started by a script of its own, run from the consumer repository r
 ```bash
 .cerebro/cerebro/scripts/launch <Name>            # any agent, by name - the one way to start one
 .cerebro/cerebro/scripts/roster                   # the fleet: name, role, kind - one line per agent
-.cerebro/cerebro/scripts/roster --implementers    # the producer names, one per line
+.cerebro/cerebro/scripts/roster --implementers    # the producer names, one per line (the flag keeps its old name)
 .cerebro/cerebro/scripts/cerebro-tui              # the fleet view (needs cargo)
 ```
 

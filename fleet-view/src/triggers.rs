@@ -466,8 +466,6 @@ pub struct AgentFacts<'a> {
 /// wake interval, not this guard, is what keeps it from starting too often.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Fingerprint {
-    /// `candidates` is every candidate of the role with its priority, P4s included, so ranking a
-    /// bead still moves the fingerprint (cb-zgg, cb-10d.2.2).
     Implementer {
         planned_ids: Vec<String>,
         planned_revisions: Vec<(String, Option<DateTime<Utc>>)>,

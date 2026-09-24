@@ -8,6 +8,7 @@ use syn::{Attribute, Fields, ImplItem, Item, TraitItem};
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ItemBoundary {
     identity: String,
+    anchor: String,
     docs: Vec<String>,
     attributes: Vec<String>,
 }
@@ -140,6 +141,33 @@ impl Example {
     let changed = changed_metadata(before, after);
     assert_eq!(changed.len(), 1);
     assert_eq!(changed[0].identity, "impl Example");
+}
+
+#[test]
+fn allows_inserting_or_removing_a_distinct_repeated_implementation() {
+    let before = r#"
+struct Example;
+
+/// Existing implementation.
+impl Example {
+    fn existing() {}
+}
+"#;
+    let after = r#"
+struct Example;
+
+impl Example {
+    fn inserted() {}
+}
+
+/// Existing implementation.
+impl Example {
+    fn existing() {}
+}
+"#;
+
+    assert!(changed_metadata(before, after).is_empty());
+    assert!(changed_metadata(after, before).is_empty());
 }
 
 #[test]
@@ -288,15 +316,19 @@ fn changed_metadata(before: &str, after: &str) -> Vec<MetadataChange> {
             let Some(after_items) = after.get(&identity) else {
                 return Vec::new();
             };
+            let mut unmatched = after_items.clone();
             before_items
                 .into_iter()
-                .zip(after_items)
-                .filter_map(|(before, after)| {
+                .filter_map(move |before| {
+                    let index = unmatched
+                        .iter()
+                        .position(|after| after.anchor == before.anchor)?;
+                    let after = unmatched.remove(index);
                     (before.docs != after.docs || before.attributes != after.attributes).then(
                         || MetadataChange {
                             identity: identity.clone(),
                             before,
-                            after: after.clone(),
+                            after,
                         },
                     )
                 })
@@ -354,7 +386,12 @@ impl Collector {
                 ),
                 Item::Impl(item) => {
                     let identity = implementation_identity(item);
-                    self.record("impl", &identity, &item.attrs);
+                    self.record_with_anchor(
+                        "impl",
+                        &identity,
+                        &implementation_anchor(item),
+                        &item.attrs,
+                    );
                     self.with_scope(format!("impl {identity}"), |collector| {
                         for item in &item.items {
                             match item {
@@ -466,9 +503,20 @@ impl Collector {
     }
 
     fn record(&mut self, kind: &str, name: &str, attributes: &[Attribute]) {
+        self.record_with_anchor(kind, name, name, attributes);
+    }
+
+    fn record_with_anchor(
+        &mut self,
+        kind: &str,
+        name: &str,
+        anchor: &str,
+        attributes: &[Attribute],
+    ) {
         let prefix = (!self.scope.is_empty()).then(|| format!("{}::", self.scope.join("::")));
         self.items.push(ItemBoundary {
             identity: format!("{}{kind} {name}", prefix.unwrap_or_default()),
+            anchor: anchor.to_owned(),
             docs: attributes
                 .iter()
                 .filter(|attribute| attribute.path().is_ident("doc"))
@@ -495,6 +543,20 @@ fn implementation_identity(item: &syn::ItemImpl) -> String {
         .as_ref()
         .map(|(_, path, _)| format!("{} for {self_type}", path.to_token_stream()))
         .unwrap_or(self_type)
+}
+
+fn implementation_anchor(item: &syn::ItemImpl) -> String {
+    item.items
+        .iter()
+        .map(|item| match item {
+            ImplItem::Const(item) => format!("const {}", item.ident),
+            ImplItem::Fn(item) => format!("fn {}", item.sig.ident),
+            ImplItem::Macro(item) => format!("macro {}", item.mac.path.to_token_stream()),
+            ImplItem::Type(item) => format!("type {}", item.ident),
+            _ => item.to_token_stream().to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn attribute_text(attribute: &Attribute) -> String {

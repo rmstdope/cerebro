@@ -23,23 +23,50 @@ fi
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 cd "$root" || exit 2
 
+paths="$(mktemp)" || {
+  echo "pipefail-pipelines: cannot create a source list" >&2
+  exit 2
+}
+trap 'rm -f "$paths"' EXIT
+
+if ! git ls-files --cached --others --exclude-standard -z -- tests >"$paths"; then
+  echo "pipefail-pipelines: cannot enumerate test sources with git" >&2
+  exit 2
+fi
+
 findings=0
 
 while IFS= read -r -d '' path; do
   [[ "$path" == *.sh && -f "$path" ]] || continue
   output="$(awk -v path="$path" '
     /^[[:space:]]*#/ { next }
-    /\|[[:space:]]*head([[:space:]]|$)/ {
-      printf "unsafe pipeline: %s:%d (head may exit before its writer drains)\n", path, NR
-      next
-    }
-    {
-      if (!match($0, /\|[[:space:]]*grep([[:space:]]|$)/)) next
-      command = substr($0, RSTART)
+
+    function early_reader(command) {
+      if (command ~ /^[[:space:]]*head([[:space:]]|$)/) return "head"
+      if (command !~ /^[[:space:]]*grep([[:space:]]|$)/) return ""
       if (command ~ /(^|[[:space:]])--quiet([[:space:]]|$)/ ||
-          command ~ /(^|[[:space:]])-[[:alnum:]]*q[[:alnum:]]*([[:space:]]|$)/) {
-        printf "unsafe pipeline: %s:%d (quiet grep may exit before its writer drains)\n", path, NR
+          command ~ /(^|[[:space:]])-[[:alnum:]]*q[[:alnum:]]*([[:space:]]|$)/) return "quiet grep"
+      return ""
+    }
+
+    {
+      if (pending_pipe) {
+        reader = early_reader($0)
+        if (reader != "") {
+          printf "unsafe pipeline: %s:%d (%s may exit before its writer drains)\n", path, NR, reader
+        }
+        pending_pipe = 0
       }
+
+      if (match($0, /\|[[:space:]]*(head|grep)([[:space:]]|$)/)) {
+        command = substr($0, RSTART + 1)
+        reader = early_reader(command)
+        if (reader != "") {
+          printf "unsafe pipeline: %s:%d (%s may exit before its writer drains)\n", path, NR, reader
+        }
+      }
+
+      if ($0 ~ /\|[[:space:]]*$/) pending_pipe = 1
     }
   ' "$path")" || {
     echo "pipefail-pipelines: could not scan $path" >&2
@@ -49,6 +76,6 @@ while IFS= read -r -d '' path; do
   printf '%s\n' "$output"
   count="$(wc -l <<<"$output")"
   findings=$((findings + count))
-done < <(git ls-files --cached --others --exclude-standard -z -- tests)
+done <"$paths"
 
 [[ $findings -eq 0 ]] || exit 1

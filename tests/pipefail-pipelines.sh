@@ -71,6 +71,21 @@ grep -q '^unsafe pipeline: tests/head.sh:1 .*head' <<<"$out" \
   || fail "expected a head finding with path and line, got: $out"
 pass "a head pipeline is reported with its path and line"
 
+# --- a reader on the next line is reported --------------------------------------------------------
+
+fix="$(new_fixture)"
+printf 'printf "needle\\n" |\n  %s\n' "$quiet" >"$fix/tests/multiline-quiet.sh"
+printf 'printf "one\\ntwo\\n" |\n  %s\n' "$first_line" >"$fix/tests/multiline-head.sh"
+git_q -C "$fix" add -A
+git_q -C "$fix" commit -q -m init
+run "$fix/scripts/pipefail-pipelines"
+[[ $status -eq 1 ]] || fail "multiline early readers must exit 1, got $status (output: $out)"
+grep -q '^unsafe pipeline: tests/multiline-quiet.sh:2 .*grep' <<<"$out" \
+  || fail "expected a multiline quiet-grep finding, got: $out"
+grep -q '^unsafe pipeline: tests/multiline-head.sh:2 .*head' <<<"$out" \
+  || fail "expected a multiline head finding, got: $out"
+pass "multiline quiet grep and head pipelines are reported"
+
 # --- untracked source is scanned ------------------------------------------------------------------
 
 fix="$(new_fixture)"
@@ -82,6 +97,19 @@ run "$fix/scripts/pipefail-pipelines"
 grep -q '^unsafe pipeline: tests/fresh.sh:1 ' <<<"$out" \
   || fail "expected an untracked finding, got: $out"
 pass "an untracked test source is scanned"
+
+# --- source enumeration failures are loud ---------------------------------------------------------
+
+fix="$work_dir/not-a-repository"
+mkdir -p "$fix/scripts" "$fix/tests"
+cp "$script" "$fix/scripts/pipefail-pipelines"
+chmod +x "$fix/scripts/pipefail-pipelines"
+run "$fix/scripts/pipefail-pipelines"
+[[ $status -eq 2 ]] || fail "a source enumeration failure must exit 2, got $status (output: $out)"
+[[ -z "$out" ]] || fail "a source enumeration failure must print no findings, got: $out"
+grep -q 'git' "$work_dir/err" \
+  || fail "a source enumeration failure must name git, got: $(cat "$work_dir/err")"
+pass "a source enumeration failure is loud"
 
 # --- an argument is a usage error -----------------------------------------------------------------
 

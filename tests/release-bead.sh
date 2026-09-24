@@ -12,7 +12,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$repo_root/tests/lib/consumer.sh"
 
 consumer="$(consumer_new repo --link release-bead roster consumer-root)"
-printf 'Rogue implementer\nXavier planner\nIceman build-design\n' > "$consumer/.cerebro/roster.conf"
+printf 'Rogue producer\nXavier planner\nIceman ux\n' > "$consumer/.cerebro/roster.conf"
 scripts="$consumer/.cerebro/cerebro/scripts"
 state="$consumer/.cerebro/state"
 mkdir -p "$state"
@@ -149,7 +149,7 @@ pass "a handover naming a different bead is left alone"
 # --- cb-10d.3: --worktree removes a recorded tree only when nothing in it can be lost ------------
 
 tidy="$(consumer_new tidy --origin --link release-bead roster consumer-root default-branch project-conf)"
-printf 'Rogue implementer\nGambit implementer\n' > "$tidy/.cerebro/roster.conf"
+printf 'Rogue producer\nGambit producer\n' > "$tidy/.cerebro/roster.conf"
 cp "$scripts/agent-alive" "$tidy/.cerebro/cerebro/scripts/agent-alive"
 tstate="$tidy/.cerebro/state"
 mkdir -p "$tstate/worktrees"
@@ -282,7 +282,7 @@ pass "a push that fails after an unassign exits 1"
 # --- cb-10d.4: --ended takes back what a gone session still holds --------------------------------
 
 ended="$(consumer_new ended --origin --link release-bead roster consumer-root default-branch project-conf bead-delivery.sh)"
-printf 'Rogue implementer\nIceman build-design\n' > "$ended/.cerebro/roster.conf"
+printf 'Rogue producer\nIceman ux\n' > "$ended/.cerebro/roster.conf"
 cp "$scripts/agent-alive" "$ended/.cerebro/cerebro/scripts/agent-alive"
 estate="$ended/.cerebro/state"
 mkdir -p "$estate"

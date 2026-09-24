@@ -44,22 +44,17 @@ done
 pass "prints the ready UX-agreed beads sorted by priority then id"
 pass "an assigned UX-agreed bead is never assignable (bd ready --unassigned)"
 
-# --- legacy implementers retain the planned queue ------------------------------------------------
+# --- retired and unknown roles are usage errors --------------------------------------------------
 
-out="$(run implementer)"
-[[ "$(jq -c . <<<"$out")" == '[{"id":"cb-b","priority":0},{"id":"cb-a","priority":1},{"id":"cb-c","priority":1}]' ]] \
-  || fail "the planned queue comes back sorted by priority then id, got $out"
-log="$(cat "$stub/bd.log")"
-[[ "$log" == *"--label planned"* && "$log" != *"--label ux:agreed"* ]] \
-  || fail "an implementer is served the planned queue, got: $log"
-pass "legacy implementers receive planned beads"
-
-# --- any argument is a usage error --------------------------------------------------------------
+status=0
+out="$(run implementer 2>/dev/null)" || status=$?
+[[ $status -eq 2 && -z "$out" ]] || fail "the retired implementer role is exit 2 with nothing on stdout, got $status: $out"
+pass "the retired implementer role is refused"
 
 status=0
 out="$(run --all 2>/dev/null)" || status=$?
-[[ $status -eq 2 && -z "$out" ]] || fail "an argument is exit 2 with nothing on stdout, got $status: $out"
-pass "any argument is a usage error"
+[[ $status -eq 2 && -z "$out" ]] || fail "an unknown argument is exit 2 with nothing on stdout, got $status: $out"
+pass "an unknown argument is a usage error"
 
 # --- a bd failure is exit 1 with nothing on stdout ----------------------------------------------
 

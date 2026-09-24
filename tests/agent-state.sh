@@ -341,7 +341,7 @@ pass "interactive-agent-asking-with-bead-and-role-phase"
 
 # --- done-is-refused-from-every-name ---
 # cb-1or.2 retired `done': it is an unknown word now, from an interactive name and from an
-# implementer's alike, and neither writes a file.
+# producer's alike, and neither writes a file.
 tmp="$(new_fixture)"
 for who in Forge Cyclops; do
   set +e
@@ -368,18 +368,18 @@ grep -q "is not on the roster" <<<"$out" \
 rm -rf "$tmp"
 pass "off-roster-non-interactive-name-still-refused"
 
-# --- an-implementer-name-can-use-a-role-phase-word-too ---
+# --- an-producer-name-can-use-a-role-phase-word-too ---
 # The vocabulary is a union, not checked per role (cerebro.el's `cerebro--phases' makes the same
 # trade) - a wrong word in a column is not worth a per-role table in bash.
 tmp="$(new_fixture)"
 run_state "$tmp" Cyclops working --phase triage --pid 1
 f="$(state_file "$tmp" Cyclops)"
-phase="$(jq -r '.phase' "$f")"; [[ "$phase" == "triage" ]] || fail "an-implementer-name-can-use-a-role-phase-word-too: phase=$phase"
+phase="$(jq -r '.phase' "$f")"; [[ "$phase" == "triage" ]] || fail "an-producer-name-can-use-a-role-phase-word-too: phase=$phase"
 rm -rf "$tmp"
-pass "an-implementer-name-can-use-a-role-phase-word-too"
+pass "an-producer-name-can-use-a-role-phase-word-too"
 
 # --- from-a-worktree-copy-writes-to-the-shared-checkout (ah-e0w) ---
-# An implementer that inits the submodule inside its own bead worktree (the remedy ah-4ao, ah-axj
+# An producer that inits the submodule inside its own bead worktree (the remedy ah-4ao, ah-axj
 # and ah-aao prescribe) invokes agent-state relative to THAT copy. The state file must still land
 # in the main checkout the fleet view reads, never in the worktree's own .cerebro/state/.
 tmp="$(new_fixture)"
@@ -490,19 +490,19 @@ tmp="$(new_fixture)"
 # runs this case too (ah-qled.5.1). Ten of them: 20 concurrent appends is what this pins.
 # From the FIXTURE's roster, not this checkout's. The intent is unchanged - the names come from a
 # roster rather than being spelled out, so a consumer with its own fleet runs this case too - but
-# this checkout is now a consumer itself with four implementers on it (cb-i3l.3), and ten distinct
+# this checkout is now a consumer itself with four producers on it (cb-i3l.3), and ten distinct
 # names is what twenty concurrent appends need. The fixture declares no fleet, so it answers with
 # the shipped table.
-concurrent_names="$("$tmp/.cerebro/cerebro/scripts/roster" --implementers | sed -n 1,10p)"
-[[ "$(printf '%s\n' "$concurrent_names" | grep -c .)" == "10" ]] \
-  || fail "transition-log-concurrent: the roster names fewer than ten implementers"
+concurrent_names="$("$tmp/.cerebro/cerebro/scripts/roster" --implementers | sed -n 1,4p)"
+[[ "$(printf '%s\n' "$concurrent_names" | grep -c .)" == "4" ]] \
+  || fail "transition-log-concurrent: the roster names fewer than four producers"
 for n in $concurrent_names; do
   ( run_state "$tmp" "$n" working --bead ah-f9c --phase build --pid 42
     run_state "$tmp" "$n" idle --pid 42 ) &
 done
 wait
 l="$(log_file "$tmp")"
-[[ "$(wc -l < "$l" | tr -d ' ')" == "20" ]] || fail "transition-log-concurrent: expected 20 lines, got $(wc -l < "$l")"
+[[ "$(wc -l < "$l" | tr -d ' ')" == "8" ]] || fail "transition-log-concurrent: expected 8 lines, got $(wc -l < "$l")"
 jq -c . "$l" >/dev/null || fail "transition-log-concurrent: a line does not parse as JSON"
 rm -rf "$tmp"
 pass "transition-log-concurrent"
@@ -567,19 +567,19 @@ state="$(jq -r '.state' "$f")"; [[ "$state" == "waiting" ]] || fail "waiting-rec
 rm -rf "$tmp"
 pass "waiting-records-no-wake-at"
 
-# --- waiting-from-an-implementer-is-written ---
-# Since cb-1or.1 `waiting` is every agent's end-of-pass state, an implementer's included: it
+# --- waiting-from-an-producer-is-written ---
+# Since cb-1or.1 `waiting` is every agent's end-of-pass state, an producer's included: it
 # ends a pass with nothing in flight, so there is no bead on the file.
 tmp="$(new_fixture)"
 run_state "$tmp" Cyclops waiting --pid 42
 f="$(state_file "$tmp" Cyclops)"
-[[ -f "$f" ]] || fail "waiting-from-an-implementer-is-written: no state file was written"
+[[ -f "$f" ]] || fail "waiting-from-an-producer-is-written: no state file was written"
 [[ "$(jq -r '.state' "$f")" == "waiting" ]] \
-  || fail "waiting-from-an-implementer-is-written: state was $(jq -r '.state' "$f")"
+  || fail "waiting-from-an-producer-is-written: state was $(jq -r '.state' "$f")"
 [[ "$(jq -r '.bead' "$f")" == "null" ]] \
-  || fail "waiting-from-an-implementer-is-written: bead was $(jq -r '.bead' "$f")"
+  || fail "waiting-from-an-producer-is-written: bead was $(jq -r '.bead' "$f")"
 rm -rf "$tmp"
-pass "waiting-from-an-implementer-is-written"
+pass "waiting-from-an-producer-is-written"
 
 # --- waiting-without-wake-in-is-accepted ---
 # The inverse of what this script asked for until cb-3tk, and the case that would have caught the

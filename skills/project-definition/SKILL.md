@@ -133,11 +133,11 @@ the producer-review guidance especially. An existing `CLAUDE.md` is **merged**:
 append absent template sections, write `## The project`, keep the rest, say which happened.
 
 **3. `.cerebro/roster.conf`** — propose the built-in `TABLE=` from `.cerebro/cerebro/scripts/roster`
-with `autostart` on `orchestrator`, `planner`, `verifier`, `user-feedback` and `implementer` rows,
+with `autostart` on `orchestrator`, `verifier`, `user-feedback` and `producer` rows,
 none on `reviewer` or `architect`, as a fenced table:
 
 > This is the fleet I will declare. Keep it, or say what to change — names, roles, fewer
-> implementers, which ones start on their own.
+> producers, which ones start on their own.
 
 *"Keep it"* / *"Change it"* (changes in Other); repeat until *"Keep it"*. Header:
 
@@ -146,7 +146,7 @@ none on `reviewer` or `architect`, as a fenced table:
 # so what is left out is as much a decision as what is here.
 #
 # Order is load-bearing, not display: the interactive roles come first, and the orchestrator takes
-# the next unused implementer name in file order.
+# the next unused producer name in file order.
 #
 # A third word, `autostart', starts that agent with the fleet view; omitted means it is started by
 # hand with `s'. Any other third word refuses, so a typo cannot read as "no".
@@ -159,7 +159,7 @@ none on `reviewer` or `architect`, as a fenced table:
 ```markdown
 # Traps
 
-The facts this project has already paid for, read by planners and implementers before they start.
+The facts this project has already paid for, read by producers before they start.
 One entry per trap: what happened, what it cost, and what to do about it. Empty until the first one.
 ```
 

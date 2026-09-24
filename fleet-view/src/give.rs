@@ -22,14 +22,13 @@ pub enum Stage {
     Designer,
 }
 
-/// `implementer` -> Builder; `bugfixer` -> Bugfixer; the planning roles -> Designer; anything
+/// `producer` -> Producer; `bugfixer` -> Bugfixer; the planning roles -> Designer; anything
 /// else -> None.
 pub fn stage_of(role: &str) -> Option<Stage> {
     match RolePolicy::for_role(role) {
         RolePolicy::Producer => Some(Stage::Producer),
-        RolePolicy::Implementer => Some(Stage::Builder),
         RolePolicy::Bugfixer => Some(Stage::Bugfixer),
-        RolePolicy::Planner | RolePolicy::Ux | RolePolicy::BuildDesign => Some(Stage::Designer),
+        RolePolicy::Planner | RolePolicy::Ux => Some(Stage::Designer),
         RolePolicy::None => None,
     }
 }
@@ -75,9 +74,9 @@ fn standing_for(
     let ux_agreed = bead.labels.iter().any(|l| l == UX_AGREED_LABEL);
     match stage {
         Stage::Builder if !planned => Standing::WrongStage(Stage::Builder),
-        Stage::Producer if !ux_agreed || planned => Standing::WrongStage(Stage::Producer),
+        Stage::Producer if !ux_agreed && !planned => Standing::WrongStage(Stage::Producer),
         Stage::Bugfixer if !bugfix => Standing::WrongStage(Stage::Bugfixer),
-        Stage::Designer if planned => Standing::WrongStage(Stage::Designer),
+        Stage::Designer if planned || ux_agreed => Standing::WrongStage(Stage::Designer),
         _ => Standing::Free,
     }
 }
@@ -348,7 +347,7 @@ mod tests {
     fn cand(name: &str, standing: Standing) -> Candidate {
         Candidate {
             name: name.into(),
-            role: "implementer".into(),
+            role: "producer".into(),
             state_word: "standby".into(),
             standing,
         }
@@ -384,11 +383,11 @@ mod tests {
         let rows = vec![
             row("Cerebro", "orchestrator", RowState::Standby, None),
             row("Xavier", "ux", RowState::Standby, None),
-            row("Gambit", "build-design", RowState::Standby, None),
+            row("Gambit", "planner", RowState::Standby, None),
             row("Moira", "user-feedback", RowState::Standby, None),
-            row("Cyclops", "implementer", RowState::Standby, None),
-            row("Rogue", "implementer", RowState::Standby, None),
-            row("Bad", "implementer", RowState::Invalid, None),
+            row("Cyclops", "producer", RowState::Standby, None),
+            row("Rogue", "producer", RowState::Standby, None),
+            row("Bad", "producer", RowState::Invalid, None),
         ];
         let (s, r) = none();
         let names: Vec<_> =
@@ -398,12 +397,12 @@ mod tests {
 
     #[test]
     fn a_running_starting_or_releasing_agent_is_busy_with_its_bead() {
-        let b = bead("cb-x", &["planned"], None);
+        let b = bead("cb-x", &["ux:agreed"], None);
         let rows = vec![
-            row("A", "implementer", RowState::Working, Some("cb-9su")),
-            row("B", "implementer", RowState::Standby, None),
-            row("C", "implementer", RowState::Dead, None),
-            row("D", "implementer", RowState::Up, None),
+            row("A", "producer", RowState::Working, Some("cb-9su")),
+            row("B", "producer", RowState::Standby, None),
+            row("C", "producer", RowState::Dead, None),
+            row("D", "producer", RowState::Up, None),
         ];
         let mut s = BTreeMap::new();
         s.insert("B".to_string(), "cb-s".to_string());
@@ -422,17 +421,17 @@ mod tests {
     #[test]
     fn the_stage_decides_the_rest() {
         let rows = vec![
-            row("I", "implementer", RowState::Standby, None),
+            row("I", "producer", RowState::Standby, None),
             row("P", "producer", RowState::Standby, None),
             row("U", "ux", RowState::Standby, None),
-            row("G", "build-design", RowState::Standby, None),
+            row("G", "planner", RowState::Standby, None),
         ];
         let (s, r) = none();
-        let planned = candidates(&bead("cb-x", &["planned"], None), &rows, &s, &r);
+        let planned = candidates(&bead("cb-x", &["ux:agreed"], None), &rows, &s, &r);
         assert_eq!(planned[0].standing, Standing::Free);
-        assert_eq!(planned[1].standing, Standing::WrongStage(Stage::Producer));
+        assert_eq!(planned[1].standing, Standing::Free);
         let unplanned = candidates(&bead("cb-x", &[], None), &rows, &s, &r);
-        assert_eq!(unplanned[0].standing, Standing::WrongStage(Stage::Builder));
+        assert_eq!(unplanned[0].standing, Standing::WrongStage(Stage::Producer));
         assert_eq!(unplanned[1].standing, Standing::WrongStage(Stage::Producer));
         let agreed = candidates(&bead("cb-x", &["ux:agreed"], None), &rows, &s, &r);
         assert_eq!(agreed[1].standing, Standing::Free);
@@ -442,7 +441,7 @@ mod tests {
     #[test]
     fn the_holder_is_the_assignee_then_a_running_row_then_the_records() {
         let (s, r) = none();
-        let rows = vec![row("Run", "implementer", RowState::Working, Some("cb-x"))];
+        let rows = vec![row("Run", "producer", RowState::Working, Some("cb-x"))];
         assert_eq!(holder(&bead("cb-x", &[], Some("Storm")), &rows, &s, &r), Some("Storm".into()));
         assert_eq!(holder(&bead("cb-x", &[], Some("")), &rows, &s, &r), Some("Run".into()));
         let mut st = BTreeMap::new();
@@ -486,15 +485,15 @@ mod tests {
     fn a_opens_or_refuses_in_the_agreed_order() {
         let (s, r) = none();
         let rows = vec![
-            row("Cyclops", "implementer", RowState::Working, Some("cb-9su")),
-            row("Rogue", "implementer", RowState::Standby, None),
+            row("Cyclops", "producer", RowState::Working, Some("cb-9su")),
+            row("Rogue", "producer", RowState::Standby, None),
         ];
         assert_eq!(open(None, &rows, &s, &r), Opening::Refuse(no_work()));
-        let held = bead("cb-44b", &["planned"], Some("Storm"));
+        let held = bead("cb-44b", &["ux:agreed"], Some("Storm"));
         assert_eq!(open(Some(&held), &rows, &s, &r), Opening::Refuse(already_with("cb-44b", "Storm")));
         let unplanned = bead("cb-44b", &[], None);
         assert_eq!(open(Some(&unplanned), &rows, &s, &r), Opening::Refuse(nobody("cb-44b")));
-        let planned = bead("cb-44b", &["planned"], None);
+        let planned = bead("cb-44b", &["ux:agreed"], None);
         assert_eq!(open(Some(&planned), &rows, &s, &r), Opening::Open { cursor: "Rogue".into() });
     }
 
@@ -502,14 +501,14 @@ mod tests {
     fn revalidating_closes_on_a_holder_or_nobody_and_silently_when_the_bead_is_gone() {
         let (s, r) = none();
         let rows = vec![
-            row("Rogue", "implementer", RowState::Standby, None),
-            row("Storm", "implementer", RowState::Standby, None),
+            row("Rogue", "producer", RowState::Standby, None),
+            row("Storm", "producer", RowState::Standby, None),
         ];
         assert_eq!(
             revalidate("cb-44b", "Rogue", None, &rows, &s, &r),
             Revalidated::Close { notice: None }
         );
-        let held = bead("cb-44b", &["planned"], Some("Storm"));
+        let held = bead("cb-44b", &["ux:agreed"], Some("Storm"));
         assert_eq!(
             revalidate("cb-44b", "Rogue", Some(&held), &rows, &s, &r),
             Revalidated::Close { notice: Some(already_with("cb-44b", "Storm")) }
@@ -519,10 +518,10 @@ mod tests {
             revalidate("cb-44b", "Rogue", Some(&unplanned), &rows, &s, &r),
             Revalidated::Close { notice: Some(nobody("cb-44b")) }
         );
-        let planned = bead("cb-44b", &["planned"], None);
+        let planned = bead("cb-44b", &["ux:agreed"], None);
         let busy_rows = vec![
-            row("Rogue", "implementer", RowState::Working, Some("cb-1")),
-            row("Storm", "implementer", RowState::Standby, None),
+            row("Rogue", "producer", RowState::Working, Some("cb-1")),
+            row("Storm", "producer", RowState::Standby, None),
         ];
         assert_eq!(
             revalidate("cb-44b", "Rogue", Some(&planned), &busy_rows, &s, &r),
@@ -533,24 +532,27 @@ mod tests {
     #[test]
     fn enter_rechecks_and_refuses_with_the_round_one_lines() {
         let (s, r) = none();
-        let planned = bead("cb-44b", &["planned"], None);
+        let planned = bead("cb-44b", &["ux:agreed"], None);
         let unplanned = bead("cb-44b", &[], None);
         let rows = vec![
-            row("Rogue", "implementer", RowState::Standby, None),
+            row("Rogue", "producer", RowState::Standby, None),
             row("Moira", "user-feedback", RowState::Standby, None),
-            row("Cyclops", "implementer", RowState::Working, Some("cb-9su")),
-            row("Up", "implementer", RowState::Up, None),
+            row("Cyclops", "producer", RowState::Working, Some("cb-9su")),
+            row("Up", "producer", RowState::Up, None),
             row("Xavier", "ux", RowState::Standby, None),
         ];
         let c = |cursor: &str, b: Option<&Bead>| choose("cb-44b", cursor, b, &rows, &s, &r);
         assert_eq!(c("Rogue", None), Choice::Revalidate);
-        let held = bead("cb-44b", &["planned"], Some("Storm"));
+        let held = bead("cb-44b", &["ux:agreed"], Some("Storm"));
         assert_eq!(c("Rogue", Some(&held)), Choice::Refuse(already_with("cb-44b", "Storm")));
         assert_eq!(c("Gone", Some(&planned)), Choice::Revalidate);
         assert_eq!(c("Moira", Some(&planned)), Choice::Refuse(never_takes("Moira")));
         assert_eq!(c("Cyclops", Some(&planned)), Choice::Refuse(busy("Cyclops", "cb-9su")));
         assert_eq!(c("Up", Some(&planned)), Choice::Revalidate);
-        assert_eq!(c("Rogue", Some(&unplanned)), Choice::Refuse(not_planned("cb-44b", "Rogue")));
+        assert_eq!(
+            c("Rogue", Some(&unplanned)),
+            Choice::Refuse("cb-44b is not UX-agreed work for Rogue".into())
+        );
         assert_eq!(c("Xavier", Some(&planned)), Choice::Refuse(already_planned("cb-44b", "Xavier")));
         assert_eq!(
             c("Rogue", Some(&planned)),
@@ -567,11 +569,11 @@ mod tests {
             standing,
         };
         assert_eq!(
-            row_text(&mk("Rogue", "implementer", Standing::Free), 7),
-            "Rogue    implementer  standby"
+            row_text(&mk("Rogue", "producer", Standing::Free), 7),
+            "Rogue    producer  standby"
         );
         assert_eq!(
-            row_text(&mk("Cyclops", "implementer", Standing::Busy { bead: Some("cb-9su".into()) }), 7),
+            row_text(&mk("Cyclops", "producer", Standing::Busy { bead: Some("cb-9su".into()) }), 7),
             "Cyclops  busy with cb-9su"
         );
         assert_eq!(
@@ -579,7 +581,7 @@ mod tests {
             "Xavier   only designs unplanned work"
         );
         assert_eq!(
-            row_text(&mk("Rogue", "implementer", Standing::WrongStage(Stage::Builder)), 7),
+            row_text(&mk("Rogue", "producer", Standing::WrongStage(Stage::Builder)), 7),
             "Rogue    only builds planned work"
         );
     }

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Proves `scripts/assign-bead <Name> <id>`: the fleet view's hand-over of a bead to an implementer
+# Proves `scripts/assign-bead <Name> <id>`: the fleet view's hand-over of a bead to an producer
 # before its session starts (cb-10d.1). It claims AS the agent, writes the handover file before the
 # push, and never lets the advisory push decide its exit status.
 #
@@ -12,7 +12,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$repo_root/tests/lib/consumer.sh"
 
 consumer="$(consumer_new repo --origin --link assign-bead assignable-beads roster consumer-root)"
-printf 'Rogue implementer\nCyclops producer\nBishop bugfixer\nXavier planner\nBeast ux\nIceman build-design\nCerebro orchestrator\n' > "$consumer/.cerebro/roster.conf"
+printf 'Rogue producer\nCyclops producer\nBishop bugfixer\nXavier planner\nBeast ux\nIceman ux\nCerebro orchestrator\n' > "$consumer/.cerebro/roster.conf"
 state="$consumer/.cerebro/state"
 stub="$work_dir/stub"
 mkdir -p "$stub"
@@ -146,18 +146,18 @@ unassigned='[{"id":"cb-x","status":"open","assignee":null}]'
 candidates='[{"id":"cb-x","priority":2}]'
 
 reset "$unassigned"
-err="$(CANDIDATES_JSON="$candidates" run Iceman cb-x 2>&1 >/dev/null)" || fail "a build-design agent is exit 0, got: $err"
+err="$(CANDIDATES_JSON="$candidates" run Iceman cb-x 2>&1 >/dev/null)" || fail "a ux agent is exit 0, got: $err"
 grep -qxF -- "--actor Iceman -C $consumer update cb-x --assignee Iceman --if-assignee " "$stub/bd.log" \
   || fail "the assignment is made as Iceman with an empty --if-assignee, got: $(cat "$stub/bd.log")"
-! grep -q -- "--claim" "$stub/bd.log" || fail "a build-design agent's bead is not claimed"
+! grep -q -- "--claim" "$stub/bd.log" || fail "a ux agent's bead is not claimed"
 assign_line="$(grep -n -- "update cb-x --assignee" "$stub/bd.log" | cut -d: -f1)"
 push_line="$(grep -n -- "dolt push" "$stub/bd.log" | cut -d: -f1)"
 [[ -n "$push_line" && "$assign_line" -lt "$push_line" ]] || fail "the assignment comes before the push"
-[[ "$(cat "$stub/candidates.log")" == "stage-candidates build-design" ]] \
-  || fail "a build-design agent is served from stage-candidates build-design, got: $(cat "$stub/candidates.log")"
+[[ "$(cat "$stub/candidates.log")" == "stage-candidates ux" ]] \
+  || fail "a ux agent is served from stage-candidates ux, got: $(cat "$stub/candidates.log")"
 [[ "$(cat "$state/Iceman.handover")" == "cb-x" ]] || fail "the handover file names cb-x"
 [[ "$err" == *"assign-bead: cb-x is assigned to Iceman"* ]] || fail "stderr says assigned, got: $err"
-pass "assigns a build-design agent without claiming"
+pass "assigns a ux agent without claiming"
 
 reset "$unassigned"
 CANDIDATES_JSON="$candidates" run Beast cb-x 2>/dev/null || fail "a ux agent is exit 0"
@@ -242,11 +242,11 @@ out="$(BD_PUSH_EXIT=1 run --given Rogue cb-x 2>/dev/null)" || fail "--given with
 pass "--given with a failed push prints unpushed and exits 0"
 
 reset "$unassigned"
-out="$(CANDIDATES_JSON="$candidates" run --given Iceman cb-x 2>/dev/null)" || fail "--given for a build-design agent is exit 0"
-[[ "$out" == "pushed" ]] || fail "--given build-design prints pushed, got: '$out'"
+out="$(CANDIDATES_JSON="$candidates" run --given Iceman cb-x 2>/dev/null)" || fail "--given for a ux agent is exit 0"
+[[ "$out" == "pushed" ]] || fail "--given ux prints pushed, got: '$out'"
 grep -q -- "update cb-x --assignee Iceman" "$stub/bd.log" || fail "--given assigns Iceman"
-[[ "$(exact "$state/Iceman.handover")" == $'cb-x\ngiven\n.' ]] || fail "--given build-design marks the handover given"
-pass "--given assigns a build-design agent and marks the handover given"
+[[ "$(exact "$state/Iceman.handover")" == $'cb-x\ngiven\n.' ]] || fail "--given ux marks the handover given"
+pass "--given assigns a ux agent and marks the handover given"
 
 reset '[{"id":"cb-x","status":"in_progress","assignee":"Rogue"}]' '[]'
 out="$(run --given Rogue cb-x 2>/dev/null)" || fail "--given on a bead already Rogue's is exit 0"
@@ -268,7 +268,7 @@ status=0; out="$(run --given Rogue cb-x 2>/dev/null)" || status=$?
 [[ -z "$out" ]] || fail "--given prints nothing on a refusal, got: '$out'"
 pass "--given keeps every refusal's exit status and prints nothing"
 
-# --- cb-10d.3: an implementer's tree is made and recorded -----------------------------------------
+# --- cb-10d.3: an producer's tree is made and recorded -----------------------------------------
 
 tree="$consumer/.cerebro/worktrees/cb-x"
 line_of() {
@@ -276,14 +276,14 @@ line_of() {
 }
 
 reset "$open" "$ready"
-run Rogue cb-x 2>/dev/null || fail "an implementer with a tree is exit 0"
+run Rogue cb-x 2>/dev/null || fail "an producer with a tree is exit 0"
 p="$(line_of "disk-preflight --workload rust")"; c="$(line_of "update cb-x --claim")"
 w="$(line_of "prepare-worktree --path $tree --branch cb-x")"; d="$(line_of "dolt push")"
 [[ -n "$p" && -n "$c" && -n "$w" && -n "$d" && $p -lt $c && $c -lt $w && $w -lt $d ]] \
   || fail "preflight, claim, prepare, push in that order, got: $(cat "$stub/bd.log")"
 [[ "$(cat "$state/worktrees/cb-x")" == "Rogue" ]] || fail "the tree is recorded for Rogue"
 [[ "$(cat "$state/Rogue.handover")" == "cb-x" ]] || fail "the handover still names cb-x"
-pass "an implementer's tree is made after the claim and recorded"
+pass "an producer's tree is made after the claim and recorded"
 
 reset "$open" "$ready"
 CANDIDATES_JSON="$candidates" run Bishop cb-x 2>/dev/null || fail "a bugfixer with a tree is exit 0"
@@ -339,7 +339,7 @@ run Rogue cb-x 2>/dev/null || fail "a bead already Rogue's with no tree is exit 
 ! grep -q -- "--claim" "$stub/bd.log" || fail "no second claim"
 grep -q "prepare-worktree" "$stub/bd.log" || fail "the missing tree is made"
 [[ "$(cat "$state/worktrees/cb-x")" == "Rogue" ]] || fail "the made tree is recorded"
-pass "a bead already the implementer's gets its missing tree"
+pass "a bead already the producer's gets its missing tree"
 
 reset '[{"id":"cb-x","status":"open","assignee":null}]'
 CANDIDATES_JSON='[{"id":"cb-x","priority":2}]' run Iceman cb-x 2>/dev/null || fail "a planning role is exit 0"

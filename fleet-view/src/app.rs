@@ -103,7 +103,7 @@ pub enum PaneContent<T> {
 /// Optional emphasis for a bead row in the Work pane.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WorkBeadTone {
-    /// A planned, unclaimed bead an implementer could take right now.
+    /// A planned, unclaimed bead an producer could take right now.
     Ready,
     /// A planned, unclaimed bead waiting on blockers.
     Waiting,
@@ -1896,7 +1896,7 @@ pub struct App {
     /// give-up and a view that may not supervise disarm; a pass that merely ends does not, which
     /// is the whole point of the set. `docs/ui/cb-op0-arming.html` §6 is the table.
     pub armed: BTreeSet<String>,
-    /// The view's own record of what it handed each implementer it started, until that session
+    /// The view's own record of what it handed each producer it started, until that session
     /// reports (cb-10d.1). Memory only. Written by `main::start_due`, `s`, and autostart; dropped
     /// by `main::give_back` and by a confirmed `k`. NOT `FleetRow::bead`, which stays the state
     /// file's.
@@ -3805,7 +3805,7 @@ impl App {
         // A give-back that found its bead elsewhere has nothing to say (cb-10d.1), and neither
         // has one whose sentence is empty - a planning session that ended holding its bead
         // (cb-10d.2.2).
-        // A take-back of a gone implementer's claim says nothing either way, and a refused one is
+        // A take-back of a gone producer's claim says nothing either way, and a refused one is
         // said by the loop through `App::complain`, which has the clock this has not (cb-10d.4).
         let silent = matches!(
             &answer,
@@ -8707,9 +8707,9 @@ mod tests {
 
     fn give_rows() -> Vec<FleetRow> {
         vec![
-            give_row("Rogue", "implementer", RowState::Dead, None),
-            give_row("Storm", "implementer", RowState::Dead, None),
-            give_row("Cyclops", "implementer", RowState::Working, Some("cb-9su")),
+            give_row("Rogue", "producer", RowState::Dead, None),
+            give_row("Storm", "producer", RowState::Dead, None),
+            give_row("Cyclops", "producer", RowState::Working, Some("cb-9su")),
             give_row("Xavier", "ux", RowState::Dead, None),
         ]
     }
@@ -8734,7 +8734,7 @@ mod tests {
             app.armed.insert(name.to_string());
         }
         set_fleet(&mut app, give_rows());
-        set_work(&mut app, vec![give_bead("cb-44b", &["planned"], None), give_bead("cb-55c", &["planned"], None)]);
+        set_work(&mut app, vec![give_bead("cb-44b", &["ux:agreed"], None), give_bead("cb-55c", &["ux:agreed"], None)]);
         app.focus = PaneFocus::Work;
         app.work_cursor = Some(WorkCursor::Bead("cb-44b".into()));
         app
@@ -8832,7 +8832,7 @@ mod tests {
 
     #[test]
     fn a_given_entry_goes_when_a_later_board_read_shows_it_unassigned() {
-        let unassigned = || vec![give_bead("cb-44b", &["planned"], None)];
+        let unassigned = || vec![give_bead("cb-44b", &["ux:agreed"], None)];
         // A read asked for BEFORE the give answered keeps it.
         let mut app = give_app();
         app.work.refreshing = false;
@@ -8845,7 +8845,7 @@ mod tests {
         assert!(app.given.is_empty(), "a later read that shows it unassigned drops it");
         // ... unless the bead is assigned to that agent.
         app.given.insert("Rogue".into(), "cb-44b".into());
-        set_work(&mut app, vec![give_bead("cb-44b", &["planned"], Some("Rogue"))]);
+        set_work(&mut app, vec![give_bead("cb-44b", &["ux:agreed"], Some("Rogue"))]);
         assert!(app.given.contains_key("Rogue"), "assigned to Rogue keeps it");
     }
 
@@ -8939,7 +8939,7 @@ mod tests {
 
         let mut app = give_app();
         app.open_give(20, at(0));
-        set_work(&mut app, vec![give_bead("cb-44b", &["planned"], Some("Storm"))]);
+        set_work(&mut app, vec![give_bead("cb-44b", &["ux:agreed"], Some("Storm"))]);
         app.revalidate_give(20, at(0));
         assert!(app.give.is_none());
         assert_eq!(app.notice.as_deref(), Some("cb-44b is already with Storm"));
@@ -8950,7 +8950,7 @@ mod tests {
         let mut app = give_app();
         app.open_give(20, at(0));
         app.step_give(1, 20, at(0));
-        set_work(&mut app, vec![give_bead("cb-44b", &["planned"], None), give_bead("cb-55c", &["planned"], None)]);
+        set_work(&mut app, vec![give_bead("cb-44b", &["ux:agreed"], None), give_bead("cb-55c", &["ux:agreed"], None)]);
         app.revalidate_give(20, at(0));
         assert_eq!(app.give, Some(GivePicker { bead: "cb-44b".into(), cursor: "Storm".into() }));
     }
@@ -8964,9 +8964,9 @@ mod tests {
         }
         set_fleet(
             &mut app,
-            names.iter().map(|n| give_row(n, "implementer", RowState::Dead, None)).collect(),
+            names.iter().map(|n| give_row(n, "producer", RowState::Dead, None)).collect(),
         );
-        set_work(&mut app, vec![give_bead("cb-44b", &["planned"], None)]);
+        set_work(&mut app, vec![give_bead("cb-44b", &["ux:agreed"], None)]);
         app.focus = PaneFocus::Work;
         app.work_cursor = Some(WorkCursor::Bead("cb-44b".into()));
         app.open_give(8, at(0));

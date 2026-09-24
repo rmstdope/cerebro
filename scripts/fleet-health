@@ -154,7 +154,7 @@ if ! out="$(jq -n \
   # A literal list, and the reason: an orchestrator, an architect, a reviewer and a user-feedback
   # session do their whole job without ever writing a bead into their state file, so every one of
   # their passes is a no-op by the rule below and none of them is a problem.
-  | ["implementer", "planner", "verifier"] as $holders
+  | ["producer", "planner", "verifier"] as $holders
 
   | ($D | map(select(.event == "start" and inwindow))
         | group_by(.agent)

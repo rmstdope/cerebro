@@ -37,8 +37,6 @@ pub enum RolePolicy {
     None,
     Planner,
     Ux,
-    BuildDesign,
-    Implementer,
     Producer,
     Bugfixer,
 }
@@ -57,8 +55,6 @@ impl RolePolicy {
             .map_or(Self::None, |policy| match policy {
                 "planner" => Self::Planner,
                 "ux" => Self::Ux,
-                "build-design" => Self::BuildDesign,
-                "implementer" => Self::Implementer,
                 "producer" => Self::Producer,
                 "bugfixer" => Self::Bugfixer,
                 _ => Self::None,
@@ -66,11 +62,11 @@ impl RolePolicy {
     }
 
     pub fn is_builder(self) -> bool {
-        matches!(self, Self::Implementer | Self::Producer)
+        matches!(self, Self::Producer)
     }
 
     pub fn is_planning(self) -> bool {
-        matches!(self, Self::Planner | Self::Ux | Self::BuildDesign)
+        matches!(self, Self::Planner | Self::Ux)
     }
 }
 
@@ -979,7 +975,6 @@ pub fn candidate_command(role: &str) -> Option<(&'static str, &'static [&'static
     match RolePolicy::for_role(role) {
         RolePolicy::Planner => Some(("plan-candidates", &[])),
         RolePolicy::Ux => Some(("stage-candidates", &["ux"])),
-        RolePolicy::BuildDesign => Some(("stage-candidates", &["build-design"])),
         _ => None,
     }
 }
@@ -1956,13 +1951,10 @@ mod tests {
     fn candidate_command_names_each_planning_roles_script() {
         assert_eq!(candidate_command("planner"), Some(("plan-candidates", &[][..])));
         assert_eq!(candidate_command("ux"), Some(("stage-candidates", &["ux"][..])));
-        assert_eq!(
-            candidate_command("build-design"),
-            Some(("stage-candidates", &["build-design"][..]))
-        );
+        assert_eq!(candidate_command("build-design"), None);
         assert_eq!(candidate_command("verifier"), None);
         assert_eq!(candidate_command("implementer"), None);
-        for role in ["planner", "ux", "build-design"] {
+        for role in ["planner", "ux"] {
             assert!(candidate_command(role).is_some(), "{role} has a candidate script");
         }
     }
@@ -1970,15 +1962,13 @@ mod tests {
     #[test]
     fn declared_role_policies_are_the_routing_boundary() {
         assert_eq!(RolePolicy::for_role("producer"), RolePolicy::Producer);
-        assert_eq!(RolePolicy::for_role("implementer"), RolePolicy::Implementer);
+        assert_eq!(RolePolicy::for_role("implementer"), RolePolicy::None);
         assert_eq!(RolePolicy::for_role("bugfixer"), RolePolicy::Bugfixer);
-        assert_eq!(RolePolicy::for_role("build-design"), RolePolicy::BuildDesign);
+        assert_eq!(RolePolicy::for_role("build-design"), RolePolicy::None);
         assert_eq!(RolePolicy::for_role("verifier"), RolePolicy::None);
         assert_eq!(RolePolicy::for_role("consumer-only-role"), RolePolicy::None);
         assert!(RolePolicy::Producer.is_builder());
-        assert!(RolePolicy::Implementer.is_builder());
         assert!(!RolePolicy::Bugfixer.is_builder());
-        assert!(RolePolicy::BuildDesign.is_planning());
         assert!(!RolePolicy::Producer.is_planning());
     }
 
@@ -2000,11 +1990,11 @@ mod tests {
         };
         let rows = vec![
             row("Xavier", "ux"),
-            row("Iceman", "build-design"),
-            row("Rogue", "implementer"),
+            row("Iceman", "planner"),
+            row("Rogue", "producer"),
             row("Beast", "ux"),
         ];
-        let want: BTreeSet<String> = ["build-design", "ux"].iter().map(|r| r.to_string()).collect();
+        let want: BTreeSet<String> = ["planner", "ux"].iter().map(|r| r.to_string()).collect();
         assert_eq!(planning_roles_of(&rows), want);
         assert!(planning_roles_of(&[]).is_empty());
     }

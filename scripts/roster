@@ -103,18 +103,10 @@ Psylocke      verifier
 Cypher        reviewer
 Forge         architect
 Bishop        bugfixer
-Gambit        build-design
-Iceman        build-design
-Cyclops       implementer
-Storm         implementer
-Wolverine     implementer
-Rogue         implementer
-Nightcrawler  implementer
-Colossus      implementer
-Jubilee       implementer
-Phoenix       implementer
-Mystique      implementer
-Magneto       implementer
+Cyclops       producer
+Storm         producer
+Wolverine     producer
+Rogue         producer
 "
 
 policy_of() {
@@ -129,7 +121,7 @@ policy_of() {
   # Linked-script fixtures from before the shared declaration retain this
   # compatibility fallback. Real checkouts always read the table above.
   case "$want" in
-    planner|ux|build-design|implementer|producer|bugfixer) printf '%s' "$want"; return 0 ;;
+    planner|ux|producer|bugfixer) printf '%s' "$want"; return 0 ;;
   esac
   return 1
 }
@@ -138,7 +130,7 @@ kind_of() {
   # $1 = role
   local policy
   policy="$(policy_of "$1")" || policy="none"
-  if [[ "$policy" == "implementer" || "$policy" == "producer" ]]; then
+  if [[ "$policy" == "producer" ]]; then
     printf 'implementer'
   else
     printf 'interactive'
@@ -222,6 +214,11 @@ parse_rows() {
     if [[ -n "$rest" ]]; then
       refuse "$source line $lineno: '$rest' is one word too many - a row is NAME ROLE and optionally autostart or standby"
     fi
+    case "$role" in
+      build-design | implementer)
+        refuse "$source line $lineno: '$role' is retired - replace it with producer"
+        ;;
+    esac
     printf '%s\t%s\t%s\t%s\n' "$name" "$role" "$(kind_of "$role")" "$third"
   done
 }

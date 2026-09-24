@@ -5,8 +5,8 @@ where to look when something wants you, and what it costs. You are "the navigato
 agents' word for the one person the shape of every user-facing decision belongs to.
 
 The agents' own instructions live in `.cerebro/cerebro/agents/<role>.md`, and for the roles that
-have one, in `.cerebro/cerebro/skills/`: `implement-bead`, `agree-experience`,
-`design-the-build`, `fix-bug` and the shared `beads-workflow` — plus `write-bead`, which Cerebro loads when the navigator asks for a bead and
+have one, in `.cerebro/cerebro/skills/`: `produce-bead`, `agree-experience`,
+`fix-bug` and the shared `beads-workflow` — plus `write-bead`, which Cerebro loads when the navigator asks for a bead and
 which you can also run by hand as `/write-bead`, and `project-definition`, which no role loads: you
 run it yourself, once, in a blank repository (the README says when). The verifier, the reviewer and the architect carry their
 whole job in their agent file. You do not need to read any of it to operate this.

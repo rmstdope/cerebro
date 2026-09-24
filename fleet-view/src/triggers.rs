@@ -883,7 +883,6 @@ pub fn first_candidate(candidates: &[Candidate]) -> Option<&Candidate> {
 pub fn bead_for<'a>(facts: &'a TriggerFacts, role: &str) -> Option<&'a str> {
     match RolePolicy::for_role(role) {
         RolePolicy::Producer => return next_bead(facts),
-        RolePolicy::Implementer => return facts.implementer_assignable_ids.first().map(String::as_str),
         RolePolicy::Bugfixer => return next_bugfix(facts),
         _ => {}
     }
@@ -922,6 +921,9 @@ pub fn spoken_for(
 /// (`cerebro--role-peers`). A role with one holder has none, which is what makes this answer "no"
 /// for every role but the planners and the implementers without naming any of them.
 pub fn role_peers<'a>(name: &str, role: &str, roster: &'a [RosterEntry]) -> Vec<&'a str> {
+    if role == "producer" {
+        return Vec::new();
+    }
     roster
         .iter()
         .filter(|entry| entry.role == role && entry.name != name)
@@ -1452,27 +1454,27 @@ mod tests {
     #[test]
     fn a_planning_role_is_given_its_first_ranked_candidate() {
         let list = || vec![("cb-4", 4), ("cb-2", 2), ("cb-3", 3)];
-        let facts = facts_for(vec![], &[("build-design", list())]);
-        assert_eq!(bead_for(&facts, "build-design"), Some("cb-2"));
+        let facts = facts_for(vec![], &[("ux", list())]);
+        assert_eq!(bead_for(&facts, "ux"), Some("cb-2"));
 
         let mut buckets = WorkBuckets::default();
-        buckets.candidates = cands(&[("build-design", list())]);
+        buckets.candidates = cands(&[("ux", list())]);
         let spoken: BTreeSet<String> = ["cb-2".to_string()].into_iter().collect();
-        let roster = roster(&[("Iceman", "build-design")]);
+        let roster = roster(&[("Iceman", "ux")]);
         let without =
             TriggerFacts::derive(&buckets, &roster, &spoken, |_| false, GhAnswer::Unanswered, 1);
-        assert_eq!(bead_for(&without, "build-design"), Some("cb-3"));
+        assert_eq!(bead_for(&without, "ux"), Some("cb-3"));
 
-        let only_p4 = facts_for(vec![], &[("build-design", vec![("cb-4", 4)])]);
-        assert_eq!(bead_for(&only_p4, "build-design"), None);
-        assert_eq!(condition(&only_p4, &agent_of("build-design")), None);
+        let only_p4 = facts_for(vec![], &[("ux", vec![("cb-4", 4)])]);
+        assert_eq!(bead_for(&only_p4, "ux"), None);
+        assert_eq!(condition(&only_p4, &agent_of("ux")), None);
 
-        let mut unranked = facts_for(vec![], &[("build-design", vec![("cb-n", 2), ("cb-m", 2)])]);
-        unranked.planning_candidates.get_mut("build-design").unwrap()[0].priority = None;
-        assert_eq!(bead_for(&unranked, "build-design"), Some("cb-m"), "an unranked candidate is skipped");
+        let mut unranked = facts_for(vec![], &[("ux", vec![("cb-n", 2), ("cb-m", 2)])]);
+        unranked.planning_candidates.get_mut("ux").unwrap()[0].priority = None;
+        assert_eq!(bead_for(&unranked, "ux"), Some("cb-m"), "an unranked candidate is skipped");
 
         assert_eq!(bead_for(&facts, "verifier"), None);
-        for role in ["planner", "ux", "build-design", "implementer"] {
+        for role in ["planner", "ux", "producer"] {
             assert!(hands_a_bead(role), "{role} is handed a bead");
         }
         assert!(!hands_a_bead("verifier"));

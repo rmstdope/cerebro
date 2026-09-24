@@ -12,7 +12,7 @@
 #   exit 4  a builder worktree could not be made: `disk-preflight` refused, the path holds
 #           something that is not a worktree, or `prepare-worktree` failed (cb-10d.3)
 #
-# THE WORKTREE (cb-10d.3). For a claim-based role (`implementer` or `bugfixer`), this script makes
+# THE WORKTREE (cb-10d.3). For a claim-based role (`producer` or `bugfixer`), this script makes
 # the tree the session works in:
 # `.cerebro/worktrees/<id>` on branch `<id>` (or the first free `<id>-N`), by `prepare-worktree`,
 # after `disk-preflight` passed with the plan's workload (`non-rust` only when the plan says
@@ -24,12 +24,10 @@
 #
 # Which queue, and how the bead is taken, is decided by ROLE:
 #
-#   implementer   `assignable-beads`               claimed (`--claim`); NAME's when in_progress
 #   producer      `assignable-beads`               claimed (`--claim`); NAME's when in_progress
 #   bugfixer      `bugfix-candidates`              claimed (`--claim`); NAME's when in_progress
 #   planner       `plan-candidates`                assigned; NAME's when open with assignee NAME
 #   ux            `stage-candidates ux`            assigned, likewise
-#   build-design  `stage-candidates build-design`  assigned, likewise
 #
 # A planning role's bead is NEVER claimed: `in_progress` means "being built" to Moira, Psylocke and
 # `work-beads`, and a bead being designed is not being built. `scripts/release-bead` clears that
@@ -83,16 +81,15 @@ if ! policy="$("$script_dir/roster" --policy "$role")"; then
   echo "assign-bead: $role has no routing policy" >&2
   exit 2
 fi
-# By ROLE, not kind: `planner', `ux', `build-design' and `orchestrator' all share the kind
+# By ROLE, not kind: `planner', `ux', and `orchestrator' all share the kind
 # `interactive'. `candidates' is the role's own queue; `mode' is how the bead is taken.
 case "$policy" in
-  implementer|producer) candidates=("$script_dir/assignable-beads" "$role"); mode=claim ;;
+  producer)     candidates=("$script_dir/assignable-beads");               mode=claim ;;
   bugfixer)     candidates=("$script_dir/bugfix-candidates");              mode=claim ;;
   planner)      candidates=("$script_dir/plan-candidates");               mode=assign ;;
   ux)           candidates=("$script_dir/stage-candidates" ux);           mode=assign ;;
-  build-design) candidates=("$script_dir/stage-candidates" build-design); mode=assign ;;
   *)
-    echo "assign-bead: $name is a $role; only implementers, bugfixers and the planning roles are handed a bead" >&2
+    echo "assign-bead: $name is a $role; only producers, bugfixers and the planning roles are handed a bead" >&2
     exit 2 ;;
 esac
 if [[ "$mode" == claim ]]; then

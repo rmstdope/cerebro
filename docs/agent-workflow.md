@@ -118,7 +118,7 @@ passes — a producer between beads included — and it is ended within half a m
 For column fires, and `RET` shows its last pass. A bold yellow `?` is an agent waiting on
 *you*, and grey `○` is dead.
 
-`◌` on an **producer** row is one whose session died without finishing a bead. The view starts it
+`◌` on a **producer** row is one whose session died without finishing a bead. The view starts it
 again on the same backoff a role waits out, and the For column says when and how many starts have
 come to nothing — `↻ retry now`, `↻ retry in 2m, 3 failed`. `k` leaves it down, `s` starts it now and
 clears the count, and `f` says as much rather than writing a flag nothing would read. A stop flag

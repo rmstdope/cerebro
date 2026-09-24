@@ -80,7 +80,9 @@ sends the bead to the bugfixer flow instead of UX → producer.
 ## Offering the ranking, once
 
 After filing, ask once how to rank it, through *Ranking the backlog* in `agents/orchestrator.md` —
-that pass, not one of your own. If they decline, say it goes to the next ranking pass and stop.
+that pass, not one of your own. Its first step, understanding the bead, is already done by this
+interview, so go straight to its second: the summary and the priority. That pass also loads this
+skill for a bead that arrived without the interview, and for a split. If they decline, say it goes to the next ranking pass and stop.
 Invoked by hand outside a Cerebro session there is no pass: say it goes to the next one and stop.
 
 ## When the navigator says "just file it"

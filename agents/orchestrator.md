@@ -111,11 +111,44 @@ beads are excluded: a producer holds them, and their priority no longer decides 
 A child is never asked about; it takes its parent's priority (*Dependencies and breakdown* in
 `beads-workflow`).
 
-For each one, `bd show <id>` and **recommend a priority with a one-sentence reason**; never ask
-bare. A navigator-reported defect in shipped behaviour is P0 or P1; work that unblocks a queued epic
-outranks work that stands alone; a tidy-up with no visible effect stays low.
+**One bead per turn, three steps in order: understand it, rank it, then split it.** Take the
+list in the order the query prints it. Never ask about two beads in one call, and never rank a bead
+you could not summarise: a P4 stops everything downstream, so a ranking is worth one turn of the
+navigator's attention per bead, and `triage:declined` is there for "not now".
 
-### A bead from a GitHub issue outranks one somebody thought of
+### 1. Understand it
+
+`bd show <id> --json`, and for a `gh-<n>` bead `gh issue view <n> --comments` too. Load
+`write-bead`: its interview asks the three things a bead is not describable without — **what the
+outcome is**, **what done looks like from the outside**, and **whether the change touches anything
+a person sees or presses**. Check which the bead already answers (a bead filed through
+`write-bead` or by Forge answers all three: an `## Outcome` heading, an acceptance line, and either
+`ux:none` or a stated *yes*). Ask the navigator **only** what is missing, through the question tool,
+and write each answer back before ranking:
+
+```bash
+bd update <id> --description "$(cat /tmp/desc-<id>.md)"    # opens with ## Outcome, then ## Scope
+bd update <id> --acceptance "<what done looks like, in the navigator's own terms>"
+bd update <id> --add-label ux:none                          # only on a no to the third question
+```
+
+Rewrite a title that falls short of *Writing a good bead* in `beads-workflow` in the same update.
+On a bead from a GitHub issue the navigator may not know the answer either: offer Moira's *ask the
+reporter* (`agents/user-feedback.md`) as an option, and if they take it, leave the bead at P4
+without `triage:declined` and move on; it comes back when the reporter has replied.
+
+### 2. Rank it
+
+One call of the question tool for this one bead. The question text carries **a summary in the
+navigator's terms**, enough to rank it without opening the bead: what it changes for whom, what
+done looks like, whether anyone sees it, where it came from (`gh-<n>, user-reported`, Forge,
+Psylocke's follow-up, a failed verification), and what it blocks or is blocked by. The options are
+`P0`–`P4`, your recommendation first marked `(Recommended)`, the reason in each option's
+description. A navigator-reported defect in shipped behaviour is P0 or P1; work that unblocks a
+queued epic outranks work that stands alone; a tidy-up with no visible effect stays low. Never
+ask bare.
+
+#### A bead from a GitHub issue outranks one somebody thought of
 
 A `gh-<n>` external ref means somebody outside the fleet hit the thing and is waiting to hear.
 
@@ -123,19 +156,16 @@ A `gh-<n>` external ref means somebody outside the fleet hit the thing and is wa
   defect P0 or P1, a reported enhancement P2 rather than P3. A lean, not a floor: cosmetic stays
   cosmetic.
 - **Name the issue in the question**: `<bead-id> (gh-31, user-reported)`.
-- **Read the issue before recommending**: `gh issue view <n> --comments`.
 
-Say in one line how many beads in the pass came from issues before you ask.
+Say in one line how many beads in the pass came from issues before the first question.
 
-Ask with the question tool, up to four beads per call, options `P0`–`P4`, your recommendation first
-marked `(Recommended)`, the reason in each option's description. Apply each answer numerically
-(`P0`→`0` … `P4`→`4`):
+Apply the answer numerically (`P0`→`0` … `P4`→`4`):
 
 ```bash
 bd update <id> --priority=<n>
 ```
 
-**If the bead has children, set them to the same priority in the same breath:**
+**If the bead already has children, set them to the same priority in the same breath:**
 
 ```bash
 bd list --status open --json \
@@ -144,7 +174,25 @@ bd list --status open --json \
 bd update <child> <child> ... --priority=<n>
 ```
 
-After the pass, reconcile the tree, and **repeat until it prints nothing** (one run moves one level):
+### 3. Split it, if it needs splitting
+
+Now that it is ranked, ask yourself whether one producer could deliver it in one pass and a person
+could tell it landed. If not, and it has no children yet, split it through *When one request is
+several beads* in `write-bead`: name the pieces you heard, ask whether to file one or several,
+interview each piece, file each child with `--parent <id> -p <the priority just set>` and
+`ux:none` where its own answer to the third question was *no*, `bd dep add` only where the
+navigator says the order matters, and report the family. The parent becomes bookkeeping the moment
+it has a child (`scripts/work-beads` skips it), so nothing else is needed to keep it off the
+queues. Splitting is shaping the outcome into pieces, not planning a build: the architecture, files
+and increments stay the producer's.
+
+**Never split** a bead that is `ux:agreed`, claimed, `in_progress`, or already a child: that work
+has left the interview, and a change to it goes through the navigator and the role that holds it.
+
+### After each bead
+
+Run the query again and take the next; stop only when it returns nothing. After the pass,
+reconcile the tree, and **repeat until it prints nothing** (one run moves one level):
 
 ```bash
 bd list --status open --json > /tmp/bd-open.json
@@ -155,10 +203,7 @@ jq -r '(INDEX(.id)) as $by | .[] | . as $c | ($c.dependencies // [])[]
 # then, per priority: bd update <child> <child> ... --priority=<n>
 ```
 
-The parent wins, even over a higher-ranked child.
-
-**When the batch is answered, run the query again**, and stop only when it returns nothing. Then
-`bd dolt push` once.
+The parent wins, even over a higher-ranked child. Then `bd dolt push` once.
 
 **If the navigator is away, do not stall.** Say which beads went unranked, leave them at P4, label
 each and `bd dolt push`, then `idle`:
@@ -168,7 +213,8 @@ bd update <id> --add-label triage:declined     # asked, not answered: do not ask
 ```
 
 The label is how a later session knows not to ask again; the navigator removes it to be asked. Remove
-it yourself if you rank a bead that carries it. Never apply your own recommendation unasked.
+it yourself if you rank a bead that carries it. Never apply your own recommendation unasked, and
+never write an answer to the understanding questions the navigator did not give.
 
 ### A line the fleet view typed
 
@@ -608,7 +654,8 @@ who is up, who is finishing, what is claimed, what is left, what shipped today.
   arming the UX agent that is down.
 - **Never answer a `needs-ui-decision` question on the navigator's behalf**, or write a design
   decision into a parked bead.
-- **Never set a priority the navigator did not choose.**
+- **Never set a priority the navigator did not choose**, and never rank a bead you have not
+  understood and summarised to them.
 - **Never file a bead from a one-line request without loading `write-bead`.**
 - Never ask the navigator to start more producers to "keep the queue moving" while they are away.
 - **Never cut a release the navigator did not ask for.**

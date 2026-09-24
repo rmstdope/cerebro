@@ -1,11 +1,11 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Flag, Search } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { type Agent, type Bead, running, since, stateOf } from "./api";
 import { SessionScreen } from "./session";
-import { ActionBar, FinishingStrip, type Offer, offersFor, SaidLine, type Said } from "./actions";
+import { ActionBar, FinishingStrip, type Offer, offersFor, SaidLine, type Said, typingInto } from "./actions";
 
 const tones: Record<string, { dot: string; text: string; badge: string }> = {
   working: { dot: "bg-emerald-500 animate-breathe", text: "text-muted-foreground", badge: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400" },
@@ -25,14 +25,37 @@ export function StatusDot({ agent, className }: { agent: Agent; className?: stri
 
 const activity = (agent: Agent) => stateOf(agent) === "asking" ? "asking you" : agent.phase ?? stateOf(agent);
 
-export function FleetSidebar({ agents, selected, now, onSelect }: { agents: Agent[]; selected?: string; now: number; onSelect: (name: string) => void }) {
+export function FleetSidebar({ agents, selected, now, onSelect, keys = true }: { agents: Agent[]; selected?: string; now: number; onSelect: (name: string) => void; keys?: boolean }) {
   const [filter, setFilter] = useState("");
   const shown = agents.filter(agent => `${agent.name} ${agent.role} ${agent.bead ?? ""}`.toLowerCase().includes(filter.toLowerCase()));
   const live = shown.filter(running);
   const gone = shown.filter(agent => !running(agent)).sort((a, b) => Number(stateOf(a) !== "standby") - Number(stateOf(b) !== "standby"));
+  const rows = useRef(new Map<string, HTMLButtonElement>());
+  // Up and down walk the list as it is drawn, as the fleet view's own list does - unless a field
+  // or a session's screen has the keyboard, which is then theirs.
+  const order = [...live, ...gone].map(agent => agent.name);
+  const list = useRef({ order, selected, keys, onSelect });
+  list.current = { order, selected, keys, onSelect };
+  useEffect(() => {
+    const press = (event: KeyboardEvent) => {
+      const { order, selected, keys, onSelect } = list.current;
+      if (!keys || (event.key !== "ArrowUp" && event.key !== "ArrowDown") || event.defaultPrevented
+        || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey || typingInto(event.target) || !order.length) return;
+      event.preventDefault();
+      const at = selected === undefined ? -1 : order.indexOf(selected);
+      const next = order[at < 0 ? 0 : Math.max(0, Math.min(order.length - 1, at + (event.key === "ArrowDown" ? 1 : -1)))];
+      onSelect(next);
+      const element = rows.current.get(next);
+      element?.focus({ preventScroll: true });
+      element?.scrollIntoView({ block: "nearest" });
+    };
+    window.addEventListener("keydown", press);
+    return () => window.removeEventListener("keydown", press);
+  }, []);
   const row = (agent: Agent) => {
     const active = agent.name === selected;
     return <button key={agent.name} onClick={() => onSelect(agent.name)} aria-current={active || undefined}
+      ref={element => { if (element) rows.current.set(agent.name, element); else rows.current.delete(agent.name); }}
       className={cn("flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left transition-colors hover:bg-muted", active && "bg-muted ring-1 ring-border", !running(agent) && "py-1.5", stateOf(agent) === "dead" && "opacity-60")}>
       <StatusDot agent={agent} />
       <span className="min-w-0 flex-1">

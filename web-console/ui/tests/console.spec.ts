@@ -15,7 +15,6 @@ test("loads data and requests the event stream through Vite", async ({ page }) =
 
 const past = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, i) => `\u001b]7717;[{"t":"old ${from + i}"}]\u0007`).join("");
 const lines = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, i) => `line ${from + i}\r\n`).join("");
-
 async function hostSession(page: import("@playwright/test").Page, opening = "\u001b[8;5;40t" + lines(1, 50)) {
   let stream = opening;
   await page.route("/api/fleet", (route) =>
@@ -501,6 +500,47 @@ test("a ranking bd refuses is said in red", async ({ page }) => {
   const said = page.getByRole("status", { name: "Ranking" });
   await expect(said).toHaveText("bd would not set cb-3 to P4");
   await expect(said).toHaveClass(/text-destructive/);
+});
+
+test("the arrow keys move through the fleet list, and the session follows", async ({ page }) => {
+  await page.route("/api/fleet", route => route.fulfill(fleetOf(
+    { name: "Storm", role: "producer", state: "working", bead: "cb-1" },
+    { name: "Cyclops", role: "producer", state: "working", bead: "cb-2" },
+    { name: "Rogue", role: "producer", state: "Dead" },
+    { name: "Moira", role: "user-feedback", state: "Standby" },
+  )));
+  await page.route(/\/api\/sessions\/(Storm|Cyclops)/, route => {
+    const name = new URL(route.request().url()).pathname.split("/").pop()!;
+    return route.fulfill({ json: { state: "live", log: `${name}.log`, reset: true, data: `this is ${name}\r\n`, offset: 10, more: false } });
+  });
+  await page.goto("/");
+  const fleet = page.getByRole("complementary", { name: "Fleet" });
+  const current = fleet.locator("button[aria-current=true]");
+  await fleet.getByRole("button", { name: /Storm/ }).click();
+  await expect(page.getByRole("region", { name: "Storm session" }).locator(".xterm-rows")).toContainText("this is Storm");
+
+  await page.keyboard.press("ArrowDown");
+  await expect(current).toContainText("Cyclops");
+  await expect(page.getByRole("region", { name: "Cyclops session" }).locator(".xterm-rows")).toContainText("this is Cyclops");
+  await page.keyboard.press("ArrowDown");
+  await expect(current).toContainText("Moira");
+  await expect(page.getByRole("region", { name: "Moira details" })).toContainText("on standby");
+  await page.keyboard.press("ArrowDown");
+  await expect(current).toContainText("Rogue");
+  await page.keyboard.press("ArrowDown");
+  await expect(current).toContainText("Rogue");
+  await page.keyboard.press("ArrowUp");
+  await page.keyboard.press("ArrowUp");
+  await page.keyboard.press("ArrowUp");
+  await page.keyboard.press("ArrowUp");
+  await expect(current).toContainText("Storm");
+
+  await page.getByRole("region", { name: "Storm session" }).locator(".xterm-screen").click();
+  await page.keyboard.press("ArrowDown");
+  await expect(current).toContainText("Storm");
+  await fleet.getByLabel("Filter agents").fill("o");
+  await page.keyboard.press("ArrowDown");
+  await expect(current).toContainText("Storm");
 });
 
 test("a small screen's box still has room for its name and its controls", async ({ page }) => {

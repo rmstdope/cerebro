@@ -13,7 +13,7 @@ Open <http://127.0.0.1:5173>. Vite proxies `/api` requests to the Rust service a
 
 The page has two tabs, in a dark and a light theme (the button top right; the first visit follows
 the system). **Fleet** lists the agents down the side, live ones first, each with a status dot, its
-bead and how long it has been in its phase; the chosen agent's CLI session fills the rest. With nobody chosen it shows whoever is asking, else working. **Work** is the board in
+bead and how long it has been in its phase; the chosen agent's CLI session fills the rest. The up and down arrows move the choice through the list as it is drawn, and the session with it, unless a field or a session's screen has the keyboard. With nobody chosen it shows whoever is asking, else working. **Work** is the board in
 five lanes, searchable, filterable by type and priority, and grouped by epic: a bead's epic is its
 nearest dotted-id ancestor, named from the `epics` map in `/api/work`. A click selects a card and a
 second click, or `Enter`, opens it; the arrow keys move the selection, up and down within a lane

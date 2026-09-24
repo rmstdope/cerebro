@@ -152,7 +152,7 @@ function App() {
           : fleet.snapshot.state === "unavailable" ? <p className="p-5 text-sm">Couldn’t load fleet. Try refreshing this page.</p>
           : agents.length === 0 ? <p className="p-5 text-sm text-muted-foreground">No agents are in the fleet yet.</p>
           : <>
-            <FleetSidebar agents={agents} selected={agent?.name} now={now} onSelect={choose} />
+            <FleetSidebar agents={agents} selected={agent?.name} now={now} onSelect={choose} keys={!palette && !lifecycle.asking && bead === undefined} />
             <main className="flex min-h-0 min-w-0 flex-1 flex-col p-5">
               {agent && <AgentPane agent={agent} bead={agent.bead ? beads.find(item => item.id === agent.bead) : undefined} now={now}
                 controls={{ supervised, busy: lifecycle.busy, said: lifecycle.said, onAct: offer => lifecycle.perform(agent, offer) }} />}

@@ -90,8 +90,9 @@ It ends a producer that reports `waiting` — its buffer
 kept — and starts a fresh one when a UX-agreed bead exists, at most one producer every 30 seconds.
 It runs the **interactive roles** exactly the same way: a role that writes `waiting` is ended half a
 minute later — its buffer kept, `RET` shows it — and started fresh when its trigger fires: a
-planning role when the planned buffer is short and its queue has work, or when a P0 is waiting — a
-board of nothing but unranked beads starts Cerebro to rank them and no planning role (cb-zgg);
+UX agent when the queue of beads a producer can take is short and its own queue has work, or when
+a P0 is waiting — a board of nothing but unranked beads starts Cerebro to rank them and no UX agent
+(cb-zgg);
 Psylocke when a merged bead is unverified or a verdict is stale; Moira when an issue moved on GitHub
 or a bead linked to one (`gh-<n>` in its `external_ref`) changed since her last pass, Cypher when an
 outside PR moved, both hourly regardless; Forge hourly too; a producer when a UX-agreed,
@@ -103,26 +104,27 @@ until it goes idle if the mark falls mid-pass (cb-7nx). A role you have not star
 reads `standby` from the moment the view opens and the trigger is what starts it — `k` and `f`
 disarm it, and none of that is written to any
 file. `cerebro-wake-intervals` is the floor between two starts of one role, changeable while the
-fleet runs — **the planning roles have none**: a short buffer is the fleet already idle, so they start on
-the next five-second tick. What keeps that from looping over a trigger no pass can clear is two
+fleet runs — **the UX role has none**: a short buffer is the fleet already idle, so it starts on
+the next five-second tick. That buffer counts every bead a producer can take, `ux:agreed` and
+`ux:none` alike, so filing invisible work fills it as surely as agreeing an experience does. What keeps that from looping over a trigger no pass can clear is two
 comparisons rather than a clock: the counts leave out what is parked in your queue (`human`,
 `triage:declined`), and a role is not started again while its trigger names exactly the work its own
-last pass was started for. Anything that moves — a bead arrives, one is planned, an implementer
+last pass was started for. Anything that moves — a bead arrives, one is planned, a producer
 comes up — starts the next pass at once.
 
 **Reading a row.** Green `●` is working, blue `◆` is idle, yellow `◐` is an agent `waiting` between
-passes — an implementer between beads included — and it is ended within half a minute; blue `◌` is
+passes — a producer between beads included — and it is ended within half a minute; blue `◌` is
 **standby**: the view ended this agent after its pass and starts a fresh one when the trigger in the
 For column fires, and `RET` shows its last pass. A bold yellow `?` is an agent waiting on
 *you*, and grey `○` is dead.
 
-`◌` on an **implementer** row is one whose session died without finishing a bead. The view starts it
+`◌` on an **producer** row is one whose session died without finishing a bead. The view starts it
 again on the same backoff a role waits out, and the For column says when and how many starts have
 come to nothing — `↻ retry now`, `↻ retry in 2m, 3 failed`. `k` leaves it down, `s` starts it now and
 clears the count, and `f` says as much rather than writing a flag nothing would read. A stop flag
 written before it died still means *no further bead*: it is retired instead of retried.
 
-**A standby row under a stop flag reads `■ told to finish`** — an implementer or a role, since
+**A standby row under a stop flag reads `■ told to finish`** — a producer or a role, since
 cb-sxf — and the view does not start it, whatever its trigger says; `RET` says so in as many
 words rather than promising a return. `s` clears the flag and starts it, saying
 `<Name>: cleared a stale stop flag`, and `f` offers to clear it instead of refusing, which is the
@@ -130,7 +132,7 @@ cheap way back to *actually, keep going*. A name disarmed on a tick is not start
 tick either.
 
 A dead row with a red `✗ …` in the Bead/Phase column is a session that died on its own — most often
-a launcher that refused, and the line is the reason it printed, an implementer included. The view
+a launcher that refused, and the line is the reason it printed, a producer included. The view
 does not start that name again, however it is armed, until you press `s`; `RET` shows the whole
 line.
 
@@ -165,7 +167,7 @@ Every session starts the same way, whatever the role:
 ```
 
 `launch` is the one place a session is born. It stamps the session with that agent's own `bd`
-identity (so two implementers cannot silently claim as one another), re-syncs the skill and agent
+identity (so two producers cannot silently claim as one another), re-syncs the skill and agent
 symlinks, reads the model and effort from the agent's own definition, turns on Remote Control so you
 can steer the session from claude.ai or the Claude app, and installs the hooks that keep the state
 file honest while an agent has a question open. Pressing `s` in the fleet view runs exactly this. It refuses, with the pid, to start a name whose
@@ -248,13 +250,13 @@ session — `k`, a stop flag, `s`.
 **Two or three is a sensible number on one machine.** More is not faster: every merge makes every
 other open PR stale, and where the branch protection sets `strict` each of them pays for a `BEHIND`
 catch-up and a fresh CI run — and CI is
-where the browser suites actually run now, in parallel jobs implementers no longer serialize behind
+where the browser suites actually run now, in parallel jobs producers no longer serialize behind
 locally. The orchestrator will say so if you ask for more, once, and then do as it is told.
 
 ### The orchestrator
 
-**Cerebro** is one interactive session that watches the fleet, reports on it, stops implementers, and
-hands a release request to the project's own release skill. It starts nothing — not even an implementer, because starting one means starting a
+**Cerebro** is one interactive session that watches the fleet, reports on it, stops producers, and
+hands a release request to the project's own release skill. It starts nothing — not even a producer, because starting one means starting a
 session, and only you can do that. The fleet view *starts* it for an unranked bead and for nothing
 else (cb-5lx.2), and *types into* it for two things: that same unranked bead, and a two-hourly
 reminder to look at the work the view kept (cb-7nx, cb-10d.4).
@@ -274,21 +276,21 @@ cut a minor release
 
 It is called Cerebro because it finds the mutants and points them at the work. Since the fleet view
 took over the timed sweeps, what is left for a Cerebro session is ranking the unranked backlog with
-you, handing a release request to the project's release skill, diagnosing a stuck implementer, and
+you, handing a release request to the project's release skill, diagnosing a stuck producer, and
 anything needing a forced reassignment — which is why most days you will not run one
 at all.
 
 ### What "take one down" means
 
 It means *finish*, not *stop now* — for a builder mid-bead. Pressing `f` in the fleet view (or asking
-Cerebro) writes a stop flag; for one that has claimed something it is read when the implementer
+Cerebro) writes a stop flag; for one that has claimed something it is read when the producer
 reports `waiting` — bead merged, closed, worktree gone — and no fresh session starts in its place.
 So a builder that has just claimed something will be a while yet. That is deliberate: killing one
 mid-bead leaves a claimed bead, a worktree and an open PR for you to unpick by hand. An **idle**
 builder — between beads, nothing claimed — is the one exception: it stops at once, since there is
 nothing in flight to strand.
 
-The implementer never reads the flag itself, and cannot end itself either. It says its pass is over; the
+The producer never reads the flag itself, and cannot end itself either. It says its pass is over; the
 fleet view decides whether a replacement starts.
 
 Changed your mind before it noticed? `f` again offers to clear the flag, or:
@@ -303,7 +305,7 @@ If you genuinely want one gone this second, `k` — and then you have that clean
 
 ### What the builders learned
 
-An implementer that hit something unexpected writes it up before it merges, as
+A producer that hit something unexpected writes it up before it merges, as
 `docs/retrospectives/<bead id>.md`, riding in on that bead's own PR. Only surprises go in — a bead
 that went to plan leaves no file — so everything in that directory cost somebody time:
 
@@ -325,7 +327,7 @@ Agents work in `.cerebro/worktrees/<bead>` and remove the tree when they finish.
 whose bead somebody else merged, leaves it behind — and a stray tree holding `main` makes the next
 agent's `git checkout main` fail for no visible reason.
 
-**The fleet view removes an implementer's tree** when its owner has left and nothing in it can be
+**The fleet view removes a producer's tree** when its owner has left and nothing in it can be
 lost, and Cerebro runs the full sweep every two hours. You can run it yourself at any time:
 
 ```bash
@@ -340,12 +342,12 @@ main — with `--squash` merges the commits are never there, so the naive check 
 worktree for ever.
 
 Creating one is owned too: `scripts/prepare-worktree` is the single recipe every role uses, because
-`git worktree add` does not initialise the `.cerebro/cerebro` submodule and five implementers hit
+`git worktree add` does not initialise the `.cerebro/cerebro` submodule and five producers hit
 exactly that before the step had an owner.
 
 ### When a builder gets slow or vague
 
-An implementer's context grows with every bead it finishes, and nothing can clear it from the inside.
+A producer's context grows with every bead it finishes, and nothing can clear it from the inside.
 It is told to re-read plans rather than recall them, and to tell you when it starts to feel the
 weight. When it does — or when its reports get woolly — take it down and start a fresh one. That is
 the cure, and it is why the fleet is yours to manage rather than automatic.
@@ -365,14 +367,14 @@ no bead yet with a recommendation — bead, question to the reporter, or close �
 do have a bead, brings the issue's status comments up to date with what the bead is actually doing,
 closing anything that has shipped.
 
-She never plans and never implements: what leaves her hands is a bead at P4, unranked, for a planner
-to triage with you like anything else. She is the only agent that speaks to people outside the
+She never designs and never produces: what leaves her hands is a bead at P4, unranked, for Cerebro
+to rank with you like anything else. She is the only agent that speaks to people outside the
 project, which is why the wording of what she posts is hers to get right and yours to correct.
 
 ## Reviewing what comes from outside
 
-Anyone can open a pull request. The fleet's own work is planned, built, reviewed before merge by a
-sub-agent the implementer spawns, and merged by the implementer that built it — none of which
+Anyone can open a pull request. The fleet's own work is agreed, built, reviewed before merge by a
+sub-agent the producer spawns, and merged by the producer that built it — none of which
 applies to a contributor who holds no bead and has read none of that. **Cypher** is the path for those:
 
 ```bash
@@ -403,7 +405,7 @@ a different question from whether a stranger's PR should land at all.
 
 ## Starting a verifier
 
-Every step so far — plan, build, review, merge — is an agent judging its own work, and since the
+Every step so far — agree, build, review, merge — is an agent judging its own work, and since the
 review became a sub-agent the fleet spawns for itself that is truer than it was, not less. Nothing
 checks that the merged result actually does what it was supposed to, until **Psylocke**:
 
@@ -431,9 +433,9 @@ launches the app and waits for one of three verdicts:
   that as an ordinary new bead — unranked, for Cerebro to rank with you next time round — and
   still marks the original passed.
 - **Failed.** She reopens the bead **at P0**, records what you saw, and asks one more thing: was the
-  *plan* wrong, or was the *build* wrong? A build failure goes straight back to the implementers as
-  ordinary rework against the same design. A plan failure goes to a planner first, who reads what you
-  saw and revises the existing design rather than starting from nothing.
+  *plan* wrong, or was the *build* wrong? A build failure goes straight back to a producer as
+  ordinary rework against the same design. A plan failure goes back to UX first, which reads what
+  you saw and amends the agreed experience rather than starting from nothing.
 
 If you are not free when she asks, the bead simply waits — nothing is blocked, and she offers it
 again next pass rather than escalating it to your queue.
@@ -454,11 +456,11 @@ next pass rather than never. She tells
 you the sha she is about to build before she ever asks you to look at anything, and if a port she
 needs is already serving something, she refuses to reuse it rather than risk verifying against a
 build that is not the one that merged. When a verification is later found to have judged the wrong
-build, she writes a retrospective of her own, the same way an implementer does.
+build, she writes a retrospective of her own, the same way a producer does.
 
 ## Starting the architect
 
-Nobody else in the fleet reads the *shape* of the code. A planner plans one bead, an implementer
+Nobody else in the fleet reads the *shape* of the code. A UX agent agrees one bead, a producer
 builds one bead, a review sub-agent reads that one diff, Psylocke checks merged work (single beads
 or epic sweeps) against what it claimed — and across fifty merges nobody asks whether the codebase
 got harder to change
@@ -476,8 +478,8 @@ view, same as any other agent you are done with.
 
 Start it whenever you want a read — each morning is a reasonable habit, or any time you want to know
 whether recent work left something worth revisiting. It costs you nothing until triage: what it finds
-becomes an ordinary `Refactoring:`-titled bead at P4, unranked, for the planners to bring to you like
-anything else in the backlog. Forge never fixes anything itself, and it only files a finding that
+becomes an ordinary `Refactoring:`-titled bead at P4, unranked and `ux:none`, for Cerebro to rank
+with you like anything else in the backlog and a producer to take once ranked. Forge never fixes anything itself, and it only files a finding that
 names a cost already being paid today — a defect fixed twice in the same place, a change that had to
 touch several files, a retrospective that names a structural reason something cost time — never a
 bare principle or a "could be cleaner."
@@ -562,14 +564,14 @@ four days it used to — which is the window an incident is usually looked at fr
 *evaluation* per armed row, on every five-second tick, carrying what the trigger read and whether
 the no-progress guard is what held it.
 
-That last part is the point: a planner that does not start looks identical from outside whether the
-guard is right or wrong, and this is the only place the difference is written down.
+That last part is the point: a UX agent that does not start looks identical from outside whether
+the guard is right or wrong, and this is the only place the difference is written down.
 
 ```bash
 # Why did Xavier start, and what did it read?
 jq -c 'select(.agent == "Xavier" and .event == "start")' .cerebro/state/decisions.jsonl | tail
-# What is holding the planners right now?
-jq -c 'select(.role == "planner" and .event == "evaluate")' .cerebro/state/evaluations.jsonl | tail -5
+# What is holding the UX agents right now?
+jq -c 'select(.role == "ux" and .event == "evaluate")' .cerebro/state/evaluations.jsonl | tail -5
 ```
 
 **It is loud.** A nine-agent fleet on a five-second tick writes on the order of a hundred thousand
@@ -586,17 +588,17 @@ Everything waiting on you, from every agent and every terminal, in one place:
 bd human list
 ```
 
-Beads arrive there for five reasons: a plan turned out to be wrong in a way the builder must not
-decide; a plan was missing something; a user-facing question went unanswered while a planner was
-working on it; the review sub-agent could not be spawned or returned nothing usable; or CI stayed
-red after three attempts. The bead says
-which in its notes.
+Beads arrive there for four reasons: a producer found the work itself in question (`producer-park
+… scope`); a user-facing question went unanswered while a UX agent was working on it; the review
+sub-agent could not be spawned or returned nothing usable; or CI stayed red after three attempts.
+The bead says which in its notes. A UX question a producer hits does not come to you: it goes
+straight back to the UX agent.
 
-To put one back into circulation after you have answered:
+To put one back into circulation after you have answered, or ask Cerebro to:
 
 ```bash
-bd update <id> --add-label planned --remove-label human    # back to the builders
-bd update <id> --remove-label human                        # back to a planner
+bd update <id> --remove-label human                                  # back to a producer
+bd update <id> --remove-label human --remove-label ux:agreed         # back to UX, with needs-ui-decision kept
 ```
 
 ## Watching without interfering
@@ -653,13 +655,13 @@ Honest numbers from building this repository's own harness:
   caught up is `required_status_checks.strict` on the branch protection, which this repository
   leaves `false`, so a behind-but-mergeable head with green checks merges as it stands. Setting it
   `true` buys the catch that two agents changed the same function compatibly-but-wrongly, at a
-  `BEHIND` catch-up and a fresh CI cycle per merge — one switch, and every implementer follows it.
+  `BEHIND` catch-up and a fresh CI cycle per merge — one switch, and every producer follows it.
 - **One full review per bead.** A producer gives a reviewer the whole diff and bead, addresses its
   findings, then decides whether the resulting changes need another review and at what scope.
   Small, self-contained answers do not create a mandatory review loop.
 - **Nothing merges red or with unresolved review findings.** The `main` ruleset enforces the
   former on the server; producers enforce the latter.
-- **Interactive agents cost nothing between passes** — the view ends them, implementers included
+- **Interactive agents cost nothing between passes** — the view ends them, producers included
   since cb-1or.1: one with nothing to build costs nothing — and a fresh start
   re-reads the role's instructions; a role whose trigger is true but whose pass cannot clear it
   restarts once per `cerebro-wake-intervals`.
@@ -712,17 +714,18 @@ rm -rf target/debug/incremental            # the cheap few gigabytes back
 A bare preflight remains conservative and uses the full floor. Non-Rust mode retains every
 fast-gate leg by pointing Cargo at the declared shared target; it does not skip Rust checks.
 
-**A bead keeps coming back to you.** That usually means the plan is wrong rather than the builder is:
-send it to a planner (`--remove-label human`, leave `planned` off) rather than to another builder.
+**A bead keeps coming back to you.** That usually means the agreed experience is wrong rather than
+the producer is: send it back to UX (the second line under *Your queue*) rather than to another
+producer.
 
 ## What agents never decide
 
 - The shape of anything the audience sees — what a feature is from your side, a new surface, a key
-  or gesture, what a control does. That is the whole reason the planners talk to you, and why
+  or gesture, what a control does. That is the whole reason the UX agents talk to you, and why
   Psylocke and Cypher put a running application in front of you rather than describing it. The
-  detail inside a shape you have agreed — wording, colour, sizes, the empty and error states — a
-  planner decides and writes into the plan's *Decided by me*, where you can overrule it; no other
-  role decides any of it.
+  detail inside a shape you have agreed — wording, colour, sizes, the empty and error states — the
+  UX agent settles with you, and what the record leaves open a producer decides and writes into
+  the plan's *Decided by me*, where you can overrule it; no other role decides any of it.
 - Whether to merge something red, stale, or unreviewed — and for a PR from outside, whether to merge
   it at all.
 - Whether to take a bead off another agent, beyond the narrow crashed-agent case above.

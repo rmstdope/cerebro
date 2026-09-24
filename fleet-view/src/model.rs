@@ -28,9 +28,55 @@ pub enum AgentKind {
     Implementer,
 }
 
+/// The board-routing capability a role declares in `role-policies.tsv`.
+///
+/// The table is shared with the shell fleet: role names choose agent definitions,
+/// while policies choose queues and work lifecycle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RolePolicy {
+    None,
+    Planner,
+    Ux,
+    BuildDesign,
+    Implementer,
+    Producer,
+    Bugfixer,
+}
+
+impl RolePolicy {
+    pub fn for_role(role: &str) -> Self {
+        include_str!("../../role-policies.tsv")
+            .lines()
+            .filter_map(|line| {
+                let line = line.trim();
+                (!line.is_empty() && !line.starts_with('#'))
+                    .then(|| line.split_once('\t'))
+                    .flatten()
+            })
+            .find_map(|(name, policy)| (name == role).then_some(policy))
+            .map_or(Self::None, |policy| match policy {
+                "planner" => Self::Planner,
+                "ux" => Self::Ux,
+                "build-design" => Self::BuildDesign,
+                "implementer" => Self::Implementer,
+                "producer" => Self::Producer,
+                "bugfixer" => Self::Bugfixer,
+                _ => Self::None,
+            })
+    }
+
+    pub fn is_builder(self) -> bool {
+        matches!(self, Self::Implementer | Self::Producer)
+    }
+
+    pub fn is_planning(self) -> bool {
+        matches!(self, Self::Planner | Self::Ux | Self::BuildDesign)
+    }
+}
+
 /// Roles that claim a bead and receive a prepared worktree.
 pub fn is_builder_role(role: &str) -> bool {
-    matches!(role, "implementer" | "producer")
+    RolePolicy::for_role(role).is_builder()
 }
 
 /// One row of `scripts/roster`, in file order.
@@ -928,15 +974,13 @@ pub struct Candidate {
 }
 
 /// The three roles the view hands a bead from a candidate script, in roster-independent order.
-pub const PLANNING_ROLES: [&str; 3] = ["planner", "ux", "build-design"];
-
 /// The script (relative to `scripts_dir`) and argv that list ROLE's candidates, or `None` for a
 /// role that is not a planning role.
 pub fn candidate_command(role: &str) -> Option<(&'static str, &'static [&'static str])> {
-    match role {
-        "planner" => Some(("plan-candidates", &[])),
-        "ux" => Some(("stage-candidates", &["ux"])),
-        "build-design" => Some(("stage-candidates", &["build-design"])),
+    match RolePolicy::for_role(role) {
+        RolePolicy::Planner => Some(("plan-candidates", &[])),
+        RolePolicy::Ux => Some(("stage-candidates", &["ux"])),
+        RolePolicy::BuildDesign => Some(("stage-candidates", &["build-design"])),
         _ => None,
     }
 }
@@ -945,7 +989,7 @@ pub fn candidate_command(role: &str) -> Option<(&'static str, &'static [&'static
 /// showing, so a project with no `ux` row runs no `stage-candidates ux`.
 pub fn planning_roles_of(rows: &[FleetRow]) -> BTreeSet<String> {
     rows.iter()
-        .filter(|row| PLANNING_ROLES.contains(&row.role.as_str()))
+        .filter(|row| RolePolicy::for_role(&row.role).is_planning())
         .map(|row| row.role.clone())
         .collect()
 }
@@ -1919,7 +1963,7 @@ mod tests {
         );
         assert_eq!(candidate_command("verifier"), None);
         assert_eq!(candidate_command("implementer"), None);
-        for role in PLANNING_ROLES {
+        for role in ["planner", "ux", "build-design"] {
             assert!(candidate_command(role).is_some(), "{role} has a candidate script");
         }
     }

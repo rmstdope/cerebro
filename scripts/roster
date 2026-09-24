@@ -26,6 +26,7 @@
 #     roster --implementers     the implementer names only, one per line, in file order
 #     roster --entry <Name>     that one row (NAME<TAB>ROLE<TAB>KIND); exit 2 if absent
 #     roster --role <role>      the names holding that ROLE, one per line, in file order; nothing
+#     roster --policy <role>    that role's routing policy; exit 2 if unknown
 #                               (exit 0) if nobody holds it
 #     roster --autostart        the names whose row carries `autostart', one per line, in file
 #                               order; nothing (exit 0) when no row does
@@ -88,7 +89,7 @@ refuse() {
 }
 
 usage() {
-  echo "usage: roster [--implementers | --role <role> | --entry <Name> | --autostart | --standby]" >&2
+  echo "usage: roster [--implementers | --role <role> | --policy <role> | --entry <Name> | --autostart | --standby]" >&2
   exit 2
 }
 
@@ -116,9 +117,28 @@ Mystique      implementer
 Magneto       implementer
 "
 
+policy_of() {
+  # $1 = role. The table is shared with fleet-view/src/model.rs.
+  local want="$1" role policy
+  if [[ -f "$here/../role-policies.tsv" ]]; then
+    while IFS=$'\t' read -r role policy; do
+      [[ -z "$role" || "${role:0:1}" == "#" ]] && continue
+      [[ "$role" == "$want" ]] && { printf '%s' "$policy"; return 0; }
+    done < "$here/../role-policies.tsv"
+  fi
+  # Linked-script fixtures from before the shared declaration retain this
+  # compatibility fallback. Real checkouts always read the table above.
+  case "$want" in
+    planner|ux|build-design|implementer|producer|bugfixer) printf '%s' "$want"; return 0 ;;
+  esac
+  return 1
+}
+
 kind_of() {
   # $1 = role
-  if [[ "$1" == "implementer" || "$1" == "producer" ]]; then
+  local policy
+  policy="$(policy_of "$1")" || policy="none"
+  if [[ "$policy" == "implementer" || "$policy" == "producer" ]]; then
     printf 'implementer'
   else
     printf 'interactive'
@@ -299,6 +319,14 @@ case "${1:-}" in
       usage
     fi
     names_where role "$role"
+    ;;
+  --policy)
+    role="${2:-}"
+    [[ -n "$role" ]] || usage
+    if ! policy="$(policy_of "$role")"; then
+      refuse "$role has no routing policy"
+    fi
+    printf '%s\n' "$policy"
     ;;
   --entry)
     name="${2:-}"

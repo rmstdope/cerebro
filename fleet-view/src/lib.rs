@@ -86,7 +86,7 @@ pub mod triggers;
 pub mod ui;
 
 pub use model::{
-    derive_fleet, parse_processes, parse_roster, partition_beads, session_liveness, AgentKind,
+    derive_fleet, parse_processes, parse_roster, partition_beads, session_liveness, AgentKind, RolePolicy,
     Bead, BeadRecord, FleetRow, ModelError, ProcessRow, RosterEntry, RowState, SessionLiveness, StateInputs,
     StateObservation, StateRecord, WorkBuckets, FleetHealth,
 };

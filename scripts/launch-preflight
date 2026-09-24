@@ -12,7 +12,7 @@
 # (ah-bri) - a launcher used to go `up` for half a second and then `dead` with
 # nothing to read anywhere when `agents/architect.md` was missing.
 #
-# usage: launch-preflight <role> <name> <tool>
+# usage: launch-preflight <role> <policy> <name> <tool>
 #   <role>  the role the launcher is about to start (architect, planner, ...)
 #   <name>  the display name for messages (Bishop, Cyclops, ...)
 #   <tool>  the agent CLI this session is about to start on, which `.cerebro/agents.conf' decided
@@ -31,16 +31,24 @@
 set -euo pipefail
 
 role="${1:-}"
-name="${2:-}"
-tool="${3:-}"
-if [[ -z "$role" || -z "$name" || -z "$tool" ]]; then
+if [[ $# -eq 3 ]]; then
+  name="${2:-}"
+  tool="${3:-}"
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+  policy="$("$script_dir/roster" --policy "$role" 2>/dev/null || printf 'none')"
+else
+  policy="${2:-}"
+  name="${3:-}"
+  tool="${4:-}"
+fi
+if [[ -z "$role" || -z "$policy" || -z "$name" || -z "$tool" ]]; then
   echo "usage: launch-preflight <role> <name> <tool>" >&2
   exit 2
 fi
 
 # Resolved before the first refusal rather than after the agent-cli check: every refusal this script
 # owns is said and recorded by `launch-refused` (cb-ccl), which lives beside it.
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+script_dir="${script_dir:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)}"
 
 # Which agent CLI this fleet runs on, and whether it can be launched at all, is `agent-cli`'s
 # answer and no longer spelt here (cb-d59.2): it refuses an undeclarable provider and a missing
@@ -233,7 +241,7 @@ fi
 # them would take the whole fleet down over a key that does not concern them. The role IS the kind
 # here: `roster' derives `implementer' from exactly this value and nothing else, so asking it again
 # would only add a second place for the two to disagree.
-if [[ "$role" == "implementer" || "$role" == "producer" ]]; then
+if [[ "$policy" == "implementer" || "$policy" == "producer" ]]; then
   gate_fast="$("$script_dir/project-conf" gate_fast 2>/dev/null)" || gate_fast=""
   if [[ -z "$gate_fast" ]]; then
     "$script_dir/launch-refused" "$name" "this project declares no fast gate, and none could be detected - a producer has nothing to run before it opens a PR. Add a line like 'gate_fast <command>' (and 'gate_full <command>') to .cerebro/project.conf before starting $name"

@@ -148,8 +148,8 @@ pass "roster prints at least 2 rows"
 
 while IFS=$'\t' read -r name role kind; do
   [[ -n "$name" && -n "$role" && -n "$kind" ]] || fail "roster: row missing a field: $name/$role/$kind"
-  if [[ "$role" == "implementer" ]]; then
-    [[ "$kind" == "implementer" ]] || fail "roster: $name has role implementer but kind $kind"
+  if [[ "$role" == "producer" ]]; then
+    [[ "$kind" == "implementer" ]] || fail "roster: $name has role producer but kind $kind"
   else
     [[ "$kind" == "interactive" ]] || fail "roster: $name has role $role but kind $kind"
   fi
@@ -165,8 +165,8 @@ pass "roster: names are unique"
 first_kind="$(awk -F'\t' 'NR==1 { print $3; exit }' <<<"$roster_out")"
 last_kind="$(printf '%s\n' "$roster_out" | tail -1 | awk -F'\t' '{print $3}')"
 [[ "$first_kind" == "interactive" ]] || fail "roster: first row is not interactive"
-[[ "$last_kind" == "implementer" ]] || fail "roster: last row is not implementer"
-pass "roster: interactive agents first, implementers last"
+[[ "$last_kind" == "implementer" ]] || fail "roster: last row is not a producer"
+pass "roster: interactive agents first, producers last"
 
 implementers_out="$("$builtin_dir/roster" --implementers)"
 expected_implementers="$(printf '%s\n' "$roster_out" | awk -F'\t' '$3 == "implementer" {print $1}')"
@@ -303,11 +303,11 @@ Ada           planner
 Grace         planner
 Hopper        orchestrator
 
-Turing        implementer
-Lovelace      implementer
+Turing        producer
+Lovelace      producer
 ROSTER
 
-expected_rows="$(printf 'Ada\tplanner\tinteractive\nGrace\tplanner\tinteractive\nHopper\torchestrator\tinteractive\nTuring\timplementer\timplementer\nLovelace\timplementer\timplementer')"
+expected_rows="$(printf 'Ada\tplanner\tinteractive\nGrace\tplanner\tinteractive\nHopper\torchestrator\tinteractive\nTuring\tproducer\timplementer\nLovelace\tproducer\timplementer')"
 [[ "$("$roster_at")" == "$expected_rows" ]] \
   || fail "consumer roster: expected the consumer's rows in file order, got: $("$roster_at")"
 pass "consumer roster: replaces the built-in table, in file order, past comments and blanks"
@@ -357,9 +357,9 @@ cat > "$consumer_roster_file" <<'ROSTER'
 Ada           planner        autostart
 Grace         planner        standby
 Hopper        reviewer       standby
-Turing        implementer    autostart
+Turing        producer    autostart
 ROSTER
-expected_rows="$(printf 'Ada\tplanner\tinteractive\nGrace\tplanner\tinteractive\nHopper\treviewer\tinteractive\nTuring\timplementer\timplementer')"
+expected_rows="$(printf 'Ada\tplanner\tinteractive\nGrace\tplanner\tinteractive\nHopper\treviewer\tinteractive\nTuring\tproducer\timplementer')"
 [[ "$("$roster_at")" == "$expected_rows" ]] \
   || fail "roster autostart: default output should still be three columns, got: $("$roster_at")"
 pass "roster: the autostart column leaves the default three-column output alone"
@@ -451,15 +451,30 @@ grep -q "one word too many" <<<"$err" \
   || fail "roster with both words: expected the 'one word too many' line, got: $err"
 pass "roster: autostart and standby on one row refuse as a fourth word"
 
+# Retired workflow roles must fail while the roster is parsed, before the fleet view can schedule
+# them through its generic builder paths.
+for retired_role in build-design implementer; do
+  printf 'Ada  %s\n' "$retired_role" > "$consumer_roster_file"
+  set +e
+  err="$("$roster_at" 2>&1 >/dev/null)"
+  status=$?
+  set -e
+  [[ $status -eq 2 ]] || fail "roster with retired $retired_role role: expected exit 2, got $status"
+  grep -q "'$retired_role' is retired - replace it with producer" <<<"$err" \
+    || fail "roster with retired $retired_role role: expected migration guidance, got: $err"
+done
+rm -f "$consumer_roster_file"
+pass "roster: retired build-design and implementer roles refuse with producer migration guidance"
+
 # `standby` on an implementer row arms it like any other (cb-1or.2): since cb-1or.1 the implementer
 # trigger is a real condition - a planned, unclaimed bead - so the refusal that stood here guarded
 # nothing. The word is accepted in every mode, and the default output stays three columns.
-printf 'Ada  planner\nTuring  implementer  standby\n' > "$consumer_roster_file"
+printf 'Ada  planner\nTuring  producer  standby\n' > "$consumer_roster_file"
 [[ "$("$roster_at" --standby)" == "Turing" ]] \
   || fail "roster --standby: expected Turing, got: $("$roster_at" --standby)"
 "$roster_at" >/dev/null 2>&1 || fail "roster: a standby implementer row should be accepted"
 turing_row="$("$roster_at" | grep '^Turing')"
-[[ "$turing_row" == "$(printf 'Turing\timplementer\timplementer')" ]] \
+[[ "$turing_row" == "$(printf 'Turing\tproducer\timplementer')" ]] \
   || fail "roster: the standby word must not reach the KIND column, got: $turing_row"
 [[ "$("$roster_at" --implementers)" == "Turing" ]] \
   || fail "roster --implementers: expected Turing, got: $("$roster_at" --implementers)"
@@ -478,7 +493,7 @@ rm -f "$consumer_roster_file"
 # the same defect independently - two of them did, separately, and were fixed separately. So all
 # four are held to the one rule here, against one roster whose LAST row matches none of them while
 # every mode still has something to print: a regression to "prints nothing, exits 0" fails too.
-printf 'Turing  implementer  autostart\nAda  planner  standby\nHopper  orchestrator\n' \
+printf 'Turing  producer  autostart\nAda  planner  standby\nHopper  orchestrator\n' \
   > "$consumer_roster_file"
 
 set +e
@@ -588,8 +603,8 @@ set -e
 pass "the old-path refusal needs no external command"
 
 # The new path wins outright when both exist: only the absence of the new one is a migration error.
-printf 'Turing  implementer\n' > "$consumer_roster_file"
-[[ "$("$roster_at")" == "$(printf 'Turing\timplementer\timplementer')" ]] \
+printf 'Turing  producer\n' > "$consumer_roster_file"
+[[ "$("$roster_at")" == "$(printf 'Turing\tproducer\timplementer')" ]] \
   || fail "roster with both paths: expected the new one to win, got: $("$roster_at")"
 rm -f "$roster_consumer/.cerebro/cerebro-roster" "$consumer_roster_file"
 pass "roster: the new path wins when both exist"
@@ -607,8 +622,8 @@ alt_roster_at="$alt_consumer/vendor/cerebro/scripts/roster"
 [[ "$("$alt_roster_at")" == "$roster_out" ]] \
   || fail "alternative mount with no consumer file: expected the built-in table"
 mkdir -p "$alt_consumer/.cerebro"
-printf 'Ada  planner\nTuring  implementer\n' > "$alt_consumer/.cerebro/roster.conf"
-[[ "$("$alt_roster_at")" == "$(printf 'Ada\tplanner\tinteractive\nTuring\timplementer\timplementer')" ]] \
+printf 'Ada  planner\nTuring  producer\n' > "$alt_consumer/.cerebro/roster.conf"
+[[ "$("$alt_roster_at")" == "$(printf 'Ada\tplanner\tinteractive\nTuring\tproducer\timplementer')" ]] \
   || fail "alternative mount: expected the consumer's roster, got: $("$alt_roster_at")"
 pass "roster finds a consumer file from a submodule mounted at vendor/cerebro"
 
@@ -622,7 +637,7 @@ The consumer's own role, shipped by nobody but this repository.
 AGENT
 cat > "$consumer_roster_file" <<'ROSTER'
 Ada           archivist      autostart
-Turing        implementer
+Turing        producer
 ROSTER
 out="$(run_launcher_at "$roster_consumer/.cerebro/cerebro/scripts" launch Ada)"
 arg_follows "$out" '^ARG:--agent$' '^ARG:archivist$' \
@@ -1042,11 +1057,11 @@ rm -f "$consumer_dir/.cerebro/models.conf"
 no_agents_conf
 
 # --- a sync failure aborts the launch: the stub is never reached ---
-# The first run above already symlinked .claude/skills/implement-bead; remove that link before
+# The first run above already symlinked .claude/skills/produce-bead; remove that link before
 # replacing it with a real directory, or `mkdir -p` on an existing symlink-to-directory is a
 # silent no-op and never creates the blocking condition this assertion needs.
-rm -f "$consumer_dir/.claude/skills/implement-bead"
-mkdir -p "$consumer_dir/.claude/skills/implement-bead"   # a real directory, not a symlink — the sync refuses
+rm -f "$consumer_dir/.claude/skills/produce-bead"
+mkdir -p "$consumer_dir/.claude/skills/produce-bead"   # a real directory, not a symlink — the sync refuses
 set +e
 out="$(run_launcher_at "$consumer_dir/.cerebro/cerebro/scripts" launch Forge 2>&1)"
 status=$?
@@ -1146,11 +1161,11 @@ cat > "$self_cerebro/.cerebro/roster.conf" <<'ROSTER'
 Ada           planner
 Hopper        orchestrator
 
-Turing        implementer
+Turing        producer
 ROSTER
 
 self_rows="$("$self_roster_at")"
-[[ "$self_rows" == "$(printf 'Ada\tplanner\tinteractive\nHopper\torchestrator\tinteractive\nTuring\timplementer\timplementer')" ]] \
+[[ "$self_rows" == "$(printf 'Ada\tplanner\tinteractive\nHopper\torchestrator\tinteractive\nTuring\tproducer\timplementer')" ]] \
   || fail "self-consumer roster: expected the declared fleet, got: $self_rows"
 pass "self-consumer roster: the checkout's own file replaces the built-in table"
 
@@ -1554,7 +1569,7 @@ rm -f "$assign_log"
 out="$(run_launcher launch "$bead_name" --bead cb-x 2>/dev/null)" \
   || fail "launch --bead: an assigned bead starts the session"
 [[ "$(cat "$assign_log")" == "$bead_name cb-x" ]] || fail "launch --bead: assign-bead saw $(cat "$assign_log" 2>/dev/null)"
-grep -qF "Your bead is cb-x; it is already claimed for you." <<<"$out" \
+grep -qF "Your bead is cb-x; it is already assigned to you." <<<"$out" \
   || fail "launch --bead: the prompt names the bead, got: $out"
 grep -q '^ARG:--bead$' <<<"$out" && fail "launch --bead: --bead is not passed to the agent CLI"
 pass "launch with --bead claims before exec and names the bead in the prompt"

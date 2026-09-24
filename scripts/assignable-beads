@@ -5,8 +5,7 @@
 #
 #     .cerebro/cerebro/scripts/assignable-beads
 #
-# The optional role preserves the legacy implementer queue while producers take UX-agreed work. Its
-# two callers are `scripts/assign-bead`,
+# Its two callers are `scripts/assign-bead`,
 # which refuses a bead that is not on this list, and the fleet view's work reader
 # (`readers::read_assignable`), which picks the bead a standby producer is started on - so the
 # view and the claim cannot disagree about what a producer may take.
@@ -26,9 +25,8 @@
 
 set -euo pipefail
 
-role="${1:-producer}"
-if [[ $# -gt 1 || ( "$role" != "implementer" && "$role" != "producer" ) ]]; then
-  echo "usage: assignable-beads [implementer|producer]" >&2
+if [[ $# -ne 0 ]]; then
+  echo "usage: assignable-beads" >&2
   exit 2
 fi
 
@@ -36,14 +34,7 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$("$script_dir/consumer-root" --shared)"
 
 # Captured before the pipe, so a failure leaves stdout empty (see `scripts/plan-candidates`).
-labels=()
-if [[ "$role" == "producer" ]]; then
-  labels=(--label ux:agreed --exclude-label planned)
-else
-  labels=(--label planned)
-fi
-
-if ! raw="$(bd --readonly -C "$root" ready "${labels[@]}" --exclude-label human \
+if ! raw="$(bd --readonly -C "$root" ready --label ux:agreed --exclude-label planned --exclude-label human \
         --exclude-label verdict:stale --exclude-label bugfix \
         --exclude-type epic --unassigned --json --brief -n 0)"; then
   echo "assignable-beads: bd ready failed - cannot list the assignable beads" >&2

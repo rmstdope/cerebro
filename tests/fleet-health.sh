@@ -87,7 +87,7 @@ run() {
 
 # --- starts are counted across every decision generation, inside the window ----------------------
 tmp="$(new_fixture)"
-roster_conf "$tmp" "Cyclops implementer"
+roster_conf "$tmp" "Cyclops producer"
 printf '%s\n' "$(dec "$(ago 200)" start Cyclops)" > "$tmp/.cerebro/state/decisions.2.jsonl"
 printf '%s\n' "$(dec "$(ago 50)" start Cyclops)"  > "$tmp/.cerebro/state/decisions.1.jsonl"
 {
@@ -105,7 +105,7 @@ pass "starts are counted across every decision generation, inside the window"
 
 # --- over the ceiling ---------------------------------------------------------------------------
 tmp="$(new_fixture)"
-roster_conf "$tmp" "Cyclops implementer" "Storm implementer"
+roster_conf "$tmp" "Cyclops producer" "Storm producer"
 {
   dec "$(ago 30)" start Cyclops; dec "$(ago 20)" start Cyclops; dec "$(ago 10)" start Cyclops
   dec "$(ago 30)" start Storm;   dec "$(ago 20)" start Storm
@@ -121,7 +121,7 @@ pass "a name past the start ceiling is flagged, one exactly at it is not"
 
 # --- passes that held no bead -------------------------------------------------------------------
 tmp="$(new_fixture)"
-roster_conf "$tmp" "Cyclops implementer"
+roster_conf "$tmp" "Cyclops producer"
 : > "$tmp/.cerebro/state/decisions.jsonl"
 {
   tline "$(ago 60)" Cyclops working build "" 111 ""
@@ -135,7 +135,7 @@ pass "a session that ended waiting with no bead is a no-op pass"
 
 # Two sessions of one agent sharing a pid - pids are recycled, so the boundary is a null `from`.
 tmp="$(new_fixture)"
-roster_conf "$tmp" "Cyclops implementer"
+roster_conf "$tmp" "Cyclops producer"
 : > "$tmp/.cerebro/state/decisions.jsonl"
 {
   tline "$(ago 90)" Cyclops working build cb-aaa 111 ""
@@ -150,7 +150,7 @@ out="$(run "$tmp" --json)"
 pass "a session is bounded by a null from, not by its pid"
 
 tmp="$(new_fixture)"
-roster_conf "$tmp" "Cyclops implementer"
+roster_conf "$tmp" "Cyclops producer"
 : > "$tmp/.cerebro/state/decisions.jsonl"
 {
   tline "$(ago 60)" Cyclops working build "" 111 ""
@@ -163,7 +163,7 @@ pass "a session that has not reached waiting is counted nowhere"
 
 # A pass whose first line is older than the window belongs to neither half of it.
 tmp="$(new_fixture)"
-roster_conf "$tmp" "Cyclops implementer"
+roster_conf "$tmp" "Cyclops producer"
 : > "$tmp/.cerebro/state/decisions.jsonl"
 {
   tline "$(ago 200)" Cyclops working build "" 111 ""
@@ -175,7 +175,7 @@ out="$(run "$tmp" --since 1h --json)"
 pass "a pass is attributed to the window by its first line"
 
 tmp="$(new_fixture)"
-roster_conf "$tmp" "Cyclops implementer"
+roster_conf "$tmp" "Cyclops producer"
 : > "$tmp/.cerebro/state/decisions.jsonl"
 {
   tline "$(ago 90)" Cyclops working build "" 111 ""
@@ -193,7 +193,7 @@ pass "both transition generations are read"
 # A log rotated mid-session leaves a tail whose first line is not a session start. Counted as a
 # whole pass it is a false positive in the one section meant to name agents doing nothing.
 tmp="$(new_fixture)"
-roster_conf "$tmp" "Cyclops implementer"
+roster_conf "$tmp" "Cyclops producer"
 : > "$tmp/.cerebro/state/decisions.jsonl"
 {
   tline "$(ago 60)" Cyclops working review "" 111 build
@@ -227,7 +227,7 @@ grep -q 'not counted (these roles hold no bead): Cerebro' <<<"$report" \
 pass "a role that never holds a bead is reported and never counted"
 
 tmp="$(new_fixture)"
-roster_conf "$tmp" "Cyclops implementer"
+roster_conf "$tmp" "Cyclops producer"
 : > "$tmp/.cerebro/state/decisions.jsonl"
 {
   tline "$(ago 60)" Nightcrawler working build "" 111 ""
@@ -241,7 +241,7 @@ pass "an agent missing from the roster is reported as holding beads"
 
 # --- running now --------------------------------------------------------------------------------
 tmp="$(new_fixture)"
-roster_conf "$tmp" "Cyclops implementer" "Psylocke verifier"
+roster_conf "$tmp" "Cyclops producer" "Psylocke verifier"
 : > "$tmp/.cerebro/state/decisions.jsonl"
 {
   tline "$(ago 120)" Psylocke working verify cb-5kk 111 ""
@@ -261,7 +261,7 @@ pass "running now is fleet-history's open intervals, longest first"
 
 # --- a waiting session is not measured ------------------------------------------------------------
 tmp="$(new_fixture)"
-roster_conf "$tmp" "Cyclops implementer" "Psylocke verifier"
+roster_conf "$tmp" "Cyclops producer" "Psylocke verifier"
 : > "$tmp/.cerebro/state/decisions.jsonl"
 {
   tline "$(ago 120)" Psylocke asking verify cb-5kk 111 ""
@@ -335,12 +335,12 @@ pass "a disarm whose by is unknown or absent still says so"
 
 # --- the report ---------------------------------------------------------------------------------
 tmp="$(new_fixture)"
-roster_conf "$tmp" "Cyclops implementer" "Storm implementer" "Cerebro orchestrator"
+roster_conf "$tmp" "Cyclops producer" "Storm producer" "Cerebro orchestrator"
 {
   dec "$(ago 30)" start Cyclops; dec "$(ago 25)" start Cyclops; dec "$(ago 20)" start Cyclops
   dec "$(ago 15)" start Storm
-  dec "$(ago 10)" retire Storm '{"role":"implementer","state":"waiting","stop_flag":"set"}'
-  dec "$(ago 5)" disarm Cyclops '{"role":"implementer","by":"kill"}'
+  dec "$(ago 10)" retire Storm '{"role":"producer","state":"waiting","stop_flag":"set"}'
+  dec "$(ago 5)" disarm Cyclops '{"role":"producer","by":"kill"}'
 } > "$tmp/.cerebro/state/decisions.jsonl"
 {
   tline "$(ago 40)" Storm working build "" 111 ""
@@ -379,7 +379,7 @@ $expected"
 pass "the report is the agreed text, section for section"
 
 tmp="$(new_fixture)"
-roster_conf "$tmp" "Cyclops implementer"
+roster_conf "$tmp" "Cyclops producer"
 dec "$(ago 30)" start Cyclops > "$tmp/.cerebro/state/decisions.jsonl"
 got="$(run "$tmp")"
 [ "$(grep -c 'nothing in the window' <<<"$got")" = 3 ] \
@@ -395,20 +395,20 @@ pass "the last line names only the thresholds that were crossed"
 
 # --- loud failure -------------------------------------------------------------------------------
 tmp="$(new_fixture)"
-roster_conf "$tmp" "Cyclops implementer"
+roster_conf "$tmp" "Cyclops producer"
 if out="$(run "$tmp" 2>/dev/null)"; then fail "a missing decision log exited 0"; fi
 [ -z "$out" ] || fail "a missing decision log printed to stdout"
 pass "a missing decision log is a non-zero exit with nothing on stdout"
 
 tmp="$(new_fixture)"
-roster_conf "$tmp" "Cyclops implementer"
+roster_conf "$tmp" "Cyclops producer"
 printf 'not json at all\n' > "$tmp/.cerebro/state/decisions.jsonl"
 if out="$(run "$tmp" 2>/dev/null)"; then fail "an unparsable log line exited 0"; fi
 [ -z "$out" ] || fail "an unparsable log line printed to stdout"
 pass "an unparsable log line is a non-zero exit with nothing on stdout"
 
 tmp="$(new_fixture)"
-roster_conf "$tmp" "Cyclops implementer"
+roster_conf "$tmp" "Cyclops producer"
 dec "$(ago 30)" start Cyclops > "$tmp/.cerebro/state/decisions.jsonl"
 rm "$tmp/.cerebro/state/transitions.jsonl"
 if out="$(run "$tmp" 2>/dev/null)"; then fail "a failing fleet-history exited 0"; fi
@@ -416,7 +416,7 @@ if out="$(run "$tmp" 2>/dev/null)"; then fail "a failing fleet-history exited 0"
 pass "a failing fleet-history is a non-zero exit with nothing on stdout"
 
 tmp="$(new_fixture)"
-roster_conf "$tmp" "Cyclops implementer"
+roster_conf "$tmp" "Cyclops producer"
 dec "$(ago 30)" start Cyclops > "$tmp/.cerebro/state/decisions.jsonl"
 set +e
 out="$(run "$tmp" --nonsense 2>"$work_dir/err1")"; status1=$?

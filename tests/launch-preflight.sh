@@ -387,20 +387,20 @@ PATH="$stub_dir:$PATH" bash "$standalone/scripts/launch-preflight" ux Xavier cla
   || fail "standalone: expected exit 0"
 pass "a standalone clone is untouched"
 
-# --- an implementer with no fast gate is refused (ah-qled.7.1) ------------------------------------
+# --- an producer with no fast gate is refused (ah-qled.7.1) ------------------------------------
 #
-# The bead: implement-bead names no tool any more, so an implementer with no declared and no
+# The bead: produce-bead names no tool any more, so an producer with no declared and no
 # detectable gate has nothing to run before it opens a PR - and an agent with nothing to run
 # improvises. A loud refusal at launch beats a green report nobody earned.
 c="$(make_consumer nogate)"
 set +e
-out="$(run_preflight "$c" implementer Cyclops 2>&1)"
+out="$(run_preflight "$c" producer Cyclops 2>&1)"
 status=$?
 set -e
 [[ $status -eq 2 ]] || fail "no gate: expected exit 2, got $status"
 grep -q "gate_fast" <<<"$out" || fail "no gate: expected the message to name gate_fast, got: $out"
 grep -q "submodule is behind" <<<"$out" && fail "no gate: the message blames the submodule, got: $out"
-pass "an implementer with no fast gate is refused, and the message names the gate"
+pass "an producer with no fast gate is refused, and the message names the gate"
 
 # --- a producer with no fast gate is refused -------------------------------------------------------
 c="$(make_consumer nogateproducer)"
@@ -420,11 +420,11 @@ c="$(make_consumer nogateplanner)"
 run_preflight "$c" ux Xavier || fail "no gate, ux: expected exit 0"
 pass "a UX agent with no fast gate still launches"
 
-# --- an implementer with a declared gate launches --------------------------------------------------
+# --- an producer with a declared gate launches --------------------------------------------------
 c="$(make_consumer withgate)"
 echo "gate_fast make check" > "$c/.cerebro/project.conf"
-run_preflight "$c" implementer Cyclops || fail "declared gate: expected exit 0"
-pass "an implementer whose project declares a gate launches"
+run_preflight "$c" producer Cyclops || fail "declared gate: expected exit 0"
+pass "an producer whose project declares a gate launches"
 run_preflight "$c" producer Storm || fail "declared gate, producer: expected exit 0"
 pass "a producer whose project declares a gate launches"
 
@@ -432,7 +432,7 @@ pass "a producer whose project declares a gate launches"
 #
 # The declarations moved to `.cerebro/`. This is the earliest and friendliest place to catch a
 # consumer that bumped the submodule past that move: it is also the ONLY place that can catch a
-# stray `cerebro-traps.md`, which no script reads at all - a planner and an implementer read it as
+# stray `cerebro-traps.md`, which no script reads at all - a planner and an producer read it as
 # prose, so a file left behind would simply go unread, in silence, for ever.
 #
 # It refuses even when the new file exists too: two copies of a declaration is exactly the ambiguity
@@ -445,7 +445,7 @@ for pair in "cerebro-project.conf:project.conf" "cerebro-roster:roster.conf" "ce
   mkdir -p "$c/.claude"
   : > "$c/.claude/$old_name"
   set +e
-  out="$(run_preflight "$c" implementer Cyclops 2>&1)"
+  out="$(run_preflight "$c" producer Cyclops 2>&1)"
   status=$?
   set -e
   [[ $status -eq 2 ]] || fail "old path $old_name: expected exit 2, got $status"
@@ -465,14 +465,14 @@ grep -qF "git mv .claude/cerebro .cerebro/cerebro" <<<"$out" \
   || fail "old mount: expected the git mv line, got: $out"
 pass "a submodule at the retired .claude/cerebro mount is refused at launch"
 
-# --- implement-bead names no tool -------------------------------------------------------------------
+# --- produce-bead names no tool -------------------------------------------------------------------
 #
-# The bead's own acceptance: the skill an implementer reads in a Python project must not tell it to
+# The bead's own acceptance: the skill an producer reads in a Python project must not tell it to
 # run pnpm or cargo. The disk preflight was the last of them and became a cerebro script of its own
 # in ah-qled.7.2, so there is nothing left to exempt.
-hits="$(grep -nE "pnpm|cargo" "$repo_root/skills/implement-bead/SKILL.md" || true)"
-[[ -z "$hits" ]] || fail "implement-bead still names a tool: $hits"
-pass "implement-bead names no build tool at all"
+hits="$(grep -nE "pnpm|cargo" "$repo_root/skills/produce-bead/SKILL.md" || true)"
+[[ -z "$hits" ]] || fail "produce-bead still names a tool: $hits"
+pass "produce-bead names no build tool at all"
 
 # --- cerebro's own checkout, mounted in itself, launches (cb-i3l.1) -------------------------------
 #

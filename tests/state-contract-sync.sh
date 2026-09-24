@@ -44,7 +44,6 @@ CARRIERS=(
   agents/verifier.md
   skills/implement-bead/SKILL.md
   skills/agree-experience/SKILL.md
-  skills/design-the-build/SKILL.md
   skills/produce-bead/SKILL.md
 )
 
@@ -105,10 +104,10 @@ pass "a carrier whose block has drifted is reported"
 # --- one unmarked carrier is one finding ----------------------------------------------------------
 
 fix="$(new_fixture)"
-perl -0pi -e 's/\n<!-- state-contract:end -->//' "$fix/skills/design-the-build/SKILL.md"
+perl -0pi -e 's/\n<!-- state-contract:end -->//' "$fix/skills/produce-bead/SKILL.md"
 run "$fix/scripts/state-contract-sync"
 [[ $status -eq 1 ]] || fail "an unmarked carrier must exit 1, got $status (output: $out)"
-[[ "$out" == "unmarked: skills/design-the-build/SKILL.md (no state-contract:begin/end pair)" ]] \
+[[ "$out" == "unmarked: skills/produce-bead/SKILL.md (no state-contract:begin/end pair)" ]] \
   || fail "expected exactly the unmarked: line, got: $out"
 pass "a carrier with no usable marker pair is reported"
 

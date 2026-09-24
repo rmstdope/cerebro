@@ -18,16 +18,16 @@
 # default", and a required key with no default and no answer refuses.
 #
 # Step 4, the fleet: `.cerebro/roster.conf' from a second interview - how many ux, build-design and
-# implementer agents, whether a verifier, a reviewer and a user-feedback agent run, and per role
+# producer agents, whether a verifier, a reviewer and a user-feedback agent run, and per role
 # whether the fleet view autostarts it, arms it (standby) or leaves it to be started by hand. The
 # orchestrator and the architect are always there. Names come from the built-in fleet's pool.
 #
 # Step 5, the agent settings: `.cerebro/agents.conf' from a third interview - the tool, the default
-# model and effort, the implementers' own - and, on copilot, an external OpenAI-compatible model
+# model and effort, the producers' own - and, on copilot, an external OpenAI-compatible model
 # source that the model answers may then name. Every other role is a commented line.
 #
 # Step 6, the traps: an empty `.cerebro/traps.md' - a heading and what the file is for - so the
-# planners and implementers that read it find the file rather than nothing; one that exists is kept.
+# planners and producers that read it find the file rather than nothing; one that exists is kept.
 #
 # Step 7, the ignores: the three runtime directories under `.cerebro/' are appended to `.gitignore'
 # with their comment, each only if it is not there already, and `.cerebro/agents.conf' joins them
@@ -151,11 +151,11 @@ linked="$(new_consumer linked)"
 run_install "$all" "$linked"
 [[ $status -eq 0 ]] || fail "links: expected exit 0, got $status; stderr: $err"
 grep -q "Synced .* skill link" <<<"$out" || fail "links: expected the sync's skill line in: $out"
-skill_link="$linked/.claude/skills/implement-bead"
-[[ -L "$skill_link" && "$(readlink "$skill_link")" == "../../.cerebro/cerebro/skills/implement-bead" ]] \
+skill_link="$linked/.claude/skills/produce-bead"
+[[ -L "$skill_link" && "$(readlink "$skill_link")" == "../../.cerebro/cerebro/skills/produce-bead" ]] \
   || fail "links: expected a relative skill link at $skill_link"
 [[ -f "$skill_link/SKILL.md" ]] || fail "links: the skill link does not resolve"
-agent_link="$linked/.claude/agents/implementer.md"
+agent_link="$linked/.claude/agents/producer.md"
 [[ -L "$agent_link" && -f "$agent_link" ]] || fail "links: expected a resolving agent link at $agent_link"
 [[ -e "$linked/.github/agents" ]] || fail "links: the second provider's layout was not written"
 pass "the installer links every skill and agent into every layout"
@@ -191,7 +191,7 @@ pass "the interview's answers are the declaration, and every reader answers from
 # Every other key the scripts read is there to be found, and off.
 for k in install_shell prewarm disk_floor_gb reclaim_dirs rust_paths launch_targets port_base \
          port_env verification verification_skill fixtures_doc retro_dir merged_check \
-         commit_ref_pattern non_delivery_commit_pattern role_start_spacing_implementer \
+         commit_ref_pattern non_delivery_commit_pattern role_start_spacing_producer \
          planner_buffer_multiple; do
   grep -Eq "^#[[:space:]]*$k\b" "$conf" || fail "declare: optional key $k is not in the file, commented out"
   [[ -z "$("$pc" "$k" 2>/dev/null)" ]] || fail "declare: optional key $k is live: $("$pc" "$k")"
@@ -229,8 +229,8 @@ grep -Eq '^#[[:space:]]*gate_full\b' "$conf" || fail "nogate: gate_full should b
 [[ -z "$("$pc" gate_fast 2>/dev/null)" ]] || fail "nogate: a gate was declared from nothing: $("$pc" gate_fast)"
 [[ "$(grep -cEv '^[[:space:]]*(#|$)' "$conf")" -eq 4 ]] \
   || fail "nogate: expected four live keys, got: $(grep -Ev '^[[:space:]]*(#|$)' "$conf")"
-grep -q 'gate_fast' <<<"$out" && grep -qi 'implementer' <<<"$out" \
-  || fail "nogate: expected a line saying an implementer needs gate_fast before it starts: $out"
+grep -q 'gate_fast' <<<"$out" && grep -qi 'producer' <<<"$out" \
+  || fail "nogate: expected a line saying an producer needs gate_fast before it starts: $out"
 pass "with no gate to detect the gates are left empty, written commented out, and the cost is said"
 
 # The app_paths question explains what it is asking for before it asks (asserted on this run's own
@@ -252,7 +252,7 @@ pass "an unanswerable required key refuses, naming it, and writes no file"
 # --- an existing declaration is kept, and not asked about --------------------------------------------
 kept="$(new_consumer kept)"
 printf 'project_name  Mine\napp_paths ^x/\ngate_fast true\n' > "$kept/.cerebro/project.conf"
-printf 'Ada  implementer\n' > "$kept/.cerebro/roster.conf"
+printf 'Ada  producer\n' > "$kept/.cerebro/roster.conf"
 printf 'default tool=claude\n' > "$kept/.cerebro/agents.conf"
 printf '# Traps\n\n- one\n' > "$kept/.cerebro/traps.md"
 printf '.cerebro/worktrees\n.cerebro/state\n.cerebro/scratch\n' > "$kept/.gitignore"
@@ -264,7 +264,7 @@ run_install "$all" "$kept"
 grep -Eq "^ +kept +\.cerebro/project\.conf" <<<"$out" || fail "kept: expected a kept line: $out"
 ! grep -q '\[' <<<"$out" || fail "kept: the interview ran on an existing declaration: $out"
 pass "an existing project.conf is kept untouched and the interview is skipped"
-[[ "$(cat "$kept/.cerebro/roster.conf")" == "Ada  implementer" ]] || fail "kept: roster.conf was changed"
+[[ "$(cat "$kept/.cerebro/roster.conf")" == "Ada  producer" ]] || fail "kept: roster.conf was changed"
 grep -Eq "^ +kept +\.cerebro/roster\.conf" <<<"$out" || fail "kept: expected a kept line for the roster: $out"
 pass "an existing roster.conf is kept untouched too"
 [[ "$(cat "$kept/.cerebro/agents.conf")" == "default tool=claude" ]] || fail "kept: agents.conf was changed"
@@ -308,7 +308,7 @@ pass "a second run leaves .gitignore as it was"
 own="$(new_consumer own)"
 printf 'node_modules/\n.cerebro/state' > "$own/.gitignore"       # no trailing newline, on purpose
 answers="$work_dir/own-answers"
-{ printf '\n\n\n\n\n\n\n'; printf '\n\n\n\n\n\n\n\n\n\n\n\n'; printf '\n\n\n\n\n'; printf 'personal\n'; } > "$answers"
+{ printf '\n\n\n\n\n\n\n'; printf '\n\n\n\n\n\n\n\n\n\n'; printf '\n\n\n\n\n'; printf 'personal\n'; } > "$answers"
 run_install "$all" "$own"
 answers=/dev/null
 [[ $status -eq 0 ]] || fail "own: expected exit 0, got $status; stderr: $err"
@@ -380,7 +380,7 @@ pass "an existing board is kept, and bd is not run"
 noorigin="$(new_consumer noorigin)"
 export BD_LOG="$work_dir/noorigin.log"
 answers="$work_dir/noorigin-answers"
-{ printf '\n\n\n\n\n\n\n'; printf '\n\n\n\n\n\n\n\n\n\n\n\n'; printf '\n\n\n\n\n'; printf '\n'; printf 'nx\nhttps://example.com/x.git\n'; } > "$answers"
+{ printf '\n\n\n\n\n\n\n'; printf '\n\n\n\n\n\n\n\n\n\n'; printf '\n\n\n\n\n'; printf '\n'; printf 'nx\nhttps://example.com/x.git\n'; } > "$answers"
 run_install "$logging_bd" "$noorigin"
 answers=/dev/null
 [[ $status -eq 0 ]] || fail "noorigin: expected exit 0, got $status; stderr: $err"
@@ -404,35 +404,35 @@ unset BD_LOG
 # --- 4. the fleet: counts, the optional roles, and how each role is started ------------------------
 roster_at() { "$1/.cerebro/cerebro/scripts/roster" "${@:2}"; }
 
-# The defaults alone (the `linked' run above answered everything by EOF): one ux, one build-design,
-# two implementers, a verifier, no reviewer and no user-feedback; the orchestrator autostarts, the
-# planners and implementers stand by, the rest wait for `s'.
-expected="$(printf 'Cerebro\torchestrator\tinteractive\nXavier\tux\tinteractive\nGambit\tbuild-design\tinteractive\nPsylocke\tverifier\tinteractive\nForge\tarchitect\tinteractive\nCyclops\timplementer\timplementer\nStorm\timplementer\timplementer')"
+# The defaults alone (the `linked' run above answered everything by EOF): one ux,
+# two producers, a verifier, no reviewer and no user-feedback; the orchestrator autostarts, the
+# planners and producers stand by, the rest wait for `s'.
+expected="$(printf 'Cerebro\torchestrator\tinteractive\nXavier\tux\tinteractive\nPsylocke\tverifier\tinteractive\nForge\tarchitect\tinteractive\nCyclops\tproducer\timplementer\nStorm\tproducer\timplementer')"
 [[ "$(roster_at "$linked")" == "$expected" ]] \
   || fail "fleet defaults: expected the default fleet, got: $(roster_at "$linked")"
 [[ "$(roster_at "$linked" --autostart)" == "Cerebro" ]] \
   || fail "fleet defaults: expected only Cerebro to autostart, got: $(roster_at "$linked" --autostart)"
-[[ "$(roster_at "$linked" --standby)" == "$(printf 'Xavier\nGambit\nCyclops\nStorm')" ]] \
-  || fail "fleet defaults: expected the planners and implementers on standby, got: $(roster_at "$linked" --standby)"
+[[ "$(roster_at "$linked" --standby)" == "$(printf 'Xavier\nCyclops\nStorm')" ]] \
+  || fail "fleet defaults: expected the planners and producers on standby, got: $(roster_at "$linked" --standby)"
 pass "the default fleet: the seven rows, the orchestrator autostarted, builders on standby"
 
-# Every answer given: two ux, one build-design, three implementers, a verifier, no reviewer, a
+# Every answer given: two ux, three producers, a verifier, no reviewer, a
 # user-feedback agent; then how each present role starts, in the order the roles are listed.
 fleet="$(new_consumer fleet)"
 answers="$work_dir/fleet-answers"
 {
   printf '\n\n\n\n\n\n\n'                    # project.conf: every default
-  printf '2\n1\n3\ny\nn\ny\n'                 # the counts and the optional roles
-  printf '\nmanual\n\nstandby\n\n\nautostart\n'  # orchestrator ux build-design verifier user-feedback architect implementer
+  printf '2\n3\ny\nn\ny\n'                    # the counts and the optional roles
+  printf '\nmanual\nstandby\n\n\nautostart\n'   # orchestrator ux verifier user-feedback architect producer
 } > "$answers"
 run_install "$all" "$fleet"
 answers=/dev/null
 [[ $status -eq 0 ]] || fail "fleet: expected exit 0, got $status; stderr: $err"
-expected="$(printf 'Cerebro\torchestrator\tinteractive\nXavier\tux\tinteractive\nBeast\tux\tinteractive\nGambit\tbuild-design\tinteractive\nPsylocke\tverifier\tinteractive\nMoira\tuser-feedback\tinteractive\nForge\tarchitect\tinteractive\nCyclops\timplementer\timplementer\nStorm\timplementer\timplementer\nWolverine\timplementer\timplementer')"
+expected="$(printf 'Cerebro\torchestrator\tinteractive\nXavier\tux\tinteractive\nBeast\tux\tinteractive\nPsylocke\tverifier\tinteractive\nMoira\tuser-feedback\tinteractive\nForge\tarchitect\tinteractive\nCyclops\tproducer\timplementer\nStorm\tproducer\timplementer\nWolverine\tproducer\timplementer')"
 [[ "$(roster_at "$fleet")" == "$expected" ]] || fail "fleet: got: $(roster_at "$fleet")"
 [[ "$(roster_at "$fleet" --autostart)" == "$(printf 'Cerebro\nCyclops\nStorm\nWolverine')" ]] \
   || fail "fleet: autostart: got: $(roster_at "$fleet" --autostart)"
-[[ "$(roster_at "$fleet" --standby)" == "$(printf 'Gambit\nPsylocke')" ]] \
+[[ "$(roster_at "$fleet" --standby)" == "Psylocke" ]] \
   || fail "fleet: standby: got: $(roster_at "$fleet" --standby)"
 grep -Eq "^ +wrote +\.cerebro/roster\.conf" <<<"$out" || fail "fleet: expected a wrote line: $out"
 ! grep -q 'reviewer' <<<"$(roster_at "$fleet")" || fail "fleet: a declined role was written"
@@ -441,13 +441,13 @@ pass "the fleet interview: counts, optional roles and each role's start are the 
 # A fleet with nobody to build is refused, and nothing is written.
 nobody="$(new_consumer nobody)"
 answers="$work_dir/nobody-answers"
-{ printf '\n\n\n\n\n\n\n'; printf '\n\n0\n'; } > "$answers"
+{ printf '\n\n\n\n\n\n\n'; printf '\n0\n'; } > "$answers"
 run_install "$all" "$nobody"
 answers=/dev/null
 [[ $status -eq 1 ]] || fail "nobody: expected exit 1, got $status"
-grep -q 'implementer' <<<"$err" || fail "nobody: expected the refusal to name implementers: $err"
+grep -q 'producer' <<<"$err" || fail "nobody: expected the refusal to name producers: $err"
 [[ ! -e "$nobody/.cerebro/roster.conf" ]] || fail "nobody: a roster was written"
-pass "zero implementers refuses, naming it, and writes no roster"
+pass "zero producers refuses, naming it, and writes no roster"
 
 # An answer that is neither of the offered words is refused rather than read as one of them.
 typo="$(new_consumer typo)"
@@ -465,34 +465,34 @@ pass "a misspelt start word refuses, naming it"
 field() { awk -F'\t' -v n="$2" '{print $n}' <<<"$1"; }
 settings_at() { "$1/.cerebro/cerebro/scripts/agents-conf" "${@:2}"; }
 
-# The defaults alone (`linked' again): claude, opus, medium effort, the implementers the same.
-line="$(settings_at "$linked" --name Cyclops --role implementer)"
-[[ "$(field "$line" 1)" == hit && "$(field "$line" 2)" == implementer ]] || fail "settings defaults: implementer line: $line"
+# The defaults alone (`linked' again): claude, opus, medium effort, the producers the same.
+line="$(settings_at "$linked" --name Cyclops --role producer)"
+[[ "$(field "$line" 1)" == hit && "$(field "$line" 2)" == producer ]] || fail "settings defaults: producer line: $line"
 [[ "$(field "$line" 3)" == claude && "$(field "$line" 4)" == opus && "$(field "$line" 5)" == medium ]] \
-  || fail "settings defaults: expected claude/opus/medium for implementers, got: $line"
+  || fail "settings defaults: expected claude/opus/medium for producers, got: $line"
 line="$(settings_at "$linked" --name Forge --role architect)"
 [[ "$(field "$line" 2)" == default && "$(field "$line" 3)" == claude && "$(field "$line" 4)" == opus ]] \
   || fail "settings defaults: expected the architect to fall to default, got: $line"
-for r in ux build-design orchestrator verifier reviewer user-feedback architect; do
+for r in ux orchestrator verifier reviewer user-feedback architect; do
   grep -Eq "^#[[:space:]]*$r[[:space:]]+tool=" "$linked/.cerebro/agents.conf" || fail "settings defaults: no commented line for $r"
 done
-pass "the default settings: claude on opus at medium, implementers the same, other roles commented out"
+pass "the default settings: claude on opus at medium, producers the same, other roles commented out"
 
 # Copilot with an external source: the source is defined, and the model answers name it.
 ext="$(new_consumer ext)"
 answers="$work_dir/ext-answers"
 {
   printf '\n\n\n\n\n\n\n'                        # project.conf
-  printf '\n\n\n\n\n\n\n\n\n\n\n\n'              # the fleet, every default: six counts, six roles
+  printf '\n\n\n\n\n\n\n\n\n\n'                  # the fleet, every default: five choices, five roles
   printf 'copilot\ny\n\n\n\ngpt-5.4\n'            # tool; external: yes, name, url, key variable, model id
-  printf '\nhigh\n\nlow\n'                        # default model (the source), effort; implementer model, effort
+  printf '\nhigh\n\nlow\n'                        # default model (the source), effort; producer model, effort
 } > "$answers"
 run_install "$all" "$ext"
 answers=/dev/null
 [[ $status -eq 0 ]] || fail "ext: expected exit 0, got $status; stderr: $err"
-line="$(settings_at "$ext" --name Cyclops --role implementer)"
+line="$(settings_at "$ext" --name Cyclops --role producer)"
 [[ "$(field "$line" 3)" == copilot && "$(field "$line" 5)" == low && "$(field "$line" 6)" == external ]] \
-  || fail "ext: expected an external copilot implementer at low, got: $line"
+  || fail "ext: expected an external copilot producer at low, got: $line"
 [[ "$(field "$line" 7)" == research && "$(field "$line" 8)" == openai \
    && "$(field "$line" 9)" == "https://api.openai.com/v1" && "$(field "$line" 10)" == OPENAI_API_KEY ]] \
   || fail "ext: the external definition did not come back whole: $line"
@@ -504,13 +504,13 @@ pass "copilot with an external OpenAI-compatible source: defined once, named by 
 # On claude there is no external question at all.
 cl="$(new_consumer cl)"
 answers="$work_dir/cl-answers"
-{ printf '\n\n\n\n\n\n\n'; printf '\n\n\n\n\n\n\n\n\n\n\n\n'; printf 'claude\nsonnet\n\nhaiku\n\n'; } > "$answers"
+{ printf '\n\n\n\n\n\n\n'; printf '\n\n\n\n\n\n\n\n\n\n'; printf 'claude\nsonnet\n\nhaiku\n\n'; } > "$answers"
 run_install "$all" "$cl"
 answers=/dev/null
 [[ $status -eq 0 ]] || fail "cl: expected exit 0, got $status; stderr: $err"
 ! grep -qi 'external' <<<"$out" || fail "cl: claude was asked about an external source: $out"
-line="$(settings_at "$cl" --name Cyclops --role implementer)"
-[[ "$(field "$line" 4)" == haiku && "$(field "$line" 6)" == ordinary ]] || fail "cl: implementer: $line"
+line="$(settings_at "$cl" --name Cyclops --role producer)"
+[[ "$(field "$line" 4)" == haiku && "$(field "$line" 6)" == ordinary ]] || fail "cl: producer: $line"
 line="$(settings_at "$cl" --name Forge --role architect)"
 [[ "$(field "$line" 4)" == sonnet ]] || fail "cl: default model: $line"
 pass "on claude the external source is not asked about, and the models are the answers"
@@ -518,7 +518,7 @@ pass "on claude the external source is not asked about, and the models are the a
 # A tool this cerebro cannot run is refused, naming the ones it can.
 badtool="$(new_consumer badtool)"
 answers="$work_dir/badtool-answers"
-{ printf '\n\n\n\n\n\n\n'; printf '\n\n\n\n\n\n\n\n\n\n\n\n'; printf 'gemini\n'; } > "$answers"
+{ printf '\n\n\n\n\n\n\n'; printf '\n\n\n\n\n\n\n\n\n\n'; printf 'gemini\n'; } > "$answers"
 run_install "$all" "$badtool"
 answers=/dev/null
 [[ $status -eq 1 ]] || fail "badtool: expected exit 1, got $status"

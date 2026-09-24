@@ -1,1 +1,0 @@
-../../.cerebro/cerebro/agents/implementer.md

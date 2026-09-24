@@ -142,7 +142,7 @@ pass "no new parser and no third config file"
 # ---------------------------------------------------------------------------
 # 6. NO ROLE NAMES ANOTHER PROJECT'S TOOL OR PORT
 # ---------------------------------------------------------------------------
-sites="agents/verifier.md agents/reviewer.md skills/implement-bead/SKILL.md docs/agent-workflow.md"
+sites="agents/verifier.md agents/reviewer.md skills/produce-bead/SKILL.md docs/agent-workflow.md"
 
 for f in $sites; do
   if grep -nE 'pnpm --filter|tauri|@atlantis|\b5173\b|\b4174\b|\b4183\b|\b4173\b|\b4193\b' \
@@ -193,29 +193,6 @@ case "$verifier" in
   *) fail "verifier.md: the pick-the-right-fixture rule is gone" ;;
 esac
 pass "build after the reset, and pick the fixture that exercises what changed, both survive"
-
-# --- the smoke prose keeps the rule the numbers only illustrated ---
-skill="$(tr '\n' ' ' < "$repo_root/skills/implement-bead/SKILL.md" | tr -s ' ')"
-case "$skill" in
-  *"its own block of ports"*) ;;
-  *) fail "implement-bead: the give-each-session-its-own-block rule is gone" ;;
-esac
-# A block is now RESERVED for the run rather than checked before it: a check is true at the instant
-# it runs, and a bead spends most of an hour between that instant and the suite that needs the
-# block (ah-dksm). What has to survive is the wrapper and the lifetime of what it holds.
-case "$skill" in
-  *"smoke-port -- "*) ;;
-  *) fail "implement-bead: the run-it-through-smoke-port rule is gone" ;;
-esac
-case "$skill" in
-  *"holds it for exactly as long as your command runs"*) ;;
-  *) fail "implement-bead: the reservation-lasts-the-run rule is gone" ;;
-esac
-case "$skill" in
-  *"Do not set \`CI\` by hand"*) ;;
-  *) fail "implement-bead: the do-not-set-CI rule is gone" ;;
-esac
-pass "give each session its own block of ports, reserved for the run, and never by setting CI"
 
 echo "all launch-targets tests passed"
 

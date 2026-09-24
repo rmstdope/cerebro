@@ -113,7 +113,7 @@ step_links() {
 # as a person; an empty answer takes the default, and a required key with no default and no
 # answer refuses before anything is written.
 # The gates and the install command may be left empty - a new project has none yet - and are then
-# written commented out, with a line saying an implementer will not start until a gate exists. An
+# written commented out, with a line saying a producer will not start until a gate exists. An
 # existing file is kept whole: after the first run it is the project's, and edited by hand.
 
 # ask <var> <prompt> <default> [optional]  ->  sets <var>; an empty default with an empty answer
@@ -173,9 +173,9 @@ step_declare() {
   echo "  anywhere else - docs, tests, CI, the fleet's own files - counts as invisible to them, and"
   echo "  is neither reviewed as application code, verified by hand, nor released."
   ask app_paths      "  application paths" "$d_app" || return 1
-  echo "  The gate: what an implementer runs before it opens a pull request, and what a pull request"
+  echo "  The gate: what a producer runs before it opens a pull request, and what a pull request"
   echo "  is judged by. A new project may have none yet - leave it empty, and declare it in"
-  echo "  .cerebro/project.conf before the first implementer starts; none starts without one."
+  echo "  .cerebro/project.conf before the first producer starts; none starts without one."
   ask gate_fast      "  fast gate" "$d_fast" optional || return 1
   if [[ -n "$gate_fast" ]]; then
     ask gate_full    "  full gate" "${d_full:-$gate_fast}" || return 1
@@ -203,16 +203,16 @@ step_declare() {
   mkdir -p "$root/.cerebro"
   printf '%s\n' "$body" > "$conf"
   report wrote ".cerebro/project.conf"
-  [[ -n "$gate_fast" ]] || echo "  No gate declared: an implementer will not start until gate_fast is set in .cerebro/project.conf."
+  [[ -n "$gate_fast" ]] || echo "  No gate declared: a producer will not start until gate_fast is set in .cerebro/project.conf."
 }
 
 # --- 4. the fleet ----------------------------------------------------------------------------------
 #
-# `.cerebro/roster.conf', from a second interview: how many ux, build-design and implementer agents,
+# `.cerebro/roster.conf', from a second interview: how many ux and producer agents,
 # whether the three optional roles run, and per role present how the fleet view starts it -
 # `autostart' as the view opens, `standby' armed for its trigger, or `manual' for `s'. The
 # orchestrator and the architect are always there. Names come from the built-in fleet's pool, in
-# the order `scripts/roster' wants: the interactive roles first, then the implementers.
+# the order `scripts/roster' wants: the interactive roles first, then the producers.
 
 # ask_count <var> <prompt> <default> <min>
 ask_count() {
@@ -241,12 +241,11 @@ names_for() {
   case "$role" in
     orchestrator)  pool="Cerebro" ;;
     ux)            pool="Xavier Beast Jean Emma" ;;
-    build-design)  pool="Gambit Iceman Bishop Cable" ;;
     verifier)      pool="Psylocke" ;;
     reviewer)      pool="Cypher" ;;
     user-feedback) pool="Moira" ;;
     architect)     pool="Forge" ;;
-    implementer)   pool="Cyclops Storm Wolverine Rogue Nightcrawler Colossus Jubilee Phoenix Mystique Magneto" ;;
+    producer)      pool="Cyclops Storm Wolverine Rogue Nightcrawler Colossus Jubilee Phoenix Mystique Magneto" ;;
   esac
   for name in $pool; do
     [[ $i -lt $n ]] || break
@@ -267,21 +266,20 @@ step_fleet() {
     return 0
   fi
 
-  local n_ux n_bd n_impl verifier reviewer feedback
+  local n_ux n_producer verifier reviewer feedback
   ask_count  n_ux   "How many ux agents, to agree what a person will see" 1 0 || return 1
-  ask_count  n_bd   "How many build-design agents, to plan the build of an agreed experience" 1 0 || return 1
-  ask_count  n_impl "How many implementers, to build planned beads" 2 1 || return 1
+  ask_count  n_producer "How many producers, to plan and build UX-agreed beads" 2 1 || return 1
   ask_choice verifier "A verifier, to verify merged beads with you (y/n)" y y n || return 1
   ask_choice reviewer "A reviewer, for pull requests from outside the fleet (y/n)" n y n || return 1
   ask_choice feedback "A user-feedback agent, to own the GitHub issues (y/n)" n y n || return 1
 
   # role<TAB>count, in file order; a count of 0 is a role left out.
   local roles=() r role count word start rows="" name
-  roles+=("orchestrator	1" "ux	$n_ux" "build-design	$n_bd")
+  roles+=("orchestrator	1" "ux	$n_ux")
   [[ "$verifier" == y ]] && roles+=("verifier	1")
   [[ "$reviewer" == y ]] && roles+=("reviewer	1")
   [[ "$feedback" == y ]] && roles+=("user-feedback	1")
-  roles+=("architect	1" "implementer	$n_impl")
+  roles+=("architect	1" "producer	$n_producer")
 
   echo "  How the fleet view starts each role: autostart as it opens, standby to arm it for its"
   echo "  own trigger, or manual to start it yourself with 's'."
@@ -290,7 +288,7 @@ step_fleet() {
     [[ "$count" -gt 0 ]] || continue
     case "$role" in
       orchestrator)                 start=autostart ;;
-      ux|build-design|implementer)  start=standby ;;
+      ux|producer)                 start=standby ;;
       *)                            start=manual ;;
     esac
     ask_choice word "$role ($(names_for "$role" "$count" | tr '\n' ' ' | sed 's/ $//'))" "$start" autostart standby manual || return 1
@@ -308,7 +306,7 @@ step_fleet() {
   {
     echo "# The fleet THIS project runs, written by .cerebro/cerebro/scripts/install and edited by hand."
     echo "# NAME  ROLE  [autostart|standby]: one agent per line, the interactive roles first, then the"
-    echo "# implementers. Order is load-bearing - implementers are taken in file order. \`autostart' is"
+    echo "# producers. Order is load-bearing - producers are taken in file order. \`autostart' is"
     echo "# started as the fleet view opens; \`standby' is armed and started by its role's trigger; no"
     echo "# third word means you start it with \`s'. The roles are the files in .cerebro/cerebro/agents/."
     echo
@@ -320,7 +318,7 @@ step_fleet() {
 # --- 5. the agent settings -------------------------------------------------------------------------
 #
 # `.cerebro/agents.conf', from a third interview: which agent CLI, the default model and effort,
-# the implementers' own (the role with the most sessions, so the one worth pricing apart) - and,
+# the producers' own (the role with the most sessions, so the one worth pricing apart) - and,
 # on copilot, an external OpenAI-compatible model source, defined once on an `external' line and
 # then named by a model answer like any model. Every other role is written as a commented line
 # equal to `default', so giving one its own settings is uncommenting and editing. The shape is
@@ -363,15 +361,15 @@ step_settings() {
     fi
   fi
 
-  local d_model="" model effort impl_model impl_effort
+  local d_model="" model effort producer_model producer_effort
   case "$tool" in
     claude) d_model=opus ;;
     *)      d_model="$ext_name" ;;
   esac
   ask model       "Default model (empty leaves it to the tool)" "$d_model" optional || return 1
   ask effort      "Default effort - low, medium or high (empty leaves it to the tool)" medium optional || return 1
-  ask impl_model  "The implementers' model" "$model" optional || return 1
-  ask impl_effort "The implementers' effort" "$effort" optional || return 1
+  ask producer_model  "The producers' model" "$model" optional || return 1
+  ask producer_effort "The producers' effort" "$effort" optional || return 1
 
   mkdir -p "$root/.cerebro"
   {
@@ -386,11 +384,11 @@ step_settings() {
       echo
     fi
     setting_line default "$tool" "$model" "$effort"
-    setting_line implementer "$tool" "$impl_model" "$impl_effort"
+    setting_line producer "$tool" "$producer_model" "$producer_effort"
     echo
     echo "# Every other role runs on the default line. Uncomment one to give that role its own settings."
     local r
-    for r in ux build-design orchestrator verifier reviewer user-feedback architect; do
+    for r in ux orchestrator verifier reviewer user-feedback architect; do
       printf '#'; setting_line "$r" "$tool" "$model" "$effort"
     done
   } > "$conf"
@@ -400,7 +398,7 @@ step_settings() {
 # --- 6. the traps ----------------------------------------------------------------------------------
 #
 # `.cerebro/traps.md', empty: the heading and what the file is for, the same words
-# skills/project-definition writes. Planners and implementers read it before they start, and a
+# skills/project-definition writes. Producers read it before they start, and a
 # file that exists and says "nothing yet" is a clearer answer than one that is not there.
 
 step_traps() {
@@ -416,7 +414,7 @@ step_traps() {
   cat > "$conf" <<'TRAPS'
 # Traps
 
-The facts this project has already paid for, read by planners and implementers before they start.
+The facts this project has already paid for, read by producers before they start.
 One entry per trap: what happened, what it cost, and what to do about it. Empty until the first one.
 TRAPS
   report wrote ".cerebro/traps.md (empty)"

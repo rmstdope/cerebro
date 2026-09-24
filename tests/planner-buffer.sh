@@ -2,7 +2,7 @@
 #
 # Proves `scripts/planner-buffer`: the one place the harness answers "how much planned, claimable
 # work is there, and how much is wanted" - the wanted number being `planner_buffer_multiple' beads
-# per implementer on the roster (absent means one each), minus any told to finish, never fewer than
+# per producer on the roster (absent means one each), minus any told to finish, never fewer than
 # the floor. That question used to be answered twice, in two languages
 # - the fleet view's planner trigger and a hand-written `bd list` in
 # `skills/plan-bead/SKILL.md` - and the two drifted, each time costing sessions: a trigger counting
@@ -65,7 +65,7 @@ set -e
 pass "refuses a call that names no mode"
 
 # ------------------------------------------------------------------------------------------------
-# The count: which beads an implementer could actually claim. The bead query goes through
+# The count: which beads an producer could actually claim. The bead query goes through
 # `scripts/work-beads', so a stub `bd' on PATH ahead of the real one reaches it - never the real
 # `bd', which would read this machine's own backlog and pass or fail by accident.
 # ------------------------------------------------------------------------------------------------
@@ -73,10 +73,10 @@ pass "refuses a call that names no mode"
 stub_dir="$(mktemp -d)"
 cleanup_add "$stub_dir"
 count_consumer="$(consumer_new count --copy)"
-# A roster of its own, or the built-in table's twelve implementers would be what `want' is sized
+# A roster of its own, or the built-in table's twelve producers would be what `want' is sized
 # from since cb-1or.3: one builder on the roster, so `want' is the floor.
 mkdir -p "$count_consumer/.cerebro/state"
-printf 'Xavier planner\nCyclops implementer\n' > "$count_consumer/.cerebro/roster.conf"
+printf 'Xavier planner\nCyclops producer\n' > "$count_consumer/.cerebro/roster.conf"
 
 # The subcommand whose argv this suite reads. The stub dispatches, because `work-beads` asks
 # `bd children` per epic since cb-hzl and a single argv file would keep only the last call.
@@ -125,7 +125,7 @@ argv_has_pair() {
     [ "$(grep -xF -A1 "ARG:$1" "$argv_file" | tail -1)" = "ARG:$2" ]
 }
 
-# One of each shape an implementer might or might not be able to take. The stub ignores
+# One of each shape an producer might or might not be able to take. The stub ignores
 # `--exclude-type', so the epic here also proves work-beads' own filtering is still in the path -
 # it is a split epic (see `set_stub'), which is bookkeeping over its children rather than work.
 beads='[{"id":"a","issue_type":"task","labels":["planned"]},
@@ -137,13 +137,13 @@ set_stub "$beads"
 
 planned="$(run_count --planned)"
 [ "$planned" = "1" ] || fail "--planned counted '$planned', not the one claimable bead"
-pass "counts only the planned beads an implementer could claim"
+pass "counts only the planned beads an producer could claim"
 
 argv_has_pair "--status" "open" || fail "the bead query did not ask for open beads"
 pass "asks for open beads, through work-beads"
 
 # --- the exact line the skill reads --------------------------------------------------------------
-# One implementer on this fixture's roster, so `want' is the floor.
+# One producer on this fixture's roster, so `want' is the floor.
 line="$(run_count --count)"
 [ "$line" = "planned=1 want=2" ] || fail "--count printed '$line', not 'planned=1 want=2'"
 pass "prints the one line the skill reads"
@@ -237,19 +237,19 @@ pass "a failing bead query is loud on --ux-agreed too"
 set_stub "$beads"
 
 # ------------------------------------------------------------------------------------------------
-# The wanted number: one per implementer on the ROSTER, never fewer than the floor - and an
-# implementer told to finish is left out, since it takes no further bead. Sessions are not counted
+# The wanted number: one per producer on the ROSTER, never fewer than the floor - and an
+# producer told to finish is left out, since it takes no further bead. Sessions are not counted
 # at all since cb-1or.3: since cb-1or.1 a builder between beads has no session and is started *by* a
 # planned bead, so counting sessions sized the buffer at the floor on every quiet board and woke two
 # builders of four.
 #
 # The stop flag is still the one disagreement this script exists to end: the skill's own loop
-# skipped a stop-flagged implementer and the fleet view's count did not, so with four on the roster
+# skipped a stop-flagged producer and the fleet view's count did not, so with four on the roster
 # and one told to finish the skill wanted three and the view wanted four, and the view started a
 # planner whose pass found a full buffer.
 # ------------------------------------------------------------------------------------------------
 
-# A fixture whose roster declares exactly the implementers named, plus one planner so the file has
+# A fixture whose roster declares exactly the producers named, plus one planner so the file has
 # the shape a real one has. Nothing runs: since cb-1or.3 the wanted number is read off the roster
 # and the stop flags, never off a session.
 want_fixture() {
@@ -257,7 +257,7 @@ want_fixture() {
   tmp="$(consumer_new "$(fixture_name pb)" --link roster consumer-root work-beads planner-buffer project-conf)"
   mkdir -p "$tmp/.cerebro/state"
   printf 'Xavier planner\n' > "$tmp/.cerebro/roster.conf"
-  for name in "$@"; do printf '%s implementer\n' "$name" >> "$tmp/.cerebro/roster.conf"; done
+  for name in "$@"; do printf '%s producer\n' "$name" >> "$tmp/.cerebro/roster.conf"; done
   echo "$tmp"
 }
 
@@ -270,17 +270,17 @@ run_want() {
   bash "$tmp/.cerebro/cerebro/scripts/planner-buffer" "$@"
 }
 
-# --- one bead per implementer on the roster, running or not --------------------------------------
+# --- one bead per producer on the roster, running or not --------------------------------------
 tmp="$(want_fixture Cyclops Storm Wolverine)"
 want="$(run_want "$tmp" --want)"
-[ "$want" = "3" ] || fail "--want with three implementers on the roster printed '$want'"
-pass "wants one bead per implementer on the roster, running or not"
+[ "$want" = "3" ] || fail "--want with three producers on the roster printed '$want'"
+pass "wants one bead per producer on the roster, running or not"
 
-# --- an implementer told to finish takes no further bead -----------------------------------------
+# --- an producer told to finish takes no further bead -----------------------------------------
 touch "$tmp/.cerebro/state/Storm.stop"
 want="$(run_want "$tmp" --want)"
 [ "$want" = "2" ] || fail "--want with one of three told to finish printed '$want'"
-pass "skips an implementer told to finish"
+pass "skips an producer told to finish"
 
 # --- the floor holds however many are told to finish ---------------------------------------------
 touch "$tmp/.cerebro/state/Cyclops.stop"
@@ -291,27 +291,27 @@ pass "never fewer than the floor, however many are told to finish"
 # --- a roster of one still wants the floor -------------------------------------------------------
 tmp="$(want_fixture Cyclops)"
 want="$(run_want "$tmp" --want)"
-[ "$want" = "2" ] || fail "--want with one implementer on the roster printed '$want', not the floor"
+[ "$want" = "2" ] || fail "--want with one producer on the roster printed '$want', not the floor"
 pass "wants the floor with a roster of one"
 
 # --- a declared multiple scales the wanted number ------------------------------------------------
 tmp="$(want_fixture Cyclops Storm Wolverine)"
 declare_multiple "$tmp" 2
 want="$(run_want "$tmp" --want)"
-[ "$want" = "6" ] || fail "--want with three implementers and multiple 2 printed '$want'"
+[ "$want" = "6" ] || fail "--want with three producers and multiple 2 printed '$want'"
 pass "scales the wanted number by the declared multiple"
 
 # --- a stop flag still subtracts before the multiple applies -------------------------------------
 touch "$tmp/.cerebro/state/Storm.stop"
 want="$(run_want "$tmp" --want)"
 [ "$want" = "4" ] || fail "--want with one of three told to finish and multiple 2 printed '$want'"
-pass "an implementer told to finish is subtracted before the multiple applies"
+pass "an producer told to finish is subtracted before the multiple applies"
 
 # --- multiple 1 is today's rule, floor and all ---------------------------------------------------
 tmp="$(want_fixture Cyclops)"
 declare_multiple "$tmp" 1
 want="$(run_want "$tmp" --want)"
-[ "$want" = "2" ] || fail "--want with one implementer and multiple 1 printed '$want', not the floor"
+[ "$want" = "2" ] || fail "--want with one producer and multiple 1 printed '$want', not the floor"
 pass "the floor still wins over a declared multiple"
 
 # --- a bad multiple is loud, and 1 is used -------------------------------------------------------
@@ -350,6 +350,6 @@ pass "a session, live or not, is not what is counted"
 # --- the count line reads the same wanted number --------------------------------------------------
 tmp="$(want_fixture Cyclops Storm Wolverine)"
 line="$(PATH="$stub_dir:$PATH" bash "$tmp/.cerebro/cerebro/scripts/planner-buffer" --count)"
-[ "$line" = "planned=1 want=3" ] || fail "--count printed '$line' with three implementers on the roster"
+[ "$line" = "planned=1 want=3" ] || fail "--count printed '$line' with three producers on the roster"
 pass "the count line reads the same wanted number as --want"
 suite_passed

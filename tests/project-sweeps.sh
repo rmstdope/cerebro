@@ -176,7 +176,7 @@ pass "every declared directory is reclaimed, not just the first, and an undeclar
 # =================================================================================================
 cat > "$consumer/.cerebro/roster.conf" <<'ROSTER'
 Oracle    verifier
-Cyclops   implementer
+Cyclops   producer
 ROSTER
 
 # Oracle's tree at BOTH paths — the exception is by name, not by location — and `psylocke`, who is
@@ -216,7 +216,7 @@ pass "the roster name is matched case-insensitively, as the lowercased literal w
 # A roster with no verifier at all keeps nobody by that exception, and still deletes nothing it
 # should not — every tree here is live, so every one is kept for an ordinary reason.
 cat > "$consumer/.cerebro/roster.conf" <<'ROSTER'
-Cyclops   implementer
+Cyclops   producer
 ROSTER
 out="$(run_prune PRESSURE_COLD_MINUTES=30 COLD_TARGET_MINUTES=99999)"
 grep -q "it is .*verification tree" <<<"$out" \

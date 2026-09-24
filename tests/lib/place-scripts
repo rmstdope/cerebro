@@ -8,7 +8,7 @@
 #     tests/lib/place-scripts [--copy|--link] <scripts-dir> <script>...
 #
 #   <scripts-dir>  the directory the scripts go IN - created if absent. Not a consumer root: a
-#                  caller wanting the standard mount passes "<consumer>/.claude/cerebro/scripts".
+#                  caller wanting the standard mount passes "<consumer>/.cerebro/cerebro/scripts".
 #   <script>...    names as they appear in `scripts/'. Every library each of them sources is placed
 #                  too, transitively, whether or not it was named.
 #   --link         symlink into this checkout (the default), so a fixture reads the script this

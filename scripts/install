@@ -2,8 +2,8 @@
 #
 # `install` - the one command a new consumer runs after adding cerebro as a submodule (cb-4ua).
 #
-#     git submodule add https://github.com/rmstdope/cerebro.git .claude/cerebro
-#     .claude/cerebro/scripts/install
+#     git submodule add https://github.com/rmstdope/cerebro.git .cerebro/cerebro
+#     .cerebro/cerebro/scripts/install
 #
 # It takes the README's setup steps in order, one function each. Every step reports one line per
 # fact, does nothing that is already done, and never overwrites a declaration the project wrote:
@@ -306,11 +306,11 @@ step_fleet() {
 
   mkdir -p "$root/.cerebro"
   {
-    echo "# The fleet THIS project runs, written by .claude/cerebro/scripts/install and edited by hand."
+    echo "# The fleet THIS project runs, written by .cerebro/cerebro/scripts/install and edited by hand."
     echo "# NAME  ROLE  [autostart|standby]: one agent per line, the interactive roles first, then the"
     echo "# implementers. Order is load-bearing - implementers are taken in file order. \`autostart' is"
     echo "# started as the fleet view opens; \`standby' is armed and started by its role's trigger; no"
-    echo "# third word means you start it with \`s'. The roles are the files in .claude/cerebro/agents/."
+    echo "# third word means you start it with \`s'. The roles are the files in .cerebro/cerebro/agents/."
     echo
     printf '%s' "$rows"
   } > "$conf"
@@ -376,7 +376,7 @@ step_settings() {
   mkdir -p "$root/.cerebro"
   {
     echo "# What each agent runs on: which tool, which model, how hard it thinks. Written by"
-    echo "# .claude/cerebro/scripts/install and edited by hand; .claude/cerebro/agents.conf.example is the shape."
+    echo "# .cerebro/cerebro/scripts/install and edited by hand; .cerebro/cerebro/agents.conf.example is the shape."
     echo "# The most specific line wins whole: the agent's own name, then its role, then \`default'."
     echo
     if [[ -n "$external_line" ]]; then

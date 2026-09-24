@@ -31,7 +31,7 @@
 # source of truth, which is the only shape safe to inherit.
 #
 # `CEREBRO_CONSUMER_MOUNT' is part of the stamp rather than a convenience: it is what lets the
-# round trip work for a submodule vendored somewhere other than `.claude/cerebro'.
+# round trip work for a submodule vendored somewhere other than `.cerebro/cerebro'.
 
 # THE one answer to "does <root>/<mount> resolve to <checkout>" (cb-akc). `consumer-root' resolves
 # by it, `--self-mounted' and `--mount' expose it, and the hint guard below reuses it - so roster
@@ -45,7 +45,7 @@
 cerebro_mount_resolves_to() {
   # $1 = a candidate consumer root, $2 = a checkout of cerebro, $3 = the mount (default the standard one)
   local mount checkout
-  mount="$(cd "$1/${3:-.claude/cerebro}" 2>/dev/null && pwd -P)" || return 1
+  mount="$(cd "$1/${3:-.cerebro/cerebro}" 2>/dev/null && pwd -P)" || return 1
   checkout="$(cd "$2" 2>/dev/null && pwd -P)" || return 1
   [[ "$mount" == "$checkout" ]]
 }

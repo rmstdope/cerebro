@@ -24,7 +24,7 @@ chmod +x "$stub/bd"
 
 run() {
   rm -f "$stub/bd.log"
-  STUB_DIR="$stub" PATH="$stub:$PATH" bash "$consumer/.claude/cerebro/scripts/assignable-beads" "$@"
+  STUB_DIR="$stub" PATH="$stub:$PATH" bash "$consumer/.cerebro/cerebro/scripts/assignable-beads" "$@"
 }
 
 # --- prints the ready UX-agreed beads sorted by priority then id -------------------------------

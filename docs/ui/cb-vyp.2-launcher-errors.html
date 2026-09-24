@@ -21,19 +21,19 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 <p>Each refusal names the problem and the action that resolves it, following the existing
 <code>scripts/cerebro</code> style.</p>
 
-<div class="term"><span class="dim">$ .claude/cerebro/scripts/cerebro-tui unexpected</span><br>
+<div class="term"><span class="dim">$ .cerebro/cerebro/scripts/cerebro-tui unexpected</span><br>
 <span class="error">usage: cerebro-tui (no arguments; run it from anywhere inside the consumer)</span></div>
 
-<div class="term"><span class="dim">$ .claude/cerebro/scripts/cerebro-tui</span><br>
+<div class="term"><span class="dim">$ .cerebro/cerebro/scripts/cerebro-tui</span><br>
 <span class="error">cerebro-tui: not inside a consumer - run this from a repository that mounts cerebro</span></div>
 
-<div class="term"><span class="dim">$ .claude/cerebro/scripts/cerebro-tui</span><br>
+<div class="term"><span class="dim">$ .cerebro/cerebro/scripts/cerebro-tui</span><br>
 <span class="error">cerebro-tui: cargo is not on PATH - install Rust and Cargo</span></div>
 
-<div class="term"><span class="dim">$ .claude/cerebro/scripts/cerebro-tui</span><br>
+<div class="term"><span class="dim">$ .cerebro/cerebro/scripts/cerebro-tui</span><br>
 <span class="error">cerebro-tui: /path/to/cerebro/Cargo.toml is missing - this checkout of cerebro has no Ratatui fleet view</span></div>
 
 <div class="term"><span class="dim">$ cargo run ...</span><br>
-<span class="error">cerebro-tui: CEREBRO_CONSUMER_SHARED_ROOT is missing - start it with .claude/cerebro/scripts/cerebro-tui</span></div>
+<span class="error">cerebro-tui: CEREBRO_CONSUMER_SHARED_ROOT is missing - start it with .cerebro/cerebro/scripts/cerebro-tui</span></div>
 </body>
 </html>

@@ -757,7 +757,7 @@ mod tests {
     fn a_failed_read_names_the_pane_or_the_roster() {
         let ps = ReadError::Timeout { source: "/usr/bin/ps".into(), seconds: 5 };
         let roster = ReadError::Exit {
-            source: "/repos/x/.claude/cerebro/scripts/roster".into(),
+            source: "/repos/x/.cerebro/cerebro/scripts/roster".into(),
             status: Some(2),
             stderr: "roster.conf line 3".into(),
         };

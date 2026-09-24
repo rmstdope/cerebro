@@ -21,7 +21,7 @@ stub_dir="$(mktemp -d)"
 cleanup_add "$stub_dir"
 
 # `work-beads`, which this script calls, resolves its root with `consumer-root --shared`, which
-# answers only when this copy of cerebro is mounted at <consumer>/.claude/cerebro. So: a throwaway
+# answers only when this copy of cerebro is mounted at <consumer>/.cerebro/cerebro. So: a throwaway
 # consumer with this submodule copied in, and every case runs the script from there.
 consumer="$(consumer_new repo --copy)"
 consumer_resolved="$consumer"
@@ -72,7 +72,7 @@ set_stub_for() {
 
 run() {
   rm -f "$stub_dir"/argv.*
-  PATH="$stub_dir:$PATH" bash "$consumer/.claude/cerebro/scripts/stage-candidates" "$@"
+  PATH="$stub_dir:$PATH" bash "$consumer/.cerebro/cerebro/scripts/stage-candidates" "$@"
 }
 
 argv_has() {
@@ -92,7 +92,7 @@ ids_of() {
 #
 # Answered before any root is resolved and before `bd` is reached, exactly as planner-buffer's three
 # `--print-*` modes are - which is what lets cb-lz5.1.2's Rust contract test run it with no board.
-label="$(PATH="/usr/bin:/bin" bash "$consumer/.claude/cerebro/scripts/stage-candidates" --print-stage-label)"
+label="$(PATH="/usr/bin:/bin" bash "$consumer/.cerebro/cerebro/scripts/stage-candidates" --print-stage-label)"
 [ "$label" = "ux:agreed" ] || fail "--print-stage-label printed '$label', not ux:agreed"
 pass "prints the stage label the fleet view checks itself against"
 
@@ -286,7 +286,7 @@ pass "the build-design stage does not accept an agreed blocker"
 #
 # `work-beads` has owned that rule since cb-hzl. The header may explain it; the code may not restate
 # it. The assertion is on the code with comment lines stripped.
-code="$(grep -v '^[[:space:]]*#' "$consumer/.claude/cerebro/scripts/stage-candidates")"
+code="$(grep -v '^[[:space:]]*#' "$consumer/.cerebro/cerebro/scripts/stage-candidates")"
 if grep -q 'epic' <<<"$code"; then
   fail "stage-candidates spells an epic rule of its own; work-beads owns that since cb-hzl"
 fi

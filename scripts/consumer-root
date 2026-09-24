@@ -12,11 +12,11 @@
 # And two about the mount itself - how this checkout sits in that root, which is the same question
 # asked from the other side, so it is answered here and nowhere else (cb-akc):
 #
-#   consumer-root --self-mounted   exit 0 when `.claude/cerebro' resolves back to this very
+#   consumer-root --self-mounted   exit 0 when `.cerebro/cerebro' resolves back to this very
 #                                  checkout - cerebro serving its own fleet (cb-i3l.1) - and 1 for
 #                                  every real consumer. Prints nothing.
 #   consumer-root --mount          the path of this checkout relative to the consumer root, the way
-#                                  a link from the consumer should spell it: `.claude/cerebro' at
+#                                  a link from the consumer should spell it: `.cerebro/cerebro' at
 #                                  the standard mount and for the self-mount, the physical relative
 #                                  path (`vendor/cerebro') for a submodule vendored elsewhere.
 #   consumer-root --hints          all three of the above, one per line - enclosing, shared (which
@@ -25,7 +25,7 @@
 #                                  scripts/root-hints.sh for what reads them and why they are
 #                                  validated rather than trusted.
 #
-# The mount may be <consumer>/.claude/cerebro or, for a consumer that vendors cerebro as a SUBMODULE
+# The mount may be <consumer>/.cerebro/cerebro or, for a consumer that vendors cerebro as a SUBMODULE
 # somewhere else entirely (vendor/cerebro, tools/cerebro, ...), wherever it put it - see the three
 # resolution steps below. It may also be cerebro's own checkout, which mounts itself by symlink to
 # run its fleet on its own source. A vendored *copy* that is not a submodule is only found at the
@@ -47,7 +47,7 @@ source "$script_dir/root-hints.sh"
 # Three ways of answering, tried in order (ah-ohc2, cb-i3l.1).
 #
 # 1. The path arithmetic, which needs no git: this script lives at
-#    <consumer>/.claude/cerebro/scripts, and the round trip back through `.claude/cerebro' is what
+#    <consumer>/.cerebro/cerebro/scripts, and the round trip back through `.cerebro/cerebro' is what
 #    rejects a standalone clone of cerebro - whatever changes here must keep rejecting one, or this
 #    would start answering with somebody's home directory.
 #
@@ -69,7 +69,7 @@ source "$script_dir/root-hints.sh"
 #    is still unsupported: nothing here can find it, and inventing a marker-file search for a case
 #    nobody has is not the answer.
 #
-# 3. Cerebro serving ITSELF, mounted at `.claude/cerebro` as a symlink back to its own checkout
+# 3. Cerebro serving ITSELF, mounted at `.cerebro/cerebro` as a symlink back to its own checkout
 #    (cb-i3l.1). This repository develops itself with its own fleet, and neither step above can see
 #    that mount: `pwd -P` resolves the symlink, so the script appears to live at <cerebro>/scripts
 #    and three levels up is nobody's consumer, while the superproject probe answers for submodules
@@ -89,7 +89,7 @@ else
   fi
 fi
 if [[ -z "$enclosing" ]]; then
-  # 3. This checkout mounted as its own consumer - `.claude/cerebro' resolving back to the very
+  # 3. This checkout mounted as its own consumer - `.cerebro/cerebro' resolving back to the very
   #    tree this script lives in. No git, so the narrowed PATH in tests/launchers.sh still works.
   own_root="$(cd "$script_dir/.." && pwd -P)"
   if cerebro_mount_resolves_to "$own_root" "$own_root"; then
@@ -97,7 +97,7 @@ if [[ -z "$enclosing" ]]; then
   fi
 fi
 if [[ -z "$enclosing" ]]; then
-  echo "consumer-root: $script_dir is not <consumer>/.claude/cerebro/scripts" >&2
+  echo "consumer-root: $script_dir is not <consumer>/.cerebro/cerebro/scripts" >&2
   exit 1
 fi
 case "${1:-}" in
@@ -110,20 +110,20 @@ case "${1:-}" in
       || { echo "consumer-root: $enclosing is not inside a git working tree" >&2; exit 1; }
     printf '%s\n' "$(cd "$(dirname "$common")" && pwd -P)" ;;
   --self-mounted)
-    # Exit 0 when this checkout IS its consumer - `.claude/cerebro' is a symlink back to the tree
+    # Exit 0 when this checkout IS its consumer - `.cerebro/cerebro' is a symlink back to the tree
     # it lives in (cb-i3l.1) - and 1 for every real consumer. Nothing printed: the exit status is
     # the whole answer. No caller in this repository needs it today - it is here because it is the
     # question `--mount' and both resolution steps above are already asking, stated once.
     cerebro_mount_resolves_to "$enclosing" "$enclosing" ;;
   --mount)
     # The path of this checkout relative to the consumer root, the way a link from the consumer
-    # should spell it: `.claude/cerebro' whenever the standard mount resolves to this checkout
+    # should spell it: `.cerebro/cerebro' whenever the standard mount resolves to this checkout
     # (a submodule there, the self-mount symlink, or a symlink at the standard mount to a
     # submodule elsewhere), and the physical relative path otherwise (`vendor/cerebro').
     # sync-symlinks.sh builds every relative link from this.
     checkout="$(cd "$script_dir/.." && pwd -P)"
     if cerebro_mount_resolves_to "$enclosing" "$checkout"; then
-      printf '.claude/cerebro\n'
+      printf '.cerebro/cerebro\n'
     else
       rel="${checkout#"$enclosing/"}"
       [[ "$rel" != "$checkout" ]] \
@@ -145,7 +145,7 @@ case "${1:-}" in
       && shared="$(cd "$(dirname "$shared")" && pwd -P)" || shared=""
     checkout="$(cd "$script_dir/.." && pwd -P)"
     if cerebro_mount_resolves_to "$enclosing" "$checkout"; then
-      mount=".claude/cerebro"
+      mount=".cerebro/cerebro"
     else
       mount="${checkout#"$enclosing/"}"
       [[ "$mount" != "$checkout" ]] \

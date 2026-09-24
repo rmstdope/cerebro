@@ -73,7 +73,7 @@ run_in() {
   shift
   set +e
   out="$(cd "$c" && env -u CEREBRO_CONSUMER_ROOT -u CEREBRO_CONSUMER_SHARED_ROOT -u CEREBRO_CONSUMER_MOUNT \
-           bash "$c/.claude/cerebro/scripts/agents-conf" "$@" 2>"$work_dir/stderr")"
+           bash "$c/.cerebro/cerebro/scripts/agents-conf" "$@" 2>"$work_dir/stderr")"
   status=$?
   set -e
   err="$(cat "$work_dir/stderr")"
@@ -255,7 +255,7 @@ c="$(new_consumer \
   'Beast tool=copilot model=research')"
 set +e
 out="$(cd "$c" && env -u CEREBRO_CONSUMER_ROOT -u CEREBRO_CONSUMER_SHARED_ROOT -u CEREBRO_CONSUMER_MOUNT \
-         /bin/bash "$c/.claude/cerebro/scripts/agents-conf" --name Beast --role planner \
+         /bin/bash "$c/.cerebro/cerebro/scripts/agents-conf" --name Beast --role planner \
          2>"$work_dir/stderr")"
 status=$?
 set -e
@@ -344,8 +344,8 @@ ln -s "$(command -v bash)" "$narrow_path_dir/bash"
 c="$(new_consumer "default tool=claude" "Beast tool=copilot model=gpt-5.5 effort=high")"
 set +e
 out="$(cd "$c" && env CEREBRO_CONSUMER_ROOT="$c" CEREBRO_CONSUMER_SHARED_ROOT="$c" \
-         CEREBRO_CONSUMER_MOUNT=".claude/cerebro" \
-         PATH="$narrow_path_dir" "$(command -v bash)" "$c/.claude/cerebro/scripts/agents-conf" \
+         CEREBRO_CONSUMER_MOUNT=".cerebro/cerebro" \
+         PATH="$narrow_path_dir" "$(command -v bash)" "$c/.cerebro/cerebro/scripts/agents-conf" \
          --name Beast --role planner 2>"$work_dir/stderr")"
 status=$?
 set -e
@@ -362,9 +362,9 @@ pass "agents-conf answers on a PATH holding only dirname and bash, as the launch
 # which is why aborting is the right answer and a sentence would not help.
 
 stub_agent_cli() {  # stub_agent_cli <consumer> <body>
-  rm -f "$1/.claude/cerebro/scripts/agent-cli"
-  printf '#!/usr/bin/env bash\n%s\n' "$2" > "$1/.claude/cerebro/scripts/agent-cli"
-  chmod +x "$1/.claude/cerebro/scripts/agent-cli"
+  rm -f "$1/.cerebro/cerebro/scripts/agent-cli"
+  printf '#!/usr/bin/env bash\n%s\n' "$2" > "$1/.cerebro/cerebro/scripts/agent-cli"
+  chmod +x "$1/.cerebro/cerebro/scripts/agent-cli"
 }
 
 c="$(new_consumer "Beast tool=claude")"

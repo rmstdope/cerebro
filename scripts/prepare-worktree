@@ -2,8 +2,8 @@
 #
 # Prepares one worktree of the consumer repository, the one step every role that needs a tree
 # of its own was writing out by hand and getting wrong the same way: `git worktree add` does not
-# initialise the `.claude/cerebro` submodule, so the tree it produces has no scripts under
-# .claude/cerebro until something runs `git submodule update --init --recursive` - five
+# initialise the `.cerebro/cerebro` submodule, so the tree it produces has no scripts under
+# .cerebro/cerebro until something runs `git submodule update --init --recursive` - five
 # implementers hit exactly that (docs/retrospectives/ah-4ao.md and friends, in the consumer repo)
 # before anyone gave the step an owner. This script is that owner: implement-bead and
 # agents/verifier.md both call it instead of copying the recipe.

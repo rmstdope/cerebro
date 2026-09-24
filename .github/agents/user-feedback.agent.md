@@ -1,1 +1,1 @@
-../../.claude/cerebro/agents/user-feedback.md
+../../.cerebro/cerebro/agents/user-feedback.md

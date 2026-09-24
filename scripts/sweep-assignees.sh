@@ -4,7 +4,7 @@
 # clear an assignee no live session backs up, and unstrand a bead every implementer walks past
 # (ah-kjfm).
 #
-#     .claude/cerebro/scripts/sweep-assignees.sh --json
+#     .cerebro/cerebro/scripts/sweep-assignees.sh --json
 #
 # A bead reopened by a failed verification comes back `status=open` - no lease - but still naming its
 # old assignee, and `bd ready --claim' then never takes it. Twice on 2026-08-23 that stranded a P0,
@@ -41,7 +41,7 @@
 set -uo pipefail
 
 if [[ "${1:-}" != "--json" ]]; then
-  echo "usage: .claude/cerebro/scripts/sweep-assignees.sh --json" >&2
+  echo "usage: .cerebro/cerebro/scripts/sweep-assignees.sh --json" >&2
   exit 2
 fi
 

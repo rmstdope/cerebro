@@ -47,7 +47,7 @@ chmod +x "$stub_dir/bd"
 run() {
   rm -f "$stub_dir"/argv.*
   set +e
-  out="$(PATH="$stub_dir:$PATH" bash "$consumer/.claude/cerebro/scripts/verifier-pass-epic-family" "$@" 2>"$stub_dir/err")"
+  out="$(PATH="$stub_dir:$PATH" bash "$consumer/.cerebro/cerebro/scripts/verifier-pass-epic-family" "$@" 2>"$stub_dir/err")"
   status=$?
   set -e
   err="$(cat "$stub_dir/err")"

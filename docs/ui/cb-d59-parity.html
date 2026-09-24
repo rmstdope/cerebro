@@ -36,11 +36,11 @@ th{color:#fff}
 <h1 style="margin-top:28px">Question 1 — Forge is <code>opus</code> at <code>xhigh</code>, and Copilot's effort scale stops at <code>high</code>.</h1>
 <div class="row">
 <div class="panel dark"><h2>Option A — map down, and say so</h2>
-<pre>$ .claude/cerebro/scripts/launch Forge
+<pre>$ .cerebro/cerebro/scripts/launch Forge
 <span class="y">launch: copilot has no xhigh effort; Forge runs at high</span></pre>
 <p class="cost">Every role starts on every provider. One line per launch of one role. The mapping lives in <code>agent-cli</code> beside the flag names.</p></div>
 <div class="panel dark"><h2>Option B — a Copilot consumer must declare it</h2>
-<pre>$ .claude/cerebro/scripts/launch Forge
+<pre>$ .cerebro/cerebro/scripts/launch Forge
 <span class="e">launch: agents/architect.md asks for xhigh effort, which copilot does not have - set `architect &lt;model&gt; high' in .cerebro/models.conf before starting Forge</span></pre>
 <p class="cost">Nothing is silently downgraded; the navigator chooses. Cost: a Copilot consumer cannot start Forge until it edits a file, and the same will be true of every future frontmatter value one provider lacks.</p></div>
 <div class="panel dark"><h2>Option C — the frontmatter stops being provider-neutral</h2>
@@ -55,7 +55,7 @@ effort_copilot: high</pre>
 <div class="row">
 <div class="panel dark"><h2>Option A — <code>COPILOT_HOME</code> under <code>.cerebro/</code>, set by <code>launch</code></h2>
 <pre>.cerebro/copilot-home/
-  agents/architect.agent.md   <span class="d">-&gt; ../../../.claude/cerebro/agents/architect.md</span>
+  agents/architect.agent.md   <span class="d">-&gt; ../../../.cerebro/cerebro/agents/architect.md</span>
   skills/plan-bead/           <span class="d">-&gt; ...</span>
   hooks/question-state.json
   settings.json</pre>
@@ -64,7 +64,7 @@ effort_copilot: high</pre>
 <p class="cost">Cost: <code>COPILOT_HOME</code> is an env var and never appears in argv, so it cannot be a liveness discriminator — which L2 already made unnecessary. Also: the fleet's login/credentials live under <code>~/.copilot</code>, so the home has to be seeded or the session is logged out. <b>That is the one thing this option can get wrong, and it is worth the spike proving before anything is built on it.</b></p></div>
 
 <div class="panel dark"><h2>Option B — the consumer's own <code>.github/</code>, tracked</h2>
-<pre>.github/agents/architect.agent.md   <span class="d">-&gt; ../../.claude/cerebro/agents/architect.md</span>
+<pre>.github/agents/architect.agent.md   <span class="d">-&gt; ../../.cerebro/cerebro/agents/architect.md</span>
 .github/skills/plan-bead/           <span class="d">-&gt; ...</span>
 .github/hooks/cerebro-question-state.json</pre>
 <h3>The path Copilot documents first, and it needs no environment at all. Every human who runs <code>copilot</code> in the repository gets the fleet's agents and skills too — <code>/plan-bead</code> works for a person, not only for a session.</h3>

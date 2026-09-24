@@ -57,7 +57,7 @@ cat > "$beads_file" <<JSON
 ]
 JSON
 
-sweep="$consumer/.claude/cerebro/scripts/sweep-assignees.sh"
+sweep="$consumer/.cerebro/cerebro/scripts/sweep-assignees.sh"
 
 out="$("$sweep" --json)" || fail "sweep-assignees.sh --json exited non-zero"
 jq -e . >/dev/null 2>&1 <<<"$out" || fail "output is not JSON: $out"

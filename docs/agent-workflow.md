@@ -4,8 +4,8 @@ This is the human's guide to running the fleet: what to start, what each agent w
 where to look when something wants you, and what it costs. You are "the navigator" throughout — the
 agents' word for the one person the shape of every user-facing decision belongs to.
 
-The agents' own instructions live in `.claude/cerebro/agents/<role>.md`, and for the roles that
-have one, in `.claude/cerebro/skills/`: `implement-bead`, `agree-experience`,
+The agents' own instructions live in `.cerebro/cerebro/agents/<role>.md`, and for the roles that
+have one, in `.cerebro/cerebro/skills/`: `implement-bead`, `agree-experience`,
 `design-the-build`, `fix-bug` and the shared `beads-workflow` — plus `write-bead`, which Cerebro loads when the navigator asks for a bead and
 which you can also run by hand as `/write-bead`, and `project-definition`, which no role loads: you
 run it yourself, once, in a blank repository (the README says when). The verifier, the reviewer and the architect carry their
@@ -58,7 +58,7 @@ else derives from it: the fleet view, the launcher, and the state files.
 ## The fleet view is the console
 
 ```
-.claude/cerebro/scripts/cerebro-tui   # anywhere inside the consumer
+.cerebro/cerebro/scripts/cerebro-tui   # anywhere inside the consumer
 ```
 
 Everything below can be done from a terminal, and almost nobody does. The fleet view lists
@@ -159,7 +159,7 @@ else.
 Every session starts the same way, whatever the role:
 
 ```bash
-.claude/cerebro/scripts/launch <Name>          # every agent, by its own name
+.cerebro/cerebro/scripts/launch <Name>          # every agent, by its own name
 ```
 
 `launch` is the one place a session is born. It stamps the session with that agent's own `bd`
@@ -170,8 +170,8 @@ file honest while an agent has a question open. Pressing `s` in the fleet view r
 session is already running in this fleet; end that one first.
 
 **Changing what the fleet runs on** is one file, and it lives in *your project* rather than inside
-the `.claude/cerebro` submodule — so no other consumer of the harness inherits it — commit it
-to give every clone the same fleet, or ignore it to keep it yours. Copy `.claude/cerebro/agents.conf.example` to `.cerebro/agents.conf` and edit a
+the `.cerebro/cerebro` submodule — so no other consumer of the harness inherits it — commit it
+to give every clone the same fleet, or ignore it to keep it yours. Copy `.cerebro/cerebro/agents.conf.example` to `.cerebro/agents.conf` and edit a
 line. Keys are an agent's name, a role, or `default`, most specific first, so
 `default tool=copilot model=gpt-5.5` moves everybody and
 `Beast tool=claude model=opus` moves one `ux` agent — which is the cheap way to compare two tools or
@@ -258,7 +258,7 @@ else (cb-5lx.2), and *types into* it for two things: that same unranked bead, an
 reminder to look at the work the view kept (cb-7nx, cb-10d.4).
 
 ```bash
-.claude/cerebro/scripts/launch Cerebro
+.cerebro/cerebro/scripts/launch Cerebro
 ```
 
 Then you talk to it in whatever words you like:
@@ -327,8 +327,8 @@ agent's `git checkout main` fail for no visible reason.
 lost, and Cerebro runs the full sweep every two hours. You can run it yourself at any time:
 
 ```bash
-.claude/cerebro/scripts/prune-worktrees.sh --dry-run   # say what would go
-.claude/cerebro/scripts/prune-worktrees.sh             # actually go
+.cerebro/cerebro/scripts/prune-worktrees.sh --dry-run   # say what would go
+.cerebro/cerebro/scripts/prune-worktrees.sh             # actually go
 ```
 
 It only removes a worktree when **nothing can be lost from it**: the tree is clean, the work is
@@ -338,7 +338,7 @@ main — with `--squash` merges the commits are never there, so the naive check 
 worktree for ever.
 
 Creating one is owned too: `scripts/prepare-worktree` is the single recipe every role uses, because
-`git worktree add` does not initialise the `.claude/cerebro` submodule and five implementers hit
+`git worktree add` does not initialise the `.cerebro/cerebro` submodule and five implementers hit
 exactly that before the step had an owner.
 
 ### When a builder gets slow or vague
@@ -354,7 +354,7 @@ GitHub issues are the **external** inbox — everything from outside the fleet �
 them:
 
 ```bash
-.claude/cerebro/scripts/launch Moira
+.cerebro/cerebro/scripts/launch Moira
 ```
 
 One pass over the open issues, then a ten-minute sleep, then another. On each pass she acknowledges
@@ -374,7 +374,7 @@ sub-agent the implementer spawns, and merged by the implementer that built it �
 applies to a contributor who holds no bead and has read none of that. **Cypher** is the path for those:
 
 ```bash
-.claude/cerebro/scripts/launch Cypher
+.cerebro/cerebro/scripts/launch Cypher
 ```
 
 One session, interactive, and it works a PR at a time:
@@ -406,7 +406,7 @@ review became a sub-agent the fleet spawns for itself that is truer than it was,
 checks that the merged result actually does what it was supposed to, until **Psylocke**:
 
 ```bash
-.claude/cerebro/scripts/launch Psylocke
+.cerebro/cerebro/scripts/launch Psylocke
 ```
 
 She walks merged work since her last pass, but treats epics as families: when a bead belongs to an
@@ -463,7 +463,7 @@ got harder to change
 along the way. **Forge** is that reader:
 
 ```bash
-.claude/cerebro/scripts/launch Forge
+.cerebro/cerebro/scripts/launch Forge
 ```
 
 Unlike every other interactive session here, Forge does **one sweep and stops** — it works out for
@@ -523,8 +523,8 @@ turns it into durations — how long a bead was held, how long anyone waited at 
 unusual this week:
 
 ```bash
-.claude/cerebro/scripts/fleet-history --summary --since 24h
-.claude/cerebro/scripts/fleet-history --json --agent Cyclops
+.cerebro/cerebro/scripts/fleet-history --summary --since 24h
+.cerebro/cerebro/scripts/fleet-history --json --agent Cyclops
 ```
 
 **What it cost** is the same log joined to the other record a session leaves behind. Every Copilot
@@ -534,10 +534,10 @@ agent and the root, and `transitions.jsonl` says which bead that agent held at t
 `scripts/fleet-cost` can answer afterwards, with nothing captured while a session runs:
 
 ```bash
-.claude/cerebro/scripts/fleet-cost --by-bead --since 7d
-.claude/cerebro/scripts/fleet-cost --by-bead --phase
-.claude/cerebro/scripts/fleet-cost --by-agent --since 30d
-.claude/cerebro/scripts/fleet-cost --bead cb-ue0
+.cerebro/cerebro/scripts/fleet-cost --by-bead --since 7d
+.cerebro/cerebro/scripts/fleet-cost --by-bead --phase
+.cerebro/cerebro/scripts/fleet-cost --by-agent --since 30d
+.cerebro/cerebro/scripts/fleet-cost --bead cb-ue0
 ```
 
 Two of its columns are the ones worth knowing about before you read a total. **`no bead` is about a
@@ -603,7 +603,7 @@ The fleet view is the short answer — the agent list, the bead panel and the sw
 and the window holding the checkout's lease is also the one that acts:
 
 ```bash
-.claude/cerebro/scripts/cerebro-tui     # needs cargo; anywhere inside the consumer
+.cerebro/cerebro/scripts/cerebro-tui     # needs cargo; anywhere inside the consumer
 ```
 
 It draws the same fleet rows and the same six queues — Claimed, Planned unclaimed, Being planned,
@@ -702,8 +702,8 @@ blocks.
 **The disk fills.** The Rust build tree is shared by every worktree and still grows:
 
 ```bash
-.claude/cerebro/scripts/disk-preflight --workload rust       # conservative full floor
-.claude/cerebro/scripts/disk-preflight --workload non-rust   # declared lighter floor
+.cerebro/cerebro/scripts/disk-preflight --workload rust       # conservative full floor
+.cerebro/cerebro/scripts/disk-preflight --workload non-rust   # declared lighter floor
 rm -rf target/debug/incremental            # the cheap few gigabytes back
 ```
 

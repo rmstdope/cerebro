@@ -1,1 +1,1 @@
-../cerebro/agents/build-design.md
+../../.cerebro/cerebro/agents/build-design.md

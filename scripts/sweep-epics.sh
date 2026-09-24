@@ -3,7 +3,7 @@
 # Prints, as JSON, every epic eligible for closure - every child closed - so the fleet view can
 # offer to close it, with the navigator confirming each one.
 #
-#     .claude/cerebro/scripts/sweep-epics.sh --json
+#     .cerebro/cerebro/scripts/sweep-epics.sh --json
 #
 # Read-only, like every sweep: no `bd close` here. `bd epic status --eligible-only` has already
 # done the counting - every child of the epics this prints is closed - so there is no delivery
@@ -20,7 +20,7 @@
 set -uo pipefail
 
 if [[ "${1:-}" != "--json" ]]; then
-  echo "usage: .claude/cerebro/scripts/sweep-epics.sh --json" >&2
+  echo "usage: .cerebro/cerebro/scripts/sweep-epics.sh --json" >&2
   exit 2
 fi
 

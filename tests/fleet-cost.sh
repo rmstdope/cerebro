@@ -62,7 +62,7 @@ new_fixture() {
 # The root as the script itself resolves it - mktemp under /var on macOS is a symlink to
 # /private/var, and a marker built from the unresolved spelling would match nothing.
 root_of() {
-  "$1/.claude/cerebro/scripts/consumer-root" --shared
+  "$1/.cerebro/cerebro/scripts/consumer-root" --shared
 }
 
 make_store() {
@@ -113,7 +113,7 @@ run() {
   shift
   FLEET_HISTORY_NOW="$now_epoch" FLEET_COST_STORE="$tmp/store.db" \
     FLEET_COST_COLUMNS=100 PATH="$PATH" \
-    "$tmp/.claude/cerebro/scripts/fleet-cost" "$@"
+    "$tmp/.cerebro/cerebro/scripts/fleet-cost" "$@"
 }
 
 # AIC for one bead, out of a --json answer, summed over that bead's rows - a bead is one row per
@@ -144,7 +144,7 @@ run_titled() {
   local dir="$1" tmp="$2"; shift 2
   FLEET_HISTORY_NOW="$now_epoch" FLEET_COST_STORE="$tmp/store.db" \
     FLEET_COST_COLUMNS=100 PATH="$dir:$PATH" \
-    "$tmp/.claude/cerebro/scripts/fleet-cost" "$@"
+    "$tmp/.cerebro/cerebro/scripts/fleet-cost" "$@"
 }
 
 # --- the base fixture ---------------------------------------------------------------------------
@@ -270,7 +270,7 @@ while IFS= read -r -d '' expect \
   "
   event "$db" s1 "$(ago_ms 110)" 1000000000
   agents="$(FLEET_HISTORY_NOW="$now_epoch" FLEET_COST_STORE="$db" FLEET_COST_COLUMNS=100 \
-              "$fixture/.claude/cerebro/scripts/fleet-cost" --by-agent --json 2>/dev/null \
+              "$fixture/.cerebro/cerebro/scripts/fleet-cost" --by-agent --json 2>/dev/null \
             | jq -r '[.[].agent] | join(" ")')"
   # An empty answer is [], not a message: --json emits the agent array in every case, so a dead
   # row needs no output-shape special case.

@@ -29,7 +29,7 @@ run_state() {
   # $1 = fixture root, rest = args to agent-state
   local tmp="$1"
   shift
-  "$tmp/.claude/cerebro/scripts/agent-state" "$@"
+  "$tmp/.cerebro/cerebro/scripts/agent-state" "$@"
 }
 
 state_file() {
@@ -302,7 +302,7 @@ statuses="$work_dir/concurrent-statuses.log"
 for i in 1 2 3 4 5 6 7 8 9 10; do
   ( s=0; run_state "$tmp" Cyclops working --bead ah-f9c --phase build --pid 1 || s=$?
     printf '%s\n' "$s" >> "$statuses"
-    s=0; CEREBRO_AGENT_NAME=Cyclops "$tmp/.claude/cerebro/scripts/agent-turn" ended || s=$?
+    s=0; CEREBRO_AGENT_NAME=Cyclops "$tmp/.cerebro/cerebro/scripts/agent-turn" ended || s=$?
     printf '%s\n' "$s" >> "$statuses" ) &
 done
 wait
@@ -389,7 +389,7 @@ git -C "$tmp" worktree add -q "$worktree" -b ah-f9c-branch
 # a fixture that places a script without them dies at its `source` line (cb-ue0, cb-ge0).
 link_scripts "$worktree" agent-state roster consumer-root
 
-"$worktree/.claude/cerebro/scripts/agent-state" Cyclops working --bead ah-f9c --pid 42
+"$worktree/.cerebro/cerebro/scripts/agent-state" Cyclops working --bead ah-f9c --pid 42
 
 f="$(state_file "$tmp" Cyclops)"
 [[ -f "$f" ]] || fail "from-a-worktree-copy-writes-to-the-shared-checkout: no state file in the main checkout"
@@ -493,7 +493,7 @@ tmp="$(new_fixture)"
 # this checkout is now a consumer itself with four implementers on it (cb-i3l.3), and ten distinct
 # names is what twenty concurrent appends need. The fixture declares no fleet, so it answers with
 # the shipped table.
-concurrent_names="$("$tmp/.claude/cerebro/scripts/roster" --implementers | sed -n 1,10p)"
+concurrent_names="$("$tmp/.cerebro/cerebro/scripts/roster" --implementers | sed -n 1,10p)"
 [[ "$(printf '%s\n' "$concurrent_names" | grep -c .)" == "10" ]] \
   || fail "transition-log-concurrent: the roster names fewer than ten implementers"
 for n in $concurrent_names; do

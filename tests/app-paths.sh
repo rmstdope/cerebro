@@ -25,7 +25,7 @@ source "$repo_root/tests/lib/consumer.sh"
 consumer="$(consumer_new repo --link consumer-root project-conf app-paths)"
 conf="$consumer/.cerebro/project.conf"
 mkdir -p "$consumer/.cerebro"
-app_paths="$consumer/.claude/cerebro/scripts/app-paths"
+app_paths="$consumer/.cerebro/cerebro/scripts/app-paths"
 
 printf 'project_name Atlantis HUD\napp_paths      ^(packages|crates|apps)/\n' > "$conf"
 

@@ -12,7 +12,7 @@
 # Copy to `.cerebro/agents.conf` in the consumer repository (not here - this submodule is shared
 # by every consumer):
 #
-#     cp .claude/cerebro/agents.conf.example .cerebro/agents.conf
+#     cp .cerebro/cerebro/agents.conf.example .cerebro/agents.conf
 
 default      tool=claude  model=opus
 producer     tool=claude  model=sonnet

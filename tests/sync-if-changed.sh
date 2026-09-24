@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Proves githooks/sync-if-changed.sh finds its own mount point instead of assuming
-# `.claude/cerebro', and says something when it cannot find the sync script rather than
+# `.cerebro/cerebro', and says something when it cannot find the sync script rather than
 # exiting zero in silence (ah-qled.9). Silently no-opping is how this class of breakage
 # stayed invisible: a consumer mounting cerebro anywhere else got no symlink sync and no
 # word about it.
@@ -20,7 +20,7 @@ source "$repo_root/tests/lib/consumer.sh"
 
 hook="$repo_root/githooks/sync-if-changed.sh"
 
-# A throwaway consumer with cerebro mounted somewhere that is NOT .claude/cerebro.
+# A throwaway consumer with cerebro mounted somewhere that is NOT .cerebro/cerebro.
 consumer="$work_dir/repo"
 mount="vendor/cerebro"
 mkdir -p "$consumer/$mount/githooks" "$consumer/$mount/scripts"
@@ -42,7 +42,7 @@ git -C "$consumer" commit -qm one
 out="$(cd "$consumer" && bash "$mount/githooks/sync-if-changed.sh" 2>&1)"
 grep -q "sync-symlinks ran" <<<"$out" \
   || fail "the hook did not find its sync script at $mount (said: $out)"
-pass "the hook syncs from a mount that is not .claude/cerebro"
+pass "the hook syncs from a mount that is not .cerebro/cerebro"
 
 # --- an unfindable sync script is reported, not swallowed ---
 rm "$consumer/$mount/scripts/sync-symlinks.sh"

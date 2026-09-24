@@ -3,14 +3,14 @@
 # The one place the harness asks: "how much planned, claimable work is there, and how many beads
 # does the fleet want?" Prints one plain answer per mode on stdout.
 #
-#     .claude/cerebro/scripts/planner-buffer --count                     planned=<p> want=<m>
-#     .claude/cerebro/scripts/planner-buffer --planned                   <p>
-#     .claude/cerebro/scripts/planner-buffer --want                      <m>
-#     .claude/cerebro/scripts/planner-buffer --ux-agreed                 <a>
-#     .claude/cerebro/scripts/planner-buffer --ux-count                  agreed=<a> want=<m>
-#     .claude/cerebro/scripts/planner-buffer --print-excluded-labels     one label per line
-#     .claude/cerebro/scripts/planner-buffer --print-floor               the floor, as a number
-#     .claude/cerebro/scripts/planner-buffer --print-multiple-key        the project.conf key name
+#     .cerebro/cerebro/scripts/planner-buffer --count                     planned=<p> want=<m>
+#     .cerebro/cerebro/scripts/planner-buffer --planned                   <p>
+#     .cerebro/cerebro/scripts/planner-buffer --want                      <m>
+#     .cerebro/cerebro/scripts/planner-buffer --ux-agreed                 <a>
+#     .cerebro/cerebro/scripts/planner-buffer --ux-count                  agreed=<a> want=<m>
+#     .cerebro/cerebro/scripts/planner-buffer --print-excluded-labels     one label per line
+#     .cerebro/cerebro/scripts/planner-buffer --print-floor               the floor, as a number
+#     .cerebro/cerebro/scripts/planner-buffer --print-multiple-key        the project.conf key name
 #
 # It exists because that one rule was written twice, in two languages, by two readers that have to
 # agree: the fleet view's planner trigger, and a hand-written `bd list' in

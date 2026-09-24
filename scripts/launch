@@ -276,7 +276,7 @@ unset _conf_field_index _conf_field _conf_rest
 case "$conf_kind" in
   hit|miss|refused) ;;
   *)
-    "$here/launch-refused" "$name" "agents.conf could not be read (agents-conf exited $conf_status) - fix it, or run .claude/cerebro/scripts/agents-conf --name $name --role $role to see why"
+    "$here/launch-refused" "$name" "agents.conf could not be read (agents-conf exited $conf_status) - fix it, or run .cerebro/cerebro/scripts/agents-conf --name $name --role $role to see why"
     exit 2
     ;;
 esac

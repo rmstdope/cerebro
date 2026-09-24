@@ -82,7 +82,7 @@ roster_conf() {
 
 run() {
   local tmp="$1"; shift
-  FLEET_HEALTH_NOW="$now_epoch" "$tmp/.claude/cerebro/scripts/fleet-health" "$@"
+  FLEET_HEALTH_NOW="$now_epoch" "$tmp/.cerebro/cerebro/scripts/fleet-health" "$@"
 }
 
 # --- starts are counted across every decision generation, inside the window ----------------------

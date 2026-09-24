@@ -1,1 +1,1 @@
-../../.claude/cerebro/agents/bugfixer.md
+../../.cerebro/cerebro/agents/bugfixer.md

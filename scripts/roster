@@ -139,7 +139,7 @@ kind_of() {
 # It REPLACES this table rather than merging with it. File order is load-bearing - Cerebro takes the
 # next unused implementer name in file order - and a merged order is nobody's decision.
 #
-# The file lived at <consumer>/.claude/cerebro-roster until cb-epr. At every candidate root, a file
+# The file lived at <consumer>/.cerebro/cerebro-roster until cb-epr. At every candidate root, a file
 # still sitting there with none at the new path is a MIGRATION ERROR and exits 2: absence is the
 # documented "run the built-in fleet" signal, and a stale path silently borrowing it is how a
 # consumer would end up running nineteen names it never declared.
@@ -155,8 +155,8 @@ consider_root() {
   [[ -n "$candidate" ]] || return 0
   if [[ -f "$candidate/.cerebro/roster.conf" ]]; then
     CONSUMER_ROSTER="$candidate/.cerebro/roster.conf"
-  elif [[ -z "$OLD_ROSTER" && -f "$candidate/.claude/cerebro-roster" ]]; then
-    OLD_ROSTER="$candidate/.claude/cerebro-roster"
+  elif [[ -z "$OLD_ROSTER" && -f "$candidate/.cerebro/cerebro-roster" ]]; then
+    OLD_ROSTER="$candidate/.cerebro/cerebro-roster"
   fi
 }
 
@@ -175,7 +175,7 @@ root="$(cerebro_hinted_root "$here/.." plain)" \
 consider_root "$root"
 
 if [[ -z "$CONSUMER_ROSTER" && -n "$OLD_ROSTER" ]]; then
-  refuse "the fleet declaration has moved - run: mv .claude/cerebro-roster .cerebro/roster.conf"
+  refuse "the fleet declaration has moved - run: mv .cerebro/cerebro-roster .cerebro/roster.conf"
 fi
 
 # $1 = what to call the source in a refusal: the consumer file's path, or `built-in table'.

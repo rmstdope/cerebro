@@ -1,1 +1,1 @@
-../cerebro/agents/implementer.md
+../../.cerebro/cerebro/agents/implementer.md

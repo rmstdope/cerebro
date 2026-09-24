@@ -22,7 +22,7 @@ source "$repo_root/tests/lib/consumer.sh"
 consumer="$(consumer_new agent-cli-repo --link consumer-root project-conf agent-cli launch-refused)"
 conf="$consumer/.cerebro/project.conf"
 mkdir -p "$consumer/.cerebro"
-agent_cli="$consumer/.claude/cerebro/scripts/agent-cli"
+agent_cli="$consumer/.cerebro/cerebro/scripts/agent-cli"
 
 # Every case declares what it needs; this one declares nothing at all.
 : > "$conf"

@@ -16,40 +16,40 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # fail, pass, git_q, $work_dir and its cleanup trap - see tests/lib/consumer.sh.
 source "$repo_root/tests/lib/consumer.sh"
 
-# --- a throwaway consumer repo: T/repo/.claude/cerebro is where the script actually lives ---
+# --- a throwaway consumer repo: T/repo/.cerebro/cerebro is where the script actually lives ---
 consumer="$(consumer_new repo --link consumer-root)"
 
-plain_out="$("$consumer/.claude/cerebro/scripts/consumer-root")"
+plain_out="$("$consumer/.cerebro/cerebro/scripts/consumer-root")"
 [[ "$plain_out" == "$(cd "$consumer" && pwd -P)" ]] \
   || fail "plain: expected $consumer, got $plain_out"
 pass "plain, from the main checkout, prints the consumer"
 
-shared_out="$("$consumer/.claude/cerebro/scripts/consumer-root" --shared)"
+shared_out="$("$consumer/.cerebro/cerebro/scripts/consumer-root" --shared)"
 [[ "$shared_out" == "$(cd "$consumer" && pwd -P)" ]] \
   || fail "--shared: expected $consumer, got $shared_out"
 pass "--shared, from the main checkout, prints the same consumer"
 
 # --- how this checkout is mounted, from the one script that knows (cb-akc) ---
 set +e
-"$consumer/.claude/cerebro/scripts/consumer-root" --self-mounted; status=$?
+"$consumer/.cerebro/cerebro/scripts/consumer-root" --self-mounted; status=$?
 set -e
 [[ $status -eq 1 ]] || fail "--self-mounted on a real consumer: expected 1, got $status"
 pass "--self-mounted is 1 for a consumer whose mount is not its own checkout"
-mount_out="$("$consumer/.claude/cerebro/scripts/consumer-root" --mount)"
-[[ "$mount_out" == ".claude/cerebro" ]] || fail "--mount at the standard mount: got $mount_out"
-pass "--mount names .claude/cerebro at the standard mount"
+mount_out="$("$consumer/.cerebro/cerebro/scripts/consumer-root" --mount)"
+[[ "$mount_out" == ".cerebro/cerebro" ]] || fail "--mount at the standard mount: got $mount_out"
+pass "--mount names .cerebro/cerebro at the standard mount"
 
 # --- a linked worktree of it: plain answers the worktree, --shared answers the main checkout ---
 worktree="$consumer/.cerebro/worktrees/wt"
 git -C "$consumer" worktree add -q "$worktree" -b wt-branch
-"$repo_root/tests/lib/place-scripts" "$worktree/.claude/cerebro/scripts" consumer-root
+"$repo_root/tests/lib/place-scripts" "$worktree/.cerebro/cerebro/scripts" consumer-root
 
-wt_plain="$("$worktree/.claude/cerebro/scripts/consumer-root")"
+wt_plain="$("$worktree/.cerebro/cerebro/scripts/consumer-root")"
 [[ "$wt_plain" == "$(cd "$worktree" && pwd -P)" ]] \
   || fail "worktree plain: expected $worktree, got $wt_plain"
 pass "plain, from a worktree's own submodule copy, prints the worktree"
 
-wt_shared="$("$worktree/.claude/cerebro/scripts/consumer-root" --shared)"
+wt_shared="$("$worktree/.cerebro/cerebro/scripts/consumer-root" --shared)"
 [[ "$wt_shared" == "$(cd "$consumer" && pwd -P)" ]] \
   || fail "worktree --shared: expected $consumer, got $wt_shared"
 pass "--shared, from a worktree's own submodule copy, prints the main checkout"
@@ -63,14 +63,14 @@ out="$("$standalone/consumer-root" 2>&1)"
 status=$?
 set -e
 [[ $status -ne 0 ]] || fail "standalone: expected a non-zero exit, got 0"
-grep -q "is not <consumer>/.claude/cerebro/scripts" <<<"$out" \
+grep -q "is not <consumer>/.cerebro/cerebro/scripts" <<<"$out" \
   || fail "standalone: expected the guard's message, got: $out"
-pass "refuses when there is no consumer above .claude/cerebro/scripts"
+pass "refuses when there is no consumer above .cerebro/cerebro/scripts"
 
-# --- cerebro mounted somewhere other than .claude/cerebro (ah-ohc2) ---
+# --- cerebro mounted somewhere other than .cerebro/cerebro (ah-ohc2) ---
 #
 # A consumer that vendors cerebro as a submodule at `vendor/cerebro` gets no answer at all from the
-# path arithmetic above: three levels up is the consumer, but `<consumer>/.claude/cerebro` does not
+# path arithmetic above: three levels up is the consumer, but `<consumer>/.cerebro/cerebro` does not
 # resolve back to this checkout. `git rev-parse --show-superproject-working-tree` is purpose-built
 # for exactly this question and answers regardless of the mount's depth or name.
 #
@@ -106,8 +106,8 @@ git init -q "$nested_src"
 git_q -C "$nested_src" commit -q --allow-empty -m init
 git_q -C "$grandparent" -c protocol.file.allow=always submodule add -q "$nested_src" child
 nested="$grandparent/child"
-"$repo_root/tests/lib/place-scripts" --copy "$nested/.claude/cerebro/scripts" consumer-root
-nested_out="$("$nested/.claude/cerebro/scripts/consumer-root")"
+"$repo_root/tests/lib/place-scripts" --copy "$nested/.cerebro/cerebro/scripts" consumer-root
+nested_out="$("$nested/.cerebro/cerebro/scripts/consumer-root")"
 [[ "$nested_out" == "$(cd "$nested" && pwd -P)" ]] \
   || fail "a copied mount in a nested consumer: expected $nested, got $nested_out"
 pass "a plain copy at the standard mount resolves the consumer, not its grandparent"
@@ -121,22 +121,22 @@ bare_path_dir="$work_dir/bare-path"
 mkdir -p "$bare_path_dir"
 ln -s "$(command -v dirname)" "$bare_path_dir/dirname"
 ln -s "$(command -v bash)" "$bare_path_dir/bash"
-bare_out="$(PATH="$bare_path_dir" "$(command -v bash)" "$consumer/.claude/cerebro/scripts/consumer-root")"
+bare_out="$(PATH="$bare_path_dir" "$(command -v bash)" "$consumer/.cerebro/cerebro/scripts/consumer-root")"
 [[ "$bare_out" == "$(cd "$consumer" && pwd -P)" ]] \
   || fail "narrowed PATH: expected $consumer, got $bare_out"
 pass "the standard mount resolves with PATH narrowed to dirname and bash - git stayed optional"
 
 # --- a consumer layout that is not a git tree: plain still works, --shared refuses ---
 plain_consumer="$work_dir/plain"
-"$repo_root/tests/lib/place-scripts" "$plain_consumer/.claude/cerebro/scripts" consumer-root
+"$repo_root/tests/lib/place-scripts" "$plain_consumer/.cerebro/cerebro/scripts" consumer-root
 
-plain_ng_out="$("$plain_consumer/.claude/cerebro/scripts/consumer-root")"
+plain_ng_out="$("$plain_consumer/.cerebro/cerebro/scripts/consumer-root")"
 [[ "$plain_ng_out" == "$(cd "$plain_consumer" && pwd -P)" ]] \
   || fail "non-git plain: expected $plain_consumer, got $plain_ng_out"
 pass "plain works even when the consumer is not a git working tree"
 
 set +e
-out="$("$plain_consumer/.claude/cerebro/scripts/consumer-root" --shared 2>&1)"
+out="$("$plain_consumer/.cerebro/cerebro/scripts/consumer-root" --shared 2>&1)"
 status=$?
 set -e
 [[ $status -ne 0 ]] || fail "non-git --shared: expected a non-zero exit, got 0"
@@ -144,10 +144,10 @@ grep -q "is not inside a git working tree" <<<"$out" \
   || fail "non-git --shared: expected the guard's message, got: $out"
 pass "--shared refuses when the consumer is not inside a git working tree"
 
-# --- cerebro as its own consumer: .claude/cerebro is a symlink back to the checkout (cb-i3l.1) ---
+# --- cerebro as its own consumer: .cerebro/cerebro is a symlink back to the checkout (cb-i3l.1) ---
 #
 # This repository is a harness for other repositories, and its own fleet has to run somewhere. The
-# mount is a committed symlink `.claude/cerebro -> ..`, which makes the path every script already
+# mount is a committed symlink `.cerebro/cerebro -> ..`, which makes the path every script already
 # assumes literally exist. The path arithmetic above cannot see it: `pwd -P` resolves the link, so
 # the script appears to live at <cerebro>/scripts and three levels up is nobody's consumer. A
 # submodule of the repository inside itself would have satisfied the arithmetic, but
@@ -156,28 +156,29 @@ self_consumer="$work_dir/self"
 mkdir -p "$self_consumer/.claude"
 git init -q "$self_consumer"
 "$repo_root/tests/lib/place-scripts" --copy "$self_consumer/scripts" consumer-root
-ln -s ".." "$self_consumer/.claude/cerebro"
+mkdir -p "$self_consumer/.cerebro"
+ln -s ".." "$self_consumer/.cerebro/cerebro"
 git_q -C "$self_consumer" add -A
 git_q -C "$self_consumer" commit -q -m "self-consumer"
 
 self_root="$(cd "$self_consumer" && pwd -P)"
-self_out="$("$self_consumer/.claude/cerebro/scripts/consumer-root")"
+self_out="$("$self_consumer/.cerebro/cerebro/scripts/consumer-root")"
 [[ "$self_out" == "$self_root" ]] || fail "self-consumer: expected $self_root, got $self_out"
 pass "cerebro mounted in itself by symlink resolves its own checkout"
 
-self_shared="$("$self_consumer/.claude/cerebro/scripts/consumer-root" --shared)"
+self_shared="$("$self_consumer/.cerebro/cerebro/scripts/consumer-root" --shared)"
 [[ "$self_shared" == "$self_root" ]] \
   || fail "self-consumer --shared: expected $self_root, got $self_shared"
 pass "--shared from a self-consumer's main checkout prints that checkout"
 
-"$self_consumer/.claude/cerebro/scripts/consumer-root" --self-mounted \
+"$self_consumer/.cerebro/cerebro/scripts/consumer-root" --self-mounted \
   || fail "--self-mounted on cerebro mounted in itself: expected 0"
 pass "--self-mounted is 0 for cerebro mounted in itself"
-self_mount="$("$self_consumer/.claude/cerebro/scripts/consumer-root" --mount)"
-[[ "$self_mount" == ".claude/cerebro" ]] || fail "--mount on the self-mount: got $self_mount"
-pass "--mount on the self-mount names .claude/cerebro, like every other consumer"
+self_mount="$("$self_consumer/.cerebro/cerebro/scripts/consumer-root" --mount)"
+[[ "$self_mount" == ".cerebro/cerebro" ]] || fail "--mount on the self-mount: got $self_mount"
+pass "--mount on the self-mount names .cerebro/cerebro, like every other consumer"
 # With no git on PATH: the answer is builtins only, which is what lets roster ask it.
-PATH="$bare_path_dir" "$(command -v bash)" "$self_consumer/.claude/cerebro/scripts/consumer-root" --self-mounted \
+PATH="$bare_path_dir" "$(command -v bash)" "$self_consumer/.cerebro/cerebro/scripts/consumer-root" --self-mounted \
   || fail "--self-mounted under a narrowed PATH: expected 0"
 pass "--self-mounted answers with PATH narrowed to dirname and bash"
 
@@ -186,12 +187,12 @@ pass "--self-mounted answers with PATH narrowed to dirname and bash"
 self_wt="$self_consumer/.cerebro/worktrees/wt"
 git -C "$self_consumer" worktree add -q "$self_wt" -b self-wt-branch
 
-self_wt_out="$("$self_wt/.claude/cerebro/scripts/consumer-root")"
+self_wt_out="$("$self_wt/.cerebro/cerebro/scripts/consumer-root")"
 [[ "$self_wt_out" == "$(cd "$self_wt" && pwd -P)" ]] \
   || fail "self-consumer worktree: expected $self_wt, got $self_wt_out"
 pass "plain, from a self-consumer's worktree, prints the worktree"
 
-self_wt_shared="$("$self_wt/.claude/cerebro/scripts/consumer-root" --shared)"
+self_wt_shared="$("$self_wt/.cerebro/cerebro/scripts/consumer-root" --shared)"
 [[ "$self_wt_shared" == "$self_root" ]] \
   || fail "self-consumer worktree --shared: expected $self_root, got $self_wt_shared"
 pass "--shared, from a self-consumer's worktree, prints the main checkout"
@@ -212,14 +213,14 @@ assert_hints() {
     || fail "--hints mount: expected $want_mount, got $(sed -n 3p <<<"$got")"
 }
 
-assert_hints "$consumer/.claude/cerebro/scripts/consumer-root" \
-  "$(cd "$consumer" && pwd -P)" "$(cd "$consumer" && pwd -P)" ".claude/cerebro"
+assert_hints "$consumer/.cerebro/cerebro/scripts/consumer-root" \
+  "$(cd "$consumer" && pwd -P)" "$(cd "$consumer" && pwd -P)" ".cerebro/cerebro"
 pass "--hints prints plain, shared and mount from the main checkout"
 
 # The worktree is the case the hints exist to keep honest: plain and shared differ, and a consumer
 # script handed the wrong one of the two would write its links into somebody else's tree.
-assert_hints "$worktree/.claude/cerebro/scripts/consumer-root" \
-  "$(cd "$worktree" && pwd -P)" "$(cd "$consumer" && pwd -P)" ".claude/cerebro"
+assert_hints "$worktree/.cerebro/cerebro/scripts/consumer-root" \
+  "$(cd "$worktree" && pwd -P)" "$(cd "$consumer" && pwd -P)" ".cerebro/cerebro"
 pass "--hints from a worktree names the worktree and the shared checkout separately"
 
 assert_hints "$alt/vendor/cerebro/scripts/consumer-root" "$alt_root" "$alt_root" "vendor/cerebro"

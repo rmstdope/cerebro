@@ -13,7 +13,7 @@ source "$repo_root/tests/lib/consumer.sh"
 
 consumer="$(consumer_new repo --link release-bead roster consumer-root)"
 printf 'Rogue implementer\nXavier planner\nIceman build-design\n' > "$consumer/.cerebro/roster.conf"
-scripts="$consumer/.claude/cerebro/scripts"
+scripts="$consumer/.cerebro/cerebro/scripts"
 state="$consumer/.cerebro/state"
 mkdir -p "$state"
 stub="$work_dir/stub"
@@ -150,7 +150,7 @@ pass "a handover naming a different bead is left alone"
 
 tidy="$(consumer_new tidy --origin --link release-bead roster consumer-root default-branch project-conf)"
 printf 'Rogue implementer\nGambit implementer\n' > "$tidy/.cerebro/roster.conf"
-cp "$scripts/agent-alive" "$tidy/.claude/cerebro/scripts/agent-alive"
+cp "$scripts/agent-alive" "$tidy/.cerebro/cerebro/scripts/agent-alive"
 tstate="$tidy/.cerebro/state"
 mkdir -p "$tstate/worktrees"
 cat > "$stub/gh" <<'STUB'
@@ -170,7 +170,7 @@ recorded_tree() {
 }
 
 tidy_run() {
-  STUB_DIR="$stub" PATH="$stub:$PATH" bash "$tidy/.claude/cerebro/scripts/release-bead" "$@"
+  STUB_DIR="$stub" PATH="$stub:$PATH" bash "$tidy/.cerebro/cerebro/scripts/release-bead" "$@"
 }
 tree="$tidy/.cerebro/worktrees/cb-x"
 record="$tstate/worktrees/cb-x"
@@ -245,19 +245,19 @@ git_q -C "$tidy" remote set-url origin "$origin_url"
 pass "an unreachable origin is retry and touches nothing"
 
 recorded_tree cb-x Rogue
-real_default="$(readlink "$tidy/.claude/cerebro/scripts/default-branch")"
-rm "$tidy/.claude/cerebro/scripts/default-branch"
-cat > "$tidy/.claude/cerebro/scripts/default-branch" <<STUB
+real_default="$(readlink "$tidy/.cerebro/cerebro/scripts/default-branch")"
+rm "$tidy/.cerebro/cerebro/scripts/default-branch"
+cat > "$tidy/.cerebro/cerebro/scripts/default-branch" <<STUB
 #!/usr/bin/env bash
 printf 'Gambit\n' > "$record"
 exec "$real_default" "\$@"
 STUB
-chmod +x "$tidy/.claude/cerebro/scripts/default-branch"
+chmod +x "$tidy/.cerebro/cerebro/scripts/default-branch"
 out="$(tidy_run --worktree Rogue cb-x 2>/dev/null)"
 [[ "$out" == "gone" && -e "$tree" && "$(cat "$record")" == "Gambit" ]] \
   || fail "a record rewritten mid-run is left to its new owner, got: $out"
-rm "$tidy/.claude/cerebro/scripts/default-branch"
-ln -s "$real_default" "$tidy/.claude/cerebro/scripts/default-branch"
+rm "$tidy/.cerebro/cerebro/scripts/default-branch"
+ln -s "$real_default" "$tidy/.cerebro/cerebro/scripts/default-branch"
 pass "a record adopted by another agent mid-run is not touched"
 
 status=0; out="$(tidy_run --worktree Rogue ../x 2>/dev/null)" || status=$?
@@ -283,7 +283,7 @@ pass "a push that fails after an unassign exits 1"
 
 ended="$(consumer_new ended --origin --link release-bead roster consumer-root default-branch project-conf bead-delivery.sh)"
 printf 'Rogue implementer\nIceman build-design\n' > "$ended/.cerebro/roster.conf"
-cp "$scripts/agent-alive" "$ended/.claude/cerebro/scripts/agent-alive"
+cp "$scripts/agent-alive" "$ended/.cerebro/cerebro/scripts/agent-alive"
 estate="$ended/.cerebro/state"
 mkdir -p "$estate"
 ended_origin="$(git -C "$ended" remote get-url origin)"
@@ -296,7 +296,7 @@ ended_reset() {
   git_q -C "$ended" remote set-url origin "$ended_origin"
 }
 ended_run() {
-  STUB_DIR="$stub" PATH="$stub:$PATH" bash "$ended/.claude/cerebro/scripts/release-bead" --ended "$@"
+  STUB_DIR="$stub" PATH="$stub:$PATH" bash "$ended/.cerebro/cerebro/scripts/release-bead" --ended "$@"
 }
 held='[{"id":"cb-d","status":"in_progress","assignee":"Rogue","labels":[]}]'
 undelivered='[{"id":"cb-u","status":"in_progress","assignee":"Rogue"}]'

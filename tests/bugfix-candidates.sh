@@ -23,7 +23,7 @@ chmod +x "$stub/bd"
 
 run() {
   rm -f "$stub/bd.log"
-  STUB_DIR="$stub" PATH="$stub:$PATH" bash "$consumer/.claude/cerebro/scripts/bugfix-candidates" "$@"
+  STUB_DIR="$stub" PATH="$stub:$PATH" bash "$consumer/.cerebro/cerebro/scripts/bugfix-candidates" "$@"
 }
 
 # --- prints the ready bugfix beads sorted by priority then id -----------------------------------

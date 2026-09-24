@@ -23,11 +23,11 @@ consumer="$work_dir/consumer"
 mkdir -p "$stub_dir" "$consumer"
 
 # The script resolves its root through `work-beads`, which uses `consumer-root --shared` and so
-# answers only when this copy of cerebro is mounted at <consumer>/.claude/cerebro (ah-il8j).
+# answers only when this copy of cerebro is mounted at <consumer>/.cerebro/cerebro (ah-il8j).
 git init -q "$consumer"
-mkdir -p "$consumer/.claude/cerebro"
+mkdir -p "$consumer/.cerebro/cerebro"
 for d in scripts agents skills hooks; do
-  [ -d "$repo_root/$d" ] && cp -R "$repo_root/$d" "$consumer/.claude/cerebro/"
+  [ -d "$repo_root/$d" ] && cp -R "$repo_root/$d" "$consumer/.cerebro/cerebro/"
 done
 
 stub_stdout="$stub_dir/stdout"
@@ -42,7 +42,7 @@ STUB
 chmod +x "$stub_dir/bd"
 
 run() {
-  PATH="$stub_dir:$PATH" bash "$consumer/.claude/cerebro/scripts/second-look-beads" "$@"
+  PATH="$stub_dir:$PATH" bash "$consumer/.cerebro/cerebro/scripts/second-look-beads" "$@"
 }
 
 # Six states, one fixture. Each bead is open - `bd` is asked for open beads and answers with these.

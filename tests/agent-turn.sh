@@ -23,13 +23,13 @@ new_fixture() {
 
 run_state() {
   local tmp="$1"; shift
-  "$tmp/.claude/cerebro/scripts/agent-state" "$@"
+  "$tmp/.cerebro/cerebro/scripts/agent-state" "$@"
 }
 
 # agent-turn takes its name from the environment, exactly as agent-asking does.
 run_turn() {
   local tmp="$1" name="$2"; shift 2
-  CEREBRO_AGENT_NAME="$name" "$tmp/.claude/cerebro/scripts/agent-turn" "$@"
+  CEREBRO_AGENT_NAME="$name" "$tmp/.cerebro/cerebro/scripts/agent-turn" "$@"
 }
 
 state_file() {
@@ -121,7 +121,7 @@ run_state "$tmp" Cyclops working --bead cb-1 --phase build --pid 42
 f="$(state_file "$tmp" Cyclops)"
 before="$(cat "$f")"
 status=0
-out="$(env -u CEREBRO_AGENT_NAME "$tmp/.claude/cerebro/scripts/agent-turn" ended)" || status=$?
+out="$(env -u CEREBRO_AGENT_NAME "$tmp/.cerebro/cerebro/scripts/agent-turn" ended)" || status=$?
 [[ $status -eq 0 ]] || fail "no-agent-name-does-nothing: exited $status"
 [[ -z "$out" ]] || fail "no-agent-name-does-nothing: wrote to stdout: $out"
 [[ "$before" == "$(cat "$f")" ]] || fail "no-agent-name-does-nothing: the file changed"
@@ -204,7 +204,7 @@ STUB
 chmod +x "$stub_dir/jq"
 status=0
 out="$(CEREBRO_AGENT_NAME=Cyclops PATH="$stub_dir:$PATH" \
-        "$tmp/.claude/cerebro/scripts/agent-turn" ended)" || status=$?
+        "$tmp/.cerebro/cerebro/scripts/agent-turn" ended)" || status=$?
 [[ $status -eq 0 ]] || fail "a-failing-jq-leaves-no-tmp-behind: exited $status"
 [[ -z "$out" ]] || fail "a-failing-jq-leaves-no-tmp-behind: wrote to stdout: $out"
 [[ "$before" == "$(cat "$f")" ]] || fail "a-failing-jq-leaves-no-tmp-behind: the file changed"

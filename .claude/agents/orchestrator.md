@@ -1,1 +1,1 @@
-../cerebro/agents/orchestrator.md
+../../.cerebro/cerebro/agents/orchestrator.md

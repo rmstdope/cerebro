@@ -5,7 +5,7 @@
 # instead of to an implementer who would build a no-op or a planner who would rewrite a sound plan
 # (ah-e0kf).
 #
-#     .claude/cerebro/scripts/sweep-verdicts.sh --json
+#     .cerebro/cerebro/scripts/sweep-verdicts.sh --json
 #
 # A verdict is formed against one specific commit. On a fast day the fleet merges several beads
 # while the verification is happening, so by the time the verdict reaches anybody a sibling may
@@ -57,7 +57,7 @@
 set -uo pipefail
 
 if [[ "${1:-}" != "--json" ]]; then
-  echo "usage: .claude/cerebro/scripts/sweep-verdicts.sh --json" >&2
+  echo "usage: .cerebro/cerebro/scripts/sweep-verdicts.sh --json" >&2
   exit 2
 fi
 

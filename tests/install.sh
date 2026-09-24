@@ -90,7 +90,7 @@ answers=/dev/null                       # a case that answers the interview poin
 # run_install <stubs-dir> [<consumer>]  ->  sets $out, $err, $status
 run_install() {
   set +e
-  out="$(PATH="$1:$bare" "$bare/bash" "${2:-$consumer}/.claude/cerebro/scripts/install" \
+  out="$(PATH="$1:$bare" "$bare/bash" "${2:-$consumer}/.cerebro/cerebro/scripts/install" \
     <"$answers" 2>"$work_dir/err")"
   status=$?
   set -e
@@ -152,7 +152,7 @@ run_install "$all" "$linked"
 [[ $status -eq 0 ]] || fail "links: expected exit 0, got $status; stderr: $err"
 grep -q "Synced .* skill link" <<<"$out" || fail "links: expected the sync's skill line in: $out"
 skill_link="$linked/.claude/skills/implement-bead"
-[[ -L "$skill_link" && "$(readlink "$skill_link")" == "../cerebro/skills/implement-bead" ]] \
+[[ -L "$skill_link" && "$(readlink "$skill_link")" == "../../.cerebro/cerebro/skills/implement-bead" ]] \
   || fail "links: expected a relative skill link at $skill_link"
 [[ -f "$skill_link/SKILL.md" ]] || fail "links: the skill link does not resolve"
 agent_link="$linked/.claude/agents/implementer.md"
@@ -178,13 +178,13 @@ answers=/dev/null
 [[ $status -eq 0 ]] || fail "declare: expected exit 0, got $status; stderr: $err"
 conf="$declared/.cerebro/project.conf"
 [[ -f "$conf" ]] || fail "declare: no $conf written"
-pc="$declared/.claude/cerebro/scripts/project-conf"
+pc="$declared/.cerebro/cerebro/scripts/project-conf"
 for pair in project_name=Ledger default_branch=trunk audience_noun=member app_paths='^app/' \
             gate_fast='make check && make lint' gate_full='make check-all' install='npm ci'; do
   k="${pair%%=*}"; v="${pair#*=}"
   [[ "$("$pc" "$k" 2>/dev/null)" == "$v" ]] || fail "declare: $k: expected '$v', got '$("$pc" "$k" 2>/dev/null)'"
 done
-[[ "$("$declared/.claude/cerebro/scripts/app-paths" 2>/dev/null)" == '^app/' ]] || fail "declare: app-paths does not answer"
+[[ "$("$declared/.cerebro/cerebro/scripts/app-paths" 2>/dev/null)" == '^app/' ]] || fail "declare: app-paths does not answer"
 grep -Eq "^ +wrote +\.cerebro/project\.conf" <<<"$out" || fail "declare: expected a wrote line: $out"
 pass "the interview's answers are the declaration, and every reader answers from it (a gate with && included)"
 
@@ -209,7 +209,7 @@ grep -q '\[main\]' <<<"$out" || fail "detected: expected the branch default: $ou
 grep -q '\[user\]' <<<"$out" || fail "detected: expected the audience default: $out"
 grep -q '\[\^src/\]' <<<"$out" || fail "detected: expected ^src/ from the src directory: $out"
 grep -q '\[make test\]' <<<"$out" || fail "detected: expected make test from the Makefile: $out"
-pc="$detected/.claude/cerebro/scripts/project-conf"
+pc="$detected/.cerebro/cerebro/scripts/project-conf"
 [[ "$("$pc" project_name 2>/dev/null)" == "detected" ]] || fail "detected: project_name not defaulted"
 [[ "$("$pc" app_paths 2>/dev/null)" == '^src/' ]] || fail "detected: app_paths not defaulted"
 [[ "$("$pc" gate_full 2>/dev/null)" == 'make test' ]] || fail "detected: gate_full not defaulted to the gate"
@@ -223,7 +223,7 @@ mkdir -p "$nogate/app"                               # an app_paths default, no 
 run_install "$all" "$nogate"
 [[ $status -eq 0 ]] || fail "nogate: expected exit 0, got $status; stderr: $err"
 conf="$nogate/.cerebro/project.conf"
-pc="$nogate/.claude/cerebro/scripts/project-conf"
+pc="$nogate/.cerebro/cerebro/scripts/project-conf"
 grep -Eq '^#[[:space:]]*gate_fast\b' "$conf" || fail "nogate: gate_fast should be present and commented out: $(cat "$conf")"
 grep -Eq '^#[[:space:]]*gate_full\b' "$conf" || fail "nogate: gate_full should be present and commented out"
 [[ -z "$("$pc" gate_fast 2>/dev/null)" ]] || fail "nogate: a gate was declared from nothing: $("$pc" gate_fast)"
@@ -402,7 +402,7 @@ pass "with no remote at all the board is made and the remote is left for later, 
 unset BD_LOG
 
 # --- 4. the fleet: counts, the optional roles, and how each role is started ------------------------
-roster_at() { "$1/.claude/cerebro/scripts/roster" "${@:2}"; }
+roster_at() { "$1/.cerebro/cerebro/scripts/roster" "${@:2}"; }
 
 # The defaults alone (the `linked' run above answered everything by EOF): one ux, one build-design,
 # two implementers, a verifier, no reviewer and no user-feedback; the orchestrator autostarts, the
@@ -463,7 +463,7 @@ pass "a misspelt start word refuses, naming it"
 # --- 5. the agent settings: tool, models, effort, and an external source on copilot ----------------
 # field <line> <n>  ->  the n-th tab-separated field of an agents-conf answer
 field() { awk -F'\t' -v n="$2" '{print $n}' <<<"$1"; }
-settings_at() { "$1/.claude/cerebro/scripts/agents-conf" "${@:2}"; }
+settings_at() { "$1/.cerebro/cerebro/scripts/agents-conf" "${@:2}"; }
 
 # The defaults alone (`linked' again): claude, opus, medium effort, the implementers the same.
 line="$(settings_at "$linked" --name Cyclops --role implementer)"

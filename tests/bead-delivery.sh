@@ -11,7 +11,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$repo_root/tests/lib/consumer.sh"
 
 consumer="$(consumer_new delivery --origin --link project-conf default-branch consumer-root bead-delivery.sh)"
-scripts="$consumer/.claude/cerebro/scripts"
+scripts="$consumer/.cerebro/cerebro/scripts"
 
 commit() {
   git_q -C "$consumer" commit -q --allow-empty -m "$1"

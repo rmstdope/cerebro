@@ -670,7 +670,7 @@ started by `scripts/launch` itself, on a an agent whose `agents.conf` line names
 ### Command
 
 A throwaway consumer, never this checkout: a `mktemp -d`, `git init`, a **copy** of this checkout at
-`.claude/cerebro` (a symlink there makes `consumer-root` climb into the cerebro repository instead —
+`.cerebro/cerebro` (a symlink there makes `consumer-root` climb into the cerebro repository instead —
 the self-mount, and it syncs the wrong tree), `printf 'gate_fast true\n' >
 .cerebro/project.conf`, `printf 'default tool=copilot\n' > .cerebro/agents.conf`, then
 `sync-symlinks.sh`. Each session started under a **real pty** with an
@@ -679,12 +679,12 @@ explicit window size, since without one Copilot degrades to a single-shot run an
 ```python
 pid, fd = pty.fork()
 if pid == 0:
-    os.execvp("bash", ["bash", ".claude/cerebro/scripts/launch", name])
+    os.execvp("bash", ["bash", ".cerebro/cerebro/scripts/launch", name])
 fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 120, 0, 0))
 ```
 
 and, twelve seconds in, `ps -o args= -p <pid>`, a state file written naming that pid, and
-`.claude/cerebro/scripts/agent-alive <Name>`.
+`.cerebro/cerebro/scripts/agent-alive <Name>`.
 
 ### Output
 
@@ -797,7 +797,7 @@ discovery paths in every project whatever is declared, so the agents, the skills
 are already where Copilot looks for them.
 
 **What you get.** Every role starts, from the fleet view or from
-`.claude/cerebro/scripts/launch <Name>`, on GitHub Copilot CLI. The agent definitions are read as
+`.cerebro/cerebro/scripts/launch <Name>`, on GitHub Copilot CLI. The agent definitions are read as
 agents, the skills as skills, and the root `CLAUDE.md` as instructions. A session's row shows
 `asking` while it waits on a question, the same as on Claude Code.
 

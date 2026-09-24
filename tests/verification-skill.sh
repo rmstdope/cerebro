@@ -40,7 +40,7 @@ pass "the verifier reads verification_skill before it prepares"
 # its generic key/value lookup already does this (see README.md and scripts/project-conf).
 # ---------------------------------------------------------------------------
 consumer="$(consumer_new repo --link consumer-root project-conf)"
-project_conf="$consumer/.claude/cerebro/scripts/project-conf"
+project_conf="$consumer/.cerebro/cerebro/scripts/project-conf"
 mkdir -p "$consumer/.cerebro"
 
 # A made-up consumer skill name, deliberately not this project's own - a name that matched this
@@ -55,7 +55,7 @@ bare="$(consumer_new bare --link consumer-root project-conf)"
 mkdir -p "$bare/.cerebro"
 : > "$bare/.cerebro/project.conf"
 
-out="$("$bare/.claude/cerebro/scripts/project-conf" verification_skill 2>"$work_dir/err")" || true
+out="$("$bare/.cerebro/cerebro/scripts/project-conf" verification_skill 2>"$work_dir/err")" || true
 [[ -z "$out" ]] || fail "no verification_skill: expected no value on stdout, got '$out'"
 grep -q 'verification_skill unset' "$work_dir/err" \
   || fail "no verification_skill: the absence must be SAID, not silent - that is what makes the step skippable"

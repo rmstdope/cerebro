@@ -8,7 +8,7 @@
 #
 # This keeps open eligible epics in, and also keeps CLOSED epics in once their last child closes.
 #
-#     .claude/cerebro/scripts/verifier-epic-candidates
+#     .cerebro/cerebro/scripts/verifier-epic-candidates
 
 set -euo pipefail
 

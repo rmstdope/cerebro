@@ -47,7 +47,7 @@ SOURCE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 source "$SCRIPT_DIR/root-hints.sh"
 consumer_root="$(cerebro_hinted_root "$SOURCE_ROOT" plain)" \
   || consumer_root="$("$SCRIPT_DIR/consumer-root" 2>/dev/null)" || {
-  echo "sync-symlinks.sh: must run from a consumer repo's .claude/cerebro (found $SOURCE_ROOT)" >&2
+  echo "sync-symlinks.sh: must run from a consumer repo's .cerebro/cerebro (found $SOURCE_ROOT)" >&2
   exit 1
 }
 CLAUDE_ROOT="$consumer_root/.claude"
@@ -55,16 +55,16 @@ CLAUDE_ROOT="$consumer_root/.claude"
 # Every link this script writes is RELATIVE, so the same link is correct in the main checkout, in
 # every worktree and on every machine - an absolute link would point at one worktree's path and be
 # wrong (or dirty the tree) everywhere else (ah-cuc). Where this checkout sits under the consumer
-# is consumer-root's to say (cb-akc): `.claude/cerebro' for the standard mount and for cerebro
-# serving itself through the symlink `.claude/cerebro -> ..' (cb-i3l.1), the physical relative
+# is consumer-root's to say (cb-akc): `.cerebro/cerebro' for the standard mount and for cerebro
+# serving itself through the symlink `.cerebro/cerebro -> ..' (cb-i3l.1), the physical relative
 # path for a submodule vendored elsewhere.
 REL_FROM_ROOT="$(cerebro_hinted_root "$SOURCE_ROOT" mount)" \
   || REL_FROM_ROOT="$("$SCRIPT_DIR/consumer-root" --mount)"
 
 # Every layout's link directory is exactly two components deep (.claude/agents, .github/skills,
-# ...), so a link there reaches the consumer root through `../../'. When the mount lives under the
-# same first component, one `../' plus the rest of the mount is shorter and is what every consumer
-# already has committed - `../cerebro/skills/plan-bead', not `../../.claude/cerebro/skills/...'.
+# ...), so a link there reaches the consumer root through `../../' - `../../.cerebro/cerebro/skills/
+# plan-bead' at the standard mount. A mount under the layout's own first component (a submodule
+# vendored at `.claude/cerebro') gets the shorter `../cerebro/...'.
 rel_source_for() {                 # $1: the destination directory, relative to the consumer root
   local top="${1%%/*}"
   case "$REL_FROM_ROOT" in
@@ -216,12 +216,15 @@ sync_links() {
   # submodule bump. Remove it, and say so - but ONLY a link that points into the mount: a
   # consumer's own link to somewhere else is not this script's, dangling or not.
   local prefix="$rel_source/$source_rel/"
+  # And a link written at the retired `.claude/cerebro' mount, which the move leaves behind.
+  local retired="../../.claude/cerebro/$source_rel/"
+  [[ "${rel_dest%%/*}" == ".claude" ]] && retired="../cerebro/$source_rel/"
   local link link_target
   for link in "$dest_dir"/*; do
     [[ -L "$link" ]] || continue
     link_target_of "$link" || continue
     link_target="$LINK_TARGET"
-    [[ "$link_target" == "$prefix"* ]] || continue
+    [[ "$link_target" == "$prefix"* || "$link_target" == "$retired"* ]] || continue
     [[ -e "$link" ]] && continue          # -e follows the link: the source is still there
     rm "$link"
     echo "Removed stale $label link: $link (its source is gone from the mount)"
@@ -258,7 +261,7 @@ remove_retired_dir_locals() {
 # into every other layout - one way only, because .claude/ is where a project writes its own
 # definitions and two sources of truth for one definition is the ambiguity this avoids.
 #
-# NEVER a symlink: the mount pass has just written .claude/agents/planner.md -> ../cerebro/..., and
+# NEVER a symlink: the mount pass has just written .claude/agents/planner.md -> ../../.cerebro/cerebro/..., and
 # mirroring that would put a link through a link over the mount link written moments earlier.
 mirror_links() {
   local source_dir="$1"            # the canonical layout's directory, absolute

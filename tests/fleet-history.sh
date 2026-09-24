@@ -69,7 +69,7 @@ run() {
   # $1 = fixture root, rest = args
   local tmp="$1"
   shift
-  FLEET_HISTORY_NOW="$now_epoch" "$tmp/.claude/cerebro/scripts/fleet-history" "$@"
+  FLEET_HISTORY_NOW="$now_epoch" "$tmp/.cerebro/cerebro/scripts/fleet-history" "$@"
 }
 
 # --- two transitions become one interval --------------------------------------------------------

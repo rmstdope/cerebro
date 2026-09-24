@@ -19,7 +19,7 @@
 # vanishes on a fresh clone, and every new machine then silently skips the step - surfacing much
 # later as a confusing failure inside somebody's worktree.
 #
-# It lived at <consumer>/.claude/cerebro-project.conf until cb-epr. A file still sitting there is
+# It lived at <consumer>/.cerebro/cerebro-project.conf until cb-epr. A file still sitting there is
 # the ONE case this script fails on (exit 2, naming the `mv'): see THIS NEVER FAILS below.
 #
 # Four keys are worth naming here because their ABSENCE is meaningful rather than merely a default:
@@ -72,9 +72,9 @@ conf="${root:+$root/.cerebro/project.conf}"
 
 # The migration refusal (cb-epr), before any lookup. Loud rather than a silent fallback: a consumer
 # whose declaration is still at the old path would otherwise read as "no declaration at all".
-old_conf="${root:+$root/.claude/cerebro-project.conf}"
+old_conf="${root:+$root/.cerebro/cerebro-project.conf}"
 if [[ -n "$conf" && ! -f "$conf" && -n "$old_conf" && -f "$old_conf" ]]; then
-  echo "project-conf: the declaration has moved - run: mv .claude/cerebro-project.conf .cerebro/project.conf" >&2
+  echo "project-conf: the declaration has moved - run: mv .cerebro/cerebro-project.conf .cerebro/project.conf" >&2
   exit 2
 fi
 

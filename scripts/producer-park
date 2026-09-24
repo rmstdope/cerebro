@@ -2,7 +2,7 @@
 #
 # Park a producer's claimed bead only for a UX or scope decision:
 #
-#     .claude/cerebro/scripts/producer-park <Name> <id> <ux|scope> <reason>
+#     .cerebro/cerebro/scripts/producer-park <Name> <id> <ux|scope> <reason>
 #
 # This is deliberately narrower than the legacy implementer hand-back: a
 # producer designs an unplanned `ux:agreed` bead itself. A parking transition

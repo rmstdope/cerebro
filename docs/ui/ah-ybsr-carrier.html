@@ -18,7 +18,7 @@ pre{margin:0;line-height:1.55;white-space:pre-wrap;word-break:break-all}
 <div class="lede">
 The rule needs two things in a session's own command line: <code>--name &lt;Name&gt;</code>, which survives,
 and <b>a path under this checkout</b>, which no longer does. It used to ride on
-<code>--settings &lt;root&gt;/.claude/cerebro/hooks/question-state.settings.json</code>; the wrapper rewrites
+<code>--settings &lt;root&gt;/.cerebro/cerebro/hooks/question-state.settings.json</code>; the wrapper rewrites
 <code>--settings</code> from a path into inline JSON, and the root disappears with it.<br><br>
 I checked my own live command line while writing this: <b>the root appears 0 times</b>. Every other flag
 the launcher passed came through untouched. So the root has to move to an argument the wrapper leaves
@@ -27,7 +27,7 @@ alone — the question is which, and one of the candidates you would actually se
 
 <span class="opt">WHAT THE WRAPPER DOES TO THE LAUNCHER'S EXEC — measured, not assumed</span>
 <div class="panel"><pre>launcher passes:  --agent planner --name Xavier --remote-control Xavier --model opus --effort high
-                  <span class="gone">--settings /Users/henrikku/repos/atlantis-hud/.claude/cerebro/hooks/question-state.settings.json</span>
+                  <span class="gone">--settings /Users/henrikku/repos/atlantis-hud/.cerebro/cerebro/hooks/question-state.settings.json</span>
                   --permission-mode auto "You are Xavier. Your agent definition (planner) is…"
 
 process carries:  --session-id cf75ef67…  <span class="add">--settings {"preferredNotifChannel":"…","hooks":{…"$CEREBRO_SCRIPTS/agent-asking"…}}</span>

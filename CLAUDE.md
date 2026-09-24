@@ -8,7 +8,7 @@ how a person *operates* it is `docs/agent-workflow.md`. Neither is repeated here
 Cerebro is an **AI harness**, not an application: agent definitions (`agents/`), skills
 (`skills/`), the bash scripts the agents and the fleet view call (`scripts/`), a terminal fleet
 viewer (`fleet-view/`, the `cerebro-tui` binary), docs and templates. A consumer repository mounts
-it as a git submodule at `.claude/cerebro`; `scripts/sync-symlinks.sh` links the skills, agents
+it as a git submodule at `.cerebro/cerebro`; `scripts/sync-symlinks.sh` links the skills, agents
 and hooks into the consumer's discovery paths (`.claude/` and `.github/`).
 
 Almost nothing here executes in this repository. The scripts only make sense from a consumer root,
@@ -20,7 +20,7 @@ Every project-specific fact is read from the consumer's `.cerebro/project.conf` 
 
 ## This repository is also a consumer
 
-Cerebro is mounted in itself: `.claude/cerebro` is a committed symlink back to the checkout, so the
+Cerebro is mounted in itself: `.cerebro/cerebro` is a committed symlink back to the checkout, so the
 fleet works on its own source and runs the *working tree* rather than a pinned sha. The four
 sections below are the same declaration `templates/consumer-instructions.md` asks of every consumer;
 its "The project" section is *What this repository is*, above.
@@ -243,12 +243,12 @@ Each of these answers one question in one place. Add a caller, never a second co
   same behaviour in Copilot's schema.
 - **The fleet view is a child of cargo** (`scripts/cerebro-tui` execs `cargo run`), so every
   session inherits cargo's environment plus the consumer's `[env]` table unless `launch` strips it.
-- **Scripts only work from a consumer root.** Run here they refuse, since there is no `.claude/`
+- **Scripts only work from a consumer root.** Run here they refuse, since there is no `.cerebro/`
   above the tree. Sync links are consumer-only too, and the links tracked here are checked by
   `scripts/tracked-links`.
 - **`.cerebro/` is deny-listed, not allow-listed.** The consumer ignores `worktrees`, `state` and
   `scratch` and tracks the rest, so a new runtime artifact must be added to `.gitignore`.
-- **`.claude/cerebro/scripts/` is hard-coded in two places that must agree**: the fleet view's
+- **`.cerebro/cerebro/scripts/` is hard-coded in two places that must agree**: the fleet view's
   script directory and the docs. The launchers themselves work from anywhere.
 - **Snippets in `skills/` and `agents/` are pasted into whatever shell an agent has.** An unquoted
   `${X:+--flag $X}` word-splits in bash and not in zsh; `scripts/portable-snippets` catches it.

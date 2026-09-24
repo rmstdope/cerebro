@@ -2,7 +2,7 @@
 #
 # scripts/end-pass — the one place a pass is ended.
 #
-#     .claude/cerebro/scripts/end-pass <name> --pid <pid>
+#     .cerebro/cerebro/scripts/end-pass <name> --pid <pid>
 #
 #   exit 0  the state file now reads `waiting'
 #   exit 2  usage error, a name not on `scripts/roster', or a missing/non-numeric pid

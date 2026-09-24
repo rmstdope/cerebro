@@ -3,7 +3,7 @@
 # The one place the harness answers: "which UX-agreed beads may a producer be given?" Prints a JSON array
 # of {id, priority} on stdout, sorted by priority ascending then by id.
 #
-#     .claude/cerebro/scripts/assignable-beads
+#     .cerebro/cerebro/scripts/assignable-beads
 #
 # The optional role preserves the legacy implementer queue while producers take UX-agreed work. Its
 # two callers are `scripts/assign-bead`,

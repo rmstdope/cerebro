@@ -74,7 +74,7 @@ smoke_port() {
   # $1 = fixture root, rest = args
   local tmp="$1"
   shift
-  "$tmp/.claude/cerebro/scripts/smoke-port" "$@"
+  "$tmp/.cerebro/cerebro/scripts/smoke-port" "$@"
 }
 
 lock_dir() {

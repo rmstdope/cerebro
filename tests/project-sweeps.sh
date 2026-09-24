@@ -94,7 +94,7 @@ git_q -C "$consumer" commit -q -m "init"
 git_q -C "$consumer" remote add origin "$origin"
 git_q -C "$consumer" push -q -u origin "$branch"
 
-prune="$consumer/.claude/cerebro/scripts/prune-worktrees.sh"
+prune="$consumer/.cerebro/cerebro/scripts/prune-worktrees.sh"
 
 # A live agent tree: an untracked file keeps it, exactly as a working implementer's would. Every
 # build directory named is created and aged by hand.
@@ -279,7 +279,7 @@ git_q -C "$consumer" push -q origin "$branch"
 git_q -C "$consumer" fetch -q origin "$branch"
 
 delivered() {
-  (cd "$consumer" && bash -c 'script_dir="$1/.claude/cerebro/scripts"; source "$script_dir/bead-delivery.sh"
+  (cd "$consumer" && bash -c 'script_dir="$1/.cerebro/cerebro/scripts"; source "$script_dir/bead-delivery.sh"
     if cerebro_bead_delivered "$1" "$2" "$3"; then echo true; else echo false; fi' _ "$consumer" "$branch" "$1")
 }
 

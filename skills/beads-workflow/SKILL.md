@@ -27,7 +27,7 @@ The fleet view gives each producer its bead through `scripts/assign-bead`, which
 that agent before the session starts, choosing from:
 
 ```bash
-.claude/cerebro/scripts/assignable-beads            # what a builder may be given
+.cerebro/cerebro/scripts/assignable-beads            # what a builder may be given
 ```
 
 It excludes `human` (already waiting on the navigator), `epic` (a split parent, with children

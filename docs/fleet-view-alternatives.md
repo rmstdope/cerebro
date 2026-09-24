@@ -516,7 +516,7 @@ That is a good shape — the risky half can be exercised for weeks before the ir
 ### Delivered: the read-only half exists (cb-vyp)
 
 The first increment above is no longer hypothetical. `cerebro-tui` — a Rust/Ratatui binary in
-`fleet-view/`, started by `.claude/cerebro/scripts/cerebro-tui` from anywhere inside a consumer —
+`fleet-view/`, started by `.cerebro/cerebro/scripts/cerebro-tui` from anywhere inside a consumer —
 draws the fleet rows and the six work queues from the same `scripts/roster`, `.cerebro/state/*.state.json`
 and `bd --readonly` contracts the Emacs view reads, on its own five-second and thirty-second
 cadences. It is stacked and scrollable — since cb-42k as independently focused widgets that scroll

@@ -98,7 +98,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Relative on purpose: `tests/gate' and CI both cd to the repository root first, and a consumer
-# running `.claude/cerebro/scripts/suite-runner tests' from its own root gets its own log root.
+# running `.cerebro/cerebro/scripts/suite-runner tests' from its own root gets its own log root.
 [[ -n "$log_dir" ]] || log_dir=".cerebro/state/suite-logs"
 
 # Absolute from here on (cb-wxr). The default above is relative on purpose - it is what gives each

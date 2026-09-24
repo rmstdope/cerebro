@@ -2,7 +2,7 @@
 #
 # The one place a full epic verification is recorded across the whole family.
 #
-#     .claude/cerebro/scripts/verifier-pass-epic-family <epic-id> --sha <full-sha> [--reason <line>]
+#     .cerebro/cerebro/scripts/verifier-pass-epic-family <epic-id> --sha <full-sha> [--reason <line>]
 #
 # It ensures every bead in the family (the epic and every descendant `<epic-id>.*`) is closed and
 # marked verification=passed at the sha that was verified.

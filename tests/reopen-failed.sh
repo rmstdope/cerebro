@@ -24,7 +24,7 @@ stub_dir="$(mktemp -d)"
 cleanup_add "$stub_dir"
 
 # The script resolves its root with `consumer-root --shared`, which answers only when this copy of
-# cerebro is mounted at <consumer>/.claude/cerebro - so every case runs it from a throwaway consumer.
+# cerebro is mounted at <consumer>/.cerebro/cerebro - so every case runs it from a throwaway consumer.
 consumer="$(consumer_new repo --link reopen-failed consumer-root)"
 git_q -C "$consumer" commit -q --allow-empty -m "init"
 
@@ -95,7 +95,7 @@ set_show() {
 
 run() {
   set +e
-  out="$(PATH="$stub_dir:$PATH" bash "$consumer/.claude/cerebro/scripts/reopen-failed" "$@" 2>"$stub_dir/err")"
+  out="$(PATH="$stub_dir:$PATH" bash "$consumer/.cerebro/cerebro/scripts/reopen-failed" "$@" 2>"$stub_dir/err")"
   status=$?
   set -e
   err="$(cat "$stub_dir/err")"

@@ -3,7 +3,7 @@
 # The open beads that need the verifier's second look, and the one place that question is answered.
 # Prints ids, one per line.
 #
-#     .claude/cerebro/scripts/second-look-beads
+#     .cerebro/cerebro/scripts/second-look-beads
 #
 # Two states reach her here, and neither can arrive on her ordinary work list: that one asks
 # `work-beads --status closed`, and both of these are OPEN. ah-e0kf learnt this for the first of

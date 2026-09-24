@@ -2,7 +2,7 @@
 #
 # Proves sync-symlinks.sh writes RELATIVE links (so the same link is correct in the main
 # checkout, in every worktree and on every machine — ah-cuc) and refuses to run anywhere that
-# is not a consumer repo's .claude/cerebro (a standalone clone of this repository would
+# is not a consumer repo's .cerebro/cerebro (a standalone clone of this repository would
 # otherwise climb three directories from scripts/ and land on the user's own ~/.claude,
 # linking skills into their global config).
 #
@@ -18,12 +18,12 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # fail, pass, git_q, $work_dir and its cleanup trap - see tests/lib/consumer.sh.
 source "$repo_root/tests/lib/consumer.sh"
 
-# --- a throwaway consumer repo: T/repo/.claude/cerebro is where the script actually lives ---
+# --- a throwaway consumer repo: T/repo/.cerebro/cerebro is where the script actually lives ---
 consumer="$work_dir/repo"
 mkdir -p "$consumer/.claude"
 git init -q "$consumer"
 
-cerebro_dir="$consumer/.claude/cerebro"
+cerebro_dir="$consumer/.cerebro/cerebro"
 mkdir -p "$cerebro_dir/scripts" "$cerebro_dir/skills/demo" "$cerebro_dir/agents" \
          "$cerebro_dir/hooks/copilot"
 # The two hook schemas, side by side, exactly as the mount ships them: Claude Code's settings file
@@ -50,15 +50,15 @@ agent_link="$consumer/.claude/agents/demo.md"
 
 [[ -L "$skill_link" ]] || fail "expected $skill_link to be a symlink"
 skill_target="$(readlink "$skill_link")"
-[[ "$skill_target" == "../cerebro/skills/demo" ]] \
-  || fail "expected skill link target '../cerebro/skills/demo', got '$skill_target'"
-pass "skill link is relative: ../cerebro/skills/demo"
+[[ "$skill_target" == "../../.cerebro/cerebro/skills/demo" ]] \
+  || fail "expected skill link target '../../.cerebro/cerebro/skills/demo', got '$skill_target'"
+pass "skill link is relative: ../../.cerebro/cerebro/skills/demo"
 
 [[ -L "$agent_link" ]] || fail "expected $agent_link to be a symlink"
 agent_target="$(readlink "$agent_link")"
-[[ "$agent_target" == "../cerebro/agents/demo.md" ]] \
-  || fail "expected agent link target '../cerebro/agents/demo.md', got '$agent_target'"
-pass "agent link is relative: ../cerebro/agents/demo.md"
+[[ "$agent_target" == "../../.cerebro/cerebro/agents/demo.md" ]] \
+  || fail "expected agent link target '../../.cerebro/cerebro/agents/demo.md', got '$agent_target'"
+pass "agent link is relative: ../../.cerebro/cerebro/agents/demo.md"
 
 [[ -e "$skill_link/SKILL.md" ]] || fail "relative skill link does not resolve to SKILL.md"
 [[ -e "$agent_link" ]] || fail "relative agent link does not resolve"
@@ -75,15 +75,15 @@ copilot_skill_link="$consumer/.github/skills/demo"
 
 [[ -L "$copilot_agent_link" ]] || fail "expected $copilot_agent_link to be a symlink"
 copilot_agent_target="$(readlink "$copilot_agent_link")"
-[[ "$copilot_agent_target" == "../../.claude/cerebro/agents/demo.md" ]] \
-  || fail "expected copilot agent link '../../.claude/cerebro/agents/demo.md', got '$copilot_agent_target'"
+[[ "$copilot_agent_target" == "../../.cerebro/cerebro/agents/demo.md" ]] \
+  || fail "expected copilot agent link '../../.cerebro/cerebro/agents/demo.md', got '$copilot_agent_target'"
 [[ -e "$copilot_agent_link" ]] || fail "the copilot agent link does not resolve"
 pass "the copilot layout is written too, with the .agent.md suffix"
 
 [[ -L "$copilot_skill_link" ]] || fail "expected $copilot_skill_link to be a symlink"
 copilot_skill_target="$(readlink "$copilot_skill_link")"
-[[ "$copilot_skill_target" == "../../.claude/cerebro/skills/demo" ]] \
-  || fail "expected copilot skill link '../../.claude/cerebro/skills/demo', got '$copilot_skill_target'"
+[[ "$copilot_skill_target" == "../../.cerebro/cerebro/skills/demo" ]] \
+  || fail "expected copilot skill link '../../.cerebro/cerebro/skills/demo', got '$copilot_skill_target'"
 [[ -e "$copilot_skill_link/SKILL.md" ]] || fail "the copilot skill link does not resolve to SKILL.md"
 pass "a skill keeps its directory name in the copilot layout"
 
@@ -95,8 +95,8 @@ pass "a skill keeps its directory name in the copilot layout"
 hook_link="$consumer/.github/hooks/cerebro-question-state.json"
 [[ -L "$hook_link" ]] || fail "expected $hook_link to be a symlink"
 hook_target="$(readlink "$hook_link")"
-[[ "$hook_target" == "../../.claude/cerebro/hooks/copilot/cerebro-question-state.json" ]] \
-  || fail "expected hook link '../../.claude/cerebro/hooks/copilot/cerebro-question-state.json', got '$hook_target'"
+[[ "$hook_target" == "../../.cerebro/cerebro/hooks/copilot/cerebro-question-state.json" ]] \
+  || fail "expected hook link '../../.cerebro/cerebro/hooks/copilot/cerebro-question-state.json', got '$hook_target'"
 [[ -e "$hook_link" ]] || fail "the hook link does not resolve"
 pass "the copilot question-state hook is linked into .github/hooks"
 
@@ -146,16 +146,16 @@ out="$("$cerebro_dir/scripts/sync-symlinks.sh")"
 grep -q "is tracked" <<<"$out" \
   && fail "a sync that changed nothing still talked about the tracked directory, got: $out"
 pass "a sync that changes nothing says nothing about the tracked directory"
-[[ "$(readlink "$skill_link")" == "../cerebro/skills/demo" ]] \
+[[ "$(readlink "$skill_link")" == "../../.cerebro/cerebro/skills/demo" ]] \
   || fail "second run changed the skill link target"
-[[ "$(readlink "$agent_link")" == "../cerebro/agents/demo.md" ]] \
+[[ "$(readlink "$agent_link")" == "../../.cerebro/cerebro/agents/demo.md" ]] \
   || fail "second run changed the agent link target"
 pass "a second run is idempotent"
 
 # A link outside .claude/ that has been repointed is written again, so the line comes back.
 ln -sfn "../../elsewhere/demo.md" "$copilot_agent_link"
 out="$("$cerebro_dir/scripts/sync-symlinks.sh")"
-[[ "$(readlink "$copilot_agent_link")" == "../../.claude/cerebro/agents/demo.md" ]] \
+[[ "$(readlink "$copilot_agent_link")" == "../../.cerebro/cerebro/agents/demo.md" ]] \
   || fail "the repointed copilot agent link was not written back"
 grep -qF ".github/ is tracked" <<<"$out" \
   || fail "expected a repointed link outside .claude/ to say it again, got: $out"
@@ -166,8 +166,8 @@ pass "a repointed link outside .claude/ says it again"
 # After a submodule bump that removes a skill or an agent, the link this script wrote for it
 # dangles. It is this script's link, so this script removes it - but ONLY a link that points
 # into the mount: a consumer's own link to somewhere else is its own business, dangling or not.
-ln -s "../cerebro/skills/gone" "$consumer/.claude/skills/gone"
-ln -s "../cerebro/agents/gone.md" "$consumer/.claude/agents/gone.md"
+ln -s "../../.cerebro/cerebro/skills/gone" "$consumer/.claude/skills/gone"
+ln -s "../../.cerebro/cerebro/agents/gone.md" "$consumer/.claude/agents/gone.md"
 ln -s "../../elsewhere/mine" "$consumer/.claude/skills/mine"
 
 out="$("$cerebro_dir/scripts/sync-symlinks.sh" 2>&1)"
@@ -185,6 +185,23 @@ grep -qF "Removed stale agent link: $consumer/.claude/agents/gone.md" <<<"$out" 
 grep -q "mine" <<<"$out" \
   && fail "the sync talked about a link that is not its own, got: $out"
 pass "a link into the mount whose source is gone is removed, out loud; a consumer's own is not"
+
+# --- a stale link written at the retired .claude/cerebro mount is removed too ---------------------
+#
+# A consumer that moves the mount bumps the submodule in the same step, so the links it synced for
+# anything retired since still spell the old mount - in `.claude/' as `../cerebro/...', elsewhere
+# as `../../.claude/cerebro/...'. They are this script's, and would otherwise dangle for ever.
+mkdir -p "$consumer/.github/skills"
+ln -s "../cerebro/skills/retired" "$consumer/.claude/skills/retired"
+ln -s "../../.claude/cerebro/skills/retired" "$consumer/.github/skills/retired"
+
+out="$("$cerebro_dir/scripts/sync-symlinks.sh" 2>&1)"
+
+[[ ! -L "$consumer/.claude/skills/retired" ]] \
+  || fail "a .claude/ link at the retired mount with no source survived the sync"
+[[ ! -L "$consumer/.github/skills/retired" ]] \
+  || fail "a .github/ link at the retired mount with no source survived the sync"
+pass "a stale link written at the retired .claude/cerebro mount is removed"
 
 out="$("$cerebro_dir/scripts/sync-symlinks.sh" 2>&1)"
 grep -q "Removed stale" <<<"$out" \
@@ -212,7 +229,7 @@ before_hook="$(inode_of "$hook_link")"
   || fail "a second sync rewrote the hook link"
 pass "a sync that changes nothing does not rewrite the links"
 
-# --- the guard: run from somewhere that is not a consumer repo's .claude/cerebro ---
+# --- the guard: run from somewhere that is not a consumer repo's .cerebro/cerebro ---
 outside="$work_dir/x/cerebro/scripts"
 mkdir -p "$outside" "$work_dir/.claude"   # a sibling .claude that must NOT be mistaken for a consumer's
 cp "$repo_root/scripts/sync-symlinks.sh" "$outside/sync-symlinks.sh"
@@ -231,13 +248,13 @@ grep -q "must run from a consumer repo" <<<"$out" \
   || fail "expected the guard's message to name the requirement, got: $out"
 [[ ! -d "$work_dir/.claude/skills" ]] \
   || fail "the guard must exit before creating any target directory"
-pass "refuses to run outside a consumer repo's .claude/cerebro, before touching anything"
+pass "refuses to run outside a consumer repo's .cerebro/cerebro, before touching anything"
 
-# --- cerebro as its own consumer: the links still read ../cerebro/... (cb-i3l.1) ---
+# --- cerebro as its own consumer: the links still read ../../.cerebro/cerebro/... (cb-i3l.1) ---
 #
 # Here the source root is the consumer root, not a directory below .claude, so stripping
 # $CLAUDE_ROOT off the front of it strips nothing and the old arithmetic produced an ABSOLUTE path
-# with a "../" glued to the front of it. The mount is the answer: `.claude/cerebro` is a symlink
+# with a "../" glued to the front of it. The mount is the answer: `.cerebro/cerebro` is a symlink
 # back to the checkout, so a link through it is correct and reads exactly like every consumer's.
 self_consumer="$work_dir/self"
 mkdir -p "$self_consumer/scripts" "$self_consumer/skills/demo" "$self_consumer/agents" \
@@ -248,30 +265,31 @@ cp "$repo_root/scripts/consumer-root" "$self_consumer/scripts/consumer-root"
 cp "$repo_root/scripts/root-hints.sh" "$self_consumer/scripts/root-hints.sh"
 cp "$repo_root/scripts/agent-cli" "$self_consumer/scripts/agent-cli"
 chmod +x "$self_consumer/scripts/agent-cli" "$self_consumer/scripts/sync-symlinks.sh" "$self_consumer/scripts/consumer-root"
-ln -s ".." "$self_consumer/.claude/cerebro"
+mkdir -p "$self_consumer/.cerebro"
+ln -s ".." "$self_consumer/.cerebro/cerebro"
 cat > "$self_consumer/skills/demo/SKILL.md" <<'EOF'
 # Demo skill
 EOF
 cat > "$self_consumer/agents/demo.md" <<'EOF'
 # Demo agent
 EOF
-"$self_consumer/.claude/cerebro/scripts/sync-symlinks.sh" >/dev/null
+"$self_consumer/.cerebro/cerebro/scripts/sync-symlinks.sh" >/dev/null
 
 self_skill_link="$self_consumer/.claude/skills/demo"
 self_agent_link="$self_consumer/.claude/agents/demo.md"
-[[ "$(readlink "$self_skill_link")" == "../cerebro/skills/demo" ]] \
-  || fail "self-consumer skill link: expected '../cerebro/skills/demo', got '$(readlink "$self_skill_link")'"
-[[ "$(readlink "$self_agent_link")" == "../cerebro/agents/demo.md" ]] \
-  || fail "self-consumer agent link: expected '../cerebro/agents/demo.md', got '$(readlink "$self_agent_link")'"
-pass "a self-consumer's links read ../cerebro/... like every other consumer's"
+[[ "$(readlink "$self_skill_link")" == "../../.cerebro/cerebro/skills/demo" ]] \
+  || fail "self-consumer skill link: expected '../../.cerebro/cerebro/skills/demo', got '$(readlink "$self_skill_link")'"
+[[ "$(readlink "$self_agent_link")" == "../../.cerebro/cerebro/agents/demo.md" ]] \
+  || fail "self-consumer agent link: expected '../../.cerebro/cerebro/agents/demo.md', got '$(readlink "$self_agent_link")'"
+pass "a self-consumer's links read ../../.cerebro/cerebro/... like every other consumer's"
 
 [[ -e "$self_skill_link/SKILL.md" ]] || fail "self-consumer skill link does not resolve to SKILL.md"
 [[ -e "$self_agent_link" ]] || fail "self-consumer agent link does not resolve"
 pass "a self-consumer's links resolve through the mount"
 
 self_hook_link="$self_consumer/.github/hooks/cerebro-question-state.json"
-[[ "$(readlink "$self_hook_link")" == "../../.claude/cerebro/hooks/copilot/cerebro-question-state.json" ]] \
-  || fail "self-consumer hook link: expected '../../.claude/cerebro/hooks/copilot/cerebro-question-state.json', got '$(readlink "$self_hook_link")'"
+[[ "$(readlink "$self_hook_link")" == "../../.cerebro/cerebro/hooks/copilot/cerebro-question-state.json" ]] \
+  || fail "self-consumer hook link: expected '../../.cerebro/cerebro/hooks/copilot/cerebro-question-state.json', got '$(readlink "$self_hook_link")'"
 [[ -e "$self_hook_link" ]] || fail "the self-consumer hook link does not resolve"
 pass "a self-consumer links the hook through the mount too"
 
@@ -287,7 +305,7 @@ pass "a self-consumer's root is left alone too"
 own="$work_dir/own"
 mkdir -p "$own/.claude"
 git init -q "$own"
-own_cerebro="$own/.claude/cerebro"
+own_cerebro="$own/.cerebro/cerebro"
 mkdir -p "$own_cerebro/scripts" "$own_cerebro/skills/demo" "$own_cerebro/agents"
 cp "$repo_root/scripts/sync-symlinks.sh" "$own_cerebro/scripts/sync-symlinks.sh"
 cp "$repo_root/scripts/consumer-root" "$own_cerebro/scripts/consumer-root"
@@ -315,7 +333,7 @@ pass "a consumer's own .dir-locals.el is left alone, silently, and the rest stil
 foreign="$work_dir/foreign"
 mkdir -p "$foreign/.claude" "$foreign/elsewhere"
 git init -q "$foreign"
-foreign_cerebro="$foreign/.claude/cerebro"
+foreign_cerebro="$foreign/.cerebro/cerebro"
 mkdir -p "$foreign_cerebro/scripts" "$foreign_cerebro/skills" "$foreign_cerebro/agents"
 cp "$repo_root/scripts/sync-symlinks.sh" "$foreign_cerebro/scripts/sync-symlinks.sh"
 cp "$repo_root/scripts/consumer-root" "$foreign_cerebro/scripts/consumer-root"
@@ -335,7 +353,7 @@ pass "a .dir-locals.el symlink pointing somewhere else is left alone"
 old_sub="$work_dir/old"
 mkdir -p "$old_sub/.claude"
 git init -q "$old_sub"
-old_cerebro="$old_sub/.claude/cerebro"
+old_cerebro="$old_sub/.cerebro/cerebro"
 mkdir -p "$old_cerebro/scripts" "$old_cerebro/skills" "$old_cerebro/agents"
 cp "$repo_root/scripts/sync-symlinks.sh" "$old_cerebro/scripts/sync-symlinks.sh"
 cp "$repo_root/scripts/consumer-root" "$old_cerebro/scripts/consumer-root"
@@ -368,7 +386,7 @@ pass "a mount that ships no provider hooks syncs the rest, silently"
 migrating="$work_dir/migrating"
 mkdir -p "$migrating/.claude"
 git init -q "$migrating"
-mig_cerebro="$migrating/.claude/cerebro"
+mig_cerebro="$migrating/.cerebro/cerebro"
 mkdir -p "$mig_cerebro/scripts" "$mig_cerebro/skills/demo" "$mig_cerebro/agents"
 cp "$repo_root/scripts/sync-symlinks.sh" "$mig_cerebro/scripts/sync-symlinks.sh"
 cp "$repo_root/scripts/consumer-root" "$mig_cerebro/scripts/consumer-root"
@@ -379,7 +397,7 @@ echo "# Demo skill" > "$mig_cerebro/skills/demo/SKILL.md"
 echo "# Demo agent" > "$mig_cerebro/agents/demo.md"
 # Dangling by construction: this fixture has no templates/, exactly like a consumer that has
 # bumped the submodule past this change.
-ln -s ".claude/cerebro/templates/consumer-dir-locals.el" "$migrating/.dir-locals.el"
+ln -s ".cerebro/cerebro/templates/consumer-dir-locals.el" "$migrating/.dir-locals.el"
 
 out="$("$mig_cerebro/scripts/sync-symlinks.sh" 2>&1)"
 
@@ -403,7 +421,7 @@ pass "a second sync says nothing about it"
 mirror="$work_dir/mirror"
 mkdir -p "$mirror/.claude/agents" "$mirror/.claude/skills/own-skill" "$mirror/.github/agents"
 git init -q "$mirror"
-mir_cerebro="$mirror/.claude/cerebro"
+mir_cerebro="$mirror/.cerebro/cerebro"
 mkdir -p "$mir_cerebro/scripts" "$mir_cerebro/skills/demo" "$mir_cerebro/agents"
 cp "$repo_root/scripts/sync-symlinks.sh" "$mir_cerebro/scripts/sync-symlinks.sh"
 cp "$repo_root/scripts/consumer-root" "$mir_cerebro/scripts/consumer-root"
@@ -440,9 +458,9 @@ grep -qF "Mirrored 1 project skill link(s) from $mirror/.claude/skills to $mirro
   || fail "expected the mirror to name what it linked (skills), got: $out"
 pass "the mirror names what it linked"
 
-# The mount pass has just written .claude/agents/demo.md -> ../cerebro/agents/demo.md. Mirroring
+# The mount pass has just written .claude/agents/demo.md -> ../../.cerebro/cerebro/agents/demo.md. Mirroring
 # that would put a link through a link over the mount link written moments earlier.
-[[ "$(readlink "$mirror/.github/agents/demo.agent.md")" == "../../.claude/cerebro/agents/demo.md" ]] \
+[[ "$(readlink "$mirror/.github/agents/demo.agent.md")" == "../../.cerebro/cerebro/agents/demo.md" ]] \
   || fail "the mount link in the copilot layout was overwritten by the mirror: '$(readlink "$mirror/.github/agents/demo.agent.md")'"
 pass "the mirror does not copy this script's own mount links back"
 
@@ -489,7 +507,7 @@ pass "a hook link pointing somewhere else is left alone"
 many="$work_dir/many"
 mkdir -p "$many/.claude"
 git init -q "$many"
-many_cerebro="$many/.claude/cerebro"
+many_cerebro="$many/.cerebro/cerebro"
 mkdir -p "$many_cerebro/scripts" "$many_cerebro/agents" \
          "$many_cerebro/skills/alpha" "$many_cerebro/skills/beta" "$many_cerebro/skills/gamma"
 cp "$repo_root/scripts/sync-symlinks.sh" "$many_cerebro/scripts/sync-symlinks.sh"
@@ -516,7 +534,7 @@ out="$("$many_cerebro/scripts/sync-symlinks.sh" 2>&1)"
 grep -qF "Removed stale skill link: $many/.claude/skills/beta" <<<"$out" \
   || fail "many: expected the sync to name the removed beta link, got: $out"
 for sk in alpha gamma; do
-  [[ "$(readlink "$many/.claude/skills/$sk")" == "../cerebro/skills/$sk" ]] \
+  [[ "$(readlink "$many/.claude/skills/$sk")" == "../../.cerebro/cerebro/skills/$sk" ]] \
     || fail "many: $sk's link was disturbed: $(readlink "$many/.claude/skills/$sk")"
 done
 [[ "$(readlink "$many/.claude/skills/theirs")" == "../../elsewhere/theirs" ]] \
@@ -547,7 +565,7 @@ pass "a link target with a space in it survives the sync"
 # once for the root and once for the mount - after `launch' had already resolved both. With
 # `consumer-root' stubbed to fail, a link written here can only have come from the hints.
 hint_consumer="$work_dir/hinted"
-hint_cerebro="$hint_consumer/.claude/cerebro"
+hint_cerebro="$hint_consumer/.cerebro/cerebro"
 mkdir -p "$hint_cerebro/scripts" "$hint_cerebro/skills/demo" "$hint_cerebro/agents" \
          "$hint_cerebro/hooks/copilot"
 git init -q "$hint_consumer"
@@ -566,17 +584,17 @@ chmod +x "$hint_cerebro/scripts/sync-symlinks.sh" "$hint_cerebro/scripts/agent-c
 
 CEREBRO_CONSUMER_ROOT="$(cd "$hint_consumer" && pwd -P)" \
 CEREBRO_CONSUMER_SHARED_ROOT="$(cd "$hint_consumer" && pwd -P)" \
-CEREBRO_CONSUMER_MOUNT=".claude/cerebro" \
+CEREBRO_CONSUMER_MOUNT=".cerebro/cerebro" \
   "$hint_cerebro/scripts/sync-symlinks.sh" >/dev/null
-[[ "$(readlink "$hint_consumer/.claude/skills/demo")" == "../cerebro/skills/demo" ]] \
-  || fail "hinted sync: expected ../cerebro/skills/demo, got $(readlink "$hint_consumer/.claude/skills/demo")"
+[[ "$(readlink "$hint_consumer/.claude/skills/demo")" == "../../.cerebro/cerebro/skills/demo" ]] \
+  || fail "hinted sync: expected ../../.cerebro/cerebro/skills/demo, got $(readlink "$hint_consumer/.claude/skills/demo")"
 pass "validated hints replace both consumer-root forks, and the link is spelled from the hinted mount"
 
 # --- and a foreign hint is refused rather than followed into another tree ------------------------
 set +e
 out="$(CEREBRO_CONSUMER_ROOT="$(cd "$consumer" && pwd -P)" \
        CEREBRO_CONSUMER_SHARED_ROOT="$(cd "$consumer" && pwd -P)" \
-       CEREBRO_CONSUMER_MOUNT=".claude/cerebro" \
+       CEREBRO_CONSUMER_MOUNT=".cerebro/cerebro" \
        "$hint_cerebro/scripts/sync-symlinks.sh" 2>&1)"
 status=$?
 set -e

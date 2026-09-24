@@ -56,7 +56,7 @@ run_preflight() {
   local role="${2:-ux}"
   local name="${3:-Xavier}"
   local tool="${4:-claude}"
-  PATH="$stub_dir:$PATH" bash "$consumer/.claude/cerebro/scripts/launch-preflight" "$role" "$name" "$tool"
+  PATH="$stub_dir:$PATH" bash "$consumer/.cerebro/cerebro/scripts/launch-preflight" "$role" "$name" "$tool"
 }
 
 head_of() { git -C "$1" rev-parse HEAD; }
@@ -265,10 +265,10 @@ pass "a checkout on another branch is refused"
 # under them would throw that work away.
 c="$(make_consumer submodule)"
 advance_origin submodule 1
-git init -q -b main "$c/.claude/cerebro"
-git_q -C "$c/.claude/cerebro" add -A
-git_q -C "$c/.claude/cerebro" commit -q -m "cerebro"
-echo "# work in progress" >> "$c/.claude/cerebro/scripts/launch-preflight"
+git init -q -b main "$c/.cerebro/cerebro"
+git_q -C "$c/.cerebro/cerebro" add -A
+git_q -C "$c/.cerebro/cerebro" commit -q -m "cerebro"
+echo "# work in progress" >> "$c/.cerebro/cerebro/scripts/launch-preflight"
 before="$(head_of "$c")"
 set +e
 out="$(run_preflight "$c" 2>&1)"
@@ -277,7 +277,7 @@ set -e
 [[ $status -eq 2 ]] || fail "submodule: expected exit 2, got $status"
 grep -q "uncommitted changes" <<<"$out" || fail "submodule: expected a message naming the changes, got: $out"
 [[ "$(head_of "$c")" == "$before" ]] || fail "submodule: HEAD moved"
-grep -q "work in progress" "$c/.claude/cerebro/scripts/launch-preflight" \
+grep -q "work in progress" "$c/.cerebro/cerebro/scripts/launch-preflight" \
   || fail "submodule: the in-progress edit was lost"
 pass "a dirty submodule is refused, and its work survives"
 
@@ -442,6 +442,7 @@ for pair in "cerebro-project.conf:project.conf" "cerebro-roster:roster.conf" "ce
   new_name="${pair#*:}"
   c="$(make_consumer "old-${new_name%%.*}")"
   echo "gate_fast make check" > "$c/.cerebro/project.conf"
+  mkdir -p "$c/.claude"
   : > "$c/.claude/$old_name"
   set +e
   out="$(run_preflight "$c" implementer Cyclops 2>&1)"
@@ -452,6 +453,17 @@ for pair in "cerebro-project.conf:project.conf" "cerebro-roster:roster.conf" "ce
     || fail "old path $old_name: expected the mv line naming both paths, got: $out"
   pass "a $old_name left at the retired .claude/ path is refused at launch"
 done
+
+# --- a submodule still at the retired .claude/cerebro mount is refused, with the move to make -------
+c="$(consumer_with_submodule old-mount .claude/cerebro)"
+set +e
+out="$(PATH="$stub_dir:$PATH" bash "$c/.claude/cerebro/scripts/launch-preflight" ux Xavier claude 2>&1)"
+status=$?
+set -e
+[[ $status -eq 2 ]] || fail "old mount: expected exit 2, got $status (output: $out)"
+grep -qF "git mv .claude/cerebro .cerebro/cerebro" <<<"$out" \
+  || fail "old mount: expected the git mv line, got: $out"
+pass "a submodule at the retired .claude/cerebro mount is refused at launch"
 
 # --- implement-bead names no tool -------------------------------------------------------------------
 #
@@ -465,7 +477,7 @@ pass "implement-bead names no build tool at all"
 # --- cerebro's own checkout, mounted in itself, launches (cb-i3l.1) -------------------------------
 #
 # The self-consumer is not a variant of make_consumer: there is no submodule under .claude, because
-# the harness IS the checkout. What .claude/cerebro holds is a committed symlink back up to the
+# the harness IS the checkout. What .cerebro/cerebro holds is a committed symlink back up to the
 # repository root, and the whole point of this case is that a launcher run through that symlink
 # reaches the end of the preflight - consumer-root answers, the role's agent file is found through
 # the mount, and the sync writes links that resolve.
@@ -475,7 +487,8 @@ git init -q --bare -b main "$self_origin"
 git init -q -b main "$work_dir/self-seed"
 copy_cerebro_into "$work_dir/self-seed"
 mkdir -p "$work_dir/self-seed/.claude"
-ln -s ".." "$work_dir/self-seed/.claude/cerebro"
+mkdir -p "$work_dir/self-seed/.cerebro"
+ln -s ".." "$work_dir/self-seed/.cerebro/cerebro"
 git_q -C "$work_dir/self-seed" add -A
 git_q -C "$work_dir/self-seed" commit -q -m "cerebro, mounted in itself"
 git_q -C "$work_dir/self-seed" push -q "$self_origin" main
@@ -497,7 +510,7 @@ pass "cerebro mounted in its own checkout passes the preflight and gets working 
 # claude' still gets a copilot refusal when copilot is what this launch was told.
 c="$(make_consumer told-tool)"
 set +e
-out="$(PATH="$stub_dir:$PATH" bash "$c/.claude/cerebro/scripts/launch-preflight" architect Forge 2>&1)"
+out="$(PATH="$stub_dir:$PATH" bash "$c/.cerebro/cerebro/scripts/launch-preflight" architect Forge 2>&1)"
 status=$?
 set -e
 [[ $status -eq 2 ]] || fail "no tool: expected exit 2, got $status"
@@ -515,7 +528,7 @@ for t in dirname bash grep tail mkdir date git jq sed awk cut; do
   [[ -x "$nocopilot_dir/$t" ]] || ln -s "$(command -v "$t")" "$nocopilot_dir/$t"
 done
 set +e
-out="$(PATH="$nocopilot_dir" bash "$c/.claude/cerebro/scripts/launch-preflight" architect Forge copilot 2>&1)"
+out="$(PATH="$nocopilot_dir" bash "$c/.cerebro/cerebro/scripts/launch-preflight" architect Forge copilot 2>&1)"
 status=$?
 set -e
 [[ $status -eq 2 ]] || fail "told copilot: expected exit 2, got $status: $out"

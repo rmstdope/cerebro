@@ -3,7 +3,7 @@
 # Opens the Ratatui fleet view. The one script here meant for a person to type rather than for an
 # agent to call, from anywhere inside a consumer:
 #
-#     .claude/cerebro/scripts/cerebro-tui
+#     .cerebro/cerebro/scripts/cerebro-tui
 #
 # What the process it starts may DO is whether it takes the checkout's supervision lease: the
 # first window open operates the fleet, and a second one on the same checkout draws everything and

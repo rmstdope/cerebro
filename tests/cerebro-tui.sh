@@ -77,10 +77,10 @@ env_value() {
 # --- the standard mount: all four roots, the exact Cargo argv, the consumer's cwd ---------------
 
 consumer="$(consumer_new fleet --link cerebro-tui consumer-root)"
-mount="$(cd "$consumer/.claude/cerebro" && pwd -P)"
+mount="$(cd "$consumer/.cerebro/cerebro" && pwd -P)"
 give_workspace "$mount"
 
-run_tui "$consumer" "$consumer/.claude/cerebro/scripts/cerebro-tui"
+run_tui "$consumer" "$consumer/.cerebro/cerebro/scripts/cerebro-tui"
 [[ -f "$record" ]] || fail "the script never reached cargo"
 
 args="$(grep '^ARG:' "$record" | sed 's/^ARG://' | tr '\n' ' ')"
@@ -98,15 +98,15 @@ pass "cargo starts in the enclosing consumer root"
   || fail "CEREBRO_CONSUMER_ROOT: expected '$consumer', got '$(env_value "$record" CEREBRO_CONSUMER_ROOT)'"
 [[ "$(env_value "$record" CEREBRO_CONSUMER_SHARED_ROOT)" == "$consumer" ]] \
   || fail "CEREBRO_CONSUMER_SHARED_ROOT: expected '$consumer', got '$(env_value "$record" CEREBRO_CONSUMER_SHARED_ROOT)'"
-[[ "$(env_value "$record" CEREBRO_CONSUMER_MOUNT)" == ".claude/cerebro" ]] \
-  || fail "CEREBRO_CONSUMER_MOUNT: expected '.claude/cerebro', got '$(env_value "$record" CEREBRO_CONSUMER_MOUNT)'"
+[[ "$(env_value "$record" CEREBRO_CONSUMER_MOUNT)" == ".cerebro/cerebro" ]] \
+  || fail "CEREBRO_CONSUMER_MOUNT: expected '.cerebro/cerebro', got '$(env_value "$record" CEREBRO_CONSUMER_MOUNT)'"
 [[ "$(env_value "$record" CEREBRO_SCRIPTS)" == "$mount/scripts" ]] \
   || fail "CEREBRO_SCRIPTS: expected '$mount/scripts', got '$(env_value "$record" CEREBRO_SCRIPTS)'"
 pass "a standard consumer exports all four roots"
 
 # From a subdirectory: the same command line, the same cwd, the same roots.
 mkdir -p "$consumer/sub/dir"
-run_tui "$consumer/sub/dir" "$consumer/.claude/cerebro/scripts/cerebro-tui"
+run_tui "$consumer/sub/dir" "$consumer/.cerebro/cerebro/scripts/cerebro-tui"
 got_pwd="$(grep '^PWD:' "$record" | sed 's/^PWD://')"
 [[ "$got_pwd" == "$consumer" ]] \
   || fail "run from a subdirectory: expected '$consumer', got '$got_pwd'"
@@ -136,17 +136,17 @@ pass "an arbitrary mount uses its physical source, not the standard one"
 # This is the shape every implementer runs in. The shared root is where `.cerebro/state' lives, so
 # a launcher that exported the worktree as both would show a fleet in which nobody is up.
 worktree_consumer="$(consumer_new worktree --link cerebro-tui consumer-root)"
-worktree_mount="$(cd "$worktree_consumer/.claude/cerebro" && pwd -P)"
+worktree_mount="$(cd "$worktree_consumer/.cerebro/cerebro" && pwd -P)"
 give_workspace "$worktree_mount"
 tree="$work_dir/worktree-checkout"
 git_q -C "$worktree_consumer" worktree add -q -b a-bead "$tree" HEAD
 tree="$(cd "$tree" && pwd -P)"
-# The worktree carries its own mount, the way a committed `.claude/cerebro' symlink does in a real
+# The worktree carries its own mount, the way a committed `.cerebro/cerebro' symlink does in a real
 # one: the launcher inside it must answer about the worktree, not about the checkout it came from.
-mkdir -p "$tree/.claude"
-cp -R "$worktree_mount" "$tree/.claude/cerebro"
+mkdir -p "$tree/.cerebro"
+cp -R "$worktree_mount" "$tree/.cerebro/cerebro"
 
-run_tui "$tree" "$tree/.claude/cerebro/scripts/cerebro-tui"
+run_tui "$tree" "$tree/.cerebro/cerebro/scripts/cerebro-tui"
 [[ -f "$record" ]] || fail "worktree: the script never reached cargo"
 [[ "$(env_value "$record" CEREBRO_CONSUMER_ROOT)" == "$tree" ]] \
   || fail "worktree: expected the enclosing root '$tree', got '$(env_value "$record" CEREBRO_CONSUMER_ROOT)'"
@@ -158,13 +158,14 @@ pass "a worktree keeps its enclosing and shared roots distinct"
 
 # --- the self-mount: cerebro running its own fleet ----------------------------------------------
 #
-# `.claude/cerebro' a symlink back to the checkout it lives in (cb-i3l.1). Neither the path climb
+# `.cerebro/cerebro' a symlink back to the checkout it lives in (cb-i3l.1). Neither the path climb
 # nor the submodule probe sees that mount, so this is its own case.
 self="$work_dir/self-mounted"
 copy_cerebro_into "$self"
 give_workspace "$self"
 mkdir -p "$self/.claude"
-ln -s "$self" "$self/.claude/cerebro"
+mkdir -p "$self/.cerebro"
+ln -s "$self" "$self/.cerebro/cerebro"
 git init -q -b main "$self"
 git_q -C "$self" commit -q --allow-empty -m init
 
@@ -173,15 +174,15 @@ run_tui "$self" "$self/scripts/cerebro-tui"
 self_physical="$(cd "$self" && pwd -P)"
 [[ "$(env_value "$record" CEREBRO_CONSUMER_ROOT)" == "$self_physical" ]] \
   || fail "self-mount: expected '$self_physical', got '$(env_value "$record" CEREBRO_CONSUMER_ROOT)'"
-[[ "$(env_value "$record" CEREBRO_CONSUMER_MOUNT)" == ".claude/cerebro" ]] \
-  || fail "self-mount: expected the mount '.claude/cerebro', got '$(env_value "$record" CEREBRO_CONSUMER_MOUNT)'"
+[[ "$(env_value "$record" CEREBRO_CONSUMER_MOUNT)" == ".cerebro/cerebro" ]] \
+  || fail "self-mount: expected the mount '.cerebro/cerebro', got '$(env_value "$record" CEREBRO_CONSUMER_MOUNT)'"
 pass "a self-mounted checkout launches its own fleet view"
 
 # --- an argument is a usage error ---------------------------------------------------------------
 #
 # Nothing is passed through: an argument would reach `cargo run' and be read as a Cargo flag.
 set +e
-out="$(run_tui "$consumer" "$consumer/.claude/cerebro/scripts/cerebro-tui" --wide 2>&1)"
+out="$(run_tui "$consumer" "$consumer/.cerebro/cerebro/scripts/cerebro-tui" --wide 2>&1)"
 status=$?
 set -e
 [[ $status -eq 2 ]] || fail "an argument: expected exit 2, got $status"
@@ -222,7 +223,7 @@ ln -s "$(command -v dirname)" "$bare_dir/dirname"
 rm -f "$record"
 set +e
 out="$( cd "$consumer" && PATH="$bare_dir" CEREBRO_TEST_RECORD="$record" \
-    "$(command -v bash)" "$consumer/.claude/cerebro/scripts/cerebro-tui" 2>&1 )"
+    "$(command -v bash)" "$consumer/.cerebro/cerebro/scripts/cerebro-tui" 2>&1 )"
 status=$?
 set -e
 [[ $status -eq 2 ]] || fail "no cargo: expected exit 2, got $status"
@@ -236,10 +237,10 @@ pass "a missing cargo is refused with the approved line"
 # A vendored partial copy, or a submodule pinned before cb-vyp.1. It refuses rather than letting
 # `cargo run --manifest-path' fail with a path error.
 partial="$(consumer_new partial --link cerebro-tui consumer-root)"
-partial_mount="$(cd "$partial/.claude/cerebro" && pwd -P)"
+partial_mount="$(cd "$partial/.cerebro/cerebro" && pwd -P)"
 
 set +e
-out="$(run_tui "$partial" "$partial/.claude/cerebro/scripts/cerebro-tui" 2>&1)"
+out="$(run_tui "$partial" "$partial/.cerebro/cerebro/scripts/cerebro-tui" 2>&1)"
 status=$?
 set -e
 [[ $status -eq 2 ]] || fail "no workspace: expected exit 2, got $status"

@@ -3,7 +3,7 @@
 Cerebro runs a fleet of AI coding agents on your repository. You file work as beads and rank it;
 the fleet plans each bead, builds it test-first in its own worktree, reviews and merges the pull
 request, and brings what merged back to you to verify. It ships as a git submodule mounted at
-`.claude/cerebro`: agent definitions, skills and scripts for Claude Code or GitHub Copilot CLI, and
+`.cerebro/cerebro`: agent definitions, skills and scripts for Claude Code or GitHub Copilot CLI, and
 a terminal fleet view that shows the agents and the board and starts, ends and nudges their
 sessions. You are the navigator. You never make a technical decision: architecture, files, tests
 and approach are the agents' to decide. You make every decision about what people will see and
@@ -23,7 +23,7 @@ The fleet is bash and Rust on top of programs it does not ship. Have these on `P
   with a Dolt remote so every machine and session sees one board.
 - `gh` — pull requests, reviews, and the issue inbox.
 - `git` and `jq` — every script.
-- **Rust and Cargo**, for the fleet view (`.claude/cerebro/scripts/cerebro-tui`, below). Optional:
+- **Rust and Cargo**, for the fleet view (`.cerebro/cerebro/scripts/cerebro-tui`, below). Optional:
   the launchers work without it.
 
 ## Setting up a new project
@@ -31,21 +31,31 @@ The fleet is bash and Rust on top of programs it does not ship. Have these on `P
 Five steps, in this order, and an optional sixth. Each says what it is for, what to run from the root of your
 repository, and how to tell it worked.
 
-### 1. Add cerebro as a submodule at `.claude/cerebro`
+### 1. Add cerebro as a submodule at `.cerebro/cerebro`
 
-`.claude/cerebro` is the one path every script and the fleet view assume.
+`.cerebro/cerebro` is the one path every script and the fleet view assume. It sits beside the
+project's declarations, so a fleet that runs Copilot alone needs no `.claude/` of its own.
+
+A repository that mounted cerebro at the old `.claude/cerebro` moves it once; every launch refuses
+until it has:
 
 ```bash
-git submodule add https://github.com/rmstdope/cerebro.git .claude/cerebro
+git mv .claude/cerebro .cerebro/cerebro
+.cerebro/cerebro/scripts/sync-symlinks.sh
+git commit -m "Move cerebro to .cerebro/cerebro"
+```
+
+```bash
+git submodule add https://github.com/rmstdope/cerebro.git .cerebro/cerebro
 git submodule update --init --recursive
 ```
 
-Check: `.claude/cerebro/scripts/consumer-root` prints your repository's absolute path.
+Check: `.cerebro/cerebro/scripts/consumer-root` prints your repository's absolute path.
 
 ### 2. Run the installer
 
 ```bash
-.claude/cerebro/scripts/install
+.cerebro/cerebro/scripts/install
 ```
 
 It asks a handful of questions about the project, each with a default taken from the tree, and
@@ -68,7 +78,7 @@ sections into the file you have, and edit it until it describes your project. `#
 is read by its exact name.
 
 ```bash
-cp .claude/cerebro/templates/consumer-instructions.md CLAUDE.md
+cp .cerebro/cerebro/templates/consumer-instructions.md CLAUDE.md
 ```
 
 Check: `grep -c '^## Work tracking' CLAUDE.md` prints `1`.
@@ -91,7 +101,7 @@ Check: `git status` reports a clean tree, and `bd dolt push` says there is nothi
 Open the fleet view, from anywhere inside the repository:
 
 ```bash
-.claude/cerebro/scripts/cerebro-tui
+.cerebro/cerebro/scripts/cerebro-tui
 ```
 
 The rows the roster marks `autostart` start as it opens, `standby` rows wait for their trigger,
@@ -132,16 +142,16 @@ run in a fresh checkout compiles the workspace, so give it a minute before decid
 Each agent is started by a script of its own, run from the consumer repository root:
 
 ```bash
-.claude/cerebro/scripts/launch <Name>            # any agent, by name - the one way to start one
-.claude/cerebro/scripts/roster                   # the fleet: name, role, kind - one line per agent
-.claude/cerebro/scripts/roster --implementers    # the implementer names, one per line
-.claude/cerebro/scripts/cerebro-tui              # the fleet view (needs cargo)
+.cerebro/cerebro/scripts/launch <Name>            # any agent, by name - the one way to start one
+.cerebro/cerebro/scripts/roster                   # the fleet: name, role, kind - one line per agent
+.cerebro/cerebro/scripts/roster --implementers    # the implementer names, one per line
+.cerebro/cerebro/scripts/cerebro-tui              # the fleet view (needs cargo)
 ```
 
 Every agent starts the same way, by its own name: `launch Xavier`, `launch Cyclops`, `launch Forge`.
 There are no per-role launcher scripts - the roster is the one place the fleet is declared, and
 `launch` is the one place a session is started. A session started this way runs in that terminal,
-outside the fleet view; `.claude/cerebro/scripts/launch-preflight ux Xavier; echo $?` printing
+outside the fleet view; `.cerebro/cerebro/scripts/launch-preflight ux Xavier; echo $?` printing
 `0` and nothing else says one could start.
 
 Every session starts with Remote Control on and is listed under its agent's name at
@@ -159,7 +169,7 @@ file — rather than the session going `up` for a moment and then silently `dead
 `scripts/prune-worktrees.sh` is the worktree sweep, run by Cerebro every two hours and by you whenever
 you like (`--dry-run` first).
 
-To take a newer cerebro: `git submodule update --remote --merge .claude/cerebro`, then start
+To take a newer cerebro: `git submodule update --remote --merge .cerebro/cerebro`, then start
 something — every launch re-syncs the links.
 
 ## What the fleet cost
@@ -169,10 +179,10 @@ gone, and the number with it. `scripts/fleet-cost` asks afterwards, and answers 
 agent** rather than only per session:
 
 ```bash
-.claude/cerebro/scripts/fleet-cost --by-bead --since 7d      # what each agent cost on each bead
-.claude/cerebro/scripts/fleet-cost --by-bead --phase         # the same, split by phase as well
-.claude/cerebro/scripts/fleet-cost --by-agent --since 30d    # what each agent spent
-.claude/cerebro/scripts/fleet-cost --bead cb-d89             # one bead, split by agent and phase
+.cerebro/cerebro/scripts/fleet-cost --by-bead --since 7d      # what each agent cost on each bead
+.cerebro/cerebro/scripts/fleet-cost --by-bead --phase         # the same, split by phase as well
+.cerebro/cerebro/scripts/fleet-cost --by-agent --since 30d    # what each agent spent
+.cerebro/cerebro/scripts/fleet-cost --bead cb-d89             # one bead, split by agent and phase
 ```
 
 ```
@@ -226,11 +236,11 @@ agent or skill is linked the first time something is started (ah-cuc).
 
 What it does:
 
-- Asks `scripts/consumer-root` for the consumer repository root (the enclosing working tree) and exits with an error if this checkout is not mounted at `<consumer>/.claude/cerebro`.
+- Asks `scripts/consumer-root` for the consumer repository root (the enclosing working tree) and exits with an error if this checkout is not mounted at `<consumer>/.cerebro/cerebro`.
 - Creates `../../.claude/skills/` and `../../.claude/agents/` if they do not exist.
-- Scans `.claude/cerebro/skills/*` for folders that contain `SKILL.md`.
-- Creates/updates symlinks in `.claude/skills/` (for example `.claude/skills/implement-bead -> ../cerebro/skills/implement-bead`), relative rather than absolute, so the same link is correct in the main checkout, in every worktree and on every machine.
-- Scans `.claude/cerebro/agents/*.md` and creates/updates symlinks in `.claude/agents/`.
+- Scans `.cerebro/cerebro/skills/*` for folders that contain `SKILL.md`.
+- Creates/updates symlinks in `.claude/skills/` (for example `.claude/skills/implement-bead -> ../../.cerebro/cerebro/skills/implement-bead`), relative rather than absolute, so the same link is correct in the main checkout, in every worktree and on every machine.
+- Scans `.cerebro/cerebro/agents/*.md` and creates/updates symlinks in `.claude/agents/`.
 - Removes the old aggregate symlink `.claude/skills/cerebro` if present.
 - Removes a `.dir-locals.el` link at the consumer root left by a sync from before the fleet view had its own command; a `.dir-locals.el` the project wrote itself is never touched.
 
@@ -241,19 +251,19 @@ Run it whenever:
 
 ### Optional: Run Sync Automatically On Submodule Pointer Changes
 
-This repository ships git hooks in `githooks/` that run the sync script automatically after merge/pull and checkout when the `.claude/cerebro` gitlink changes.
+This repository ships git hooks in `githooks/` that run the sync script automatically after merge/pull and checkout when the `.cerebro/cerebro` gitlink changes.
 
 Enable once per clone, from anywhere inside the consumer repository:
 
 ```bash
-.claude/cerebro/githooks/install.sh
+.cerebro/cerebro/githooks/install.sh
 ```
 
 What it configures:
 
-- `core.hooksPath=.claude/cerebro/githooks`
-- `post-merge` hook: syncs when `.claude/cerebro` changed between `ORIG_HEAD` and `HEAD`.
-- `post-checkout` hook: syncs when `.claude/cerebro` changed between old and new refs, and only on a branch checkout.
+- `core.hooksPath=.cerebro/cerebro/githooks`
+- `post-merge` hook: syncs when `.cerebro/cerebro` changed between `ORIG_HEAD` and `HEAD`.
+- `post-checkout` hook: syncs when `.cerebro/cerebro` changed between old and new refs, and only on a branch checkout.
 
 Both hooks are silent when the gitlink did not move.
 

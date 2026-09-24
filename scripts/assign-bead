@@ -2,7 +2,7 @@
 #
 # Hand a bead to a builder role or a planning role before its session starts (cb-10d.1, cb-10d.2.1):
 #
-#     .claude/cerebro/scripts/assign-bead <Name> <id>
+#     .cerebro/cerebro/scripts/assign-bead <Name> <id>
 #
 #   exit 0  the bead is claimed for / assigned to NAME (newly, or it already was)
 #   exit 1  `bd` failed (its stderr passed through)

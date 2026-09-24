@@ -74,7 +74,7 @@ not reclaimed — no licence to let one go cold elsewhere.
 <!-- state-contract:begin -->
 
 Write it at every transition, in the same `Bash` call as the thing it describes, only through
-`.claude/cerebro/scripts/agent-state`, never by hand. There are four state words and no others:
+`.cerebro/cerebro/scripts/agent-state`, never by hand. There are four state words and no others:
 
 - `working` — everything you are doing.
 - `asking` — blocked on the navigator; nothing moves until they answer.
@@ -109,17 +109,17 @@ corrected").
 
 | Where in this skill | Call |
 |---|---|
-| *Picking up*, no bead named in the prompt that started you | `.claude/cerebro/scripts/end-pass <name> --pid $PPID` |
-| *Picking up*, once the bead you were given is confirmed yours | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase build --pid $PPID` |
-| *Building*, before the fast gate | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase gate --pid $PPID` |
-| *The review loop*, before spawning the review sub-agent | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase review --pid $PPID` |
-| *The review loop*, once every finding is answered | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase ci --pid $PPID` |
+| *Picking up*, no bead named in the prompt that started you | `.cerebro/cerebro/scripts/end-pass <name> --pid $PPID` |
+| *Picking up*, once the bead you were given is confirmed yours | `.cerebro/cerebro/scripts/agent-state <name> working --bead <id> --phase build --pid $PPID` |
+| *Building*, before the fast gate | `.cerebro/cerebro/scripts/agent-state <name> working --bead <id> --phase gate --pid $PPID` |
+| *The review loop*, before spawning the review sub-agent | `.cerebro/cerebro/scripts/agent-state <name> working --bead <id> --phase review --pid $PPID` |
+| *The review loop*, once every finding is answered | `.cerebro/cerebro/scripts/agent-state <name> working --bead <id> --phase ci --pid $PPID` |
 | *Red CI*, after each fix-and-push | decide whether its scope warrants `--phase review`; then `--phase ci` again |
-| *The retrospective* opening line onward | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase merge --pid $PPID` |
+| *The retrospective* opening line onward | `.cerebro/cerebro/scripts/agent-state <name> working --bead <id> --phase merge --pid $PPID` |
 | *The retrospective*, if you committed one | decide whether its scope warrants `--phase review`; then `--phase ci`, then `--phase merge` again |
-| *Merging*, when a `strict` protection asks for a catch-up: GitHub → CI | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase rebase --pid $PPID`, then `... --phase ci ...` |
-| *Asking instead of handing back* | `.claude/cerebro/scripts/agent-state <name> asking --bead <id> --phase <current> --pid $PPID`; on resuming, `working` with the same bead and phase |
-| *Finishing, then going again*, after `bd close`, and the hand-back block | `.claude/cerebro/scripts/end-pass <name> --pid $PPID` |
+| *Merging*, when a `strict` protection asks for a catch-up: GitHub → CI | `.cerebro/cerebro/scripts/agent-state <name> working --bead <id> --phase rebase --pid $PPID`, then `... --phase ci ...` |
+| *Asking instead of handing back* | `.cerebro/cerebro/scripts/agent-state <name> asking --bead <id> --phase <current> --pid $PPID`; on resuming, `working` with the same bead and phase |
+| *Finishing, then going again*, after `bd close`, and the hand-back block | `.cerebro/cerebro/scripts/end-pass <name> --pid $PPID` |
 
 `waiting` asks to be ended and is granted within about half a minute, so run `end-pass` last; there
 is no wake to ask for.
@@ -132,7 +132,7 @@ mid-bead strands the bead. **Never touch another implementer's state file or sto
 **A pass is ended in one place**, and `waiting` is what it writes for you:
 
 ```bash
-.claude/cerebro/scripts/end-pass <name> --pid $PPID
+.cerebro/cerebro/scripts/end-pass <name> --pid $PPID
 ```
 
 Run it last — after the bead is merged and closed and the retrospective is written — then say what
@@ -150,7 +150,7 @@ Confirm it is yours, then write your state:
 ```bash
 bd dolt pull
 bd show <id> --json          # assignee must be your own name, status must be in_progress
-.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase build --pid $PPID
+.cerebro/cerebro/scripts/agent-state <name> working --bead <id> --phase build --pid $PPID
 bd dolt push
 ```
 
@@ -222,7 +222,7 @@ unchanged, because the verifier already reopened the chain.
 ## Workspace
 
 **Your tree was made before your session started**: `disk-preflight` with the plan's workload, then
-`scripts/prepare-worktree` (fetch the default branch, branch, init the `.claude/cerebro` submodule,
+`scripts/prepare-worktree` (fetch the default branch, branch, init the `.cerebro/cerebro` submodule,
 run the project's `install`) at `<repo>/.cerebro/worktrees/<id>`. Never check out `main`; go to
 your tree:
 
@@ -230,7 +230,7 @@ your tree:
 cd <repo>/.cerebro/worktrees/<id>
 git branch --show-current          # <id>, or <id>-2 and onward when that name was taken
 git status --porcelain
-git log --oneline "origin/$(.claude/cerebro/scripts/default-branch)..HEAD"
+git log --oneline "origin/$(.cerebro/cerebro/scripts/default-branch)..HEAD"
 ```
 
 **If either of the last two shows anything, the tree is an earlier attempt at this bead**; read it
@@ -238,29 +238,29 @@ before you build. If the tree is missing, hand back, naming that. **Never create
 worktree yourself.**
 
 A fresh tree has no prewarmed build: if a suite needs one, run what
-`.claude/cerebro/scripts/project-conf prewarm` prints, inside the tree.
+`.cerebro/cerebro/scripts/project-conf prewarm` prints, inside the tree.
 
 Worktrees stay under `.cerebro/worktrees/`: `bd` and most build tools find their configuration by
 walking up.
 
-### A bead whose diff is inside `.claude/cerebro`
+### A bead whose diff is inside `.cerebro/cerebro`
 
-Work in `<tree>/.claude/cerebro`; its submodule git dir is private to your tree:
+Work in `<tree>/.cerebro/cerebro`; its submodule git dir is private to your tree:
 
 ```bash
-cat <tree>/.claude/cerebro/.git    # gitdir: …/.git/worktrees/<id>/modules/.claude/cerebro
-cat <repo>/.claude/cerebro/.git    # gitdir: …/.git/modules/.claude/cerebro
+cat <tree>/.cerebro/cerebro/.git    # gitdir: …/.git/worktrees/<id>/modules/.cerebro/cerebro
+cat <repo>/.cerebro/cerebro/.git    # gitdir: …/.git/modules/.cerebro/cerebro
 ```
 
 **It arrives detached at the pinned sha**, so fetch and branch from cerebro's main, or the PR is
 based behind it:
 
 ```bash
-git -C <tree>/.claude/cerebro fetch origin
-git -C <tree>/.claude/cerebro checkout -b <id>-short-description origin/main
+git -C <tree>/.cerebro/cerebro fetch origin
+git -C <tree>/.cerebro/cerebro checkout -b <id>-short-description origin/main
 ```
 
-**Never `git -C .claude/cerebro worktree add`**: it registers the tree in the submodule, not the
+**Never `git -C .cerebro/cerebro worktree add`**: it registers the tree in the submodule, not the
 consumer, and a relative path lands it inside the submodule. **Never clone cerebro to a sibling
 directory**: the classifier refuses it. `bd` works here because the tree is inside the consumer.
 
@@ -273,7 +273,7 @@ directory**: the classifier refuses it. `bd` works here because the tree is insi
 always safe:
 
 ```bash
-.claude/cerebro/scripts/smoke-port -- <the project's browser-suite command>
+.cerebro/cerebro/scripts/smoke-port -- <the project's browser-suite command>
 ```
 
 It takes a free block, holds it for exactly as long as your command runs, releases it however the
@@ -293,7 +293,7 @@ order, each opening with its named failing test.
 
 ```bash
 git diff --name-only -z origin/main...HEAD |
-  xargs -0 .claude/cerebro/scripts/build-workload --classify
+  xargs -0 .cerebro/cerebro/scripts/build-workload --classify
 ```
 
 If a planned `non-rust` workload classifies as `rust`, or classification fails, rerun the preflight
@@ -301,8 +301,8 @@ with `--workload rust` and use the private-target gate. Otherwise use the plan's
 gate; keep every existing gate leg. The command is the project's:
 
 ```bash
-.claude/cerebro/scripts/project-conf gate_fast     # the fast gate, and what to run
-.claude/cerebro/scripts/project-conf gate_full     # everything the project has
+.cerebro/cerebro/scripts/project-conf gate_fast     # the fast gate, and what to run
+.cerebro/cerebro/scripts/project-conf gate_full     # everything the project has
 ```
 
 A detected, undeclared gate is announced on stderr; read it. With no gate at all, launch preflight
@@ -322,7 +322,7 @@ The fast gate is deliberately not everything; CI gates the merge. The full gate 
 choice when you suspect a regression the fast gate skips — slower, and possibly serialized.
 
 A suite in neither gate may run in CI only when the diff touches its paths
-(`.claude/cerebro/scripts/app-paths`); a red job there is the gate doing its job.
+(`.cerebro/cerebro/scripts/app-paths`); a red job there is the gate doing its job.
 
 ## When the plan is wrong
 
@@ -360,8 +360,8 @@ wait per *Waiting for a sub-agent*. Address its findings, then decide whether th
 needs a follow-up review.
 
 ```bash
-.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase review --pid $PPID
-.claude/cerebro/scripts/agents-conf --role reviewer
+.cerebro/cerebro/scripts/agent-state <name> working --bead <id> --phase review --pid $PPID
+.cerebro/cerebro/scripts/agents-conf --role reviewer
 ```
 
 **Ask for no provider; let `agents-conf` resolve it.** It probes the `reviewer` role, then
@@ -389,7 +389,7 @@ Spawn a sub-agent of type **`reviewer`** on the resolved model; both layouts shi
 
 - the diff — `gh pr diff <n>`,
 - the bead's plan — `bd show <id> --json`,
-- `.claude/cerebro/agents/reviewer.md`, to read as its checklist.
+- `.cerebro/cerebro/agents/reviewer.md`, to read as its checklist.
 
 **A follow-up review**, when the changes warrant one, gets five things:
 
@@ -496,7 +496,7 @@ bead's; two findings are two sections of your one file. It lives under `docs/` b
 ```bash
 mkdir -p docs/retrospectives          # the first finding in a fresh checkout creates it
 [ -f docs/retrospectives/README.md ] || \
-  cp .claude/cerebro/templates/retrospectives-README.md docs/retrospectives/README.md
+  cp .cerebro/cerebro/templates/retrospectives-README.md docs/retrospectives/README.md
 git add docs/retrospectives/          # the README too, on the run that creates it
 git commit -m "docs(<bead id>): retrospective — <the one-line symptom>"
 git push
@@ -527,7 +527,7 @@ changing the rules, the skill or CI is the navigator's.
 Expect `BEHIND`. **Whether a `BEHIND` branch may merge is the repository's answer:**
 
 ```bash
-gh api "repos/<owner>/<repo>/branches/$(.claude/cerebro/scripts/default-branch)/protection" \
+gh api "repos/<owner>/<repo>/branches/$(.cerebro/cerebro/scripts/default-branch)/protection" \
   --jq '.required_status_checks.strict'      # true: catch up first. false: BEHIND may merge.
 ```
 
@@ -541,12 +541,12 @@ The project's configuration owns this; `false` knowingly risks a semantic confli
 When it says `true`, catch up **on GitHub, and wait for CI again — no local re-gate**:
 
 ```bash
-.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase rebase --pid $PPID
+.cerebro/cerebro/scripts/agent-state <name> working --bead <id> --phase rebase --pid $PPID
 gh api -X PUT "repos/<owner>/<repo>/pulls/<n>/update-branch"
 until [ "$(gh pr view <n> --json mergeStateStatus -q .mergeStateStatus)" != "BEHIND" ]; do
   sleep 10
 done
-.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase ci --pid $PPID
+.cerebro/cerebro/scripts/agent-state <name> working --bead <id> --phase ci --pid $PPID
 # wait for CI on the new head
 ```
 
@@ -603,7 +603,7 @@ happened. Check `git ls-remote --heads origin <branch>` and delete it explicitly
 ```bash
 bd close <id> --reason "Delivered in PR #NN"
 bd dolt push
-.claude/cerebro/scripts/end-pass <name> --pid $PPID
+.cerebro/cerebro/scripts/end-pass <name> --pid $PPID
 ```
 
 The fleet view removes your tree only when nothing in it can be lost, so `git status --porcelain`

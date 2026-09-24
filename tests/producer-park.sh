@@ -13,7 +13,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$repo_root/tests/lib/consumer.sh"
 
 consumer="$(consumer_new repo --link producer-park consumer-root)"
-script="$consumer/.claude/cerebro/scripts/producer-park"
+script="$consumer/.cerebro/cerebro/scripts/producer-park"
 stub="$work_dir/stub"
 mkdir -p "$stub"
 

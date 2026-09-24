@@ -32,14 +32,14 @@
 <span class="c">Cerebro ▸</span> Added `Morph  implementer` to .cerebro/roster.conf and committed it
           (roster: add Morph as an implementer). The fleet view will show the row
           on its next read. I cannot start a session — run
-          `.claude/cerebro/scripts/launch Morph`, or press s on its row.</pre>
+          `.cerebro/cerebro/scripts/launch Morph`, or press s on its row.</pre>
 <p class="note"><b>Cost:</b> a new capability for Cerebro — it edits and commits a tracked declaration. Order is load-bearing in that file (the orchestrator takes implementer names in file order), and a bad row refuses the whole roster with exit 2, so this is a write with real blast radius. It also needs its own rules: where the row goes, whether it carries <code>standby</code>, and what happens on a dirty checkout.</p>
 
 <h2>Option C — do not pre-judge; run it and report what happened</h2>
 <pre><span class="u">you ▸</span> start Morph on the next planned bead
 
 <span class="c">Cerebro ▸</span> I cannot start a session — that is yours or the fleet view's. If you run
-          `.claude/cerebro/scripts/launch Morph` it will answer for itself; on this
+          `.cerebro/cerebro/scripts/launch Morph` it will answer for itself; on this
           roster I expect it to refuse, since the declared implementers are
           Cyclops, Storm, Wolverine and Rogue.</pre>
 <p class="note"><b>Cost:</b> the least prose, and it never asserts a fence that a consumer's own roster might not have. But it makes the navigator find out by trying, which is exactly what the sentence being removed was written to save them.</p>
@@ -48,6 +48,6 @@
 <pre><span class="u">you ▸</span> start another builder
 
 <span class="c">Cerebro ▸</span> Storm and Wolverine are up. The next unused implementer name this
-          project declares is Rogue — run `.claude/cerebro/scripts/launch Rogue`,
+          project declares is Rogue — run `.cerebro/cerebro/scripts/launch Rogue`,
           or press s on its row in the fleet view.</pre>
 <p class="note">Today this paragraph reads “when you pick a new <b>X-Man</b> name”. In every option it becomes “the next unused implementer name <b>this project declares</b>”, which is the same act with a true reason. The built-in default table in <code>scripts/roster</code> stays X-Men and is not touched by this bead.</p>

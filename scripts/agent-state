@@ -5,7 +5,7 @@
 # ah-2n3.2) - so the fleet view derives a row the same way for all of them; it exists so the two
 # timestamps below are handled by code rather than remembered by an agent an hour into a bead.
 #
-#     .claude/cerebro/scripts/agent-state <name> <state> [--bead <id>] [--phase <phase>] --pid <pid>
+#     .cerebro/cerebro/scripts/agent-state <name> <state> [--bead <id>] [--phase <phase>] --pid <pid>
 #
 # <state> is one of: idle working asking waiting - the only field cerebro--supervise-action
 # reads.

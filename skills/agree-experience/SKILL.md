@@ -20,7 +20,7 @@ not designed here.
 <!-- state-contract:begin -->
 
 Write it at every transition, in the same `Bash` call as the thing it describes, only through
-`.claude/cerebro/scripts/agent-state`, never by hand. There are four state words and no others:
+`.cerebro/cerebro/scripts/agent-state`, never by hand. There are four state words and no others:
 
 - `working` — everything you are doing.
 - `asking` — blocked on the navigator; nothing moves until they answer.
@@ -57,9 +57,9 @@ The moments that are yours:
 
 | Moment | Call |
 |---|---|
-| The piece of work you were given is confirmed yours (*The piece of work you were given*) | `.claude/cerebro/scripts/agent-state <your-name> working --bead <id> --phase ux --pid $PPID` |
-| Every question you put to the designer | `.claude/cerebro/scripts/agent-state <your-name> asking --bead <id> --phase ux --pid $PPID`, and `working` again as the very first thing you do with the answer |
-| Ending a pass | `.claude/cerebro/scripts/end-pass <your-name> --pid $PPID` |
+| The piece of work you were given is confirmed yours (*The piece of work you were given*) | `.cerebro/cerebro/scripts/agent-state <your-name> working --bead <id> --phase ux --pid $PPID` |
+| Every question you put to the designer | `.cerebro/cerebro/scripts/agent-state <your-name> asking --bead <id> --phase ux --pid $PPID`, and `working` again as the very first thing you do with the answer |
+| Ending a pass | `.cerebro/cerebro/scripts/end-pass <your-name> --pid $PPID` |
 
 `ux` is this role's one phase word, from the confirmed bead to the last push.
 
@@ -69,7 +69,7 @@ The moments that are yours:
 or another's.
 
 ```bash
-.claude/cerebro/scripts/roster --role ux            # the design agents, in roster order
+.cerebro/cerebro/scripts/roster --role ux            # the design agents, in roster order
 ```
 
 ## What of the planner's skill applies
@@ -98,7 +98,7 @@ child of a bead being split) and assigned it. Confirm it:
 ```bash
 bd dolt pull
 bd show <id> --json | jq -r '(if type=="array" then .[0] else . end) | "\(.status) \(.assignee // "")"'
-.claude/cerebro/scripts/agent-state <your-name> working --bead <id> --phase ux --pid $PPID
+.cerebro/cerebro/scripts/agent-state <your-name> working --bead <id> --phase ux --pid $PPID
 ```
 
 `open <your-name>` is yours; otherwise say so in one line, write nothing, end the pass. No sentence:
@@ -142,8 +142,8 @@ Never a word from this repository; use the replacement:
 Read two of them:
 
 ```bash
-.claude/cerebro/scripts/project-conf project_name        # what the product is called
-.claude/cerebro/scripts/project-conf audience_noun       # what it calls the people who use it
+.cerebro/cerebro/scripts/project-conf project_name        # what the product is called
+.cerebro/cerebro/scripts/project-conf audience_noun       # what it calls the people who use it
 ```
 
 ## Opening the session
@@ -315,7 +315,7 @@ git -C <repo> worktree prune
 ```
 
 ```bash
-.claude/cerebro/scripts/end-pass <your-name> --pid $PPID
+.cerebro/cerebro/scripts/end-pass <your-name> --pid $PPID
 ```
 
 Say in one line what the pass did and **stop producing output**: no sleep loop, no second piece whatever the buffer says;

@@ -1,1 +1,1 @@
-../cerebro/agents/ux.md
+../../.cerebro/cerebro/agents/ux.md

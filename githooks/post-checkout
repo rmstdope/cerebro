@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Sync cerebro's symlinks when a checkout moved the .claude/cerebro gitlink.
+# Sync cerebro's symlinks when a checkout moved the .cerebro/cerebro gitlink.
 #
 # Git passes: $1 previous HEAD, $2 new HEAD, $3 1 for a branch checkout and
 # 0 for a file checkout. A file checkout cannot move a gitlink we care about.

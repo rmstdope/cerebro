@@ -4,9 +4,9 @@
 # JSON array on stdout, sorted by priority ascending then by id, so a caller pipes it into `jq`
 # exactly as it pipes `plan-candidates`.
 #
-#     .claude/cerebro/scripts/stage-candidates ux
-#     .claude/cerebro/scripts/stage-candidates build-design
-#     .claude/cerebro/scripts/stage-candidates --print-stage-label
+#     .cerebro/cerebro/scripts/stage-candidates ux
+#     .cerebro/cerebro/scripts/stage-candidates build-design
+#     .cerebro/cerebro/scripts/stage-candidates --print-stage-label
 #
 # It is the sibling of `scripts/plan-candidates`, which answers the same question for the COMBINED
 # `planner` role and is deliberately not modified: a project's roster carries either that role or

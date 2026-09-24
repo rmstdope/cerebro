@@ -2,7 +2,7 @@
 # Point the consumer repository's hooks at this directory.
 #
 # Run once per clone, from anywhere inside the consumer repo:
-#   .claude/cerebro/githooks/install.sh
+#   .cerebro/cerebro/githooks/install.sh
 set -euo pipefail
 
 HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -48,4 +48,4 @@ fi
 
 git -C "$REPO_ROOT" config core.hooksPath "$HOOKS_PATH"
 echo "core.hooksPath = $HOOKS_PATH"
-echo "post-merge and post-checkout will now sync symlinks when .claude/cerebro moves."
+echo "post-merge and post-checkout will now sync symlinks when .cerebro/cerebro moves."

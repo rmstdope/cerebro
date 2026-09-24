@@ -1,1 +1,1 @@
-../../.claude/cerebro/agents/reviewer.md
+../../.cerebro/cerebro/agents/reviewer.md

@@ -105,7 +105,7 @@ chmod +x "$stub_dir/claude"
 # and skips its checks entirely when they differ, so a fixture that is not a working tree would make
 # these cases silently assert nothing.
 fixture_dir="$(consumer_new fixture --copy)"
-fixture_scripts="$fixture_dir/.claude/cerebro/scripts"
+fixture_scripts="$fixture_dir/.cerebro/cerebro/scripts"
 # A consumer that runs implementers must declare a fast gate, or launch-preflight refuses them
 # (ah-qled.7.1). The fixture declares one for the same reason a real consumer does: nothing here
 # ever runs it - the stub `claude` is what these cases assert against - but without it every
@@ -232,7 +232,7 @@ else
   printf 'Ada\tplanner\n' > "$unreadable_dir/.cerebro/roster.conf"
   chmod 000 "$unreadable_dir/.cerebro/roster.conf"
   set +e
-  out="$("$unreadable_dir/.claude/cerebro/scripts/roster" 2>&1)"
+  out="$("$unreadable_dir/.cerebro/cerebro/scripts/roster" 2>&1)"
   status=$?
   set -e
   chmod 644 "$unreadable_dir/.cerebro/roster.conf"
@@ -276,7 +276,7 @@ pass "roster prints nothing on stderr when it exits 0"
 # `.cerebro/project.conf`: which agents exist is a fact every clone needs, and an ignored file would
 # vanish on a fresh clone with the fleet silently reverting to the X-Men.
 roster_consumer="$(consumer_new roster-consumer --copy)"
-roster_at="$roster_consumer/.claude/cerebro/scripts/roster"
+roster_at="$roster_consumer/.cerebro/cerebro/scripts/roster"
 consumer_roster_file="$roster_consumer/.cerebro/roster.conf"
 
 # With no file of its own, a consumer gets cerebro's own fleet, byte for byte.
@@ -551,10 +551,10 @@ pass "roster --standby needs nothing but bash"
 # --- a roster left at the retired .claude/ path refuses, loudly (cb-epr) ------------------------
 #
 # The declarations moved to `.cerebro/'. A consumer that bumps the submodule past that move and
-# still has its fleet at `.claude/cerebro-roster' must NOT silently fall back to the built-in table:
+# still has its fleet at `.cerebro/cerebro-roster' must NOT silently fall back to the built-in table:
 # absence is the documented "run the X-Men" signal, and a stale path would borrow it - nineteen
 # names, most of which the project does not run, with nothing said anywhere.
-printf 'Ada  planner\n' > "$roster_consumer/.claude/cerebro-roster"
+printf 'Ada  planner\n' > "$roster_consumer/.cerebro/cerebro-roster"
 set +e
 out="$("$roster_at" 2>/dev/null)"
 status=$?
@@ -562,7 +562,7 @@ err="$("$roster_at" 2>&1 >/dev/null)"
 set -e
 [[ $status -eq 2 ]] || fail "roster at the old path: expected exit 2, got $status"
 [[ -z "$out" ]] || fail "roster at the old path: expected nothing on stdout, got: $out"
-grep -q "mv .claude/cerebro-roster .cerebro/roster.conf" <<<"$err" \
+grep -q "mv .cerebro/cerebro-roster .cerebro/roster.conf" <<<"$err" \
   || fail "roster at the old path: expected the mv line on stderr, got: $err"
 pass "a roster left at the retired .claude/ path refuses instead of falling back"
 
@@ -579,10 +579,10 @@ pass "the old-path refusal needs no external command"
 printf 'Turing  implementer\n' > "$consumer_roster_file"
 [[ "$("$roster_at")" == "$(printf 'Turing\timplementer\timplementer')" ]] \
   || fail "roster with both paths: expected the new one to win, got: $("$roster_at")"
-rm -f "$roster_consumer/.claude/cerebro-roster" "$consumer_roster_file"
+rm -f "$roster_consumer/.cerebro/cerebro-roster" "$consumer_roster_file"
 pass "roster: the new path wins when both exist"
 
-# --- a consumer roster at a mount other than .claude/cerebro (ah-ohc2) ---------------------------
+# --- a consumer roster at a mount other than .cerebro/cerebro (ah-ohc2) ---------------------------
 #
 # `roster' finds a consumer's file by path arithmetic (`../../../.cerebro/roster.conf'), which answers only
 # for the standard mount. A consumer that vendors cerebro as a submodule elsewhere gets its own
@@ -612,7 +612,7 @@ cat > "$consumer_roster_file" <<'ROSTER'
 Ada           archivist      autostart
 Turing        implementer
 ROSTER
-out="$(run_launcher_at "$roster_consumer/.claude/cerebro/scripts" launch Ada)"
+out="$(run_launcher_at "$roster_consumer/.cerebro/cerebro/scripts" launch Ada)"
 arg_follows "$out" '^ARG:--agent$' '^ARG:archivist$' \
   || fail "launch Ada (consumer-only role): expected --agent archivist, got: $out"
 # The consumer's own agent file carries `model: sonnet' and it is NOT read: since cb-94y.2
@@ -626,7 +626,7 @@ Ada           archivist
 Grace         librarian
 ROSTER
 set +e
-out="$(run_launcher_at "$roster_consumer/.claude/cerebro/scripts" launch Grace 2>&1)"
+out="$(run_launcher_at "$roster_consumer/.cerebro/cerebro/scripts" launch Grace 2>&1)"
 status=$?
 set -e
 [[ $status -eq 2 ]] || fail "launch Grace (no agent file anywhere): expected exit 2, got $status"
@@ -745,7 +745,7 @@ pass "launch Nobody exits 2, names it not on the roster, lists every roster name
 # `set -euo pipefail' the advisory `names >&2' ended `launch' at that line and its `exit 2' never
 # ran.
 broken_dir="$(consumer_new broken-roster --copy)"
-broken_scripts="$broken_dir/.claude/cerebro/scripts"
+broken_scripts="$broken_dir/.cerebro/cerebro/scripts"
 cat > "$broken_scripts/roster" <<'BROKEN'
 #!/usr/bin/env bash
 printf 'Xavier\tplanner\tinteractive\n'
@@ -827,12 +827,12 @@ consumer_dir="$(consumer_new own-consumer --copy)"
 # otherwise be refused at launch (ah-qled.7.1).
 printf 'gate_fast make check\n' > "$consumer_dir/.cerebro/project.conf"
 
-out="$(run_launcher_at "$consumer_dir/.claude/cerebro/scripts" launch Forge)"
+out="$(run_launcher_at "$consumer_dir/.cerebro/cerebro/scripts" launch Forge)"
 grep -q '^ARG:--agent$' <<<"$out" || fail "launch Forge (consumer): stub was not reached: $out"
 [[ -L "$consumer_dir/.claude/agents/architect.md" ]] \
   || fail "launch Forge (consumer): expected .claude/agents/architect.md to be linked"
-[[ "$(readlink "$consumer_dir/.claude/agents/architect.md")" == "../cerebro/agents/architect.md" ]] \
-  || fail "launch Forge (consumer): expected a relative link to ../cerebro/agents/architect.md"
+[[ "$(readlink "$consumer_dir/.claude/agents/architect.md")" == "../../.cerebro/cerebro/agents/architect.md" ]] \
+  || fail "launch Forge (consumer): expected a relative link to ../../.cerebro/cerebro/agents/architect.md"
 pass "launch Forge links the consumer's agents before starting the session"
 
 # --- .cerebro/agents.conf: which tool, which model, how hard it thinks (cb-94y.2) ---
@@ -850,11 +850,11 @@ launched_flag() {
   # $1 = agent name, $2 = flag (--model/--effort). Prints the value, or nothing if the flag is
   # absent - which is an answer here (a line with no model= passes no --model), not a failure.
   local out
-  out="$(run_launcher_at "$consumer_dir/.claude/cerebro/scripts" launch "$1")"
+  out="$(run_launcher_at "$consumer_dir/.cerebro/cerebro/scripts" launch "$1")"
   arg_value "$out" "$2"
 }
 launch_stderr() {
-  run_launcher_at "$consumer_dir/.claude/cerebro/scripts" launch "$1" 2>&1 >/dev/null
+  run_launcher_at "$consumer_dir/.cerebro/cerebro/scripts" launch "$1" 2>&1 >/dev/null
 }
 
 # A line naming the agent by name: its tool, its model and its effort, and the sentence naming the
@@ -938,7 +938,7 @@ refusal_case() {  # refusal_case <line> <name> <sentence>
   agents_conf "$1" "ux tool=claude model=opus"
   local out status
   set +e
-  out="$(run_launcher_at "$consumer_dir/.claude/cerebro/scripts" launch "$2" 2>&1)"
+  out="$(run_launcher_at "$consumer_dir/.cerebro/cerebro/scripts" launch "$2" 2>&1)"
   status=$?
   set -e
   [[ $status -eq 2 ]] || fail "agents.conf refusal ($2): expected exit 2, got $status: $out"
@@ -993,14 +993,14 @@ pass "agents.conf: a line with an effort and no model says so, and passes the ef
 broken_conf_consumer="$(consumer_new broken-agents-conf --copy)"
 printf 'gate_fast make check\n' > "$broken_conf_consumer/.cerebro/project.conf"
 printf 'default tool=copilot\n' > "$broken_conf_consumer/.cerebro/agents.conf"
-cat > "$broken_conf_consumer/.claude/cerebro/scripts/agents-conf" <<'BROKEN'
+cat > "$broken_conf_consumer/.cerebro/cerebro/scripts/agents-conf" <<'BROKEN'
 #!/usr/bin/env bash
 echo "agents-conf: something went wrong" >&2
 exit 1
 BROKEN
-chmod +x "$broken_conf_consumer/.claude/cerebro/scripts/agents-conf"
+chmod +x "$broken_conf_consumer/.cerebro/cerebro/scripts/agents-conf"
 set +e
-out="$(run_launcher_at "$broken_conf_consumer/.claude/cerebro/scripts" launch Xavier 2>&1)"
+out="$(run_launcher_at "$broken_conf_consumer/.cerebro/cerebro/scripts" launch Xavier 2>&1)"
 status=$?
 set -e
 [[ $status -eq 2 ]] || fail "unusable agents-conf: expected exit 2, got $status: $out"
@@ -1036,7 +1036,7 @@ no_agents_conf
 rm -f "$consumer_dir/.claude/skills/implement-bead"
 mkdir -p "$consumer_dir/.claude/skills/implement-bead"   # a real directory, not a symlink — the sync refuses
 set +e
-out="$(run_launcher_at "$consumer_dir/.claude/cerebro/scripts" launch Forge 2>&1)"
+out="$(run_launcher_at "$consumer_dir/.cerebro/cerebro/scripts" launch Forge 2>&1)"
 status=$?
 set -e
 [[ $status -ne 0 ]] || fail "launch Forge (consumer, blocked sync): expected a non-zero exit"
@@ -1070,9 +1070,9 @@ pass "launch Forge refuses with one line when claude is not on PATH"
 # Its own consumer again: this one has an agent file removed from its copy of the submodule, so it
 # cannot share a consumer with anything that expects a complete one.
 consumer_dir2="$(consumer_new behind-consumer --copy)"
-rm -f "$consumer_dir2/.claude/cerebro/agents/architect.md"
+rm -f "$consumer_dir2/.cerebro/cerebro/agents/architect.md"
 set +e
-out="$(run_launcher_at "$consumer_dir2/.claude/cerebro/scripts" launch Forge 2>&1)"
+out="$(run_launcher_at "$consumer_dir2/.cerebro/cerebro/scripts" launch Forge 2>&1)"
 status=$?
 set -e
 [[ $status -eq 2 ]] || fail "launch Forge (submodule behind): expected exit 2, got $status"
@@ -1110,8 +1110,8 @@ pass "agents/architect.md exists"
 # --- a consumer roster in cerebro's own checkout, mounted in itself (cb-i3l.3) ---------------------
 #
 # The path arithmetic (`../../../.cerebro/roster.conf') answers for a consumer with a submodule under
-# `.claude'. It cannot answer for cerebro serving ITSELF: `.claude/cerebro' is a symlink back to the
-# checkout, so the kernel resolves `.claude/cerebro/scripts/../..' to the directory ABOVE the
+# `.claude'. It cannot answer for cerebro serving ITSELF: `.cerebro/cerebro' is a symlink back to the
+# checkout, so the kernel resolves `.cerebro/cerebro/scripts/../..' to the directory ABOVE the
 # repository, and roster looked for a file beside somebody's clone of it. The consumer file was
 # then ignored in silence and the built-in table used instead - which looks exactly like a working
 # fleet until a name that is not on it fails to launch.
@@ -1121,8 +1121,9 @@ pass "agents/architect.md exists"
 self_cerebro="$(mktemp -d)/cerebro"
 mkdir -p "$self_cerebro/.claude" "$self_cerebro/.cerebro"
 copy_cerebro_into "$self_cerebro"
-ln -s ".." "$self_cerebro/.claude/cerebro"
-self_roster_at="$self_cerebro/.claude/cerebro/scripts/roster"
+mkdir -p "$self_cerebro/.cerebro"
+ln -s ".." "$self_cerebro/.cerebro/cerebro"
+self_roster_at="$self_cerebro/.cerebro/cerebro/scripts/roster"
 
 [[ "$("$self_roster_at")" == "$roster_out" ]] \
   || fail "self-consumer with no roster file: expected the built-in table"
@@ -1148,14 +1149,14 @@ pass "self-consumer roster: every mode reads the same declaration"
 # The self-consumer candidate refuses the old path for the same reason (cb-epr): this repository is
 # a consumer of itself, so it is the one that would notice the move last.
 rm -f "$self_cerebro/.cerebro/roster.conf"
-printf 'Ada  planner\n' > "$self_cerebro/.claude/cerebro-roster"
+printf 'Ada  planner\n' > "$self_cerebro/.cerebro/cerebro-roster"
 set +e
 "$self_roster_at" >/dev/null 2>&1
 status=$?
 err="$("$self_roster_at" 2>&1 >/dev/null)"
 set -e
 [[ $status -eq 2 ]] || fail "self-consumer roster at the old path: expected exit 2, got $status"
-grep -q "mv .claude/cerebro-roster .cerebro/roster.conf" <<<"$err" \
+grep -q "mv .cerebro/cerebro-roster .cerebro/roster.conf" <<<"$err" \
   || fail "self-consumer roster at the old path: expected the mv line, got: $err"
 pass "self-consumer roster: the retired .claude/ path refuses too"
 
@@ -1224,7 +1225,7 @@ rm -f "$fixture_dir/.cerebro/state/$dup_name.state.json"
 # passes only if every token the stub sees came from it.
 fake_consumer="$(consumer_new fake-provider --copy)"
 printf 'gate_fast make check\n' > "$fake_consumer/.cerebro/project.conf"
-cat > "$fake_consumer/.claude/cerebro/scripts/agent-cli" <<'FAKE'
+cat > "$fake_consumer/.cerebro/cerebro/scripts/agent-cli" <<'FAKE'
 #!/usr/bin/env bash
 set -euo pipefail
 # The told-tool interface (cb-94y.2): the four launch-path verbs take `--tool <t>' and this fixture
@@ -1246,14 +1247,14 @@ case "${1:-}" in
   *) echo fake ;;
 esac
 FAKE
-chmod +x "$fake_consumer/.claude/cerebro/scripts/agent-cli"
+chmod +x "$fake_consumer/.cerebro/cerebro/scripts/agent-cli"
 
 fake_dir="$(mktemp -d)"
 cleanup_add "$fake_dir"
 cp "$stub_dir/claude" "$fake_dir/fake-cli"
 cp "$stub_dir/claude" "$fake_dir/claude"
 
-out="$(PATH="$fake_dir:$PATH" bash "$fake_consumer/.claude/cerebro/scripts/launch" Xavier --model sonnet 2>/dev/null)"
+out="$(PATH="$fake_dir:$PATH" bash "$fake_consumer/.cerebro/cerebro/scripts/launch" Xavier --model sonnet 2>/dev/null)"
 grep -q '^ARG:--dialect$' <<<"$out" \
   || fail "fake provider: launch did not exec the binary agent-cli named, got: $out"
 pass "launch execs the binary agent-cli names, not claude"
@@ -1293,7 +1294,7 @@ cleanup_add "$copilot_dir"
 cp "$stub_dir/claude" "$copilot_dir/copilot"
 
 copilot_launch() {
-  PATH="$copilot_dir:$PATH" run_launcher_at "$copilot_consumer/.claude/cerebro/scripts" launch "$@"
+  PATH="$copilot_dir:$PATH" run_launcher_at "$copilot_consumer/.cerebro/cerebro/scripts" launch "$@"
 }
 
 out="$(copilot_launch Xavier 2>/dev/null)"
@@ -1434,7 +1435,7 @@ pass "an ordinary Copilot model keeps its argv and message while inherited provi
 # launch actually performs and not about which script asked for them.
 hint_consumer="$(consumer_new hint-consumer --copy)"
 printf 'gate_fast make check\n' > "$hint_consumer/.cerebro/project.conf"
-hint_scripts="$hint_consumer/.claude/cerebro/scripts"
+hint_scripts="$hint_consumer/.cerebro/cerebro/scripts"
 mv "$hint_scripts/consumer-root" "$hint_scripts/consumer-root.real"
 cat > "$hint_scripts/consumer-root" <<'WRAP'
 #!/usr/bin/env bash
@@ -1458,7 +1459,7 @@ pass "one launch resolves the consumer root exactly once, through --hints"
 out="$(CEREBRO_ROOT_CALLS="$root_calls" run_launcher_at "$hint_scripts" launch Forge)"
 grep -qF "CEREBRO_CONSUMER_ROOT=$(cd "$hint_consumer" && pwd -P)" <<<"$out" \
   || fail "hint launch: the root hint did not reach the session: $out"
-grep -qF "CEREBRO_CONSUMER_MOUNT=.claude/cerebro" <<<"$out" \
+grep -qF "CEREBRO_CONSUMER_MOUNT=.cerebro/cerebro" <<<"$out" \
   || fail "hint launch: the mount hint did not reach the session: $out"
 pass "the root hints are exported down the launched session's process tree"
 
@@ -1511,7 +1512,7 @@ mkdir -p "$cargo_consumer/.cargo"
 printf '[env]\nTS_RS_EXPORT_DIR = { value = "generated", relative = true }\n' \
   > "$cargo_consumer/.cargo/config.toml"
 out="$(TS_RS_EXPORT_DIR=/leak CARGO_MANIFEST_DIR=/x \
-       run_launcher_at "$cargo_consumer/.claude/cerebro/scripts" launch Forge 2>&1)"
+       run_launcher_at "$cargo_consumer/.cerebro/cerebro/scripts" launch Forge 2>&1)"
 grep -q '^TS_RS_EXPORT_DIR=<unset>$' <<<"$out" \
   || fail "launch Forge: the consumer's [env] key should not reach the session, got: $out"
 grep -q 'cleared 1 CARGO_\* variable and TS_RS_EXPORT_DIR from the environment cargo left behind' <<<"$out" \

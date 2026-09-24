@@ -2,7 +2,7 @@
 #
 # Give back a bead the fleet view handed an implementer that never ran on it (cb-10d.1):
 #
-#     .claude/cerebro/scripts/release-bead <Name> <id>
+#     .cerebro/cerebro/scripts/release-bead <Name> <id>
 #
 # Prints EXACTLY ONE WORD on stdout and exits 0 for each of the four:
 #
@@ -31,7 +31,7 @@
 #
 # THE ENDED MODE (cb-10d.4):
 #
-#     .claude/cerebro/scripts/release-bead --ended <Name> <id>
+#     .cerebro/cerebro/scripts/release-bead --ended <Name> <id>
 #
 # Takes back what a session that is gone still holds. One line on stdout, exit 0 for each:
 #
@@ -50,7 +50,7 @@
 #
 # THE WORKTREE MODE (cb-10d.3):
 #
-#     .claude/cerebro/scripts/release-bead --worktree <Name> <id>
+#     .cerebro/cerebro/scripts/release-bead --worktree <Name> <id>
 #
 # Removes `.cerebro/worktrees/<id>` - the tree `scripts/assign-bead` made for an implementer and
 # recorded in `.cerebro/state/worktrees/<id>` - ONLY when nothing in it can be lost, by the

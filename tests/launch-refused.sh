@@ -25,7 +25,7 @@ source "$repo_root/tests/lib/consumer.sh"
 # and the line lands in the fixture's state directory.
 refused_in() {
   local consumer="$1"; shift
-  bash "$consumer/.claude/cerebro/scripts/launch-refused" "$@"
+  bash "$consumer/.cerebro/cerebro/scripts/launch-refused" "$@"
 }
 
 errors_of() { echo "$1/.cerebro/state/errors.jsonl"; }
@@ -34,7 +34,7 @@ errors_of() { echo "$1/.cerebro/state/errors.jsonl"; }
 #
 # Exit 0 always: the CALLER exits 2. A refusal that failed because its log could not be written
 # would replace a precise message with a mystery, which is the defect this script exists to fix.
-c="$(consumer_with_submodule refusal .claude/cerebro)"
+c="$(consumer_with_submodule refusal .cerebro/cerebro)"
 msg="the checkout is 4 commits behind origin/main and has uncommitted changes"
 set +e
 out="$(refused_in "$c" Storm "$msg" 2>&1 >/dev/null)"
@@ -68,7 +68,7 @@ pass "a second refusal appends a second line"
 #
 # tests/launchers.sh proves the launchers run on a narrowed PATH. This is the refusal path's half of
 # that guarantee: a tool it cannot find must cost the log line and nothing else.
-c2="$(consumer_with_submodule nojq .claude/cerebro)"
+c2="$(consumer_with_submodule nojq .cerebro/cerebro)"
 stub_dir="$(mktemp -d)"
 cleanup_add "$stub_dir"
 cat > "$stub_dir/jq" <<'STUB'
@@ -90,7 +90,7 @@ pass "with no jq the refusal is still printed and nothing is written"
 # The launchers run from a standalone clone in the tests, where there is no root to write to.
 #
 # This case must NOT run the script from $repo_root: since cb-i3l.1 this repository is a consumer of
-# itself (.claude/cerebro is a committed symlink back to the checkout), so `consumer-root --shared`
+# itself (.cerebro/cerebro is a committed symlink back to the checkout), so `consumer-root --shared`
 # succeeds there and the refusal is written into the navigator's live errors.jsonl. That wrote 244
 # false "launch Storm" refusals into it before this fixture existed. The fixture below is genuinely
 # outside every consumer, and the guard proves it rather than hoping.

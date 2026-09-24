@@ -1,5 +1,5 @@
 //! `cerebro-tui`: the standalone fleet screen, started by
-//! `.claude/cerebro/scripts/cerebro-tui` and never by hand.
+//! `.cerebro/cerebro/scripts/cerebro-tui` and never by hand.
 //!
 //! It owns five things and nothing else: the terminal, the event loop, the workers that keep the
 //! readers off the drawing thread, the sessions it hosts (cb-kcs.2.2), and - since cb-kcs.1 - the
@@ -104,7 +104,7 @@ fn reader_paths(read: impl Fn(&str) -> Option<String>) -> Result<ReaderPaths, St
             Some(value) if !value.is_empty() => values.push(value),
             _ => {
                 return Err(format!(
-                    "cerebro-tui: {name} is missing - start it with .claude/cerebro/scripts/cerebro-tui"
+                    "cerebro-tui: {name} is missing - start it with .cerebro/cerebro/scripts/cerebro-tui"
                 ))
             }
         }
@@ -4028,7 +4028,7 @@ mod main_tests {
             assert_eq!(
                 message,
                 format!(
-                    "cerebro-tui: {expected} is missing - start it with .claude/cerebro/scripts/cerebro-tui"
+                    "cerebro-tui: {expected} is missing - start it with .cerebro/cerebro/scripts/cerebro-tui"
                 )
             );
         }
@@ -8766,7 +8766,7 @@ mod main_tests {
     ///      transitively (cb-u70), so no fixture writes a library name down. `--copy` and not
     ///      `--link`: `consumer-root`'s validated `../../..` climb is `pwd -P` arithmetic that
     ///      must resolve to the fixture rather than to this checkout.
-    ///   3. The standard mount, `<root>/.claude/cerebro/scripts`.
+    ///   3. The standard mount, `<root>/.cerebro/cerebro/scripts`.
     ///
     /// Starting processes from a unit test is fine here and does not breach cb-x3u's rule: that
     /// one is about a fixture executable the test WRITES and then runs (the `ETXTBSY` race), and
@@ -8775,7 +8775,7 @@ mod main_tests {
     fn supervisor_consumer() -> (tempfile::TempDir, ReaderPaths) {
         let dir = tempfile::tempdir().expect("tempdir");
         let root = dir.path().to_path_buf();
-        let scripts = root.join(".claude/cerebro/scripts");
+        let scripts = root.join(".cerebro/cerebro/scripts");
         std::fs::create_dir_all(&scripts).expect("scripts dir");
         std::fs::create_dir_all(root.join(".cerebro")).expect("declaration dir");
 

@@ -14,7 +14,7 @@ Beads you file carry no plan. Bead commands: `beads-workflow`.
 First message: **"I am the project-definition session."** Both checks run before any question:
 
 ```bash
-root="$(.claude/cerebro/scripts/consumer-root)"
+root="$(.cerebro/cerebro/scripts/consumer-root)"
 cd "$root"
 # The board: does one exist, and is it empty?
 bd list --status open --json 2>/dev/null | jq -r 'length'      # nothing printed: no board yet
@@ -24,10 +24,10 @@ git ls-files \
   | wc -l
 ```
 
-`consumer-root` answers the tree the session started in. If `.claude/cerebro` does not resolve,
+`consumer-root` answers the tree the session started in. If `.cerebro/cerebro` does not resolve,
 refuse (never do the setup):
 
-> cerebro is not mounted at .claude/cerebro — do steps 1 and 2 of its README first, then run
+> cerebro is not mounted at .cerebro/cerebro — do steps 1 and 2 of its README first, then run
 > /project-definition again.
 
 **Open beads — refuse.** Say this (count, first three) and write nothing:
@@ -126,13 +126,13 @@ before the next:
 
 **1. `.cerebro/project.conf`** — topic 5's block, comments included.
 
-**2. `CLAUDE.md`** from `.claude/cerebro/templates/consumer-instructions.md`: `## The project` becomes
+**2. `CLAUDE.md`** from `.cerebro/cerebro/templates/consumer-instructions.md`: `## The project` becomes
 read-backs 1, 2 and 4 as three paragraphs (drop the italic note and placeholder); one line in
 `## Development practices` names the gate; keep every other template section verbatim,
 the producer-review guidance especially. An existing `CLAUDE.md` is **merged**:
 append absent template sections, write `## The project`, keep the rest, say which happened.
 
-**3. `.cerebro/roster.conf`** — propose the built-in `TABLE=` from `.claude/cerebro/scripts/roster`
+**3. `.cerebro/roster.conf`** — propose the built-in `TABLE=` from `.cerebro/cerebro/scripts/roster`
 with `autostart` on `orchestrator`, `planner`, `verifier`, `user-feedback` and `implementer` rows,
 none on `reviewer` or `architect`, as a fenced table:
 
@@ -249,7 +249,7 @@ indented two spaces under their epic; the commit sha; then:
 >
 > ```bash
 > git push origin <default_branch>
-> .claude/cerebro/scripts/cerebro-tui  # then press s on a planner's row
+> .cerebro/cerebro/scripts/cerebro-tui  # then press s on a planner's row
 > ```
 
 No project summary.

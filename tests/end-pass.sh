@@ -31,7 +31,7 @@ run_end_pass() {
   # $1 = fixture root, rest = args to end-pass
   local tmp="$1"
   shift
-  "$tmp/.claude/cerebro/scripts/end-pass" "$@"
+  "$tmp/.cerebro/cerebro/scripts/end-pass" "$@"
 }
 
 state_file() {

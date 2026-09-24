@@ -37,7 +37,7 @@ source "$repo_root/tests/lib/consumer.sh"
 consumer="$(consumer_new repo --link consumer-root project-conf)"
 conf="$consumer/.cerebro/project.conf"
 mkdir -p "$consumer/.cerebro"
-project_conf="$consumer/.claude/cerebro/scripts/project-conf"
+project_conf="$consumer/.cerebro/cerebro/scripts/project-conf"
 
 cat > "$conf" <<'CONF'
 launch_targets  web desktop
@@ -87,7 +87,7 @@ bare="$(consumer_new bare --link consumer-root project-conf)"
 mkdir -p "$bare/.cerebro"
 : > "$bare/.cerebro/project.conf"
 
-out="$("$bare/.claude/cerebro/scripts/project-conf" launch_targets 2>"$work_dir/err")" || true
+out="$("$bare/.cerebro/cerebro/scripts/project-conf" launch_targets 2>"$work_dir/err")" || true
 [[ -z "$out" ]] || fail "no launch_targets: expected no value on stdout, got '$out'"
 grep -q 'launch_targets unset' "$work_dir/err" \
   || fail "no launch_targets: the absence must be SAID, not silent - that is what makes the role ask"
@@ -99,7 +99,7 @@ mkdir -p "$half/.cerebro"
 printf 'launch_targets web desktop\nlaunch_web  run me\nlaunch_web_port 5173\n' \
   > "$half/.cerebro/project.conf"
 
-out="$("$half/.claude/cerebro/scripts/project-conf" launch_desktop 2>"$work_dir/err2")" || true
+out="$("$half/.cerebro/cerebro/scripts/project-conf" launch_desktop 2>"$work_dir/err2")" || true
 [[ -z "$out" ]] || fail "half-written conf: expected no value for launch_desktop, got '$out'"
 grep -q 'launch_desktop unset' "$work_dir/err2" \
   || fail "half-written conf: a name in the index with no command must be reported"
@@ -124,7 +124,7 @@ pass "the port to check before starting a server is declared, not written into t
 # --- called it `warm_build_cmd', and a THIRD spelling of one thing is worse than either.
 for key in prewarm fixtures_doc; do
   [[ -n "$("$project_conf" "$key" 2>/dev/null)" ]] || fail "$key: declared but did not resolve"
-  out="$("$bare/.claude/cerebro/scripts/project-conf" "$key" 2>/dev/null)" || true
+  out="$("$bare/.cerebro/cerebro/scripts/project-conf" "$key" 2>/dev/null)" || true
   [[ -z "$out" ]] || fail "$key: absent must resolve to nothing, not to a guess"
 done
 pass "prewarm and fixtures_doc are optional, and absent yields nothing to run"

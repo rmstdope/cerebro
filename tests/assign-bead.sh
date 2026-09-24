@@ -41,22 +41,22 @@ chmod +x "$stub/bd"
 # directory (nothing real is linked there under these names). Each logs its name and arguments and
 # prints $CANDIDATES_JSON.
 for cand in plan-candidates stage-candidates bugfix-candidates; do
-  cat > "$consumer/.claude/cerebro/scripts/$cand" <<'STUB'
+  cat > "$consumer/.cerebro/cerebro/scripts/$cand" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$(basename "$0") $*" >> "$STUB_DIR/candidates.log"
 printf '%s' "${CANDIDATES_JSON:-[]}"
 STUB
-  chmod +x "$consumer/.claude/cerebro/scripts/$cand"
+  chmod +x "$consumer/.cerebro/cerebro/scripts/$cand"
 done
 
 # cb-10d.3: stub disk-preflight and prepare-worktree, logging into the same bd.log so order is
 # assertable. prepare-worktree makes a real tree on success and a bare directory on failure.
-cat > "$consumer/.claude/cerebro/scripts/disk-preflight" <<'STUB'
+cat > "$consumer/.cerebro/cerebro/scripts/disk-preflight" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$(basename "$0") $*" >> "$STUB_DIR/bd.log"
 exit "${PREFLIGHT_EXIT:-0}"
 STUB
-cat > "$consumer/.claude/cerebro/scripts/prepare-worktree" <<'STUB'
+cat > "$consumer/.cerebro/cerebro/scripts/prepare-worktree" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$(basename "$0") $*" >> "$STUB_DIR/bd.log"
 path="$2"; branch="$4"
@@ -68,7 +68,7 @@ else
 fi
 exit "${PREPARE_EXIT:-0}"
 STUB
-chmod +x "$consumer/.claude/cerebro/scripts/disk-preflight" "$consumer/.claude/cerebro/scripts/prepare-worktree"
+chmod +x "$consumer/.cerebro/cerebro/scripts/disk-preflight" "$consumer/.cerebro/cerebro/scripts/prepare-worktree"
 
 reset() {
   rm -f "$stub/bd.log" "$stub/candidates.log" "$state"/*.handover "$state"/*.state.json
@@ -86,7 +86,7 @@ reset() {
 }
 
 run() {
-  CONSUMER="$consumer" STUB_DIR="$stub" PATH="$stub:$PATH" bash "$consumer/.claude/cerebro/scripts/assign-bead" "$@"
+  CONSUMER="$consumer" STUB_DIR="$stub" PATH="$stub:$PATH" bash "$consumer/.cerebro/cerebro/scripts/assign-bead" "$@"
 }
 
 open='[{"id":"cb-x","status":"open","assignee":""}]'

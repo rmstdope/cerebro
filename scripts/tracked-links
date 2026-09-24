@@ -27,7 +27,7 @@
 # arm, so a change under either always runs the whole matrix: ci-needed needs no edit for this.
 #
 # WHERE A LINK POINTS IS DELIBERATELY NOT CHECKED. `.github/copilot-instructions.md' is a tracked
-# symlink to `../CLAUDE.md' and `.claude/cerebro' points at `..'; neither is written by the sync, so
+# symlink to `../CLAUDE.md' and `.cerebro/cerebro' points at `..'; neither is written by the sync, so
 # asserting targets would mean re-implementing `rel_source_for' and would fail on both. Resolution
 # and presence are the whole check.
 #

@@ -29,7 +29,7 @@ source "$repo_root/tests/lib/consumer.sh"
 
 # A consumer with the three scripts this reader needs; their sourced libraries come with them.
 consumer="$(consumer_new repo --link fleet-supervisor project-conf consumer-root)"
-supervisor="$consumer/.claude/cerebro/scripts/fleet-supervisor"
+supervisor="$consumer/.cerebro/cerebro/scripts/fleet-supervisor"
 mkdir -p "$consumer/.cerebro"
 conf="$consumer/.cerebro/project.conf"
 : > "$conf"
@@ -155,10 +155,10 @@ tab_root="$work_dir/tab$(printf '\t')root"
 mkdir -p "$tab_root/.cerebro"
 git_q init -q "$tab_root"
 git_q -C "$tab_root" commit -q --allow-empty -m "tabbed root"
-"$repo_root/tests/lib/place-scripts" "$tab_root/.claude/cerebro/scripts" \
+"$repo_root/tests/lib/place-scripts" "$tab_root/.cerebro/cerebro/scripts" \
   fleet-supervisor project-conf consumer-root
 set +e
-err="$("$tab_root/.claude/cerebro/scripts/fleet-supervisor" --identity 2>&1 >/dev/null)"; status=$?
+err="$("$tab_root/.cerebro/cerebro/scripts/fleet-supervisor" --identity 2>&1 >/dev/null)"; status=$?
 set -e
 [[ $status -eq 2 ]] || fail "tabbed root: expected exit 2 from --identity, got $status"
 grep -q "cannot be used as a supervision identity" <<<"$err" \
@@ -171,9 +171,9 @@ pass "a root containing a tab is refused rather than written into the record"
 # ---------------------------------------------------------------------------
 worktree="$consumer/.cerebro/worktrees/wt"
 git_q -C "$consumer" worktree add -q "$worktree" -b wt-branch
-"$repo_root/tests/lib/place-scripts" "$worktree/.claude/cerebro/scripts" \
+"$repo_root/tests/lib/place-scripts" "$worktree/.cerebro/cerebro/scripts" \
   fleet-supervisor project-conf consumer-root
-wt_supervisor="$worktree/.claude/cerebro/scripts/fleet-supervisor"
+wt_supervisor="$worktree/.cerebro/cerebro/scripts/fleet-supervisor"
 
 [[ "$("$wt_supervisor" --identity)" == "$identity" ]] \
   || fail "worktree --identity: expected the shared root $identity"
@@ -184,17 +184,17 @@ wt_supervisor="$worktree/.claude/cerebro/scripts/fleet-supervisor"
 pass "a worktree answers the shared root's identity, endpoint and record"
 
 # ---------------------------------------------------------------------------
-# 7. A mount that is not .claude/cerebro still answers (ah-ohc2), because consumer-root does.
+# 7. A mount that is not .cerebro/cerebro still answers (ah-ohc2), because consumer-root does.
 # ---------------------------------------------------------------------------
 # A real submodule at `vendor/cerebro', which is the supported shape: `--identity' asks
 # `consumer-root --shared', and only git can say which working tree holds a checkout mounted
-# somewhere other than `.claude/cerebro' (tests/consumer-fixture.sh says the same of a plain copy
+# somewhere other than `.cerebro/cerebro' (tests/consumer-fixture.sh says the same of a plain copy
 # there, which is the unsupported case).
 vendored="$(consumer_with_submodule vendored vendor/cerebro)"
 out="$("$vendored/vendor/cerebro/scripts/fleet-supervisor" --identity 2>/dev/null || echo FAILED)"
 [[ "$out" == "$(cd "$vendored" && pwd -P)" ]] \
   || fail "vendored mount: expected the vendored consumer's root, got '$out'"
-pass "a mount other than .claude/cerebro answers like any other"
+pass "a mount other than .cerebro/cerebro answers like any other"
 
 # ---------------------------------------------------------------------------
 # 8. Nothing is written. This reader is a reader: it must never create the state directory, the

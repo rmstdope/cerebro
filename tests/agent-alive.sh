@@ -51,7 +51,7 @@ run_alive() {
   local tmp="$1"
   shift
   set +e
-  "$tmp/.claude/cerebro/scripts/agent-alive" "$@" 2>"$tmp/stderr"
+  "$tmp/.cerebro/cerebro/scripts/agent-alive" "$@" 2>"$tmp/stderr"
   local status=$?
   set -e
   return $status
@@ -83,7 +83,7 @@ other="$(new_fixture)"
 # rule reads the marker sentence in the command line, not a resolved path) but they are kept so a
 # row naming one still finds a real path - and {root}-hud is the sibling-prefix case, a checkout
 # beside this one whose path merely starts with this one's.
-mkdir -p "$tmp/.claude/cerebro/hooks" "$other/.claude/cerebro/hooks" "$tmp-hud/.claude/cerebro/hooks"
+mkdir -p "$tmp/.cerebro/cerebro/hooks" "$other/.cerebro/cerebro/hooks" "$tmp-hud/.cerebro/cerebro/hooks"
 # Lives in $work_dir, ONE level above every fixture root, deliberately - not in $tmp. agent-alive's
 # rule asks whether the marker rooted at $repo_root appears ANYWHERE in the process's command line,
 # and a process's own invocation path is part of that command line: keeping the fake session out of

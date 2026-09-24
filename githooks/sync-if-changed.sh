@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Re-run the symlink sync when the .claude/cerebro gitlink moved between two commits.
+# Re-run the symlink sync when the .cerebro/cerebro gitlink moved between two commits.
 #
 # Usage: sync-if-changed.sh <old-ref> <new-ref>
 #
@@ -17,7 +17,7 @@ REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 cd "$REPO_ROOT"
 
 # The mount point is not assumed: this script lives in the submodule, so where it is
-# IS where cerebro is mounted. Hardcoding ".claude/cerebro" here meant a consumer
+# IS where cerebro is mounted. Hardcoding ".cerebro/cerebro" here meant a consumer
 # mounting it anywhere else got no sync and - worse - no word about it (ah-qled.9).
 HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SUBMODULE_ROOT="$(dirname "$HOOK_DIR")"

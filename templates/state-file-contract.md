@@ -1,5 +1,5 @@
 Write it at every transition, in the same `Bash` call as the thing it describes, only through
-`.claude/cerebro/scripts/agent-state`, never by hand. There are four state words and no others:
+`.cerebro/cerebro/scripts/agent-state`, never by hand. There are four state words and no others:
 
 - `working` — everything you are doing.
 - `asking` — blocked on the navigator; nothing moves until they answer.

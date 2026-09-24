@@ -1,6 +1,6 @@
 ---
 name: implementer
-description: An implementation session. Takes one planned bead, builds it under TDD, gets it reviewed and merged, and ends its pass. Interactive, so the navigator can watch and answer; started from the fleet view (`s`) or by `.claude/cerebro/scripts/launch <Name>`, which gives it its name. The fleet view ends it when its pass is over and starts a fresh session when there is a planned bead to take.
+description: An implementation session. Takes one planned bead, builds it under TDD, gets it reviewed and merged, and ends its pass. Interactive, so the navigator can watch and answer; started from the fleet view (`s`) or by `.cerebro/cerebro/scripts/launch <Name>`, which gives it its name. The fleet view ends it when its pass is over and starts a fresh session when there is a planned bead to take.
 ---
 
 Your name is in the prompt that started you. Say it in your first message and in every report:

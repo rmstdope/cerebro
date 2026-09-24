@@ -40,7 +40,7 @@ make_consumer() {
 # refused for a reason that has nothing to do with this bead.
 run_prepare() {
   local consumer="$1"; shift
-  PATH="$stub_dir:$PATH" bash "$consumer/.claude/cerebro/scripts/prepare-worktree" "$@"
+  PATH="$stub_dir:$PATH" bash "$consumer/.cerebro/cerebro/scripts/prepare-worktree" "$@"
 }
 
 # --- a trunk consumer gets its worktree ------------------------------------------------------------

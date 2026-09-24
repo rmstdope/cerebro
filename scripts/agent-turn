@@ -3,8 +3,8 @@
 # Records in an agent's state file the moment its most recent turn ended. Called by hooks, never by
 # an agent:
 #
-#     .claude/cerebro/scripts/agent-turn ended        # Stop: Claude has finished responding
-#     .claude/cerebro/scripts/agent-turn resumed      # UserPromptSubmit: a new turn is starting
+#     .cerebro/cerebro/scripts/agent-turn ended        # Stop: Claude has finished responding
+#     .cerebro/cerebro/scripts/agent-turn resumed      # UserPromptSubmit: a new turn is starting
 #
 # WHY THIS EXISTS (cb-ykz.1). A session that writes `working' and then ends its turn without writing
 # `waiting' sits as `working' for hours - six stretches of five to thirteen hours were measured on

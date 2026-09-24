@@ -71,7 +71,7 @@ tree_gb() { awk -v gb="$1" 'BEGIN { printf "%d\n", gb * 1024 * 1024 }' > "$du_kb
 consumer="$(consumer_new repo --link consumer-root project-conf disk-preflight)"
 conf="$consumer/.cerebro/project.conf"
 mkdir -p "$consumer/.cerebro"
-preflight="$consumer/.claude/cerebro/scripts/disk-preflight"
+preflight="$consumer/.cerebro/cerebro/scripts/disk-preflight"
 
 # stdout on either exit path, and the exit status alongside it.
 run() {

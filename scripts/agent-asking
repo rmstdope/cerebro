@@ -3,8 +3,8 @@
 # Flips an interactive agent's state file to `asking' while it has a question in front of the
 # navigator, and back again when the answer lands. Called by hooks, never by an agent:
 #
-#     .claude/cerebro/scripts/agent-asking begin      # PreToolUse on the question tool
-#     .claude/cerebro/scripts/agent-asking end        # PostToolUse, and PostToolUseFailure
+#     .cerebro/cerebro/scripts/agent-asking begin      # PreToolUse on the question tool
+#     .cerebro/cerebro/scripts/agent-asking end        # PostToolUse, and PostToolUseFailure
 #
 # WHY THIS EXISTS. `agents/verifier.md' has told Psylocke to write `asking' before every question and
 # `working' the moment it is answered since ah-2n3.2, in a table, then in per-site repeats, then as a

@@ -23,7 +23,7 @@ source "$repo_root/tests/lib/consumer.sh"
 # --- a throwaway consumer repo, the way tests/consumer-root.sh builds one ---
 consumer="$(consumer_new repo --link consumer-root project-conf)"
 conf="$consumer/.cerebro/project.conf"
-project_conf="$consumer/.claude/cerebro/scripts/project-conf"
+project_conf="$consumer/.cerebro/cerebro/scripts/project-conf"
 
 cat > "$conf" <<'CONF'
 # A whole-line comment, ignored.
@@ -116,7 +116,7 @@ fi
 
 # --- detection: `install` is inferred from a lockfile when unconfigured ---
 detect_consumer="$(consumer_new detect --link consumer-root project-conf)"
-detect_conf="$detect_consumer/.claude/cerebro/scripts/project-conf"
+detect_conf="$detect_consumer/.cerebro/cerebro/scripts/project-conf"
 
 out="$("$detect_conf" install 2>/dev/null)"
 [[ -z "$out" ]] || fail "no lockfile: expected nothing, got '$out'"
@@ -167,7 +167,7 @@ pass "calling it with no key is a usage error"
 # --- that does not exist - invisibly, in every message.
 crlf_consumer="$(consumer_new crlf --link consumer-root project-conf)"
 printf 'install npm ci\r\nproject_name Atlantis HUD\r\n' > "$crlf_consumer/.cerebro/project.conf"
-out="$("$crlf_consumer/.claude/cerebro/scripts/project-conf" install 2>/dev/null)"
+out="$("$crlf_consumer/.cerebro/cerebro/scripts/project-conf" install 2>/dev/null)"
 [[ "$out" == "npm ci" ]] || fail "CRLF: expected 'npm ci' with no carriage return, got '$(printf %s "$out" | cat -v)'"
 pass "a CRLF file yields a value with no carriage return"
 
@@ -217,7 +217,7 @@ pass "a declared gate is read whole"
 # Detection is a convenience, never a silent one: an agent about to trust a green result should know
 # the harness chose the command rather than the project declaring it.
 gate_repo="$(consumer_new gate --link consumer-root project-conf)"
-gate_conf="$gate_repo/.claude/cerebro/scripts/project-conf"
+gate_conf="$gate_repo/.cerebro/cerebro/scripts/project-conf"
 cat > "$gate_repo/package.json" <<'JSON'
 { "name": "x", "scripts": { "check:fast": "eslint .", "check": "eslint . && vitest run" } }
 JSON
@@ -284,21 +284,21 @@ pass "a gate that is neither declared nor detectable yields nothing"
 # MIGRATION ERROR, and falling back silently is exactly what would leave a consumer running on
 # defaults it never declared.
 old_consumer="$(consumer_new oldpath --link consumer-root project-conf)"
-echo "default_branch trunk" > "$old_consumer/.claude/cerebro-project.conf"
+echo "default_branch trunk" > "$old_consumer/.cerebro/cerebro-project.conf"
 set +e
-out="$("$old_consumer/.claude/cerebro/scripts/project-conf" default_branch main 2>/tmp/oldpath.err)"
+out="$("$old_consumer/.cerebro/cerebro/scripts/project-conf" default_branch main 2>/tmp/oldpath.err)"
 status=$?
 set -e
 err="$(cat /tmp/oldpath.err)"; rm -f /tmp/oldpath.err
 [[ $status -eq 2 ]] || fail "old path: expected exit 2, got $status"
 [[ -z "$out" ]] || fail "old path: expected nothing on stdout, got '$out'"
-grep -q "mv .claude/cerebro-project.conf .cerebro/project.conf" <<<"$err" \
+grep -q "mv .cerebro/cerebro-project.conf .cerebro/project.conf" <<<"$err" \
   || fail "old path: expected the mv line on stderr, got: $err"
 pass "a conf left at the retired .claude/ path refuses with the mv line"
 
 # --- and once it has moved, the same consumer reads normally again ---
-mv "$old_consumer/.claude/cerebro-project.conf" "$old_consumer/.cerebro/project.conf"
-out="$("$old_consumer/.claude/cerebro/scripts/project-conf" default_branch main 2>/dev/null)"
+mv "$old_consumer/.cerebro/cerebro-project.conf" "$old_consumer/.cerebro/project.conf"
+out="$("$old_consumer/.cerebro/cerebro/scripts/project-conf" default_branch main 2>/dev/null)"
 [[ "$out" == "trunk" ]] || fail "after the mv: expected 'trunk', got '$out'"
 pass "after the mv, the declaration reads from .cerebro/project.conf"
 
@@ -309,18 +309,18 @@ pass "after the mv, the declaration reads from .cerebro/project.conf"
 # with `consumer-root' guaranteed to fail, a value can only have come from the hint.
 hint_consumer="$(consumer_new hinted --link consumer-root project-conf)"
 echo "project_name Hinted" > "$hint_consumer/.cerebro/project.conf"
-hint_conf="$hint_consumer/.claude/cerebro/scripts/project-conf"
-rm -f "$hint_consumer/.claude/cerebro/scripts/consumer-root"
-cat > "$hint_consumer/.claude/cerebro/scripts/consumer-root" <<'STUB'
+hint_conf="$hint_consumer/.cerebro/cerebro/scripts/project-conf"
+rm -f "$hint_consumer/.cerebro/cerebro/scripts/consumer-root"
+cat > "$hint_consumer/.cerebro/cerebro/scripts/consumer-root" <<'STUB'
 #!/usr/bin/env bash
 echo "consumer-root: the suite says this must not be forked" >&2
 exit 1
 STUB
-chmod +x "$hint_consumer/.claude/cerebro/scripts/consumer-root"
+chmod +x "$hint_consumer/.cerebro/cerebro/scripts/consumer-root"
 
 out="$(CEREBRO_CONSUMER_ROOT="$hint_consumer" \
        CEREBRO_CONSUMER_SHARED_ROOT="$hint_consumer" \
-       CEREBRO_CONSUMER_MOUNT=".claude/cerebro" \
+       CEREBRO_CONSUMER_MOUNT=".cerebro/cerebro" \
        "$hint_conf" project_name 2>/dev/null)"
 [[ "$out" == "Hinted" ]] || fail "shared-root hint: expected 'Hinted', got '$out'"
 pass "a validated shared-root hint is read instead of forking consumer-root"
@@ -332,7 +332,7 @@ pass "a validated shared-root hint is read instead of forking consumer-root"
 other="$(consumer_new elsewhere --link consumer-root)"
 out="$(CEREBRO_CONSUMER_ROOT="$other" \
        CEREBRO_CONSUMER_SHARED_ROOT="$other" \
-       CEREBRO_CONSUMER_MOUNT=".claude/cerebro" \
+       CEREBRO_CONSUMER_MOUNT=".cerebro/cerebro" \
        "$hint_conf" project_name fallback 2>/dev/null)"
 [[ "$out" == "fallback" ]] || fail "foreign hint: expected 'fallback', got '$out'"
 pass "a hint describing another checkout is rejected"

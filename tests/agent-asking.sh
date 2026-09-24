@@ -27,13 +27,13 @@ new_fixture() {
 
 run_state() {
   local tmp="$1"; shift
-  "$tmp/.claude/cerebro/scripts/agent-state" "$@"
+  "$tmp/.cerebro/cerebro/scripts/agent-state" "$@"
 }
 
 # agent-asking takes its name from the environment, exactly as agent-turn does.
 run_asking() {
   local tmp="$1" name="$2"; shift 2
-  CEREBRO_AGENT_NAME="$name" "$tmp/.claude/cerebro/scripts/agent-asking" "$@"
+  CEREBRO_AGENT_NAME="$name" "$tmp/.cerebro/cerebro/scripts/agent-asking" "$@"
 }
 
 state_file() {
@@ -151,7 +151,7 @@ s="$(sidecar_file "$tmp" Cyclops)"
 before="$(cat "$f")"
 for mode in begin end; do
   status=0
-  out="$(env -u CEREBRO_AGENT_NAME "$tmp/.claude/cerebro/scripts/agent-asking" "$mode")" || status=$?
+  out="$(env -u CEREBRO_AGENT_NAME "$tmp/.cerebro/cerebro/scripts/agent-asking" "$mode")" || status=$?
   [[ $status -eq 0 ]] || fail "no-agent-name-does-nothing: $mode exited $status"
   [[ -z "$out" ]] || fail "no-agent-name-does-nothing: $mode wrote to stdout: $out"
 done
@@ -264,7 +264,7 @@ STUB
 chmod +x "$stub_dir/jq"
 status=0
 out="$(CEREBRO_AGENT_NAME=Cyclops PATH="$stub_dir:$PATH" \
-        "$tmp/.claude/cerebro/scripts/agent-asking" begin)" || status=$?
+        "$tmp/.cerebro/cerebro/scripts/agent-asking" begin)" || status=$?
 [[ $status -eq 0 ]] || fail "a-failing-jq-leaves-no-temp: exited $status"
 [[ -z "$out" ]] || fail "a-failing-jq-leaves-no-temp: wrote to stdout: $out"
 [[ "$before" == "$(cat "$f")" ]] || fail "a-failing-jq-leaves-no-temp: the state file changed"
@@ -292,7 +292,7 @@ run_state "$tmp" Cyclops working --bead cb-1 --phase build --pid 42
 f="$(state_file "$tmp" Cyclops)"
 s="$(sidecar_file "$tmp" Cyclops)"
 before="$(cat "$f")"
-rm -f "$tmp/.claude/cerebro/scripts/state-write.sh"
+rm -f "$tmp/.cerebro/cerebro/scripts/state-write.sh"
 status=0
 out="$(run_asking "$tmp" Cyclops begin)" || status=$?
 [[ $status -eq 0 ]] || fail "a-missing-state-write-library: begin exited $status"

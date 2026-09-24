@@ -1,1 +1,1 @@
-../cerebro/agents/architect.md
+../../.cerebro/cerebro/agents/architect.md

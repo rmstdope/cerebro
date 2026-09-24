@@ -66,7 +66,7 @@ git_q -C "$consumer" commit -q -m "init"
 git_q -C "$consumer" remote add origin "$origin"
 git_q -C "$consumer" push -q -u origin main
 
-prune="$consumer/.claude/cerebro/scripts/prune-worktrees.sh"
+prune="$consumer/.cerebro/cerebro/scripts/prune-worktrees.sh"
 
 # Each agent tree is live: an untracked file keeps it, exactly as a working implementer's would.
 # Its `target/` is aged by hand.
@@ -211,7 +211,7 @@ pass "an unreachable origin still reclaims the shared checkout's own cold build 
 # ================================================================================================
 # The janitor and a worktree whose repository is not the consumer (ah-apw4).
 #
-# A bead whose diff is inside `.claude/cerebro` no longer needs a worktree of the submodule — the
+# A bead whose diff is inside `.cerebro/cerebro` no longer needs a worktree of the submodule — the
 # skill declares the in-place route instead — but the trees older instructions left are real, and
 # nothing enumerated them. Two things had to change for them to be seen and taken: `gh` must be
 # asked from the tree rather than from the sweep's own working directory, and the sweep must walk
@@ -257,11 +257,11 @@ git_q -C "$consumer2" commit -q -m "init"
 git_q -C "$consumer2" remote add origin "$origin2"
 git_q -C "$consumer2" push -q -u origin main
 
-# `.claude/cerebro` is a repository of its own, exactly as the submodule is in a real consumer, and
+# `.cerebro/cerebro` is a repository of its own, exactly as the submodule is in a real consumer, and
 # the scripts under test are reached through it.
 sub_origin="$work_dir/cerebro-origin.git"
 git init -q --bare "$sub_origin"
-sub="$consumer2/.claude/cerebro"
+sub="$consumer2/.cerebro/cerebro"
 mkdir -p "$sub"
 git init -q -b main "$sub"
 "$repo_root/tests/lib/place-scripts" "$sub/scripts" \
@@ -341,7 +341,7 @@ grep -q "ah-squashed" <<<"$out" \
 pass "a failed submodule fetch skips the submodule half and leaves the consumer's alone"
 
 # --- 15. a self-mounted cerebro is not swept twice ----------------------------------------------
-# When cerebro serves its own fleet, `.claude/cerebro` is a symlink back to the checkout root, so
+# When cerebro serves its own fleet, `.cerebro/cerebro` is a symlink back to the checkout root, so
 # the two roots are the SAME repository and its worktree list would otherwise be walked twice —
 # every tree enumerated once per owner, tallies inflated, and an already-removed tree reported as
 # kept on its second pass.
@@ -354,7 +354,8 @@ disk_floor_gb 8
 CONF
 "$repo_root/tests/lib/place-scripts" "$selfmount/scripts" \
   consumer-root project-conf default-branch roster prune-worktrees.sh
-ln -s ".." "$selfmount/.claude/cerebro"
+mkdir -p "$selfmount/.cerebro"
+ln -s ".." "$selfmount/.cerebro/cerebro"
 git_q -C "$selfmount" add -A
 git_q -C "$selfmount" commit -q -m "init"
 git_q -C "$selfmount" remote add origin "$work_dir/selfmount-origin.git"

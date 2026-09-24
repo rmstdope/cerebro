@@ -4,7 +4,7 @@
 # view can show them all in its `Waiting on you` section, and offer back the one case it can judge
 # from the board alone: a pause whose blockers have every one of them closed (cb-wfb).
 #
-#     .claude/cerebro/scripts/sweep-paused.sh --json
+#     .cerebro/cerebro/scripts/sweep-paused.sh --json
 #
 # Four documents park a bead this way - an implementer handing back a plan missing a mandatory
 # section, a planner parking a user-facing question, Moira when an issue and its bead disagree, and
@@ -51,7 +51,7 @@
 set -uo pipefail
 
 if [[ "${1:-}" != "--json" ]]; then
-  echo "usage: .claude/cerebro/scripts/sweep-paused.sh --json" >&2
+  echo "usage: .cerebro/cerebro/scripts/sweep-paused.sh --json" >&2
   exit 2
 fi
 

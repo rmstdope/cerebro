@@ -37,7 +37,7 @@ files. Nothing here is committed.</p>
 
 <h2>What is broken right now</h2>
 <p><code>agents/architect.md</code> lines 66 and 203 tell Forge to write:</p>
-<pre class="del">.claude/cerebro/scripts/agent-state Forge waiting --pid $PPID</pre>
+<pre class="del">.cerebro/cerebro/scripts/agent-state Forge waiting --pid $PPID</pre>
 <p><code>scripts/agent-state</code> has required <code>--wake-in</code> with <code>waiting</code>
 since 2026-08-21 and exits 2 without it. So every Forge sweep since 2026-08-25 has failed to end its
 own pass; the state file is left at <code>{state: working, phase: daily}</code> and the role never
@@ -60,22 +60,22 @@ resolves the role from the roster and calls <code>agent-state</code> itself.</p>
 <div class="cols">
 <div>
   <div class="lbl">agents/verifier.md:96, today</div>
-  <pre class="del">.claude/cerebro/scripts/agent-state Psylocke \
+  <pre class="del">.cerebro/cerebro/scripts/agent-state Psylocke \
   waiting --wake-in 300 --pid $PPID</pre>
   <div class="lbl">skills/plan-bead/SKILL.md:290, today</div>
-  <pre class="del">.claude/cerebro/scripts/agent-state &lt;your-name&gt; \
+  <pre class="del">.cerebro/cerebro/scripts/agent-state &lt;your-name&gt; \
   waiting --wake-in 600 --pid $PPID</pre>
   <div class="lbl">agents/architect.md:66, today (broken)</div>
-  <pre class="del">.claude/cerebro/scripts/agent-state Forge \
+  <pre class="del">.cerebro/cerebro/scripts/agent-state Forge \
   waiting --pid $PPID</pre>
 </div>
 <div>
   <div class="lbl">under Option A — identical everywhere</div>
-  <pre class="ins">.claude/cerebro/scripts/end-pass Psylocke --pid $PPID</pre>
+  <pre class="ins">.cerebro/cerebro/scripts/end-pass Psylocke --pid $PPID</pre>
   <div class="lbl">&nbsp;</div>
-  <pre class="ins">.claude/cerebro/scripts/end-pass &lt;your-name&gt; --pid $PPID</pre>
+  <pre class="ins">.cerebro/cerebro/scripts/end-pass &lt;your-name&gt; --pid $PPID</pre>
   <div class="lbl">&nbsp;</div>
-  <pre class="ins">.claude/cerebro/scripts/end-pass Forge --pid $PPID</pre>
+  <pre class="ins">.cerebro/cerebro/scripts/end-pass Forge --pid $PPID</pre>
 </div>
 </div>
 <p class="note"><strong>Costs.</strong> One more script and one more name to know. <strong>Buys.</strong>
@@ -89,13 +89,13 @@ the fleet default; every existing line keeps working unchanged.</p>
 <div class="cols">
 <div>
   <div class="lbl">agents/architect.md:66, today</div>
-  <pre class="del">.claude/cerebro/scripts/agent-state Forge \
+  <pre class="del">.cerebro/cerebro/scripts/agent-state Forge \
   waiting --pid $PPID
 # agent-state: --wake-in is required with waiting</pre>
 </div>
 <div>
   <div class="lbl">under Option B — unchanged, and now correct</div>
-  <pre class="ins">.claude/cerebro/scripts/agent-state Forge \
+  <pre class="ins">.cerebro/cerebro/scripts/agent-state Forge \
   waiting --pid $PPID</pre>
 </div>
 </div>

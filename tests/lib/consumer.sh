@@ -52,7 +52,7 @@
 #
 #   copy_cerebro_into <dest>      scripts, agents, skills, hooks, templates - and no .git
 #   link_scripts <consumer> <script>...
-#                                 symlinks <script> into <consumer>/.claude/cerebro/scripts/, with
+#                                 symlinks <script> into <consumer>/.cerebro/cerebro/scripts/, with
 #                                 the libraries those scripts source (tests/lib/place-scripts)
 #   consumer_new <name> [--branch <b>] [--origin] [--copy | --link <script>...]
 #                                 echoes $work_dir/<name>; refuses a name it has already built
@@ -206,7 +206,7 @@ copy_cerebro_into() {
 link_scripts() {
   local consumer="$1"
   shift
-  "$repo_root/tests/lib/place-scripts" "$consumer/.claude/cerebro/scripts" "$@"
+  "$repo_root/tests/lib/place-scripts" "$consumer/.cerebro/cerebro/scripts" "$@"
 }
 
 # A name no earlier call has used. A fabricator wrapping consumer_new is almost always called as
@@ -274,8 +274,8 @@ consumer_new() {
     git_q -C "$consumer" commit -q --allow-empty -m init
   fi
 
-  mkdir -p "$consumer/.claude/cerebro/scripts" "$consumer/.cerebro"
-  [ -n "$copy" ] && copy_cerebro_into "$consumer/.claude/cerebro"
+  mkdir -p "$consumer/.cerebro/cerebro/scripts" "$consumer/.cerebro"
+  [ -n "$copy" ] && copy_cerebro_into "$consumer/.cerebro/cerebro"
   ((${#links[@]})) && link_scripts "$consumer" "${links[@]}"
 
   echo "$consumer"
@@ -294,7 +294,7 @@ advance_origin() {
 
 # consumer_with_submodule <name> <mount> [--branch <b>]
 #
-# A consumer that vendors cerebro as a submodule somewhere other than `.claude/cerebro`. A REAL
+# A consumer that vendors cerebro as a submodule somewhere other than `.cerebro/cerebro`. A REAL
 # submodule, not a copied directory, and that is the supported shape rather than a convenience of
 # the fixture: `scripts/consumer-root` falls back to asking git which working tree contains this
 # checkout as a submodule, which answers for a submodule and nothing else. An arbitrarily-PLACED

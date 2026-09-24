@@ -4,8 +4,8 @@
 # a JSON array on stdout,
 # so a caller pipes it into `jq` exactly as it pipes `bd list --json` today.
 #
-#     .claude/cerebro/scripts/work-beads --status <list> [--closed-after <when>]
-#     .claude/cerebro/scripts/work-beads --print-excluded-types
+#     .cerebro/cerebro/scripts/work-beads --status <list> [--closed-after <when>]
+#     .cerebro/cerebro/scripts/work-beads --print-excluded-types
 #
 # It exists because that question was hand-written independently by every reader of closed beads -
 # the fleet view's bead panel, Psylocke's work list, Cerebro's delivery counts - and each copy had

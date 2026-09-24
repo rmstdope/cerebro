@@ -5,7 +5,7 @@
 bead added to the view and why; the module map and the rules a change must keep are in
 `CLAUDE.md` under `fleet-view/`. Bead ids are the pointer into `bd show` for the full decision.*
 
-`.claude/cerebro/scripts/cerebro-tui` opens `cerebro-tui`, a Rust/Ratatui program that draws the
+`.cerebro/cerebro/scripts/cerebro-tui` opens `cerebro-tui`, a Rust/Ratatui program that draws the
 the fleet and the work queues - seven of them since cb-lz5.1, which
 added a `UX agreed {n}` section between `Being planned` and `Unplanned` for beads carrying the
 `ux:agreed` stage label, hidden entirely when empty, and which starts the two cb-lz5 roles `ux`

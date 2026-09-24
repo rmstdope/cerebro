@@ -120,7 +120,7 @@ c="$(consumer_new plain)"
   || fail "consumer_new should leave one commit, got $(git -C "$c" rev-list --count HEAD)"
 [[ "$(git -C "$c" rev-parse --abbrev-ref HEAD)" == "main" ]] \
   || fail "consumer_new should default to main, got $(git -C "$c" rev-parse --abbrev-ref HEAD)"
-[[ -d "$c/.claude/cerebro/scripts" ]] || fail "consumer_new should make .claude/cerebro/scripts"
+[[ -d "$c/.cerebro/cerebro/scripts" ]] || fail "consumer_new should make .cerebro/cerebro/scripts"
 [[ -d "$c/.cerebro" ]] || fail "consumer_new should make .cerebro"
 pass "consumer_new: a git working tree with one commit, on main, with the two harness directories"
 
@@ -134,17 +134,17 @@ pass "consumer_new --branch: the consumer is on the branch it was asked for"
 # --- consumer_new --link ---------------------------------------------------------------------------
 c="$(consumer_new linked --link consumer-root project-conf)"
 for s in consumer-root project-conf; do
-  [[ -L "$c/.claude/cerebro/scripts/$s" ]] || fail "--link $s: not a symlink"
-  [[ "$(readlink "$c/.claude/cerebro/scripts/$s")" == "$repo_root/scripts/$s" ]] \
-    || fail "--link $s: points at $(readlink "$c/.claude/cerebro/scripts/$s")"
+  [[ -L "$c/.cerebro/cerebro/scripts/$s" ]] || fail "--link $s: not a symlink"
+  [[ "$(readlink "$c/.cerebro/cerebro/scripts/$s")" == "$repo_root/scripts/$s" ]] \
+    || fail "--link $s: points at $(readlink "$c/.cerebro/cerebro/scripts/$s")"
 done
-[[ "$("$c/.claude/cerebro/scripts/consumer-root")" == "$c" ]] \
-  || fail "--link: the linked consumer-root should print $c, got $("$c/.claude/cerebro/scripts/consumer-root")"
+[[ "$("$c/.cerebro/cerebro/scripts/consumer-root")" == "$c" ]] \
+  || fail "--link: the linked consumer-root should print $c, got $("$c/.cerebro/cerebro/scripts/consumer-root")"
 pass "consumer_new --link: each script is a symlink into this checkout, and resolves the consumer"
 
-[[ -L "$c/.claude/cerebro/scripts/root-hints.sh" ]] \
+[[ -L "$c/.cerebro/cerebro/scripts/root-hints.sh" ]] \
   || fail "--link: consumer-root and project-conf both source root-hints.sh"
-[[ ! -e "$c/.claude/cerebro/scripts/jsonl-log.sh" ]] \
+[[ ! -e "$c/.cerebro/cerebro/scripts/jsonl-log.sh" ]] \
   || fail "--link: nothing here sources jsonl-log.sh"
 pass "consumer_new --link brings each script's own libraries and no others"
 
@@ -155,9 +155,9 @@ pass "consumer_new --link brings each script's own libraries and no others"
 # (ah-qled.11).
 c="$(consumer_new copied --copy)"
 for d in scripts agents skills hooks templates; do
-  [[ -d "$c/.claude/cerebro/$d" ]] || fail "--copy: $d missing under .claude/cerebro"
+  [[ -d "$c/.cerebro/cerebro/$d" ]] || fail "--copy: $d missing under .cerebro/cerebro"
 done
-[[ ! -e "$c/.claude/cerebro/.git" ]] || fail "--copy: .git should not be copied"
+[[ ! -e "$c/.cerebro/cerebro/.git" ]] || fail "--copy: .git should not be copied"
 pass "consumer_new --copy: scripts, agents, skills, hooks and templates only"
 
 # --- consumer_new --origin, and advance_origin ------------------------------------------------------

@@ -40,7 +40,7 @@ Nothing to propose is the normal case; then say nothing about traps.
 <!-- state-contract:begin -->
 
 Write it at every transition, in the same `Bash` call as the thing it describes, only through
-`.claude/cerebro/scripts/agent-state`, never by hand. There are four state words and no others:
+`.cerebro/cerebro/scripts/agent-state`, never by hand. There are four state words and no others:
 
 - `working` — everything you are doing.
 - `asking` — blocked on the navigator; nothing moves until they answer.
@@ -75,8 +75,8 @@ corrected").
 
 | Moment | Call |
 |---|---|
-| Once the sweep is decided (step 2 below) | `.claude/cerebro/scripts/agent-state Forge working --phase daily --pid $PPID` (or `--phase weekly`) |
-| After the report, ending your turn | `.claude/cerebro/scripts/end-pass Forge --pid $PPID` |
+| Once the sweep is decided (step 2 below) | `.cerebro/cerebro/scripts/agent-state Forge working --phase daily --pid $PPID` (or `--phase weekly`) |
+| After the report, ending your turn | `.cerebro/cerebro/scripts/end-pass Forge --pid $PPID` |
 
 `waiting`, never `idle`: a sweep is a pass, and the fleet view starts the next one on the hour.
 
@@ -109,15 +109,15 @@ corrected").
    git diff --name-only <watermark-sha>..origin/main -- docs/retrospectives/   # new retrospectives: read each
    ```
 
-   If the range touches the `.claude/cerebro` gitlink, also read
-   `git -C .claude/cerebro log --first-parent --format='%h %s' <old>..<new>` (`git diff
-   <watermark-sha>..origin/main -- .claude/cerebro` shows both shas). Nothing in the range → say
+   If the range touches the `.cerebro/cerebro` gitlink, also read
+   `git -C .cerebro/cerebro log --first-parent --format='%h %s' <old>..<new>` (`git diff
+   <watermark-sha>..origin/main -- .cerebro/cerebro` shows both shas). Nothing in the range → say
    so, move nothing, report, finish.
 
    **Weekly reads:** the project's application paths (`scripts/app-paths` prints the pattern; the
    workspace manifest — `pnpm-workspace.yaml`, `Cargo.toml`, whatever it uses — lists the members),
-   plus `.claude/cerebro/scripts`, plus every file in `docs/retrospectives/`. **Delegate the reading
-   one workspace member at a time** (and `.claude/cerebro/scripts`) to `general-purpose` subagents
+   plus `.cerebro/cerebro/scripts`, plus every file in `docs/retrospectives/`. **Delegate the reading
+   one workspace member at a time** (and `.cerebro/cerebro/scripts`) to `general-purpose` subagents
    (the `Agent` tool), each given the bar above verbatim and asked to return candidates as
    `path(s) · the smell in one line · the cost and its citation · confidence`. Read the
    retrospectives yourself. **The subagents find; you judge and file.**

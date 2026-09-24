@@ -30,7 +30,7 @@ script="$repo_root/scripts/tracked-links"
 [[ -f "$script" ]] || fail "scripts/tracked-links does not exist"
 [[ -x "$script" ]] || fail "scripts/tracked-links is not executable"
 
-# A fresh, whole self-consumer: cerebro copied in, `.claude/cerebro' pointing back at it the way
+# A fresh, whole self-consumer: cerebro copied in, `.cerebro/cerebro' pointing back at it the way
 # this repository's own committed symlink does, the real sync run over it, and the result committed
 # so every link is tracked. `fixture_name' rather than a counter, because this is called as
 # `fix="$(new_fixture)"' and a counter incremented in that subshell would never survive it.
@@ -38,8 +38,9 @@ new_fixture() {
   local fix="$work_dir/$(fixture_name selfrepo)"
   copy_cerebro_into "$fix"
   mkdir -p "$fix/.claude"
-  ln -s ".." "$fix/.claude/cerebro"
-  "$fix/.claude/cerebro/scripts/sync-symlinks.sh" >/dev/null
+  mkdir -p "$fix/.cerebro"
+  ln -s ".." "$fix/.cerebro/cerebro"
+  "$fix/.cerebro/cerebro/scripts/sync-symlinks.sh" >/dev/null
   git init -q "$fix"
   git_q -C "$fix" add -A
   git_q -C "$fix" commit -q -m init
@@ -73,11 +74,11 @@ rm -rf "$fix/skills/beads-workflow"
 git_q -C "$fix" commit -q -am "drop a skill"
 run "$fix/scripts/tracked-links"
 [[ $status -eq 1 ]] || fail "a dangling tracked link must exit 1, got $status (output: $out)"
-grep -qF "dangling: .claude/skills/beads-workflow -> ../cerebro/skills/beads-workflow" <<<"$out" \
+grep -qF "dangling: .claude/skills/beads-workflow -> ../../.cerebro/cerebro/skills/beads-workflow" <<<"$out" \
   || fail "expected the .claude/ link reported, got: $out"
 pass "a tracked link whose source is gone is reported, and the exit status is 1"
 
-grep -qF "dangling: .github/skills/beads-workflow -> ../../.claude/cerebro/skills/beads-workflow" <<<"$out" \
+grep -qF "dangling: .github/skills/beads-workflow -> ../../.cerebro/cerebro/skills/beads-workflow" <<<"$out" \
   || fail "expected the .github/ link reported too, got: $out"
 pass "both layouts report it, not just .claude/"
 
@@ -86,7 +87,7 @@ pass "both layouts report it, not just .claude/"
 # Tracked is the subject: the defect is what a clone gets.
 
 fix="$(new_fixture)"
-ln -s ../cerebro/skills/nothing "$fix/.claude/skills/nothing"
+ln -s ../../.cerebro/cerebro/skills/nothing "$fix/.claude/skills/nothing"
 run "$fix/scripts/tracked-links"
 [[ $status -eq 0 ]] || fail "an untracked dangling link must not be a finding, got $status: $out"
 [[ -z "$out" ]] || fail "an untracked dangling link must print nothing, got: $out"

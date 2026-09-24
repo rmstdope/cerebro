@@ -29,7 +29,7 @@ source "$repo_root/tests/lib/consumer.sh"
 decl_consumer="$(consumer_new decl --copy)"
 
 run_decl() {
-  bash "$decl_consumer/.claude/cerebro/scripts/planner-buffer" "$@"
+  bash "$decl_consumer/.cerebro/cerebro/scripts/planner-buffer" "$@"
 }
 
 labels="$(run_decl --print-excluded-labels)"
@@ -117,7 +117,7 @@ set_stub() {
 }
 
 run_count() {
-  PATH="$stub_dir:$PATH" bash "$count_consumer/.claude/cerebro/scripts/planner-buffer" "$@"
+  PATH="$stub_dir:$PATH" bash "$count_consumer/.cerebro/cerebro/scripts/planner-buffer" "$@"
 }
 
 argv_has_pair() {
@@ -267,7 +267,7 @@ declare_multiple() { printf 'planner_buffer_multiple %s\n' "$2" > "$1/.cerebro/p
 run_want() {
   local tmp="$1"
   shift
-  bash "$tmp/.claude/cerebro/scripts/planner-buffer" "$@"
+  bash "$tmp/.cerebro/cerebro/scripts/planner-buffer" "$@"
 }
 
 # --- one bead per implementer on the roster, running or not --------------------------------------
@@ -349,7 +349,7 @@ pass "a session, live or not, is not what is counted"
 
 # --- the count line reads the same wanted number --------------------------------------------------
 tmp="$(want_fixture Cyclops Storm Wolverine)"
-line="$(PATH="$stub_dir:$PATH" bash "$tmp/.claude/cerebro/scripts/planner-buffer" --count)"
+line="$(PATH="$stub_dir:$PATH" bash "$tmp/.cerebro/cerebro/scripts/planner-buffer" --count)"
 [ "$line" = "planned=1 want=3" ] || fail "--count printed '$line' with three implementers on the roster"
 pass "the count line reads the same wanted number as --want"
 suite_passed

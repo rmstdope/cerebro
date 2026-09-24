@@ -48,7 +48,7 @@ differ only in what reaches the navigator’s terminal.</p>
 <p class="note">The house format of <code>scripts/tracked-links</code> and
 <code>scripts/four-eye-sync</code>: one line per finding, nothing at all when there is nothing to
 say, exit 1 when there is. A cron or a gate could run it.</p>
-<pre><span class="d">$</span> .claude/cerebro/scripts/fleet-health
+<pre><span class="d">$</span> .cerebro/cerebro/scripts/fleet-health
 <span class="r">churn:</span>     Xavier started 15 times in 24h (ceiling 8)
 <span class="r">churn:</span>     Cyclops started 9 times in 24h (ceiling 8)
 <span class="r">no-op:</span>     Storm 5 passes held no bead (of 8)
@@ -58,7 +58,7 @@ say, exit 1 when there is. A cron or a gate could run it.</p>
 <span class="d">$ echo $?</span>
 1</pre>
 <p class="note">And on a healthy fleet:</p>
-<pre><span class="d">$</span> .claude/cerebro/scripts/fleet-health
+<pre><span class="d">$</span> .cerebro/cerebro/scripts/fleet-health
 <span class="d">$ echo $?</span>
 0</pre>
 <blockquote>Cheap to read, and it is the one shape that can be wired into something. It cannot answer
@@ -68,7 +68,7 @@ say, exit 1 when there is. A cron or a gate could run it.</p>
 <h2>Option B — a full report, four sections, always printed</h2>
 <p class="note">Every section every time, with its numbers, whether or not anything is wrong.
 Exit 0 always: it is a report, not a check.</p>
-<pre><span class="d">$</span> .claude/cerebro/scripts/fleet-health
+<pre><span class="d">$</span> .cerebro/cerebro/scripts/fleet-health
 <span class="b">Fleet health — last 24h (2026-09-03T13:20Z → 2026-09-04T13:20Z)</span>
 
 <span class="b">Starts per name</span>            ceiling 8
@@ -101,7 +101,7 @@ says something even when there is nothing to say, so it cannot be a check.</bloc
 <h2>Option C — one row per name</h2>
 <p class="note">The roster as a table, one line each, four columns of numbers and a verdict.
 Exit 0 always.</p>
-<pre><span class="d">$</span> .claude/cerebro/scripts/fleet-health
+<pre><span class="d">$</span> .cerebro/cerebro/scripts/fleet-health
 <span class="b">Fleet health — last 24h                    starts  no-op  running now        armed</span>
   <span class="r">Xavier      planner</span>                      <span class="r">15</span>      0   working/plan   2m   yes
   <span class="r">Cyclops     implementer</span>                   <span class="r">9</span>      <span class="y">3</span>   working/build 17m   yes

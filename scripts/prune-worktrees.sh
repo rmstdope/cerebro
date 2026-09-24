@@ -2,7 +2,7 @@
 #
 # Removes agent worktrees that have nothing left in them.
 #
-# It walks TWO worktree lists: the consumer's, and `.claude/cerebro`'s (ah-apw4). A worktree of the
+# It walks TWO worktree lists: the consumer's, and `.cerebro/cerebro`'s (ah-apw4). A worktree of the
 # submodule is registered in the submodule and nowhere else, so nothing enumerated one and two sat
 # on the machine that prompted this with their merged branches still checked out, immortal. A bead
 # whose diff is inside the submodule should not need such a tree at all — `implement-bead`'s
@@ -17,8 +17,8 @@
 # list` gets long enough that nobody reads it, and a `main` checked out in an abandoned tree makes
 # the next agent's `git checkout main` fail for no visible reason.
 #
-#     .claude/cerebro/scripts/prune-worktrees.sh              # one sweep, then exit
-#     .claude/cerebro/scripts/prune-worktrees.sh --dry-run    # say what would go, remove nothing
+#     .cerebro/cerebro/scripts/prune-worktrees.sh              # one sweep, then exit
+#     .cerebro/cerebro/scripts/prune-worktrees.sh --dry-run    # say what would go, remove nothing
 #
 # ## What counts as safe
 #
@@ -121,7 +121,7 @@ dry_run=false
 for argument in "$@"; do
   case "$argument" in
     --dry-run) dry_run=true ;;
-    *) echo "usage: .claude/cerebro/scripts/prune-worktrees.sh [--dry-run]" >&2; exit 2 ;;
+    *) echo "usage: .cerebro/cerebro/scripts/prune-worktrees.sh [--dry-run]" >&2; exit 2 ;;
   esac
 done
 
@@ -144,7 +144,7 @@ default_branch="$("$script_dir/default-branch" 2>/dev/null)" || default_branch="
 # declares the in-place route — but the trees older instructions left are real, are registered in
 # the submodule and not in the consumer, and were therefore invisible to every sweep for ever
 # (ah-apw4). Absent, or not a repository, is an ordinary state: the sweep then walks one list.
-submodule_root="$repo_root/.claude/cerebro"
+submodule_root="$repo_root/.cerebro/cerebro"
 submodule_default_branch="$(git -C "$submodule_root" symbolic-ref --short --quiet refs/remotes/origin/HEAD 2>/dev/null || true)"
 submodule_default_branch="${submodule_default_branch#origin/}"
 [ -n "$submodule_default_branch" ] || submodule_default_branch="$default_branch"
@@ -183,12 +183,12 @@ is_verifier_tree() {
 # reported as kept on the second.
 #
 # This is the one place cb-akc did NOT fold into `consumer-root --self-mounted', and the reason is
-# that the two questions are not the same one. `--self-mounted' asks whether `.claude/cerebro'
+# that the two questions are not the same one. `--self-mounted' asks whether `.cerebro/cerebro'
 # resolves back to the checkout root — true for cerebro serving its own fleet (cb-i3l.1) and false
 # otherwise. That answers this question for a real submodule (two repositories) and for the
 # self-mount (one repository), and gets it WRONG for the third supported layout: a vendored plain
 # COPY at the standard mount (tests/consumer-root.sh, "a plain copy at the standard mount resolves
-# the consumer"), where `.claude/cerebro' is an ordinary directory of the consumer's own repository
+# the consumer"), where `.cerebro/cerebro' is an ordinary directory of the consumer's own repository
 # — one worktree list — while the round trip says "not self-mounted". tests/project-sweeps.sh is
 # the fixture with exactly that shape, and it reported every tree twice when this asked
 # `--self-mounted'. So: compared by git dir, which is what "one repository" actually means, and

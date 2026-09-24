@@ -17,9 +17,9 @@ consumer="$work_dir/consumer"
 mkdir -p "$stub_dir" "$consumer"
 
 git init -q "$consumer"
-mkdir -p "$consumer/.claude/cerebro"
+mkdir -p "$consumer/.cerebro/cerebro"
 for d in scripts agents skills hooks; do
-  [ -d "$repo_root/$d" ] && cp -R "$repo_root/$d" "$consumer/.claude/cerebro/"
+  [ -d "$repo_root/$d" ] && cp -R "$repo_root/$d" "$consumer/.cerebro/cerebro/"
 done
 
 cat > "$stub_dir/bd" <<'STUB'
@@ -47,7 +47,7 @@ set_stdout() { printf '%s' "$2" > "$stub_dir/stdout.$1"; }
 
 run() {
   rm -f "$stub_dir"/argv.*
-  PATH="$stub_dir:$PATH" bash "$consumer/.claude/cerebro/scripts/verifier-epic-candidates"
+  PATH="$stub_dir:$PATH" bash "$consumer/.cerebro/cerebro/scripts/verifier-epic-candidates"
 }
 
 children_for() {

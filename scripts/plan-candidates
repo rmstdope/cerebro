@@ -4,7 +4,7 @@
 # on stdout, sorted by priority ascending then by id, so a caller pipes it into `jq` exactly as it
 # pipes `bd list --json` today.
 #
-#     .claude/cerebro/scripts/plan-candidates
+#     .cerebro/cerebro/scripts/plan-candidates
 #
 # No modes and no flags: it answers exactly one question and its name is the question. (`work-beads`
 # and `planner-buffer` require an explicit mode because each answers several.) Any argument at all

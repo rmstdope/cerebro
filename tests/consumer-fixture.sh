@@ -74,7 +74,7 @@ git_q -C "$consumer" remote add origin "$origin"
 mkdir -p "$consumer/src" "$consumer/.claude/agents" "$consumer/doc/retro"
 echo 'print("a consumer with no JavaScript in it")' > "$consumer/src/main.py"
 
-scripts_at="$consumer/.claude/cerebro/scripts"
+scripts_at="$consumer/.cerebro/cerebro/scripts"
 
 cat > "$consumer/.cerebro/project.conf" <<'CONF'
 project_name   Ledger
@@ -261,8 +261,8 @@ run_at prepare-worktree --path .cerebro/worktrees/LEDG-1 --branch LEDG-1-first \
 
 # The same two roots, asked from inside a worktree of the consumer: the enclosing tree for anything
 # acting on this tree, the shared checkout for anything the fleet reads.
-wt_scripts="$consumer/.cerebro/worktrees/LEDG-1/.claude/cerebro/scripts"
-[[ -x "$wt_scripts/consumer-root" ]] || fail "the worktree has no .claude/cerebro of its own"
+wt_scripts="$consumer/.cerebro/worktrees/LEDG-1/.cerebro/cerebro/scripts"
+[[ -x "$wt_scripts/consumer-root" ]] || fail "the worktree has no .cerebro/cerebro of its own"
 [[ "$(PATH="$stub_dir:$PATH" bash "$wt_scripts/consumer-root")" == "$consumer/.cerebro/worktrees/LEDG-1" ]] \
   || fail "consumer-root from a worktree: expected the worktree itself"
 [[ "$(PATH="$stub_dir:$PATH" bash "$wt_scripts/consumer-root" --shared)" == "$consumer" ]] \
@@ -286,7 +286,7 @@ pass "prune-worktrees.sh sweeps a consumer whose worktrees hold nothing to recla
 
 # --- a consumer that vendors cerebro somewhere else entirely (ah-ohc2) ----------------------------
 #
-# Everything above is a consumer at the standard mount, `<consumer>/.claude/cerebro'. This one keeps
+# Everything above is a consumer at the standard mount, `<consumer>/.cerebro/cerebro'. This one keeps
 # cerebro as a submodule at `vendor/cerebro' and must still get its consumer root, its project facts
 # and its own fleet.
 #

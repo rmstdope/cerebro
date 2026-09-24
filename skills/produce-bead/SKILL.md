@@ -17,7 +17,7 @@ claimed for you; `bugfix` beads stay with the bugfixer.
    or `planned` label is the normal producer input, never a reason to return it for build design.
    If the experience cannot be built as written because a genuine UX or scope decision is still
    needed, park it only through
-   `.claude/cerebro/scripts/producer-park <name> <id> <ux|scope> "<what the navigator must decide>"`.
+   `.cerebro/cerebro/scripts/producer-park <name> <id> <ux|scope> "<what the navigator must decide>"`.
    That records `needs-ui-decision`, releases your claim, and pushes. A missing build plan or an
    implementation detail is never a reason to park: decide it in this plan. End the pass after a
    genuine decision is parked.
@@ -39,7 +39,7 @@ the navigator only for a genuine UX, scope, or approach decision; otherwise deci
 <!-- state-contract:begin -->
 
 Write it at every transition, in the same `Bash` call as the thing it describes, only through
-`.claude/cerebro/scripts/agent-state`, never by hand. There are four state words and no others:
+`.cerebro/cerebro/scripts/agent-state`, never by hand. There are four state words and no others:
 
 - `working` — everything you are doing.
 - `asking` — blocked on the navigator; nothing moves until they answer.
@@ -73,7 +73,7 @@ corrected").
 <!-- state-contract:end -->
 
 Every write names your bead and pid:
-`.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase <phase> --pid $PPID`.
+`.cerebro/cerebro/scripts/agent-state <name> working --bead <id> --phase <phase> --pid $PPID`.
 The phases, in order, are `design`, `build`, `gate`, `review`, `ci`, `rebase` and `merge`; a
 question is `asking` with the same bead and phase. Delivered, parked or handed back:
-`.claude/cerebro/scripts/end-pass <name> --pid $PPID`, last.
+`.cerebro/cerebro/scripts/end-pass <name> --pid $PPID`, last.

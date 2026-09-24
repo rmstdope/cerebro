@@ -1,1 +1,1 @@
-../../.claude/cerebro/agents/verifier.md
+../../.cerebro/cerebro/agents/verifier.md

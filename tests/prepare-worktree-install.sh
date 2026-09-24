@@ -31,9 +31,9 @@ echo hello > "$consumer/README.md"
 git -C "$consumer" add README.md
 git_q -C "$consumer" commit -q -m init
 git -C "$consumer" push -q origin main
-"$repo_root/tests/lib/place-scripts" "$consumer/.claude/cerebro/scripts" \
+"$repo_root/tests/lib/place-scripts" "$consumer/.cerebro/cerebro/scripts" \
   consumer-root project-conf default-branch prepare-worktree
-prepare="$consumer/.claude/cerebro/scripts/prepare-worktree"
+prepare="$consumer/.cerebro/cerebro/scripts/prepare-worktree"
 conf="$consumer/.cerebro/project.conf"
 
 # The path-and-sha line is the contract every caller parses.

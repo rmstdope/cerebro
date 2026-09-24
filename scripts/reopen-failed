@@ -2,7 +2,7 @@
 #
 # scripts/reopen-failed — the one place a failed verification reopens a bead.
 #
-#     .claude/cerebro/scripts/reopen-failed <bead> --sha <full-sha> --notes <text> \
+#     .cerebro/cerebro/scripts/reopen-failed <bead> --sha <full-sha> --notes <text> \
 #         --fault plan|build [--reason <line>]
 #
 #   <bead>      the bead id whose verification failed

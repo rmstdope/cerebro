@@ -67,7 +67,7 @@ Cerebro runs the one-shot sweep every two hours.
   without being closed" and "Keeping the worktrees tidy"). Same guards, no keypress: this is the
   reading a session is for.
 
-Nothing here changes: start a session with `.claude/cerebro/scripts/launch Cerebro` exactly as
+Nothing here changes: start a session with `.cerebro/cerebro/scripts/launch Cerebro` exactly as
 before, for exactly these four things.
 
 ## Retired with the sessionless design

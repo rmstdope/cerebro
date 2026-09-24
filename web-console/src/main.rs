@@ -15,7 +15,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let assets_dir = shared_root.join("web-console/ui/dist");
     let service = ReadOnlyService::new(
         ReaderPaths {
-            scripts_dir: shared_root.join(".claude/cerebro/scripts"),
+            scripts_dir: shared_root.join(".cerebro/cerebro/scripts"),
             consumer_root,
             shared_root,
         },

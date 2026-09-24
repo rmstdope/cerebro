@@ -1,1 +1,1 @@
-../../.claude/cerebro/agents/producer.md
+../../.cerebro/cerebro/agents/producer.md

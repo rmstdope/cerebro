@@ -2,7 +2,7 @@
 #
 # Answers one question, for the shell, the way cerebro--session-alive-p answers it in elisp:
 #
-#     .claude/cerebro/scripts/agent-alive <Name>
+#     .cerebro/cerebro/scripts/agent-alive <Name>
 #
 #   exit 0   <Name>'s state file names a pid that is running AND whose command line carries
 #            cerebro's own marker sentence - "This session is <Name> of the cerebro fleet rooted at

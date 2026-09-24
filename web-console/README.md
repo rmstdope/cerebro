@@ -17,7 +17,10 @@ bead and how long it has been in its phase; the chosen agent's CLI session fills
 five lanes, searchable, filterable by type and priority, and grouped by epic: a bead's epic is its
 nearest dotted-id ancestor, named from the `epics` map in `/api/work`. A click selects a card and a
 second click, or `Enter`, opens it; the arrow keys move the selection, up and down within a lane
-and left and right to the nearest lane with a card in it. An open bead shows everything
+and left and right to the nearest lane with a card in it. `0`–`4` give the chosen bead that priority
+through `POST /api/beads/<id>/priority` (`{"to":0,"from":2}`, the console's header required),
+which runs the fleet view's own board write - `bd update --priority`, then `bd dolt push` - so it
+works whether or not a fleet view supervises; the answer is said above the board. An open bead shows everything
 `bd show` holds about it: status, priority, type and labels under its title, then a tab each for
 the overview (every fact and its dependencies), each of its texts rendered as markdown (raw HTML
 stays text) and the raw JSON, with the arrow keys moving between tabs. It is read on opening through `GET /api/beads/<id>` (a 502 carrying the reason

@@ -171,6 +171,7 @@ impl ReadOnlyService {
             .route("/api/events", get(event_stream))
             .route("/api/control", get(control_snapshot))
             .route("/api/beads/{id}", get(bead_record))
+            .route("/api/beads/{id}/priority", post(bead_priority))
             .route("/api/agents/{name}/{action}", post(agent_action))
             .route("/api/sessions/{name}", get(session_output))
             .route(
@@ -302,6 +303,51 @@ async fn bead_record(
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": panic.to_string()})),
         )),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct PriorityChange {
+    to: u8,
+    /// What the board showed before, for the sentence only; `bd` is given `to` alone.
+    from: Option<u8>,
+}
+
+/// Rank bead ID: the fleet view's own board write (`lifecycle::set_priority` - `bd update`, then
+/// `bd dolt push`), made here rather than through the control socket because board writes sit
+/// outside the supervision lease: a checkout nobody supervises may still rank its beads.
+async fn bead_priority(
+    State(state): State<SnapshotState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(change): Json<PriorityChange>,
+) -> (StatusCode, Json<cerebro_tui::control::Reply>) {
+    use cerebro_tui::{control::Reply, lifecycle::PriorityOutcome};
+    if !from_this_console(&headers) {
+        return (StatusCode::FORBIDDEN, Json(Reply::refused("Only this console’s own page may do that.")));
+    }
+    if !is_plain_name(&id, &['.']) || id.starts_with('-') {
+        return (StatusCode::BAD_REQUEST, Json(Reply::refused("That is not a bead id.")));
+    }
+    if change.to > 4 {
+        return (StatusCode::BAD_REQUEST, Json(Reply::refused("A priority is P0 to P4.")));
+    }
+    let written = tokio::task::spawn_blocking(move || {
+        cerebro_tui::lifecycle::set_priority(
+            &state.reader_paths,
+            &state.programs,
+            state.commands.as_ref(),
+            &id,
+            change.from,
+            change.to,
+            false,
+        )
+    })
+    .await;
+    match written {
+        Ok(PriorityOutcome::Ran { text } | PriorityOutcome::Pushed { text }) => (StatusCode::OK, Json(Reply::done(text))),
+        Ok(PriorityOutcome::Failed { text }) => (StatusCode::BAD_GATEWAY, Json(Reply::refused(text))),
+        Err(panic) => (StatusCode::INTERNAL_SERVER_ERROR, Json(Reply::refused(panic.to_string()))),
     }
 }
 

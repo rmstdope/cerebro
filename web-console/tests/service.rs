@@ -1024,3 +1024,95 @@ async fn a_bead_id_is_a_plain_name() {
         assert_eq!(bead(path).await.0, StatusCode::BAD_REQUEST, "{path}");
     }
 }
+
+/// A `bd` that records what it was asked and answers each call in turn from ANSWERS.
+struct Board {
+    calls: std::sync::Mutex<Vec<String>>,
+    answers: std::sync::Mutex<Vec<bool>>,
+}
+
+impl Board {
+    fn new(answers: &[bool]) -> Arc<Self> {
+        Arc::new(Self { calls: Default::default(), answers: std::sync::Mutex::new(answers.iter().rev().copied().collect()) })
+    }
+    fn calls(&self) -> Vec<String> {
+        self.calls.lock().unwrap().clone()
+    }
+}
+
+impl cerebro_tui::CommandRunner for Board {
+    fn run(
+        &self,
+        program: &std::path::Path,
+        args: &[&str],
+        cwd: Option<&std::path::Path>,
+        _timeout: Duration,
+    ) -> Result<Vec<u8>, cerebro_tui::ReadError> {
+        assert_eq!(cwd, Some(std::path::Path::new("/shared")));
+        self.calls.lock().unwrap().push(args.join(" "));
+        if self.answers.lock().unwrap().pop().unwrap_or(true) {
+            Ok(Vec::new())
+        } else {
+            Err(cerebro_tui::ReadError::Exit { source: cerebro_tui::Invocation::new(program, args), status: Some(1), stderr: "refused".into() })
+        }
+    }
+}
+
+fn ranking(id: &str, body: &str, headers: &[(&str, &str)]) -> Request<Body> {
+    let mut request = Request::builder()
+        .method(Method::POST)
+        .uri(format!("/api/beads/{id}/priority"))
+        .header("host", "localhost:5173")
+        .header("content-type", "application/json");
+    for (key, value) in headers {
+        request = request.header(*key, *value);
+    }
+    request.body(Body::from(body.to_string())).unwrap()
+}
+
+async fn rank(board: &Arc<Board>, request: Request<Body>) -> (StatusCode, serde_json::Value) {
+    let router = service_with_commands(PathBuf::from("/assets"), board.clone()).router();
+    let response = router.oneshot(request).await.unwrap();
+    let status = response.status();
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    (status, serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null))
+}
+
+const OURS: &[(&str, &str)] = &[("x-cerebro-input", "1")];
+
+#[tokio::test]
+async fn a_priority_is_written_and_pushed_as_the_fleet_view_writes_it() {
+    let board = Board::new(&[]);
+    let (status, body) = rank(&board, ranking("cb-7.1", r#"{"to":0,"from":2}"#, OURS)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, serde_json::json!({"done": true, "text": "cb-7.1: P2 → P0"}));
+    assert_eq!(board.calls(), vec!["update cb-7.1 --priority 0", "dolt push"]);
+}
+
+#[tokio::test]
+async fn a_priority_bd_refuses_is_a_failure_and_one_it_cannot_push_says_so() {
+    let refused = Board::new(&[false]);
+    let (status, body) = rank(&refused, ranking("cb-7", r#"{"to":1}"#, OURS)).await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    assert_eq!(body, serde_json::json!({"done": false, "text": "bd would not set cb-7 to P1"}));
+    assert_eq!(refused.calls(), vec!["update cb-7 --priority 1"]);
+
+    let unpushed = Board::new(&[true, false]);
+    let (status, body) = rank(&unpushed, ranking("cb-7", r#"{"to":1}"#, OURS)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["text"].as_str().unwrap().contains("bd dolt push failed"), "{body}");
+}
+
+#[tokio::test]
+async fn only_this_console_may_rank_a_plain_bead_within_p0_to_p4() {
+    for (id, body, headers, status) in [
+        ("cb-7", r#"{"to":1}"#, &[][..], StatusCode::FORBIDDEN),
+        ("cb-7", r#"{"to":1}"#, &[("x-cerebro-input", "1"), ("origin", "https://evil.example")][..], StatusCode::FORBIDDEN),
+        ("-rf", r#"{"to":1}"#, OURS, StatusCode::BAD_REQUEST),
+        ("cb-7", r#"{"to":5}"#, OURS, StatusCode::BAD_REQUEST),
+    ] {
+        let board = Board::new(&[]);
+        assert_eq!(rank(&board, ranking(id, body, headers)).await.0, status, "{id} {body} {headers:?}");
+        assert!(board.calls().is_empty(), "nothing ran for {id} {body}");
+    }
+}

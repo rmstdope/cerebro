@@ -63,7 +63,23 @@ export function moveOn(columns: string[][], selected: string | undefined, key: s
 
 const arrows = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"];
 
-export function WorkBoard({ work, agents, onOpen, keys = true }: { work: Work; agents: Agent[]; onOpen: (id: string) => void; keys?: boolean }) {
+/// What the board said about the last ranking: pending while `bd` runs, then its answer.
+type Ranked = { text: string; tone: "pending" | "done" | "failed" };
+
+/// Rank ID at P TO through the service, which writes and pushes it as the fleet view's own keys do.
+async function rank(id: string, from: number | null | undefined, to: number): Promise<Ranked> {
+  try {
+    const response = await fetch(`/api/beads/${encodeURIComponent(id)}/priority`, {
+      method: "POST", headers: { "content-type": "application/json", "x-cerebro-input": "1" }, body: JSON.stringify({ to, from: from ?? null }) });
+    const reply = await response.json().catch(() => undefined) as { done?: boolean; text?: string } | undefined;
+    if (typeof reply?.text !== "string") return { text: `Couldn’t set ${id} to P${to}: ${response.statusText || "no answer"}`, tone: "failed" };
+    return { text: reply.text, tone: reply.done ? "done" : "failed" };
+  } catch (error) {
+    return { text: `Couldn’t set ${id} to P${to}: ${error instanceof Error ? error.message : String(error)}`, tone: "failed" };
+  }
+}
+
+export function WorkBoard({ work, agents, onOpen, onChanged, keys = true }: { work: Work; agents: Agent[]; onOpen: (id: string) => void; onChanged?: () => Promise<unknown>; keys?: boolean }) {
   const [query, setQuery] = useState("");
   const [type, setType] = useState("all");
   const [priority, setPriority] = useState<PriorityFilter>("all");
@@ -74,6 +90,13 @@ export function WorkBoard({ work, agents, onOpen, keys = true }: { work: Work; a
   const keep = (bead: Bead) => (type === "all" || bead.issue_type === type) && matchesPriority(bead, priority)
     && `${bead.id} ${bead.title}`.toLowerCase().includes(query.toLowerCase());
   const [selected, setSelected] = useState<string>();
+  const [ranked, setRanked] = useState<Ranked>();
+  // One write at a time, in the order pressed, as the fleet view's write worker runs them.
+  const writes = useRef(Promise.resolve());
+  // What the last press still on its way asked for, and how many are, so the sentence for the next
+  // press starts from there rather than from a board that has not caught up. Wording only: `bd` is
+  // given the new number alone, and every press is written.
+  const intended = useRef(new Map<string, { to: number; queued: number }>());
   const cards = useRef(new Map<string, HTMLButtonElement>());
   const card = (bead: Bead) => {
     const needsYou = bead.labels.includes("human") || (bead.assignee !== undefined && bead.assignee !== null && asking.has(bead.assignee));
@@ -115,11 +138,12 @@ export function WorkBoard({ work, agents, onOpen, keys = true }: { work: Work; a
     return { lane, count: beads.length, sections: sections(beads) };
   });
   const columns = shown.map(({ sections }) => sections.flatMap(section => section.beads.map(bead => bead.id)));
-  const board = useRef({ columns, selected, keys, onOpen });
-  board.current = { columns, selected, keys, onOpen };
+  const priorityOf = new Map(lanes.flatMap(lane => lane.beads.map(bead => [bead.id, bead.priority] as const)));
+  const board = useRef({ columns, selected, keys, onOpen, onChanged, priorityOf });
+  board.current = { columns, selected, keys, onOpen, onChanged, priorityOf };
   useEffect(() => {
     const press = (event: KeyboardEvent) => {
-      const { columns, selected, keys, onOpen } = board.current;
+      const { columns, selected, keys, onOpen, onChanged, priorityOf } = board.current;
       if (!keys || event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey || typingInto(event.target)) return;
       if (event.key === "Enter") {
         // A focused control - a card included, whose own click opens it once chosen - takes
@@ -127,6 +151,23 @@ export function WorkBoard({ work, agents, onOpen, keys = true }: { work: Work; a
         if (event.target !== document.body || !selected || !columns.some(ids => ids.includes(selected))) return;
         event.preventDefault();
         onOpen(selected);
+      } else if (/^[0-4]$/.test(event.key)) {
+        if (!selected || !columns.some(ids => ids.includes(selected))) return;
+        event.preventDefault();
+        const to = Number(event.key);
+        const before = intended.current.get(selected);
+        const from = before?.to ?? priorityOf.get(selected);
+        setRanked({ text: `${selected}: P${from ?? "?"} → P${to}…`, tone: "pending" });
+        intended.current.set(selected, { to, queued: (before?.queued ?? 0) + 1 });
+        writes.current = writes.current.then(async () => {
+          try {
+            setRanked(await rank(selected, from, to));
+            await onChanged?.();
+          } finally {
+            const now = intended.current.get(selected);
+            if (now && --now.queued === 0) intended.current.delete(selected);
+          }
+        }).catch(() => undefined);
       } else if (arrows.includes(event.key)) {
         const next = moveOn(columns, selected, event.key);
         if (!next) return;
@@ -157,7 +198,8 @@ export function WorkBoard({ work, agents, onOpen, keys = true }: { work: Work; a
           {(["all", "0", "1", "2+", "unranked"] as const).map(value => <ToggleGroupItem key={value} value={value}>{value === "all" ? "All" : value === "unranked" ? "Unranked" : `P${value}`}</ToggleGroupItem>)}
         </ToggleGroup>
       </div>
-      <label className="ml-auto flex cursor-pointer items-center gap-2 text-muted-foreground">Group by epic
+      {ranked && <p role="status" aria-label="Ranking" className={cn("ml-auto", ranked.tone === "pending" ? "text-muted-foreground" : ranked.tone === "failed" ? "text-destructive" : "text-foreground")}>{ranked.text}</p>}
+      <label className={cn("flex cursor-pointer items-center gap-2 text-muted-foreground", !ranked && "ml-auto")}>Group by epic
         <Switch size="sm" checked={grouped} onCheckedChange={on => { setGrouped(on); localStorage.setItem("cerebro-group-epics", String(on)); }} />
       </label>
     </div>

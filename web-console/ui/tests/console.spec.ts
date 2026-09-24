@@ -470,6 +470,39 @@ test("an answer that is not a bead is a failure, not an empty bead", async ({ pa
   await expect(page.getByRole("dialog").getByRole("alert")).toContainText("Couldn’t load the rest of this bead");
 });
 
+test("a digit ranks the chosen bead, and the board shows it", async ({ page }) => {
+  await board(page);
+  const asked: unknown[] = [];
+  await page.route("/api/beads/cb-2/priority", async route => {
+    asked.push({ body: route.request().postDataJSON(), input: route.request().headers()["x-cerebro-input"] });
+    await page.unroute("/api/work");
+    await page.route("/api/work", work => work.fulfill({ json: { state: "fresh", value: { ...emptyWork,
+      unplanned: [bead("cb-2", "Second", { priority: 0 }), bead("cb-1", "First", { priority: 0 }), bead("cb-3", "Third", { priority: 2 })] } } }));
+    await route.fulfill({ json: { done: true, text: "cb-2: P1 → P0" } });
+  });
+
+  await page.getByText("Second").click();
+  await page.keyboard.press("0");
+  await expect(page.getByRole("status", { name: "Ranking" })).toHaveText("cb-2: P1 → P0");
+  expect(asked).toEqual([{ body: { to: 0, from: 1 }, input: "1" }]);
+  await expect(selectedCard(page)).toContainText("P0");
+
+  await page.getByLabel("Search beads").fill("3");
+  await expect(page.getByLabel("Search beads")).toHaveValue("3");
+  expect(asked).toHaveLength(1);
+});
+
+test("a ranking bd refuses is said in red", async ({ page }) => {
+  await board(page);
+  await page.route("/api/beads/cb-3/priority", route => route.fulfill({ status: 502, json: { done: false, text: "bd would not set cb-3 to P4" } }));
+
+  await page.getByText("Third").click();
+  await page.keyboard.press("4");
+  const said = page.getByRole("status", { name: "Ranking" });
+  await expect(said).toHaveText("bd would not set cb-3 to P4");
+  await expect(said).toHaveClass(/text-destructive/);
+});
+
 test("a small screen's box still has room for its name and its controls", async ({ page }) => {
   const session = await hostSession(page, "\u001b[8;10;20t" + lines(1, 3));
   await expect(session.rows).toContainText("line 3");

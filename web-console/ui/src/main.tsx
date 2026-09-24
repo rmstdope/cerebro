@@ -162,7 +162,7 @@ function App() {
 
       {tab === "work" && (!work.snapshot ? <p className="p-5 text-sm text-muted-foreground">Loading work…</p>
         : !board ? <p className="p-5 text-sm">Couldn’t load work. Try refreshing this page.</p>
-        : <WorkBoard work={board} agents={agents} onOpen={setOpenBead} keys={!palette && !lifecycle.asking && bead === undefined} />)}
+        : <WorkBoard work={board} agents={agents} onOpen={setOpenBead} onChanged={work.refresh} keys={!palette && !lifecycle.asking && bead === undefined} />)}
 
       {lifecycle.dialog}
       <Palette open={palette} agents={agents} selected={agent?.name} supervised={supervised} onClose={() => setPalette(false)}

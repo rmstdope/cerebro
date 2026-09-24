@@ -1,5 +1,7 @@
 # The handover between the UX stage and the build-design stage
 
+> **History.** The build-design stage and the combined planner role described here were retired; a producer now designs its own build from the UX record. The live route is the table in `skills/beads-workflow/SKILL.md`, *The lifecycle a bead moves through*.
+
 This is the contract cb-lz5 splits planning along: a **UX agent**, written for a designer, agrees
 what a person will see; a **build-design agent**, written for a developer, turns that into a plan an
 implementer can build. They run at different times and may be run by different people, so **nothing

@@ -38,16 +38,16 @@ rather than a plan), `verdict:stale` (waiting for the verifier, not a builder), 
 role directly and does not go through UX or the producer queue.
 
 **Only the producer claims, and the fleet view does it on its behalf.** No other role runs
-`bd update --claim`, `bd ready --claim` or `bd unclaim` — not the planner, user feedback, the
+`bd update --claim`, `bd ready --claim` or `bd unclaim` — not the UX agent, user feedback, the
 orchestrator, or a session the navigator drives by hand. Any other claim looks like a build in
 flight, hides a ready bead and strands a lease when that session ends. Creating, reading, ranking,
 labelling, commenting and planning all work unclaimed; if you want to stop another session touching
 a bead, you want a label.
 
-**The planner does not use `bd ready`**, which hides beads whose dependencies are unbuilt — often
-the ones most worth planning. The fleet view picks its bead from `scripts/plan-candidates` or
-`scripts/stage-candidates` and makes it the assignee without a claim; the planner clears the
-assignee when done. `plan-bead` has the commands.
+**The UX agent does not use `bd ready`**, which hides beads whose dependencies are unbuilt — often
+the ones most worth designing first. The fleet view picks its bead from `scripts/stage-candidates`
+and makes it the assignee without a claim; the UX agent clears the assignee when done.
+`agree-experience` has the commands.
 
 `bd blocked` shows what is waiting and on what. `bd list` shows everything.
 
@@ -125,7 +125,7 @@ back because nothing is left to implement, runs all three commands but adds **no
 `plan:revise` — what `scripts/second-look-beads` matches to send it back to the verifier. Only the
 verifier ever adds `plan:revise`.
 
-**A planner escalating has no claim**, so it runs the first and third commands with
+**A UX agent escalating has no claim**, so it runs the first and third commands with
 `--assignee ""` in place of the second — never `bd unclaim`.
 
 `pause:kept` is the orchestrator's alone: *this pause was put to the user and they left it parked*,
@@ -135,8 +135,8 @@ orchestrator unparks the bead or the user removes it to be asked again.
 
 A bead parked on a UI answer carries **both** `needs-ui-decision` and `human`, because
 `bd human list` lists only `human` — the user's one queue. The orchestrator's exception: when the
-user sends a parked bead back to a planner to interview live, `human` comes off and
-`needs-ui-decision` stays, telling that planner which question it holds.
+user sends a parked bead back to a UX agent to interview live, `human` comes off and
+`needs-ui-decision` stays, telling that agent which question it holds.
 
 ## Claiming, and not colliding
 
@@ -204,7 +204,8 @@ Types used here: `feature`, `bug`, `task`, `epic`.
 **The title stands on its own** — it is read in `bd list`, triage and release notes without the
 description. Name the effect, not the area; a bug's symptom, not its suspected cause; no internal
 module names; no *fix*, *improve*, *update* or *handle*. "Roads do not shrink with the map when
-zooming out" needs nothing else. The planner rewrites titles that fall short (see `plan-bead`).
+zooming out" needs nothing else. The UX agent restates a title that falls short in the product's
+words (see `agree-experience`, *Opening the session*).
 
 **Every bead is created at P4**, however urgent it looks: `-p 4` is explicit because bd defaults to
 P2. The one exception is a child of a split parent — see "Dependencies and breakdown".

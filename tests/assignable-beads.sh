@@ -84,6 +84,22 @@ log="$(cat "$stub/bd.log")"
   || fail "the stage label is not asked of bd, since either of two labels admits a bead: $log"
 pass "a bead filed as touching nothing a person sees is assignable without a UX pass"
 
+# --- an unranked bead reaches no producer ------------------------------------------------------
+#
+# P4 means the navigator has not ranked it (beads-workflow, *Writing a good bead*), and only Cerebro
+# touches a P4 bead. The fleet view hands a producer this list's first entry, so the filter has to be
+# here: on 2026-09-24 this repository's own fleet built two P4 beads, one straight onto main.
+
+cat > "$stub/ready.json" <<'JSON'
+[{"id":"cb-unranked","priority":4,"labels":["ux:none"]},
+ {"id":"cb-nopriority","labels":["ux:agreed"]},
+ {"id":"cb-ranked","priority":3,"labels":["ux:agreed"]}]
+JSON
+out="$(run)"
+[[ "$(jq -c '[.[].id]' <<<"$out")" == '["cb-ranked"]' ]] \
+  || fail "a P4 or unprioritised bead is never assignable, got $out"
+pass "an unranked bead reaches no producer"
+
 # --- retired and unknown roles are usage errors --------------------------------------------------
 
 status=0

@@ -679,4 +679,23 @@ run_state "$tmp" Cyclops working --bead cb-ykz.1 --phase gate --pid 42
 rm -rf "$tmp"
 pass "clears-turn-ended"
 
+# --- a pid that is only the agent's own shell is written as the session it runs in ---
+#
+# An agent that passes `$$' names the shell its tool call runs in, which is gone a moment later, so
+# the fleet reads the session as up with no bead. The session is the nearest ancestor carrying this
+# fleet's marker sentence for the name; a pid with no such ancestor is written as given.
+tmp="$(new_fixture)"
+root="$(cd "$tmp" && pwd -P)"
+marker="$(source "$repo_root/scripts/session-marker.sh" && cerebro_marker_sentence Cyclops "$root")"
+bash -c 'echo $$ > "$1/session.pid"; bash -c "\"\$0\" Cyclops working --bead ah-f9c --phase build --pid \$\$" "$2"; exit 0' \
+  "$marker" "$tmp" "$tmp/.cerebro/cerebro/scripts/agent-state"
+pid="$(jq -r '.pid' "$(state_file "$tmp" Cyclops)")"
+[[ "$pid" == "$(cat "$tmp/session.pid")" ]] \
+  || fail "pid-resolves-to-session: expected the marked session $(cat "$tmp/session.pid"), got $pid"
+run_state "$tmp" Cyclops working --bead ah-f9c --phase build --pid $$
+pid="$(jq -r '.pid' "$(state_file "$tmp" Cyclops)")"
+[[ "$pid" == "$$" ]] || fail "pid-resolves-to-session: an unmarked pid was rewritten to $pid"
+rm -rf "$tmp"
+pass "a-shell-pid-is-written-as-the-session-it-runs-in"
+
 suite_passed

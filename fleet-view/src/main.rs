@@ -1747,7 +1747,13 @@ where
                     }
                 }
                 let control = state.control.as_ref().map(|control| control.path().display().to_string());
-                state.standby.publish(&standby, app.standby_names(), control, Instant::now(), clock());
+                let publication = cerebro_tui::PublishedStandby {
+                    names: app.standby_names(),
+                    control,
+                    handed: app.starting_beads(),
+                    updated_at: clock(),
+                };
+                state.standby.publish(&standby, publication, Instant::now());
             } else {
                 state.control = None;
                 state.standby.withdraw();

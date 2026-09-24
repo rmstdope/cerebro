@@ -574,12 +574,16 @@ fn write_publication(dir: &std::path::Path, publication: &PublishedSession) -> s
 /// The names a supervising fleet view shows on standby - armed, and not parked by a failed start -
 /// as it publishes them for readers outside this process. Only this view knows them: a kill, a
 /// give-up, a lease handed over or a manual start changes the armed set, never the roster.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct PublishedStandby {
     pub names: std::collections::BTreeSet<String>,
     /// The socket that asks this view to start, finish or kill (`control`), while it has one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub control: Option<String>,
+    /// The bead this view handed each agent it started, until its state file names one - what the
+    /// fleet pane draws a starting or an `up` row's bead from.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub handed: std::collections::BTreeMap<String, String>,
     pub updated_at: DateTime<Utc>,
 }
 
@@ -587,27 +591,22 @@ pub struct PublishedStandby {
 /// reader can tell a live view from a file a gone one left behind.
 #[derive(Default)]
 pub struct StandbyPublisher {
-    last: Option<(std::collections::BTreeSet<String>, Option<String>, Instant)>,
+    last: Option<(PublishedStandby, Instant)>,
 }
 
 impl StandbyPublisher {
-    pub fn publish(
-        &mut self,
-        path: &std::path::Path,
-        names: std::collections::BTreeSet<String>,
-        control: Option<String>,
-        now: Instant,
-        at: DateTime<Utc>,
-    ) {
-        let due = self.last.as_ref().is_none_or(|(last, socket, when)| {
-            *last != names || *socket != control || now.saturating_duration_since(*when) >= SCREEN_REFRESH
+    pub fn publish(&mut self, path: &std::path::Path, publication: PublishedStandby, now: Instant) {
+        let due = self.last.as_ref().is_none_or(|(last, when)| {
+            last.names != publication.names
+                || last.control != publication.control
+                || last.handed != publication.handed
+                || now.saturating_duration_since(*when) >= SCREEN_REFRESH
         });
         if !due {
             return;
         }
-        let publication = PublishedStandby { names, control, updated_at: at };
         if write_atomically(path, &publication).is_ok() {
-            self.last = Some((publication.names, publication.control, now));
+            self.last = Some((publication, now));
         }
     }
 
@@ -1395,25 +1394,30 @@ mod tests {
         let start = Instant::now();
         let at = |seconds: i64| DateTime::<Utc>::from_timestamp(1_000 + seconds, 0).unwrap();
         let mut publisher = StandbyPublisher::default();
+        let standby = |names, updated_at| PublishedStandby { names, control: None, handed: Default::default(), updated_at };
 
-        publisher.publish(&path, names(&["Moira"]), None, start, at(0));
-        assert_eq!(standby_at(&path).unwrap(), PublishedStandby { names: names(&["Moira"]), control: None, updated_at: at(0) });
+        publisher.publish(&path, standby(names(&["Moira"]), at(0)), start);
+        assert_eq!(standby_at(&path).unwrap(), standby(names(&["Moira"]), at(0)));
 
-        publisher.publish(&path, names(&["Moira"]), None, start + Duration::from_secs(1), at(1));
+        publisher.publish(&path, standby(names(&["Moira"]), at(1)), start + Duration::from_secs(1));
         assert_eq!(standby_at(&path).unwrap().updated_at, at(0), "unchanged and not yet due");
 
-        publisher.publish(&path, names(&[]), None, start + Duration::from_secs(2), at(2));
-        assert_eq!(standby_at(&path).unwrap(), PublishedStandby { names: names(&[]), control: None, updated_at: at(2) });
+        publisher.publish(&path, standby(names(&[]), at(2)), start + Duration::from_secs(2));
+        assert_eq!(standby_at(&path).unwrap(), standby(names(&[]), at(2)));
 
-        publisher.publish(&path, names(&[]), None, start + Duration::from_secs(2) + SCREEN_REFRESH, at(7));
+        publisher.publish(&path, standby(names(&[]), at(7)), start + Duration::from_secs(2) + SCREEN_REFRESH);
         assert_eq!(standby_at(&path).unwrap().updated_at, at(7), "refreshed");
 
         publisher.withdraw();
         assert_eq!(standby_at(&path).unwrap().updated_at, at(7), "another view's file is not touched");
-        publisher.publish(&path, names(&[]), None, start + Duration::from_secs(8), at(8));
+        publisher.publish(&path, standby(names(&[]), at(8)), start + Duration::from_secs(8));
         assert_eq!(standby_at(&path).unwrap().updated_at, at(8), "supervising again publishes at once");
-        publisher.publish(&path, names(&[]), Some("/tmp/c.sock".into()), start + Duration::from_secs(9), at(9));
+        let socket = PublishedStandby { control: Some("/tmp/c.sock".into()), ..standby(names(&[]), at(9)) };
+        publisher.publish(&path, socket.clone(), start + Duration::from_secs(9));
         assert_eq!(standby_at(&path).unwrap().control.as_deref(), Some("/tmp/c.sock"), "a control socket, at once");
+        let handed = [("Cyclops".to_string(), "cb-njw".to_string())].into_iter().collect();
+        publisher.publish(&path, PublishedStandby { handed, ..socket }, start + Duration::from_secs(10));
+        assert_eq!(standby_at(&path).unwrap().handed["Cyclops"], "cb-njw", "a handed bead, at once");
     }
 
     fn key(code: KeyCode) -> KeyEvent {

@@ -167,6 +167,22 @@ test("does not offer a session for a dead agent", async ({ page }) => {
   await expect(page.getByRole("region", { name: "Rogue session" })).toHaveCount(0);
 });
 
+test("draws an up agent green and names the bead it was handed, as the fleet view does", async ({ page }) => {
+  await page.route("/api/fleet", route => route.fulfill(fleetOf(
+    { name: "Cyclops", role: "producer", state: "Up", bead: "cb-njw" },
+    { name: "Storm", role: "producer", state: "Starting", bead: "cb-e26" },
+  )));
+  await page.goto("/");
+
+  const fleet = page.getByRole("complementary", { name: "Fleet" });
+  const cyclops = fleet.getByRole("button", { name: /Cyclops/ });
+  const storm = fleet.getByRole("button", { name: /Storm/ });
+  await expect(cyclops).toContainText("cb-njw");
+  await expect(cyclops.locator("[data-state]")).toHaveClass(/bg-emerald-500/);
+  await expect(storm).toContainText("cb-e26");
+  await expect(storm.locator("[data-state]")).toHaveClass(/border-dotted/);
+});
+
 test("tells a standby agent from a dead one in the offline list", async ({ page }) => {
   await page.route("/api/fleet", route => route.fulfill(fleetOf(
     { name: "Rogue", role: "producer", state: "Dead" },

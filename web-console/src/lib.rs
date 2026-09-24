@@ -205,9 +205,18 @@ impl SnapshotState {
         let reader = self.clone();
         snapshot(&self.snapshots.fleet, fresh, after, move || {
             let rows = read_fleet(&reader.reader_paths, &reader.programs, reader.commands.as_ref())?;
-            let standby = read_standby(&standby_path(&reader.reader_paths))?;
-            Ok(cerebro_tui::model::apply_standby(rows, &standby, &Default::default())
+            let published = read_publication(&standby_path(&reader.reader_paths))?.unwrap_or_default();
+            let rows = cerebro_tui::model::apply_starting(rows, &published.handed);
+            Ok(cerebro_tui::model::apply_standby(rows, &published.names, &Default::default())
                 .into_iter()
+                .map(|mut row| {
+                    // The TUI draws a starting or `up` row's bead from what it handed, until the
+                    // state file names one.
+                    if matches!(row.state, cerebro_tui::model::RowState::Starting | cerebro_tui::model::RowState::Up) && row.bead.is_none() {
+                        row.bead = published.handed.get(&row.name).cloned();
+                    }
+                    row
+                })
                 .map(|row| Agent {
                     finishing: cerebro_tui::lifecycle::stop_flag_set(&reader.reader_paths, &row.name),
                     row,
@@ -472,11 +481,6 @@ fn read_publication(path: &std::path::Path) -> Result<Option<cerebro_tui::Publis
             .is_some_and(|socket| std::os::unix::net::UnixStream::connect(socket).is_ok())
     };
     Ok((age < SCREEN_STALE_SECONDS || answers()).then_some(publication))
-}
-
-/// The names the supervising fleet view holds on standby; nobody, with no live view.
-fn read_standby(path: &std::path::Path) -> Result<std::collections::BTreeSet<String>, cerebro_tui::ReadError> {
-    Ok(read_publication(path)?.map(|publication| publication.names).unwrap_or_default())
 }
 
 /// The socket a live, supervising fleet view takes start, finish and kill requests on; none with

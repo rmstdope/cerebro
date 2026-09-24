@@ -11,6 +11,8 @@ const tones: Record<string, { dot: string; text: string; badge: string }> = {
   working: { dot: "bg-emerald-500 animate-breathe", text: "text-muted-foreground", badge: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400" },
   asking: { dot: "bg-amber-400", text: "text-amber-700 dark:text-amber-300", badge: "bg-amber-500/15 text-amber-700 dark:text-amber-300" },
   idle: { dot: "bg-sky-400", text: "text-muted-foreground", badge: "bg-sky-500/15 text-sky-700 dark:text-sky-300" },
+  up: { dot: "bg-emerald-500", text: "text-muted-foreground", badge: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400" },
+  starting: { dot: "border-2 border-dotted border-sky-500 dark:border-sky-400", text: "text-sky-700 dark:text-sky-300", badge: "bg-sky-500/10 text-sky-700 dark:text-sky-300" },
   waiting: { dot: "bg-zinc-400", text: "text-muted-foreground", badge: "bg-zinc-500/15 text-zinc-700 dark:text-zinc-300" },
 };
 const offline: Record<string, { dot: string; text: string; badge: string }> = {

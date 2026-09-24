@@ -151,6 +151,24 @@ fi
 # which from a bead worktree's own submodule copy is the worktree itself, not the main checkout
 # the fleet view reads (ah-e0w). See scripts/consumer-root for the two roots and why they differ.
 repo_root="$("$script_dir/consumer-root" --shared)"
+
+# An agent that passes `$$', or runs this from a nested shell, names a process that is gone a moment
+# later, and the fleet reads a working session as up with no bead. So the pid written is the nearest
+# ancestor of the one given that carries this fleet's marker sentence for NAME - the session itself,
+# proven the way `agent-alive' proves it. A pid with no such ancestor is written as given.
+source "$script_dir/session-marker.sh"
+name_needle="$(cerebro_marker_name_needle "$name")"
+root_needle="$(cerebro_marker_root_needle "$repo_root")"
+walk="$pid"
+for _ in 1 2 3 4 5 6 7 8; do
+  args="$(ps -o args= -p "$walk" 2>/dev/null)" || break
+  case "$args" in
+    *"$name_needle"*) [[ "$args" == *"$root_needle"* ]] && { pid="$walk"; break; } ;;
+  esac
+  walk="$(ps -o ppid= -p "$walk" 2>/dev/null | tr -d ' ')" || break
+  [[ "$walk" =~ ^[0-9]+$ && "$walk" -gt 1 ]] || break
+done
+
 out_dir="$repo_root/.cerebro/state"
 mkdir -p "$out_dir"
 out_file="$out_dir/$name.state.json"

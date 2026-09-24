@@ -728,6 +728,7 @@ fn publish_standby_with(
     let publication = cerebro_tui::PublishedStandby {
         names: names.iter().map(|name| name.to_string()).collect(),
         control: socket.map(|socket| socket.to_string_lossy().into_owned()),
+        handed: Default::default(),
         updated_at: chrono::Utc::now() - age,
     };
     std::fs::create_dir_all(root.join(".cerebro/state")).unwrap();
@@ -761,6 +762,50 @@ async fn without_a_live_fleet_view_nobody_is_on_standby() {
     drop(std::os::unix::net::UnixListener::bind(&socket).unwrap());
     publish_standby_with(root.path(), &["Moira"], Some(&socket), chrono::Duration::seconds(60));
     assert_eq!(fleet_states(root.path()).await, states(&[("Storm", "Dead"), ("Moira", "Dead")]));
+}
+
+/// A bead the fleet view has handed an agent is shown as the TUI shows it: a dead row it was
+/// handed is starting, and a row with no bead of its own names the handed one.
+#[tokio::test]
+async fn a_bead_the_fleet_view_handed_is_shown_until_the_state_file_names_one() {
+    let root = tempfile::tempdir().unwrap();
+    let publication = cerebro_tui::PublishedStandby {
+        names: ["Moira".to_string()].into_iter().collect(),
+        control: None,
+        handed: [("Storm".to_string(), "cb-njw".to_string())].into_iter().collect(),
+        updated_at: chrono::Utc::now(),
+    };
+    std::fs::create_dir_all(root.path().join(".cerebro/state")).unwrap();
+    std::fs::write(root.path().join(".cerebro/state/standby.json"), serde_json::to_string(&publication).unwrap()).unwrap();
+
+    let service = ReadOnlyService::new(
+        ReaderPaths {
+            consumer_root: root.path().to_path_buf(),
+            shared_root: root.path().to_path_buf(),
+            scripts_dir: root.path().join("scripts"),
+        },
+        Programs::default(),
+        Arc::new(TwoDeadCommands),
+        SupervisionMode::Supervising,
+        PathBuf::from("/assets"),
+    );
+    let response = service.router().oneshot(get("/api/fleet")).await.unwrap();
+    let body: serde_json::Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+    let rows: Vec<(String, String, serde_json::Value)> = body["value"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| (row["name"].as_str().unwrap().into(), row["state"].as_str().unwrap().into(), row["bead"].clone()))
+        .collect();
+
+    assert_eq!(
+        rows,
+        vec![
+            ("Storm".into(), "Starting".into(), serde_json::json!("cb-njw")),
+            ("Moira".into(), "Standby".into(), serde_json::Value::Null),
+        ]
+    );
 }
 
 /// A launch or a reap can hold the fleet view's loop for longer than the publication stays fresh.
@@ -882,6 +927,7 @@ fn publish_control(root: &std::path::Path, socket: Option<&std::path::Path>, age
     let publication = cerebro_tui::PublishedStandby {
         names: Default::default(),
         control: socket.map(|socket| socket.to_string_lossy().into_owned()),
+        handed: Default::default(),
         updated_at: chrono::Utc::now() - age,
     };
     std::fs::create_dir_all(root.join(".cerebro/state")).unwrap();

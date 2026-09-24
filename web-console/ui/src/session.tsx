@@ -4,8 +4,7 @@ import "@xterm/xterm/css/xterm.css";
 import { Check, Copy, Maximize2, SquareTerminal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-
-type Output = { state: "live"; log: string; reset: boolean; data: string; offset: number; more: boolean } | { state: "absent" };
+import { registerResize, replay, type SessionOutput } from "./session-replay";
 
 // A line a full-screen CLI scrolled away, as `fleet-view/src/history.rs` writes it into the log
 // under OSC `HISTORY_OSC`, a literal twin of the constant there.
@@ -99,16 +98,17 @@ export function SessionScreen({ name }: { name: string }) {
       if (atBottom()) track(true);
       else if (up || (buffer.type === "normal" && buffer.viewportY < buffer.baseY)) track(false);
     };
-    // Moves of our own are where the next scroll is measured from, since a reader's scroll in
-    // the same frame arrives in one event with them.
-    const follow = () => { if (tracking) { scroller.scrollTop = scroller.scrollHeight; lastTop = scroller.scrollTop; } };
+    const follow = () => {
+      if (tracking) {
+        scroller.scrollTop = scroller.scrollHeight;
+        lastTop = scroller.scrollTop;
+      }
+    };
     scroller.addEventListener("scroll", onScroll);
     terminal.onScroll(onScroll);
     controls.current = {
       follow: on => {
         track(on);
-        // xterm follows while its viewport is at the bottom, and holds the text still (trimming
-        // included) once the reader is a line above it, so Follow off puts them there.
         if (on) { stepPending = false; terminal.scrollToBottom(); follow(); } else holdStill();
       },
       text: () => {
@@ -198,11 +198,7 @@ export function SessionScreen({ name }: { name: string }) {
       void send();
       if (!tracking) controls.current?.follow(true);
     });
-    terminal.parser.registerCsiHandler({ final: "t" }, params => {
-      const [op, rows, cols] = params.map(param => Array.isArray(param) ? param[0] : param);
-      if (op === 8 && rows > 0 && cols > 0) { terminal.resize(cols, rows); setSize(`${cols}×${rows}`); }
-      return true;
-    });
+    const resize = registerResize(terminal, setSize);
     terminal.open(host.current!);
     // The box is the size of the screen, as the terminal console's pane is. A screen taller or
     // wider than the room there is is drawn in a smaller font, never a larger one than `FONT`,
@@ -252,14 +248,19 @@ export function SessionScreen({ name }: { name: string }) {
         const query = log === undefined ? "" : `?log=${encodeURIComponent(log)}&from=${offset}`;
         const response = await fetch(`/api/sessions/${encodeURIComponent(name)}${query}`);
         if (!response.ok) throw new Error(response.statusText);
-        const output = await response.json() as Output;
+        const output = await response.json() as SessionOutput;
         if (stopped) return;
         if (output.state === "absent") { setStatus("absent"); log = undefined; offset = 0; }
         else {
           setStatus("live");
           // In order with the writes still queued, or the old log's last lines would land after it.
-          if (output.reset) terminal.write("", () => { terminal.reset(); history.replaceChildren(); if (!tracking) holdStill(); });
-          if (output.data) terminal.write(output.data, () => { trim(); follow(); });
+          replay(terminal, output, {
+            reset: () => {
+              history.replaceChildren();
+              if (!tracking) holdStill();
+            },
+            wrote: () => { trim(); follow(); },
+          });
           log = output.log;
           offset = output.offset;
           if (output.more) again = 0;
@@ -272,6 +273,7 @@ export function SessionScreen({ name }: { name: string }) {
       stopped = true;
       clearTimeout(timer);
       fitting.disconnect();
+      resize.dispose();
       scroller.removeEventListener("scroll", onScroll);
       scroller.removeEventListener("wheel", onWheel, { capture: true });
       terminal.dispose();

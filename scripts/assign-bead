@@ -79,9 +79,13 @@ if ! entry="$("$script_dir/roster" --entry "$name" 2>/dev/null)"; then
   exit 2
 fi
 IFS=$'\t' read -r _ role kind <<<"$entry"
+if ! policy="$("$script_dir/roster" --policy "$role")"; then
+  echo "assign-bead: $role has no routing policy" >&2
+  exit 2
+fi
 # By ROLE, not kind: `planner', `ux', `build-design' and `orchestrator' all share the kind
 # `interactive'. `candidates' is the role's own queue; `mode' is how the bead is taken.
-case "$role" in
+case "$policy" in
   implementer|producer) candidates=("$script_dir/assignable-beads" "$role"); mode=claim ;;
   bugfixer)     candidates=("$script_dir/bugfix-candidates");              mode=claim ;;
   planner)      candidates=("$script_dir/plan-candidates");               mode=assign ;;

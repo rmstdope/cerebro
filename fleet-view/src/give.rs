@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use unicode_width::UnicodeWidthStr;
 
 use crate::lifecycle::row_is_alive;
-use crate::model::{is_builder_role, Bead, FleetRow, Releasing, RowState, PLANNING_ROLES};
+use crate::model::{Bead, FleetRow, Releasing, RolePolicy, RowState};
 
 const PLANNED_LABEL: &str = "planned";
 const BUGFIX_LABEL: &str = "bugfix";
@@ -25,16 +25,12 @@ pub enum Stage {
 /// `implementer` -> Builder; `bugfixer` -> Bugfixer; the planning roles -> Designer; anything
 /// else -> None.
 pub fn stage_of(role: &str) -> Option<Stage> {
-    if role == "producer" {
-        Some(Stage::Producer)
-    } else if is_builder_role(role) {
-        Some(Stage::Builder)
-    } else if role == "bugfixer" {
-        Some(Stage::Bugfixer)
-    } else if PLANNING_ROLES.contains(&role) {
-        Some(Stage::Designer)
-    } else {
-        None
+    match RolePolicy::for_role(role) {
+        RolePolicy::Producer => Some(Stage::Producer),
+        RolePolicy::Implementer => Some(Stage::Builder),
+        RolePolicy::Bugfixer => Some(Stage::Bugfixer),
+        RolePolicy::Planner | RolePolicy::Ux | RolePolicy::BuildDesign => Some(Stage::Designer),
+        RolePolicy::None => None,
     }
 }
 

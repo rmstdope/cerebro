@@ -175,11 +175,16 @@ sentence, and ask.
 Four answers:
 
 **1. Add it as a bead.** Draft it from the issue rather than copying it: a reporter describes a
-symptom, a bead describes work. Follow `beads-workflow` for what a good one contains.
+symptom, a bead describes work. Follow `beads-workflow` for what a good one contains. Ask one more
+thing in the same question, as `write-bead` does: **does the change touch anything a person sees
+or presses?** A *no* files `--labels ux:none`, the navigator's word that there is nothing to
+agree, and the bead reaches a producer without a UX session; a *yes* files nothing extra. Nobody
+but the navigator, at filing, may skip that stage. A `bugfix` bead never carries `ux:none`: the
+bugfixer route skips UX anyway.
 
 ```bash
 bd create --title "..." --type bug|feature|task --priority 4 \
-  --external-ref gh-<number> --description "..." --acceptance "..." [--labels bugfix]
+  --external-ref gh-<number> --description "..." --acceptance "..." [--labels bugfix|ux:none]
 bd dolt push
 ```
 
@@ -190,8 +195,7 @@ issue verbatim; use it only when the navigator wants exactly that.
 Then post the CREATED status (*Status comments*).
 
 When the navigator chooses `--type bug`, add `--labels bugfix` on the create call. That label is
-the routing signal: bug beads go to the bugfixer directly and do not go through UX, build-design
-or implementer.
+the routing signal: bug beads go to the bugfixer directly and do not go through UX or a producer.
 
 **2. Ask the reporter for more.** The navigator says what is missing; write it specifically, one thing
 per bullet, never a demand. Leave the issue open with no bead. Present it again only once the reporter

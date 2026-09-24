@@ -973,7 +973,6 @@ pub struct Candidate {
     pub priority: Option<u8>,
 }
 
-/// The three roles the view hands a bead from a candidate script, in roster-independent order.
 /// The script (relative to `scripts_dir`) and argv that list ROLE's candidates, or `None` for a
 /// role that is not a planning role.
 pub fn candidate_command(role: &str) -> Option<(&'static str, &'static [&'static str])> {

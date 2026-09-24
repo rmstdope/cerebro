@@ -15,6 +15,9 @@ claimed for you; `bugfix` beads stay with the bugfixer.
    increments, test plan, validation, and any non-UX details. Write those decisions to the bead's
    `design` field under the usual eight plan headings, then add `planned`. A missing `design` field
    or `planned` label is the normal producer input, never a reason to return it for build design.
+   A bead carrying `verification:failed` **and** `planned` is rework: the navigator saw the build
+   fail against a design that was judged right. Read the dated failure note, amend the existing
+   `design` in place rather than writing a new one, and keep `planned`.
    If the experience cannot be built as written because a genuine UX or scope decision is still
    needed, park it only through
    `.cerebro/cerebro/scripts/producer-park <name> <id> <ux|scope> "<what the navigator must decide>"`.

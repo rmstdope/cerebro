@@ -30,19 +30,39 @@ run() {
 # --- prints the ready UX-agreed beads sorted by priority then id -------------------------------
 
 cat > "$stub/ready.json" <<'JSON'
-[{"id":"cb-c","priority":1,"title":"c"},{"id":"cb-b","priority":0,"title":"b"},{"id":"cb-a","priority":1,"title":"a"}]
+[{"id":"cb-c","priority":1,"title":"c","labels":["ux:agreed"]},
+ {"id":"cb-b","priority":0,"title":"b","labels":["ux:agreed"]},
+ {"id":"cb-a","priority":1,"title":"a"}]
 JSON
 out="$(run)"
 [[ "$(jq -c . <<<"$out")" == '[{"id":"cb-b","priority":0},{"id":"cb-a","priority":1},{"id":"cb-c","priority":1}]' ]] \
   || fail "the ready beads come back sorted by priority then id, got $out"
 log="$(cat "$stub/bd.log")"
-for want in --readonly " ready " "--label ux:agreed" "--exclude-label planned" "--exclude-label human" \
+for want in --readonly " ready " "--label ux:agreed" "--exclude-label human" \
             "--exclude-label verdict:stale" "--exclude-label bugfix" \
             "--exclude-type epic" "-n 0" "--unassigned"; do
   [[ "$log" == *"$want"* ]] || fail "bd is asked with $want, got: $log"
 done
+[[ "$log" != *"--exclude-label planned"* ]] \
+  || fail "planned is not excluded at bd, since a reopened rework bead carries it: $log"
 pass "prints the ready UX-agreed beads sorted by priority then id"
 pass "an assigned UX-agreed bead is never assignable (bd ready --unassigned)"
+
+# --- planned means "a producer's own build plan", and only rework carries it unclaimed ------------
+#
+# `reopen-failed --fault build` keeps `planned` (the design was fine) and clears the claim, so the
+# one unclaimed planned bead a producer may take is a reopened one (cb-gc45). Anything else planned
+# and unclaimed is a producer that has not released it yet, or a plan somebody else wrote.
+
+cat > "$stub/ready.json" <<'JSON'
+[{"id":"cb-rework","priority":0,"labels":["ux:agreed","planned","verification:failed"]},
+ {"id":"cb-planned","priority":0,"labels":["ux:agreed","planned"]},
+ {"id":"cb-fresh","priority":1,"labels":["ux:agreed"]}]
+JSON
+out="$(run)"
+[[ "$(jq -c '[.[].id]' <<<"$out")" == '["cb-rework","cb-fresh"]' ]] \
+  || fail "a reopened planned bead is rework and assignable; a planned bead without a failed verification is not, got $out"
+pass "a bead reopened for a build fault is assignable as rework; other planned beads are not"
 
 # --- retired and unknown roles are usage errors --------------------------------------------------
 

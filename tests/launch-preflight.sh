@@ -412,9 +412,9 @@ set -e
 grep -q "gate_fast" <<<"$out" || fail "producer no gate: expected the message to name gate_fast, got: $out"
 pass "a producer with no fast gate is refused, and the message names the gate"
 
-# --- a planner with no fast gate still launches ----------------------------------------------------
+# --- a UX agent with no fast gate still launches ----------------------------------------------------
 #
-# A planner, a verifier or the orchestrator has no gate to run; refusing them would take the whole
+# A UX agent, a verifier or the orchestrator has no gate to run; refusing them would take the whole
 # fleet down over a key that does not concern them.
 c="$(make_consumer nogateplanner)"
 run_preflight "$c" ux Xavier || fail "no gate, ux: expected exit 0"
@@ -432,7 +432,7 @@ pass "a producer whose project declares a gate launches"
 #
 # The declarations moved to `.cerebro/`. This is the earliest and friendliest place to catch a
 # consumer that bumped the submodule past that move: it is also the ONLY place that can catch a
-# stray `cerebro-traps.md`, which no script reads at all - a planner and an producer read it as
+# stray `cerebro-traps.md`, which no script reads at all - a UX agent and a producer read it as
 # prose, so a file left behind would simply go unread, in silence, for ever.
 #
 # It refuses even when the new file exists too: two copies of a declaration is exactly the ambiguity

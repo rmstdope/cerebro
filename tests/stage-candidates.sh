@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 #
-# Proves `scripts/stage-candidates`: the one place the harness asks "which beads may the agent at
-# stage S take at all", for the two-agent variant of planning (cb-lz5). It is the sibling of
-# `scripts/plan-candidates`, which answers the same question for the combined `planner` role and is
-# untouched - a project runs one variant or the other, so both routes must go on working.
+# Proves `scripts/stage-candidates`: the one place the harness asks "which beads may a UX agent
+# take at all" (cb-lz5). It grew out of the retired `scripts/plan-candidates`, whose rules it keeps.
 #
 # No framework: plain bash, set -euo pipefail, exit non-zero on the first failed assertion. Run from
 # the submodule root:
@@ -30,7 +28,7 @@ argv_file="$stub_dir/argv.list"
 stub_stdout="$stub_dir/stdout"
 stub_exit="$stub_dir/exit"
 
-# The dispatching stub from tests/plan-candidates.sh:39-63, lifted verbatim: it dispatches on the
+# The dispatching stub the retired tests/plan-candidates.sh introduced, lifted verbatim: it dispatches on the
 # SUBCOMMAND, APPENDING its argv to $stub_dir/argv.<subcommand>. A truncating stub would lose the
 # first argv of a script that calls `bd` twice, and `work-beads` asks `bd children` once per
 # unsettled epic.
@@ -90,7 +88,7 @@ ids_of() {
 
 # --- prints the stage label the fleet view checks itself against ---------------------------------
 #
-# Answered before any root is resolved and before `bd` is reached, exactly as planner-buffer's three
+# Answered before any root is resolved and before `bd` is reached, as the retired planner-buffer's three
 # `--print-*` modes are - which is what lets cb-lz5.1.2's Rust contract test run it with no board.
 label="$(PATH="/usr/bin:/bin" bash "$consumer/.cerebro/cerebro/scripts/stage-candidates" --print-stage-label)"
 [ "$label" = "ux:agreed" ] || fail "--print-stage-label printed '$label', not ux:agreed"
@@ -104,7 +102,7 @@ pass "prints the stage label the fleet view checks itself against"
 set_stub '[]'
 # `ux --print-stage-label` is in the list because the label mode is the whole call or nothing: a
 # stage word silently ignored beside it would answer a question nobody asked.
-for args in "" "ux build-design" "designer" "ux --print-stage-label"; do
+for args in "" "ux ux" "build-design" "designer" "ux --print-stage-label"; do
   set +e
   # shellcheck disable=SC2086
   out="$(run $args 2>"$stub_dir/err")"
@@ -119,7 +117,7 @@ pass "refuses no argument, two arguments and an unknown stage"
 
 # --- the label rules, one fixture ----------------------------------------------------------------
 #
-# Every label rule but the stage label is lifted from `scripts/plan-candidates` and means what it
+# Every label rule but the stage label came from the retired `scripts/plan-candidates` and means what it
 # means there; the stage label is the whole difference between the two agents. The hold, parent and
 # blocker rules have cases of their own below.
 labelled='[{"id":"tt-plain","issue_type":"task","priority":2,"labels":[]},
@@ -151,18 +149,9 @@ label="$(run --print-skip-label)"
 [ "$label" = "ux:none" ] || fail "--print-skip-label printed '$label', not ux:none"
 pass "a bead filed with ux:none skips the ux stage, and the label is printed for the fleet view"
 
-# --- the build-design stage takes only what is agreed and not yet planned ------------------------
-set_stub "$labelled"
-set_stub_for children '[]'
-ids="$(run build-design | ids_of)"
-[ "$ids" = "tt-agreed tt-agreed-held " ] || fail "the build-design stage listed '$ids', not the two agreed beads (a planning label holds nothing since cb-10d.2.2)"
-pass "the build-design stage takes only what is agreed and not yet planned"
-case " $ids " in *" tt-none "*) fail "ux:none is not an agreed experience for a build-design stage: '$ids'";; esac
-
-case " $ids " in *" tt-bugfix "*) fail "the build-design stage kept a bugfix-labelled bead: '$ids'";; esac
 ids="$(run ux | ids_of)"
 case " $ids " in *" tt-bugfix "*) fail "the ux stage kept a bugfix-labelled bead: '$ids'";; esac
-pass "both stages drop bugfix-labelled beads"
+pass "the ux stage drops bugfix-labelled beads"
 
 # --- a label at position 0 is seen ---------------------------------------------------------------
 #
@@ -171,8 +160,6 @@ pass "both stages drop bugfix-labelled beads"
 set_stub '[{"id":"tt-first","issue_type":"task","priority":2,"labels":["ux:agreed"]},
            {"id":"tt-second","issue_type":"task","priority":2,"labels":["planned","ux:agreed"]}]'
 set_stub_for children '[]'
-ids="$(run build-design | ids_of)"
-[ "$ids" = "tt-first " ] || fail "a label at position 0 was not seen: got '$ids'"
 ids="$(run ux | ids_of)"
 [ "$ids" = "" ] || fail "the ux stage kept an agreed bead whose label is at position 0: got '$ids'"
 pass "a label at position 0 is seen"
@@ -217,7 +204,7 @@ pass "a work-beads failure is loud"
 # --- a list that is not JSON is loud too ---------------------------------------------------------
 set_stub 'bd: could not open the database'
 set +e
-out="$(run build-design 2>"$stub_dir/err")"
+out="$(run ux 2>"$stub_dir/err")"
 status=$?
 set -e
 [ "$status" -eq 1 ] || fail "a non-JSON list: expected exit 1, got $status"
@@ -227,8 +214,8 @@ pass "a list that is not JSON is loud too"
 
 # --- cb-10d.2.1: an assignee holds, an assigned parent holds, an unsatisfied blocker holds --------
 #
-# The same eight cases as tests/plan-candidates.sh, at each stage: at build-design every fixture
-# bead carries the stage label so the stage sees it, at ux none does.
+# The same eight cases the retired tests/plan-candidates.sh had: at ux no fixture bead carries the
+# stage label, so the stage sees them all.
 holds_at() {
   local stage="$1" base="$2"
   t() {
@@ -273,7 +260,6 @@ holds_at() {
   check "" "a bead behind a parked blocker"
   pass "a parked blocker hides its dependant at $stage"
 }
-holds_at build-design ux:agreed
 holds_at ux ""
 
 set_stub '[{"id":"tt-a","issue_type":"task","priority":2,"labels":[],"dependencies":[{"issue_id":"tt-a","depends_on_id":"tt-b","type":"blocks"}]},
@@ -283,12 +269,6 @@ ids="$(run ux | ids_of)"
 [ "$ids" = "tt-a " ] || fail "the ux stage did not accept an agreed blocker: got '$ids'"
 pass "the ux stage accepts an agreed blocker"
 
-set_stub '[{"id":"tt-a","issue_type":"task","priority":2,"labels":["ux:agreed"],"dependencies":[{"issue_id":"tt-a","depends_on_id":"tt-b","type":"blocks"}]},
-           {"id":"tt-b","issue_type":"task","priority":2,"labels":["ux:agreed"]}]'
-set_stub_for children '[]'
-ids="$(run build-design | ids_of)"
-[ "$ids" = "tt-b " ] || fail "the build-design stage accepted an agreed blocker: got '$ids'"
-pass "the build-design stage does not accept an agreed blocker"
 
 # --- stage-candidates spells no epic rule of its own ---------------------------------------------
 #

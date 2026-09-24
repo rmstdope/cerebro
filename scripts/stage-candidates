@@ -1,33 +1,24 @@
 #!/usr/bin/env bash
 #
-# The one place the harness answers: "which beads may the agent at stage S take at all?" Prints a
-# JSON array on stdout, sorted by priority ascending then by id, so a caller pipes it into `jq`
-# exactly as it pipes `plan-candidates`.
+# The one place the harness answers: "which beads may a UX agent take at all?" Prints a JSON array
+# on stdout, sorted by priority ascending then by id, for a caller to pipe into `jq`.
 #
 #     .cerebro/cerebro/scripts/stage-candidates ux
-#     .cerebro/cerebro/scripts/stage-candidates build-design
 #     .cerebro/cerebro/scripts/stage-candidates --print-stage-label
+#     .cerebro/cerebro/scripts/stage-candidates --print-skip-label
 #
-# It is the sibling of `scripts/plan-candidates`, which answers the same question for the COMBINED
-# `planner` role and is deliberately not modified: a project's roster carries either that role or
-# the two stage roles (cb-lz5), never both, so both routes must go on working. A new script rather
-# than a flag on that one, because its header states in as many words that it has no modes and no
-# flags precisely because its name is its question - and this is a different question.
+# It grew out of the retired planner's `plan-candidates` (cb-lz5) and keeps its rules: the assignee
+# hold, the assigned-parent hold and the blocker rule (cb-10d.2.1). The UX agent takes what is not
+# yet `ux:agreed` and not filed `ux:none`; a blocker whose experience is `ux:agreed`, `ux:none` or
+# `planned` is satisfied, since that is all a designer needs of it.
 #
-# The two stages differ in exactly one rule. The UX agent takes what is NOT yet `ux:agreed`; the
-# build-design agent takes what IS. Every other rule below is lifted from `plan-candidates` and
-# means what it means there - the assignee hold, the assigned-parent hold and the blocker rule
-# (cb-10d.2.1) included, with one more difference: at the ux stage a blocker whose experience is
-# `ux:agreed` is satisfied as well as a `planned` one, since that is all a designer needs of it.
-#
-# It deliberately does NOT filter by priority, for `plan-candidates`' reason: which candidate, and
-# in what order, is policy the two agents' own skills explain, and both call sites keep their
-# one-line `jq` priority filter.
+# It deliberately does NOT filter by priority: which candidate, and in what order, is policy the
+# agent's own skill explains, and the call sites keep their one-line `jq` priority filter.
 #
 # `work-beads --status open` is where the whole EPIC question is answered, and routing through it is
 # the entire point: it has owned that rule since cb-hzl - a childless epic is real work, one with a
 # direct child is bookkeeping - and this script must add NO epic rule of its own. A second copy of
-# that rule is what `plan-candidates` exists to end.
+# that rule is what this script exists to end.
 #
 # Four jq traps, each of which fails silently if it is got wrong:
 #
@@ -53,8 +44,7 @@
 set -euo pipefail
 
 # The label that says a bead's experience is agreed and its build is not yet designed. THIS IS THE
-# ONE PLACE THE SHELL SPELLS IT: `scripts/planner-buffer` asks for it through
-# `--print-stage-label` rather than repeating the literal.
+# ONE PLACE THE SHELL SPELLS IT, asked for through `--print-stage-label` rather than repeated.
 stage_label="ux:agreed"
 # The label that says there is no experience to agree: the navigator answered at filing that nothing
 # a person sees changes (cb-uump). The ux stage never takes such a bead, and a producer takes it as
@@ -62,7 +52,7 @@ stage_label="ux:agreed"
 skip_label="ux:none"
 
 usage() {
-  echo "usage: stage-candidates <ux|build-design> | stage-candidates --print-stage-label | stage-candidates --print-skip-label" >&2
+  echo "usage: stage-candidates ux | stage-candidates --print-stage-label | stage-candidates --print-skip-label" >&2
   exit 2
 }
 
@@ -71,7 +61,7 @@ mode=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     # Answered before any root is resolved, so this works with no repository at all - exactly as
-    # `planner-buffer`'s three `--print-*` modes do, and for the same reason: a contract test in
+    # a contract test in
     # another language runs it where `consumer-root --shared` would refuse.
     --print-stage-label)
       # The whole call or nothing: a stage word beside it would be silently ignored, and a caller
@@ -81,7 +71,7 @@ while [[ $# -gt 0 ]]; do
     --print-skip-label)
       [[ -z "$mode" && $# -eq 1 ]] || usage
       printf '%s\n' "$skip_label"; exit 0 ;;
-    ux|build-design)
+    ux)
       [[ -z "$mode" ]] || usage
       mode="$1"; shift ;;
     *)
@@ -94,8 +84,8 @@ done
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Captured before the pipe rather than piped straight into `jq`, for the reason `plan-candidates`
-# gives about the same call: under `pipefail` a `work-beads` failure inside a pipeline is this
+# Captured before the pipe rather than piped straight into `jq`, for this reason about the same
+# call: under `pipefail` a `work-beads` failure inside a pipeline is this
 # script's failure too, but this script must leave stdout EMPTY on a failure, and a pipeline that
 # has already started writing cannot promise that.
 if ! raw="$("$script_dir/work-beads" --status open)"; then
@@ -107,10 +97,8 @@ if ! out="$(printf '%s' "$raw" | jq --arg mode "$mode" --arg stage "$stage_label
     | (reduce $all[] as $b ({}; .[$b.id] = $b)) as $by_id
     | def held: ((.assignee // "") != "");
       def satisfied:
-        if $mode == "ux"
-        then ((.labels // []) | index("planned")) or ((.labels // []) | index($stage))
-             or ((.labels // []) | index($skip))
-        else ((.labels // []) | index("planned")) end;
+        ((.labels // []) | index("planned")) or ((.labels // []) | index($stage))
+        or ((.labels // []) | index($skip));
       def unsatisfied_blocker($id):
         (($by_id[$id] // null) as $b | $b != null and ($b | satisfied | not))
         or any($all[]; .parent == $id and (satisfied | not));
@@ -123,9 +111,7 @@ if ! out="$(printf '%s' "$raw" | jq --arg mode "$mode" --arg stage "$stage_label
         | select(held | not)
         | select(((.labels // []) | index("verification:failed") | not)
                  or ((.labels // []) | index("plan:revise")))
-        | select(if $mode == "ux"
-                 then ((.labels // []) | index($stage) | not)
-                 else ((.labels // []) | index($stage)) end)
+        | select((.labels // []) | index($stage) | not)
         | select((($by_id[.parent // ""] // {}).assignee // "") == "")
         | select([ (.dependencies // [])[]
                    | select(.type == "blocks")

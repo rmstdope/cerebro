@@ -34,7 +34,7 @@ fi
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$("$script_dir/consumer-root" --shared)"
 
-# Captured before the pipe, so a failure leaves stdout empty (see `scripts/plan-candidates`).
+# Captured before the pipe, so a failure leaves stdout empty (see `scripts/stage-candidates`).
 #
 # `planned` is NOT excluded at `bd`. A producer adds it to its own bead while it holds the claim, so
 # an unclaimed planned bead is one of two things: a bead `reopen-failed --fault build` gave back -

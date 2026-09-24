@@ -133,6 +133,22 @@ out="$(run "$tmp" --json)"
   || fail "no-op pass: got $(jq -c '.passes' <<<"$out")"
 pass "a session that ended waiting with no bead is a no-op pass"
 
+# A UX agent holds its bead by assignee rather than claim, and a bugfixer by claim like a producer:
+# both are holders, so a pass of theirs with no bead is a no-op pass too (cb-uhhm).
+tmp="$(new_fixture)"
+roster_conf "$tmp" "Beast ux" "Bishop bugfixer"
+: > "$tmp/.cerebro/state/decisions.jsonl"
+{
+  tline "$(ago 60)" Beast working ux "" 111 ""
+  tline "$(ago 50)" Beast waiting "" "" 111 working
+  tline "$(ago 40)" Bishop working build "" 112 ""
+  tline "$(ago 30)" Bishop waiting "" "" 112 working
+} > "$tmp/.cerebro/state/transitions.jsonl"
+out="$(run "$tmp" --json)"
+[ "$(jq -c '[.passes[] | {agent, holds_beads}] | sort_by(.agent)' <<<"$out")" = '[{"agent":"Beast","holds_beads":true},{"agent":"Bishop","holds_beads":true}]' ] \
+  || fail "ux and bugfixer are holders: got $(jq -c '.passes' <<<"$out")"
+pass "a UX agent and a bugfixer are bead holders"
+
 # Two sessions of one agent sharing a pid - pids are recycled, so the boundary is a null `from`.
 tmp="$(new_fixture)"
 roster_conf "$tmp" "Cyclops producer"

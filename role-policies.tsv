@@ -7,7 +7,6 @@
 architect	none
 bugfixer	bugfixer
 orchestrator	none
-planner	planner
 producer	producer
 reviewer	none
 user-feedback	none

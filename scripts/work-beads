@@ -128,7 +128,7 @@ if ! out="$(printf '%s' "$raw" | jq --arg excluded "$excluded_csv" \
 fi
 
 # An epic is work exactly while nothing is under it, and that is asked in two steps so the number
-# of `bd` calls stays near zero on the hot path: `scripts/planner-buffer` runs this on every planner
+# of `bd` calls stays near zero on the hot path: the fleet view runs this on every
 # pass, and this board carries eleven open epics - twelve serial calls each contending with the Dolt
 # traffic cb-boc already records timing out (~10x a day) is not a cost worth paying to answer a
 # question the list itself usually settles.

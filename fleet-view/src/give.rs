@@ -27,7 +27,7 @@ pub fn stage_of(role: &str) -> Option<Stage> {
     match RolePolicy::for_role(role) {
         RolePolicy::Producer => Some(Stage::Producer),
         RolePolicy::Bugfixer => Some(Stage::Bugfixer),
-        RolePolicy::Planner | RolePolicy::Ux => Some(Stage::Designer),
+        RolePolicy::Ux => Some(Stage::Designer),
         RolePolicy::None => None,
     }
 }
@@ -383,6 +383,7 @@ mod tests {
             row("Cerebro", "orchestrator", RowState::Standby, None),
             row("Xavier", "ux", RowState::Standby, None),
             row("Gambit", "planner", RowState::Standby, None),
+            row("Beast", "ux", RowState::Standby, None),
             row("Moira", "user-feedback", RowState::Standby, None),
             row("Cyclops", "producer", RowState::Standby, None),
             row("Rogue", "producer", RowState::Standby, None),
@@ -391,7 +392,8 @@ mod tests {
         let (s, r) = none();
         let names: Vec<_> =
             candidates(&bead("cb-x", &[], None), &rows, &s, &r).into_iter().map(|c| c.name).collect();
-        assert_eq!(names, ["Xavier", "Gambit", "Cyclops", "Rogue"]);
+        // Gambit's `planner` is a retired role with no stage, so it is not listed.
+        assert_eq!(names, ["Xavier", "Beast", "Cyclops", "Rogue"]);
     }
 
     #[test]
@@ -423,7 +425,7 @@ mod tests {
             row("I", "producer", RowState::Standby, None),
             row("P", "producer", RowState::Standby, None),
             row("U", "ux", RowState::Standby, None),
-            row("G", "planner", RowState::Standby, None),
+            row("G", "ux", RowState::Standby, None),
         ];
         let (s, r) = none();
         let planned = candidates(&bead("cb-x", &["ux:agreed"], None), &rows, &s, &r);

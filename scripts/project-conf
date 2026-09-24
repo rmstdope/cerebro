@@ -34,7 +34,7 @@
 #                    file.
 #   planner_buffer_multiple
 #                  — planned beads wanted per implementer. ABSENT means 1, the rule every consumer
-#                    had before the key existed. Read by scripts/planner-buffer and by both fleet
+#                    had before the key existed. Read by the fleet
 #                    views (cb-3in).
 #
 # THIS NEVER FAILS on absence. A missing file, a missing key and an unreadable file all exit 0 with

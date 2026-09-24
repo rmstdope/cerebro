@@ -62,6 +62,22 @@ fn existing() {}
 }
 
 #[test]
+fn allows_rewording_a_doc_block_in_place() {
+    let before = r#"
+/// Describes the existing item, in the old words.
+#[allow(dead_code)]
+fn existing() {}
+"#;
+    let after = r#"
+/// Describes the existing item, in new words.
+#[allow(dead_code)]
+fn existing() {}
+"#;
+
+    assert!(changed_metadata(before, after).is_empty());
+}
+
+#[test]
 fn reports_metadata_reparented_by_a_deletion() {
     let before = r#"
 fn before() {}
@@ -307,9 +323,22 @@ fn current_rust_diff_keeps_metadata_with_its_existing_items() {
     );
 }
 
+/// The metadata changes that mean an edit anchored on a declaration line rather than on the whole
+/// item: an attribute changed, a doc block appeared on or vanished from an existing item, or an
+/// existing item's doc block now sits, verbatim, on some other item. A doc block reworded in
+/// place is an ordinary edit and is not reported.
 fn changed_metadata(before: &str, after: &str) -> Vec<MetadataChange> {
     let before = item_map(before);
     let after = item_map(after);
+    let after_docs: Vec<(String, Vec<String>)> = after
+        .iter()
+        .flat_map(|(identity, items)| {
+            items
+                .iter()
+                .filter(|item| !item.docs.is_empty())
+                .map(move |item| (identity.clone(), item.docs.clone()))
+        })
+        .collect();
     before
         .into_iter()
         .flat_map(|(identity, before_items)| {
@@ -317,6 +346,7 @@ fn changed_metadata(before: &str, after: &str) -> Vec<MetadataChange> {
                 return Vec::new();
             };
             let mut unmatched = after_items.clone();
+            let after_docs = after_docs.clone();
             before_items
                 .into_iter()
                 .filter_map(move |before| {
@@ -324,13 +354,19 @@ fn changed_metadata(before: &str, after: &str) -> Vec<MetadataChange> {
                         .iter()
                         .position(|after| after.anchor == before.anchor)?;
                     let after = unmatched.remove(index);
-                    (before.docs != after.docs || before.attributes != after.attributes).then(
-                        || MetadataChange {
+                    let moved = !before.docs.is_empty()
+                        && before.docs != after.docs
+                        && after_docs
+                            .iter()
+                            .any(|(other, docs)| *other != identity && *docs == before.docs);
+                    (before.attributes != after.attributes
+                        || before.docs.is_empty() != after.docs.is_empty()
+                        || moved)
+                        .then(|| MetadataChange {
                             identity: identity.clone(),
                             before,
                             after,
-                        },
-                    )
+                        })
                 })
                 .collect()
         })

@@ -448,18 +448,18 @@ pub fn read_role_spacing(
 /// value rather than silently replaced.
 ///
 /// Runs once, at startup, beside `read_role_spacing` - not per tick and not per row.
-pub fn read_planner_multiple(
+pub fn read_ux_multiple(
     paths: &ReaderPaths,
     commands: &dyn CommandRunner,
 ) -> (usize, Option<String>) {
     let program = paths.scripts_dir.join("project-conf");
-    let key = crate::triggers::PLANNER_MULTIPLE_KEY;
+    let key = crate::triggers::UX_MULTIPLE_KEY;
     let Ok(stdout) = commands.run(&program, &[key], Some(&paths.consumer_root), COMMAND_TIMEOUT)
     else {
         return (1, None);
     };
     let raw = String::from_utf8_lossy(&stdout).trim().to_string();
-    match crate::triggers::parse_planner_multiple(&raw) {
+    match crate::triggers::parse_ux_multiple(&raw) {
         Ok(Some(multiple)) => (multiple, None),
         Ok(None) => (1, None),
         Err(bad) => (
@@ -1668,13 +1668,13 @@ mod tests {
     #[test]
     fn a_failed_candidate_read_fails_the_work_read() {
         let paths = paths_at(Path::new("/consumer"));
-        let plan = paths.scripts_dir.join("plan-candidates");
+        let stage = paths.scripts_dir.join("stage-candidates");
         let assignable = paths.scripts_dir.join("assignable-beads");
         let bugfix = paths.scripts_dir.join("bugfix-candidates");
         let second_look = paths.scripts_dir.join("second-look-beads");
         let fake = FakeCommands::new(move |call: &Call| {
-            if call.program == plan {
-                Err(exit(1, "plan-candidates: work-beads failed"))
+            if call.program == stage {
+                Err(exit(1, "stage-candidates: work-beads failed"))
             } else if call.program == assignable {
                 Ok(b"[]".to_vec())
             } else if call.program == bugfix {
@@ -1685,7 +1685,7 @@ mod tests {
                 Ok(BUCKETED_BEADS.as_bytes().to_vec())
             }
         });
-        let roles: BTreeSet<String> = ["planner".to_string()].into_iter().collect();
+        let roles: BTreeSet<String> = ["ux".to_string()].into_iter().collect();
         assert!(read_work(&paths, &Programs::default(), &fake, &roles).is_err());
     }
 
@@ -1844,14 +1844,14 @@ mod tests {
     }
 
     #[test]
-    fn project_conf_declares_the_planner_multiple_and_names_a_bad_one() {
+    fn project_conf_declares_the_ux_multiple_and_names_a_bad_one() {
         let paths = paths_at(Path::new("/consumer"));
         let declared = FakeCommands::new(|_: &Call| Ok(b"2\n".to_vec()));
-        assert_eq!(read_planner_multiple(&paths, &declared), (2, None));
+        assert_eq!(read_ux_multiple(&paths, &declared), (2, None));
 
         let bad = FakeCommands::new(|_: &Call| Ok(b"0\n".to_vec()));
         assert_eq!(
-            read_planner_multiple(&paths, &bad),
+            read_ux_multiple(&paths, &bad),
             (
                 1,
                 Some(
@@ -1863,7 +1863,7 @@ mod tests {
 
         // Nothing declared, and a non-zero exit, are the same answer: 1.
         let absent = FakeCommands::new(|_: &Call| Ok(b"\n".to_vec()));
-        assert_eq!(read_planner_multiple(&paths, &absent), (1, None));
+        assert_eq!(read_ux_multiple(&paths, &absent), (1, None));
         let failed = FakeCommands::new(|_: &Call| {
             Err(ReadError::Exit {
                 source: "project-conf".into(),
@@ -1871,7 +1871,7 @@ mod tests {
                 stderr: String::new(),
             })
         });
-        assert_eq!(read_planner_multiple(&paths, &failed), (1, None));
+        assert_eq!(read_ux_multiple(&paths, &failed), (1, None));
     }
 
     // --- the gh reader (cb-kcs.4.3) ------------------------------------------------------------

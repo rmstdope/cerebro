@@ -26,8 +26,7 @@
 #
 #   producer      `assignable-beads`               claimed (`--claim`); NAME's when in_progress
 #   bugfixer      `bugfix-candidates`              claimed (`--claim`); NAME's when in_progress
-#   planner       `plan-candidates`                assigned; NAME's when open with assignee NAME
-#   ux            `stage-candidates ux`            assigned, likewise
+#   ux            `stage-candidates ux`            assigned; NAME's when open with assignee NAME
 #
 # A planning role's bead is NEVER claimed: `in_progress` means "being built" to Moira, Psylocke and
 # `work-beads`, and a bead being designed is not being built. `scripts/release-bead` clears that
@@ -81,15 +80,14 @@ if ! policy="$("$script_dir/roster" --policy "$role")"; then
   echo "assign-bead: $role has no routing policy" >&2
   exit 2
 fi
-# By ROLE, not kind: `planner', `ux', and `orchestrator' all share the kind
-# `interactive'. `candidates' is the role's own queue; `mode' is how the bead is taken.
+# By ROLE, not kind: `ux' and `orchestrator' share the kind `interactive'.
+# `candidates' is the role's own queue; `mode' is how the bead is taken.
 case "$policy" in
   producer)     candidates=("$script_dir/assignable-beads");               mode=claim ;;
   bugfixer)     candidates=("$script_dir/bugfix-candidates");              mode=claim ;;
-  planner)      candidates=("$script_dir/plan-candidates");               mode=assign ;;
   ux)           candidates=("$script_dir/stage-candidates" ux);           mode=assign ;;
   *)
-    echo "assign-bead: $name is a $role; only producers, bugfixers and the planning roles are handed a bead" >&2
+    echo "assign-bead: $name is a $role; only producers, bugfixers and UX agents are handed a bead" >&2
     exit 2 ;;
 esac
 if [[ "$mode" == claim ]]; then

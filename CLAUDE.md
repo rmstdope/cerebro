@@ -212,12 +212,11 @@ Each of these answers one question in one place. Add a caller, never a second co
   `agents.conf`, passes `hooks/` through `agent-hooks-env` and `--settings`.
 - `scripts/agent-state` — the only writer of a state file; `scripts/end-pass` is its one caller
   for ending a pass; `scripts/agent-alive` is the predicate.
-- `scripts/plan-candidates`, `scripts/stage-candidates`, `scripts/assignable-beads` — which
-  beads a planner, a UX agent, or a producer may be given.
+- `scripts/stage-candidates`, `scripts/assignable-beads` — which
+  beads a UX agent or a producer may be given.
   `scripts/assign-bead` and `scripts/release-bead` are the two writers; `release-bead --ended`
   takes back what a gone session still held.
 - `scripts/bead-delivery.sh` — whether a bead's work reached the default branch.
-- `scripts/planner-buffer` — the legacy planned-bead buffer for consumers that still use planners.
 - `scripts/work-beads` — the board read, and the epic rule.
 - `scripts/worktree-safety.sh` — whether a worktree can go without losing anything.
 - `scripts/session-marker.sh` — the marker sentence; `scripts/marker-readers` checks every

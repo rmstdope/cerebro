@@ -206,6 +206,18 @@ entry_out="$("$builtin_dir/roster" --entry "$first_name")"
 pass "roster --entry returns the matching row"
 
 set +e
+policy_out="$("$builtin_dir/roster" --policy producer)"
+[[ "$policy_out" == "producer" ]] \
+  || fail "roster --policy producer: got '$policy_out', expected producer"
+pass "roster --policy returns the declared routing policy"
+
+out="$("$builtin_dir/roster" --policy consumer-only-role 2>&1)"
+status=$?
+[[ $status -eq 2 ]] || fail "roster --policy consumer-only-role: expected exit 2, got $status"
+grep -q "no routing policy" <<<"$out" \
+  || fail "roster --policy consumer-only-role: expected a policy refusal, got: $out"
+pass "roster refuses an undeclared routing policy"
+
 out="$("$builtin_dir/roster" --entry Nobody 2>&1)"
 status=$?
 set -e

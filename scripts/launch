@@ -187,6 +187,7 @@ if [[ $entry_status -eq 2 ]]; then
 fi
 
 IFS=$'\t' read -r _ role kind <<<"$entry"
+policy="$("$here/roster" --policy "$role" 2>/dev/null || printf 'none')"
 
 # Every bd call in this session acts as this agent, not as the machine's git identity. Distinct
 # actors are what make a second claim on a held bead fail instead of aliasing into the first (bd's
@@ -348,7 +349,7 @@ fi
 # ah-cuc: link whatever a submodule bump brought in, so the agent CLI finds the role by name.
 # ah-bri: refuse with one line if it cannot, instead of exiting silently. The tool is passed: what
 # it checks for is the CLI this session is about to start on, not a fleet-wide declaration.
-"$here/launch-preflight" "$role" "$name" "$tool"
+"$here/launch-preflight" "$role" "$policy" "$name" "$tool"
 
 # cb-10d.1: claim the handed bead for this agent before the session exists. After the preflight, so a
 # refused preflight has claimed nothing. `|| assign_status=$?' for the reason `conf_status' gives.

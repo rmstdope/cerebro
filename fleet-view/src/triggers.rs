@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use chrono::{DateTime, Utc};
 
 use crate::model::{
-    is_builder_role, AgentKind, Candidate, FleetRow, GhSnapshot, LinkedBead, RosterEntry, WorkBuckets,
+    AgentKind, Candidate, FleetRow, GhSnapshot, LinkedBead, RolePolicy, RosterEntry, WorkBuckets,
 };
 
 #[cfg(test)]
@@ -868,7 +868,8 @@ pub fn next_bugfix(facts: &TriggerFacts) -> Option<&str> {
 /// Whether ROLE is started with a bead the view picked: `implementer` (cb-10d.1) and the three
 /// planning roles (cb-10d.2.2).
 pub fn hands_a_bead(role: &str) -> bool {
-    is_builder_role(role) || role == "bugfixer" || crate::model::PLANNING_ROLES.contains(&role)
+    let policy = RolePolicy::for_role(role);
+    policy.is_builder() || policy == RolePolicy::Bugfixer || policy.is_planning()
 }
 
 /// The first candidate a planning role may be given: not P4 and not unranked (`priority` `None`)
@@ -880,14 +881,11 @@ pub fn first_candidate(candidates: &[Candidate]) -> Option<&Candidate> {
 /// The bead the next start of ROLE is given: an implementer's first assignable bead, a planning
 /// role's `first_candidate`, and `None` for any other role.
 pub fn bead_for<'a>(facts: &'a TriggerFacts, role: &str) -> Option<&'a str> {
-    if role == "producer" {
-        return next_bead(facts);
-    }
-    if role == "implementer" {
-        return facts.implementer_assignable_ids.first().map(String::as_str);
-    }
-    if role == "bugfixer" {
-        return next_bugfix(facts);
+    match RolePolicy::for_role(role) {
+        RolePolicy::Producer => return next_bead(facts),
+        RolePolicy::Implementer => return facts.implementer_assignable_ids.first().map(String::as_str),
+        RolePolicy::Bugfixer => return next_bugfix(facts),
+        _ => {}
     }
     first_candidate(facts.planning_candidates.get(role)?).map(|c| c.id.as_str())
 }

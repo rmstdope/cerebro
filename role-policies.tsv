@@ -1,0 +1,17 @@
+# role	policy
+#
+# This is the one declaration of a role's routing capability. `scripts/roster`
+# reads it for shell launch and assignment paths; `fleet-view/src/model.rs`
+# parses the same table for the Rust fleet view. A role name selects its agent
+# definition, while this policy selects its queue and work lifecycle.
+architect	none
+bugfixer	bugfixer
+build-design	build-design
+implementer	implementer
+orchestrator	none
+planner	planner
+producer	producer
+reviewer	none
+user-feedback	none
+ux	ux
+verifier	none

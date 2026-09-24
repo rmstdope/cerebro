@@ -1305,7 +1305,7 @@ fn give_back(
     }
     let handed_a_bead = |entry: &&RosterEntry| {
         entry.kind == cerebro_tui::model::AgentKind::Implementer
-            || cerebro_tui::model::PLANNING_ROLES.contains(&entry.role.as_str())
+            || cerebro_tui::model::RolePolicy::for_role(&entry.role).is_planning()
     };
     for entry in roster.iter().filter(handed_a_bead) {
         if app.handed.contains_key(&entry.name) || app.releasing.contains_key(&entry.name) {
@@ -1339,7 +1339,7 @@ fn give_back(
     // At most one per name per tick: `queue_release` makes `may_release` false for it.
     let ended: Vec<(String, String)> = roster
         .iter()
-        .filter(|entry| cerebro_tui::model::PLANNING_ROLES.contains(&entry.role.as_str()))
+        .filter(|entry| cerebro_tui::model::RolePolicy::for_role(&entry.role).is_planning())
         .filter(|entry| !app.handed.contains_key(&entry.name))
         .filter_map(|entry| {
             let buckets = app.work.content.value()?;

@@ -638,6 +638,11 @@ staying alive in case one appears.
 - **A merge verdict about the wrong head** — see *Merging*.
 - **Accessible names are a shared namespace**: grep the suite for every name you add; a selector
   ratchet does not catch an overlap.
+- **Rust documentation and attributes belong to the whole item boundary**, not its signature:
+  insert or remove an item with one `apply_patch` hunk that includes its leading `///` block,
+  outer attributes and declaration. Never anchor a textual edit on a `fn`/`struct`/`impl` line
+  alone. When Rust source changes, run the `item_adjacency` integration target; it compares
+  existing items with their merge-base metadata and catches silent reparenting.
 
 Read `<consumer>/.cerebro/traps.md` if it exists and say what to do about any trap the bead touches;
 absent is ordinary.

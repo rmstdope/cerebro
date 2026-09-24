@@ -112,7 +112,19 @@ argv_has_pair() {
   # argv_has_pair <subcommand> <flag> <value> - the line after the flag
   local f="$stub_dir/argv.$1"
   [ -f "$f" ] || return 1
-  grep -xF -A1 "ARG:$2" "$f" | grep -qxF "ARG:$3"
+  awk -v flag="ARG:$2" -v value="ARG:$3" '
+    $0 == flag {
+      if ((getline next_line) > 0 && next_line == value) found = 1
+    }
+    END { exit !found }
+  ' "$f"
+}
+
+argv_has_line_with() {
+  awk -v first="$2" -v second="$3" '
+    index($0, first) && index($0, second) { found = 1 }
+    END { exit !found }
+  ' "$stub_dir/argv.$1"
 }
 
 # --- refuses-a-missing-fault --------------------------------------------------------------------
@@ -201,15 +213,15 @@ argv_has_pair reopen tt-a --reason \
   || fail "reopens-unassigns-and-records: no bd reopen for the bead"
 argv_has_pair reopen --reason "the panel was empty" \
   || fail "reopens-unassigns-and-records: --reason did not default to the first line of --notes"
-grep -xF -A1 "ARG:--assignee" "$stub_dir/argv.update" | grep -qxF "ARG:" \
+argv_has_pair update "--assignee" "" \
   || fail "reopens-unassigns-and-records: --assignee was not followed by an empty argument"
 argv_has update "--priority=0" \
   || fail "reopens-unassigns-and-records: the bead was not set to P0"
 grep -qxF -- "ARG:--append-notes" "$stub_dir/argv.update" \
   || fail "reopens-unassigns-and-records: no failure note appended"
-grep -F "ARG:Verification failed (" "$stub_dir/argv.update" | grep -q "the panel was empty" \
+argv_has_line_with update "ARG:Verification failed (" "the panel was empty" \
   || fail "reopens-unassigns-and-records: the note does not carry the navigator's words"
-grep -F "ARG:Verification failed (" "$stub_dir/argv.update" | grep -q "at 01234567" \
+argv_has_line_with update "ARG:Verification failed (" "at 01234567" \
   || fail "reopens-unassigns-and-records: the note does not carry the short sha"
 argv_has "set-state" "verification=failed" \
   || fail "reopens-unassigns-and-records: verification=failed was not set"
@@ -222,13 +234,13 @@ argv_has_pair update --remove-label "verdict:stale" \
 # The order: reopen, then the assignee clear, then the rest.
 [ "$(grep -c 'ARG:--assignee' "$stub_dir/argv.update")" -ge 1 ] \
   || fail "reopens-unassigns-and-records: no assignee clear at all"
-[ "$(grep -n 'ARG:--assignee' "$stub_dir/argv.update" | head -1 | cut -d: -f1)" \
-  -lt "$(grep -n 'ARG:--priority=0' "$stub_dir/argv.update" | head -1 | cut -d: -f1)" ] \
+[ "$(line_of "$(cat "$stub_dir/argv.update")" 'ARG:--assignee')" \
+  -lt "$(line_of "$(cat "$stub_dir/argv.update")" 'ARG:--priority=0')" ] \
   || fail "reopens-unassigns-and-records: the assignee clear did not come before the P0"
 # And across subcommands: `bd reopen' must precede the assignee clear, because the clear is refused
 # while the bead is still `in_progress' and held by somebody else. argv.<sub> cannot see this.
-[ "$(grep -n 'CALL:reopen' "$stub_dir/argv.all" | head -1 | cut -d: -f1)" \
-  -lt "$(grep -n 'ARG:--assignee' "$stub_dir/argv.all" | head -1 | cut -d: -f1)" ] \
+[ "$(line_of "$(cat "$stub_dir/argv.all")" 'CALL:reopen')" \
+  -lt "$(line_of "$(cat "$stub_dir/argv.all")" 'ARG:--assignee')" ] \
   || fail "reopens-unassigns-and-records: the reopen did not precede the assignee clear"
 pass "reopens-unassigns-and-records"
 
@@ -265,7 +277,7 @@ run tt-a --sha "$sha40" --notes "n" --fault build
 [ "$status" -eq 0 ] || fail "build-fault-touches-neither-label: expected exit 0, got $status ($err)"
 grep -qxF "ARG:plan:revise" "$stub_dir/argv.update" \
   && fail "build-fault-touches-neither-label: plan:revise was added on the build branch"
-grep -xF -A1 "ARG:--remove-label" "$stub_dir/argv.update" | grep -qxF "ARG:planned" \
+argv_has_pair update "--remove-label" "planned" \
   && fail "build-fault-touches-neither-label: planned was removed on the build branch"
 pass "build-fault-touches-neither-label"
 
@@ -281,7 +293,7 @@ argv_has reopen tt-p || fail "reopens-a-closed-parent-chain: the closed parent w
 argv_has reopen tt-g \
   && fail "reopens-a-closed-parent-chain: the OPEN grandparent was reopened"
 argv_has update tt-p || fail "reopens-a-closed-parent-chain: no bd update for the parent"
-grep -xF -A1 "ARG:tt-p" "$stub_dir/argv.update" | grep -qxF "ARG:--assignee" \
+argv_has_pair update "tt-p" "--assignee" \
   || fail "reopens-a-closed-parent-chain: the parent's assignee was not cleared"
 pass "reopens-a-closed-parent-chain"
 

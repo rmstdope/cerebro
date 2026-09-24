@@ -271,7 +271,9 @@ pass "--given keeps every refusal's exit status and prints nothing"
 # --- cb-10d.3: an implementer's tree is made and recorded -----------------------------------------
 
 tree="$consumer/.cerebro/worktrees/cb-x"
-line_of() { grep -n -- "$1" "$stub/bd.log" | head -1 | cut -d: -f1; }
+line_of() {
+  awk -v needle="$1" 'index($0, needle) { print NR; exit }' "$stub/bd.log"
+}
 
 reset "$open" "$ready"
 run Rogue cb-x 2>/dev/null || fail "an implementer with a tree is exit 0"

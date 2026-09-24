@@ -45,6 +45,7 @@ CARRIERS=(
   skills/implement-bead/SKILL.md
   skills/agree-experience/SKILL.md
   skills/design-the-build/SKILL.md
+  skills/produce-bead/SKILL.md
 )
 
 new_fixture() {

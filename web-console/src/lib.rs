@@ -448,8 +448,10 @@ fn standby_path(paths: &ReaderPaths) -> std::path::PathBuf {
     paths.shared_root.join(".cerebro/state/standby.json")
 }
 
-/// What the supervising fleet view publishes. No publication, or one it stopped refreshing,
-/// means no live view; one that does not parse is a fault.
+/// What the supervising fleet view publishes. No publication, or one it stopped refreshing whose
+/// control socket no longer answers, means no live view; one that does not parse is a fault. The
+/// socket is served off the view's loop and closed when it stops supervising, so it outlives a
+/// launch or a reap that holds the loop past the refresh.
 fn read_publication(path: &std::path::Path) -> Result<Option<cerebro_tui::PublishedStandby>, cerebro_tui::ReadError> {
     let invalid = |message: String| cerebro_tui::ReadError::Invalid {
         source: cerebro_tui::Invocation::new(path, &[]),
@@ -463,7 +465,13 @@ fn read_publication(path: &std::path::Path) -> Result<Option<cerebro_tui::Publis
     let publication = serde_json::from_str::<cerebro_tui::PublishedStandby>(&text)
         .map_err(|error| invalid(error.to_string()))?;
     let age = Utc::now().signed_duration_since(publication.updated_at).num_seconds();
-    Ok((age < SCREEN_STALE_SECONDS).then_some(publication))
+    let answers = || {
+        publication
+            .control
+            .as_deref()
+            .is_some_and(|socket| std::os::unix::net::UnixStream::connect(socket).is_ok())
+    };
+    Ok((age < SCREEN_STALE_SECONDS || answers()).then_some(publication))
 }
 
 /// The names the supervising fleet view holds on standby; nobody, with no live view.

@@ -716,9 +716,18 @@ async fn fleet_states(root: &std::path::Path) -> Vec<(String, String)> {
 }
 
 fn publish_standby(root: &std::path::Path, names: &[&str], age: chrono::Duration) {
+    publish_standby_with(root, names, None, age);
+}
+
+fn publish_standby_with(
+    root: &std::path::Path,
+    names: &[&str],
+    socket: Option<&std::path::Path>,
+    age: chrono::Duration,
+) {
     let publication = cerebro_tui::PublishedStandby {
         names: names.iter().map(|name| name.to_string()).collect(),
-        control: None,
+        control: socket.map(|socket| socket.to_string_lossy().into_owned()),
         updated_at: chrono::Utc::now() - age,
     };
     std::fs::create_dir_all(root.join(".cerebro/state")).unwrap();
@@ -746,6 +755,25 @@ async fn without_a_live_fleet_view_nobody_is_on_standby() {
 
     publish_standby(root.path(), &["Moira"], chrono::Duration::seconds(60));
     assert_eq!(fleet_states(root.path()).await, states(&[("Storm", "Dead"), ("Moira", "Dead")]));
+
+    // A view that died without tidying: its socket file is left, and nothing answers on it.
+    let socket = root.path().join("control.sock");
+    drop(std::os::unix::net::UnixListener::bind(&socket).unwrap());
+    publish_standby_with(root.path(), &["Moira"], Some(&socket), chrono::Duration::seconds(60));
+    assert_eq!(fleet_states(root.path()).await, states(&[("Storm", "Dead"), ("Moira", "Dead")]));
+}
+
+/// A launch or a reap can hold the fleet view's loop for longer than the publication stays fresh.
+/// Its control socket is served on a thread of its own and closed the moment the view stops
+/// supervising, so a socket that still answers is a view that is alive and only held up.
+#[tokio::test]
+async fn a_fleet_view_held_up_past_its_refresh_still_holds_its_standby_agents() {
+    let root = tempfile::tempdir().unwrap();
+    let socket = root.path().join("control.sock");
+    let _listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+    publish_standby_with(root.path(), &["Moira"], Some(&socket), chrono::Duration::seconds(60));
+
+    assert_eq!(fleet_states(root.path()).await, states(&[("Storm", "Dead"), ("Moira", "Standby")]));
 }
 
 /// A live session whose publication says where to type, and the listener standing in for it.
@@ -911,9 +939,10 @@ async fn with_no_supervising_fleet_view_nothing_is_done() {
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(body["done"], false);
 
-    // A view that stopped refreshing, or one that is read-only and names no socket.
+    // A view that stopped refreshing and left a socket nobody answers, or one that is read-only
+    // and names no socket.
     let socket = root.path().join("control.sock");
-    let _listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+    drop(std::os::unix::net::UnixListener::bind(&socket).unwrap());
     publish_control(root.path(), Some(&socket), chrono::Duration::seconds(60));
     assert_eq!(act(root.path(), acting("Storm", "start", &[])).await.0, StatusCode::SERVICE_UNAVAILABLE);
     publish_control(root.path(), None, chrono::Duration::zero());

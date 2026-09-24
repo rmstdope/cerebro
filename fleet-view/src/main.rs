@@ -1747,7 +1747,7 @@ where
                     }
                 }
                 let control = state.control.as_ref().map(|control| control.path().display().to_string());
-                state.standby.publish(&standby, app.standby_names(), control, Instant::now(), now);
+                state.standby.publish(&standby, app.standby_names(), control, Instant::now(), clock());
             } else {
                 state.control = None;
                 state.standby.withdraw();

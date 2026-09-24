@@ -29,7 +29,9 @@ at a time, and each handover is a label rather than a conversation:
                    └──────────── needs you ◄───────────┘
 ```
 
-Two rules hold that together, and both are load-bearing:
+Every label on that road, who sets it and which role is started for it, is one table in
+`skills/beads-workflow` (*The lifecycle a bead moves through*); every agent loads that skill, so it
+is the one place the route is written. Two rules hold it together, and both are load-bearing:
 
 - **UX never claims.** Claiming means *a producer is building this*. The fleet view
   assigns planning work without claiming it, which keeps the bead open while making ownership clear;

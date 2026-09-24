@@ -25,7 +25,7 @@ export type Work = {
   merged: Bead[];
   epics?: Record<string, string>;
 };
-export type Snapshot<T> = { state: "fresh"; value: T } | { state: "stale"; value: T; error: string; updated_at: string } | { state: "unavailable"; error: string };
+export type Snapshot<T> = { state: "fresh"; value: T; updated_at: string } | { state: "stale"; value: T; error: string; updated_at: string } | { state: "unavailable"; error: string };
 
 export const valueOf = <T,>(snapshot?: Snapshot<T>) => snapshot && snapshot.state !== "unavailable" ? snapshot.value : undefined;
 
@@ -41,8 +41,7 @@ export function useSnapshot<T>(path: string) {
       if (!response.ok) throw new Error(response.statusText);
       const value = await response.json() as Snapshot<T>;
       setSnapshot(value);
-      if (value.state === "fresh") last.current = Date.now();
-      else if (value.state === "stale") last.current = Date.parse(value.updated_at);
+      if (value.state !== "unavailable") last.current = Date.parse(value.updated_at);
       setUpdated(last.current);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

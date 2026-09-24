@@ -221,10 +221,14 @@ async fn work_snapshot_is_available_through_a_read_request() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
-    assert_eq!(
-        to_bytes(response.into_body(), usize::MAX).await.unwrap(),
-        r#"{"state":"fresh","value":{"claimed":[],"planned":[],"being_planned":[],"ux_agreed":[],"unplanned":[],"paused":[],"merged":[],"linked":[],"assignable":[],"implementer_assignable":[],"bugfixable":[],"second_look":[],"candidates":{},"epics":{}}}"#
-    );
+    let body = String::from_utf8(
+        to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    assert!(body.starts_with(r#"{"state":"fresh","value":{"claimed":[],"planned":[],"being_planned":[],"ux_agreed":[],"unplanned":[],"paused":[],"merged":[],"linked":[],"assignable":[],"implementer_assignable":[],"bugfixable":[],"second_look":[],"candidates":{},"epics":{}},"updated_at":""#));
 
     commands.fail();
     let response = service
@@ -248,6 +252,34 @@ async fn work_snapshot_is_available_through_a_read_request() {
     )
     .unwrap();
     assert!(body.starts_with(r#"{"state":"stale","value":{"claimed":[],"planned":[],"being_planned":[],"ux_agreed":[],"unplanned":[],"paused":[],"merged":[],"linked":[],"assignable":[],"implementer_assignable":[],"bugfixable":[],"second_look":[],"candidates":{},"epics":{}},"error":"could not run "#));
+}
+
+#[tokio::test]
+async fn fresh_snapshots_publish_their_update_time() {
+    let commands = Arc::new(ToggleCommands {
+        fails: AtomicBool::new(false),
+    });
+    let response = service_with_commands(PathBuf::from("/assets"), commands)
+        .router()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/api/fleet")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let body = String::from_utf8(
+        to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    assert!(body.contains(r#""state":"fresh""#));
+    assert!(body.contains(r#""updated_at":""#));
 }
 
 #[tokio::test]

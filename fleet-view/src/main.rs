@@ -356,15 +356,15 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
     // may act on this checkout. The spacing is read here too - once, in the one place, and only
     // when it will be used: a fork per role per five-second tick is not a thing this view may do.
     let mut spacing = BTreeMap::new();
-    // 1 for a read-only view, which starts nothing and draws no `-> buffer<N`.
-    let mut planner_multiple = 1;
+    // 1 for a read-only view, which starts nothing and draws no `-> agreed n/want`.
+    let mut ux_multiple = 1;
     if app.supervision.may_supervise() {
         let (declared, mut complaints) =
             readers::read_role_spacing(&paths, &SPACED_ROLES, commands.as_ref());
         spacing = declared;
         let (multiple, multiple_complaint) =
-            readers::read_planner_multiple(&paths, commands.as_ref());
-        planner_multiple = multiple;
+            readers::read_ux_multiple(&paths, commands.as_ref());
+        ux_multiple = multiple;
         // Onto the same vector, so a bad declaration reaches the header by the path the spacing
         // complaint already uses.
         complaints.extend(multiple_complaint);
@@ -384,7 +384,7 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
         }
     }
 
-    let config = LoopConfig { paths, programs: Programs::default(), spacing, planner_multiple };
+    let config = LoopConfig { paths, programs: Programs::default(), spacing, ux_multiple };
 
     let mut guard = TerminalGuard::enter(CrosstermTerminal)?;
     let backend = CrosstermBackend::new(io::stdout());
@@ -846,7 +846,7 @@ fn start_due(
     logger: &mut Logger,
     paths: &ReaderPaths,
     spacing: &BTreeMap<String, u64>,
-    planner_multiple: usize,
+    ux_multiple: usize,
     roster: &[RosterEntry],
     now: DateTime<Utc>,
 ) {
@@ -864,7 +864,7 @@ fn start_due(
         &spoken,
         |name| lifecycle::stop_flag_set(paths, name),
         app.gh_answer(),
-        planner_multiple,
+        ux_multiple,
     );
 
     let standby: Vec<(String, String)> = app
@@ -1615,8 +1615,8 @@ fn arm_and_autostart(
 }
 
 /// The roles a spacing is asked about, once, at startup.
-const SPACED_ROLES: [&str; 8] =
-    ["planner", "implementer", "producer", "bugfixer", "verifier", "orchestrator", "ux", "build-design"];
+const SPACED_ROLES: [&str; 6] =
+    ["implementer", "producer", "bugfixer", "verifier", "orchestrator", "ux"];
 
 /// The startup line, naming both halves of the roster's declaration - because the declaration did
 /// both and only one of them is otherwise audible. An empty half drops its clause along with the
@@ -1676,7 +1676,7 @@ struct LoopConfig {
     programs: Programs,
     spacing: BTreeMap<String, u64>,
     /// The project's declared planner buffer multiple, read once at startup (cb-3in).
-    planner_multiple: usize,
+    ux_multiple: usize,
 }
 
 /// Every worker the loop polls or asks. One value, so a tenth is a field rather than a
@@ -1837,7 +1837,7 @@ where
                 // Between the two: a given handover is not an orphan, and a name it starts must
                 // not also be started by a trigger this tick (cb-10d.5).
                 start_given(app, &mut state.host, &mut state.logger, &config.paths, &roster, now);
-                start_due(app, &mut state.host, &mut state.ledger, &mut state.logger, &config.paths, &config.spacing, config.planner_multiple, &roster, now);
+                start_due(app, &mut state.host, &mut state.ledger, &mut state.logger, &config.paths, &config.spacing, config.ux_multiple, &roster, now);
                 // And a line into an idle Cerebro, on the same freshly derived rows (cb-kcs.5.2).
                 // After `start_due` for its own reason: a Cerebro started on this very tick has
                 // no session to type into until the next read restates its row.
@@ -2856,7 +2856,7 @@ mod main_tests {
     /// cb-lz5 roles silently fall back to no spacing at all while their peers have one.
     #[test]
     fn spaced_roles_covers_every_board_backed_role() {
-        for role in ["planner", "implementer", "bugfixer", "verifier", "orchestrator", "ux", "build-design"] {
+        for role in ["implementer", "bugfixer", "verifier", "orchestrator", "ux"] {
             assert!(SPACED_ROLES.contains(&role), "{role} is asked about spacing");
         }
     }
@@ -3463,7 +3463,7 @@ mod main_tests {
     /// The paths, programs and spacing the loop reads, all pointed at `nowhere()`.
     fn test_config() -> LoopConfig {
         let (paths, programs) = nowhere();
-        LoopConfig { paths, programs, spacing: BTreeMap::new(), planner_multiple: 1 }
+        LoopConfig { paths, programs, spacing: BTreeMap::new(), ux_multiple: 1 }
     }
 
     /// The nine workers, each pointed at `nowhere()`. A case that needs a specific one writes
@@ -4826,7 +4826,7 @@ mod main_tests {
         let paths = scratch(dir.path(), "sleep 5");
         let mut app = standby_app(
             supervising(),
-            vec![planner_row("Xavier", cerebro_tui::model::RowState::Dead)],
+            vec![ux_row("Xavier", cerebro_tui::model::RowState::Dead)],
             None,
             Utc::now(),
         );
@@ -5160,27 +5160,27 @@ mod main_tests {
 
     // ---- cb-kcs.4.1: what the view starts by itself --------------------------------------
 
-    fn planner_row(name: &str, state: cerebro_tui::model::RowState) -> cerebro_tui::model::FleetRow {
+    fn ux_row(name: &str, state: cerebro_tui::model::RowState) -> cerebro_tui::model::FleetRow {
         cerebro_tui::model::FleetRow {
-            role: "planner".into(),
+            role: "ux".into(),
             ..fleet_row(name, cerebro_tui::model::AgentKind::Interactive, state)
         }
     }
 
-    fn planner_roster(names: &[&str]) -> Vec<cerebro_tui::model::RosterEntry> {
+    fn ux_roster(names: &[&str]) -> Vec<cerebro_tui::model::RosterEntry> {
         names
             .iter()
             .map(|name| cerebro_tui::model::RosterEntry {
                 name: (*name).to_string(),
-                role: "planner".to_string(),
+                role: "ux".to_string(),
                 kind: cerebro_tui::model::AgentKind::Interactive,
             })
             .collect()
     }
 
-    /// A board with one unplanned RANKED (P2) bead and nothing planned: a short buffer with
-    /// something to plan, which is the planner's second arm. It is a P2 rather than a P4 since
-    /// cb-zgg: an unranked bead is Cerebro's to rank, and no longer counts as something to plan.
+    /// A board with one undesigned RANKED (P2) bead and nothing agreed: a short buffer with
+    /// something to design, which is the UX role's second arm. It is a P2 rather than a P4 since
+    /// cb-zgg: an unranked bead is Cerebro's to rank, and no longer counts as something to design.
     fn short_buffer() -> cerebro_tui::model::WorkBuckets {
         let mut buckets = cerebro_tui::model::partition_beads(vec![cerebro_tui::model::Bead {
             id: "cb-a".into(),
@@ -5194,13 +5194,13 @@ mod main_tests {
             metadata: serde_json::Value::Null,
             external_ref: None,
         }]);
-        // What `plan-candidates` lists for that board (cb-10d.2.2).
-        buckets.candidates = [("planner".to_string(), vec![cerebro_tui::model::Candidate { id: "cb-a".into(), priority: Some(2) }])].into_iter().collect();
+        // What `stage-candidates ux` lists for that board (cb-10d.2.2).
+        buckets.candidates = [("ux".to_string(), vec![cerebro_tui::model::Candidate { id: "cb-a".into(), priority: Some(2) }])].into_iter().collect();
         buckets
     }
 
-    /// Three planned, unclaimed beads and one unplanned one to plan: a buffer that satisfies a
-    /// three-implementer fleet at a multiple of 1 and is short at a multiple of 2 (cb-3in).
+    /// Three agreed, unclaimed beads and one undesigned one to design: a buffer that satisfies a
+    /// three-producer fleet at a multiple of 1 and is short at a multiple of 2 (cb-3in).
     fn buffer_of_three() -> cerebro_tui::model::WorkBuckets {
         let bead = |id: &str, labels: Vec<String>| cerebro_tui::model::Bead {
             id: id.into(),
@@ -5215,22 +5215,22 @@ mod main_tests {
             external_ref: None,
         };
         let mut buckets = cerebro_tui::model::partition_beads(vec![
-            bead("cb-p1", vec!["planned".to_string()]),
-            bead("cb-p2", vec!["planned".to_string()]),
-            bead("cb-p3", vec!["planned".to_string()]),
+            bead("cb-p1", vec!["ux:agreed".to_string()]),
+            bead("cb-p2", vec!["ux:agreed".to_string()]),
+            bead("cb-p3", vec!["ux:agreed".to_string()]),
             bead("cb-u1", Vec::new()),
         ]);
-        buckets.candidates = [("planner".to_string(), vec![cerebro_tui::model::Candidate { id: "cb-u1".into(), priority: Some(2) }])].into_iter().collect();
+        buckets.candidates = [("ux".to_string(), vec![cerebro_tui::model::Candidate { id: "cb-u1".into(), priority: Some(2) }])].into_iter().collect();
         buckets
     }
 
-    /// One planner and COUNT implementers, so `TriggerFacts::implementers` is COUNT.
-    fn planner_and_implementers(count: usize) -> Vec<cerebro_tui::model::RosterEntry> {
-        let mut roster = planner_roster(&["Xavier"]);
+    /// One UX agent and COUNT producers, so `TriggerFacts::implementers` is COUNT.
+    fn ux_and_producers(count: usize) -> Vec<cerebro_tui::model::RosterEntry> {
+        let mut roster = ux_roster(&["Xavier"]);
         for n in 0..count {
             roster.push(cerebro_tui::model::RosterEntry {
                 name: format!("Builder{n}"),
-                role: "implementer".to_string(),
+                role: "producer".to_string(),
                 kind: cerebro_tui::model::AgentKind::Implementer,
             });
         }
@@ -5238,18 +5238,18 @@ mod main_tests {
     }
 
     #[test]
-    fn the_declared_multiple_reaches_the_planner_trigger() {
+    fn the_declared_multiple_reaches_the_ux_trigger() {
         let dir = tempfile::tempdir().unwrap();
         let paths = scratch(dir.path(), "sleep 5");
         let now = Utc::now();
-        let roster = planner_and_implementers(3);
+        let roster = ux_and_producers(3);
 
         // A multiple of 1 - today's rule - wants three, and three are planned.
         let mut host = SessionHost::default();
         let mut ledger = cerebro_tui::triggers::StartLedger::default();
         let mut app = standby_app(
             supervising(),
-            vec![planner_row("Xavier", cerebro_tui::model::RowState::Dead)],
+            vec![ux_row("Xavier", cerebro_tui::model::RowState::Dead)],
             Some(buffer_of_three()),
             now,
         );
@@ -5257,7 +5257,7 @@ mod main_tests {
         assert!(!host.is_live("Xavier"), "a satisfied buffer starts nobody");
         assert_eq!(
             app.standby_labels.get("Xavier").map(String::as_str),
-            Some("→ buffer<3")
+            Some("→ agreed 3/3")
         );
 
         // A multiple of 2 wants six, so the same board is short.
@@ -5265,16 +5265,16 @@ mod main_tests {
         let mut ledger = cerebro_tui::triggers::StartLedger::default();
         let mut app = standby_app(
             supervising(),
-            vec![planner_row("Xavier", cerebro_tui::model::RowState::Dead)],
+            vec![ux_row("Xavier", cerebro_tui::model::RowState::Dead)],
             Some(buffer_of_three()),
             now,
         );
         start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &std::collections::BTreeMap::new(), 2, &roster, now);
         assert!(host.is_live("Xavier"), "a multiple of 2 makes the same buffer short");
-        assert_eq!(app.notice.as_deref(), Some("Started Xavier — buffer 3 of 6."));
+        assert_eq!(app.notice.as_deref(), Some("Started Xavier — UX 3 of 6."));
         assert_eq!(
             app.standby_labels.get("Xavier").map(String::as_str),
-            Some("→ buffer<6")
+            Some("→ agreed 3/6")
         );
         host.kill(&paths, "Xavier");
         settle_gone(&mut host, "Xavier");
@@ -5425,16 +5425,16 @@ mod main_tests {
     }
 
     #[test]
-    fn a_standby_planner_whose_buffer_is_short_is_started() {
+    fn a_standby_ux_agent_whose_buffer_is_short_is_started() {
         let dir = tempfile::tempdir().unwrap();
         let paths = scratch(dir.path(), "sleep 5");
         let now = Utc::now();
         let mut host = SessionHost::default();
         let mut ledger = cerebro_tui::triggers::StartLedger::default();
-        let roster = planner_roster(&["Xavier"]);
+        let roster = ux_roster(&["Xavier"]);
         let mut app = standby_app(
             supervising(),
-            vec![planner_row("Xavier", cerebro_tui::model::RowState::Dead)],
+            vec![ux_row("Xavier", cerebro_tui::model::RowState::Dead)],
             Some(short_buffer()),
             now,
         );
@@ -5446,10 +5446,10 @@ mod main_tests {
         assert!(app.armed.contains("Xavier"), "and stays armed");
         assert_eq!(ledger.started_at("Xavier"), Some(now));
         assert!(ledger.fingerprint("Xavier").is_some(), "with what triggered it");
-        assert_eq!(app.notice.as_deref(), Some("Started Xavier — buffer 0 of 2."));
+        assert_eq!(app.notice.as_deref(), Some("Started Xavier — UX 0 of 2."));
         assert_eq!(
             app.standby_labels.get("Xavier").map(String::as_str),
-            Some("→ buffer<2")
+            Some("→ agreed 0/2")
         );
         host.kill(&paths, "Xavier");
         settle_gone(&mut host, "Xavier");
@@ -5642,7 +5642,7 @@ mod main_tests {
                 })
                 .collect(),
         );
-        buckets.candidates = [("planner".to_string(), vec![cerebro_tui::model::Candidate { id: "cb-a".into(), priority: Some(2) }, cerebro_tui::model::Candidate { id: "cb-b".into(), priority: Some(2) }])].into_iter().collect();
+        buckets.candidates = [("ux".to_string(), vec![cerebro_tui::model::Candidate { id: "cb-a".into(), priority: Some(2) }, cerebro_tui::model::Candidate { id: "cb-b".into(), priority: Some(2) }])].into_iter().collect();
         buckets
     }
 
@@ -5656,12 +5656,12 @@ mod main_tests {
         let now = Utc::now();
         let mut host = SessionHost::default();
         let mut ledger = cerebro_tui::triggers::StartLedger::default();
-        let roster = planner_roster(&["Xavier", "Beast"]);
+        let roster = ux_roster(&["Xavier", "Beast"]);
         let mut app = standby_app(
             supervising(),
             vec![
-                planner_row("Xavier", cerebro_tui::model::RowState::Working),
-                planner_row("Beast", cerebro_tui::model::RowState::Dead),
+                ux_row("Xavier", cerebro_tui::model::RowState::Working),
+                ux_row("Beast", cerebro_tui::model::RowState::Dead),
             ],
             Some(short_buffer()),
             now,
@@ -5681,7 +5681,7 @@ mod main_tests {
     /// Two standby uxers and two candidates: each is handed its own bead in one tick,
     /// the second never offered the first's (cb-10d.2.2).
     #[test]
-    fn two_planners_are_given_two_different_beads() {
+    fn two_ux_agents_are_given_two_different_beads() {
         let dir = tempfile::tempdir().unwrap();
         let paths = scratch(dir.path(), "sleep 5");
         let now = Utc::now();
@@ -5730,24 +5730,24 @@ mod main_tests {
     /// A planner whose only candidate is unranked has nothing to be given, so it is not started -
     /// and its line says the trigger had no reason (cb-10d.2.2).
     #[test]
-    fn a_planner_with_nothing_to_take_is_not_started() {
+    fn a_ux_agent_with_nothing_to_take_is_not_started() {
         let dir = tempfile::tempdir().unwrap();
         let paths = scratch(dir.path(), "sleep 5");
         let mut logger = logging(dir.path());
         let now = Utc::now();
         let mut host = SessionHost::default();
         let mut ledger = cerebro_tui::triggers::StartLedger::default();
-        let roster = planner_roster(&["Xavier"]);
+        let roster = ux_roster(&["Xavier"]);
         let mut buckets = short_buffer();
         buckets.candidates = [(
-            "planner".to_string(),
+            "ux".to_string(),
             vec![cerebro_tui::model::Candidate { id: "cb-a".into(), priority: Some(4) }],
         )]
         .into_iter()
         .collect();
         let mut app = standby_app(
             supervising(),
-            vec![planner_row("Xavier", RowState::Dead)],
+            vec![ux_row("Xavier", RowState::Dead)],
             Some(buckets),
             now,
         );
@@ -6541,18 +6541,18 @@ mod main_tests {
     }
 
     #[test]
-    fn two_planners_are_not_started_in_the_same_breath() {
+    fn two_ux_agents_are_not_started_in_the_same_breath() {
         let dir = tempfile::tempdir().unwrap();
         let paths = scratch(dir.path(), "sleep 5");
         let now = Utc::now();
         let mut host = SessionHost::default();
         let mut ledger = cerebro_tui::triggers::StartLedger::default();
-        let roster = planner_roster(&["Xavier", "Beast"]);
+        let roster = ux_roster(&["Xavier", "Beast"]);
         let mut app = standby_app(
             supervising(),
             vec![
-                planner_row("Xavier", cerebro_tui::model::RowState::Dead),
-                planner_row("Beast", cerebro_tui::model::RowState::Dead),
+                ux_row("Xavier", cerebro_tui::model::RowState::Dead),
+                ux_row("Beast", cerebro_tui::model::RowState::Dead),
             ],
             Some(short_buffer()),
             now,
@@ -6575,11 +6575,11 @@ mod main_tests {
         let now = Utc::now();
         let mut host = SessionHost::default();
         let mut ledger = cerebro_tui::triggers::StartLedger::default();
-        let roster = planner_roster(&["Xavier"]);
+        let roster = ux_roster(&["Xavier"]);
         cerebro_tui::lifecycle::write_stop_flag(&paths, "Xavier").unwrap();
         let mut app = standby_app(
             supervising(),
-            vec![planner_row("Xavier", cerebro_tui::model::RowState::Dead)],
+            vec![ux_row("Xavier", cerebro_tui::model::RowState::Dead)],
             Some(short_buffer()),
             now,
         );
@@ -6600,10 +6600,10 @@ mod main_tests {
         let now = Utc::now();
         let mut host = SessionHost::default();
         let mut ledger = cerebro_tui::triggers::StartLedger::default();
-        let roster = planner_roster(&["Xavier"]);
+        let roster = ux_roster(&["Xavier"]);
         let mut app = standby_app(
             supervising(),
-            vec![planner_row("Xavier", cerebro_tui::model::RowState::Dead)],
+            vec![ux_row("Xavier", cerebro_tui::model::RowState::Dead)],
             None,
             now,
         );
@@ -6632,8 +6632,8 @@ mod main_tests {
         let mut app = standby_app(
             mode,
             vec![
-                planner_row("Xavier", cerebro_tui::model::RowState::Dead),
-                planner_row("Beast", cerebro_tui::model::RowState::Dead),
+                ux_row("Xavier", cerebro_tui::model::RowState::Dead),
+                ux_row("Beast", cerebro_tui::model::RowState::Dead),
             ],
             None,
             now,
@@ -6663,8 +6663,8 @@ mod main_tests {
         let mut app = standby_app(
             mode,
             vec![
-                planner_row("Xavier", cerebro_tui::model::RowState::Dead),
-                planner_row("Beast", cerebro_tui::model::RowState::Dead),
+                ux_row("Xavier", cerebro_tui::model::RowState::Dead),
+                ux_row("Beast", cerebro_tui::model::RowState::Dead),
             ],
             None,
             now,
@@ -6741,7 +6741,7 @@ mod main_tests {
         let paths = scratch(dir.path(), "sleep 5");
         let mut app = standby_app(
             supervising(),
-            vec![planner_row("Xavier", cerebro_tui::model::RowState::Dead)],
+            vec![ux_row("Xavier", cerebro_tui::model::RowState::Dead)],
             None,
             Utc::now(),
         );
@@ -6753,7 +6753,7 @@ mod main_tests {
         let lines = disarm_lines(&paths);
         assert_eq!(lines.len(), 1, "one line for one disarm: {lines:?}");
         assert_eq!(lines[0]["agent"], "Xavier");
-        assert_eq!(lines[0]["role"], "planner");
+        assert_eq!(lines[0]["role"], "ux");
         assert_eq!(lines[0]["by"], "standby");
     }
 
@@ -6800,7 +6800,7 @@ mod main_tests {
         let mut host = SessionHost::default();
         let mut app = standby_app(
             supervising(),
-            vec![planner_row("Xavier", cerebro_tui::model::RowState::Dead)],
+            vec![ux_row("Xavier", cerebro_tui::model::RowState::Dead)],
             None,
             Utc::now(),
         );
@@ -6820,7 +6820,7 @@ mod main_tests {
         // And the row greys on the refresh the key asked for: `apply_standby` has nothing left to
         // restate it from.
         app.finish_refresh(
-            Ok(vec![planner_row("Xavier", cerebro_tui::model::RowState::Dead)]),
+            Ok(vec![ux_row("Xavier", cerebro_tui::model::RowState::Dead)]),
             Utc::now(),
         );
         assert_eq!(app.fleet_rows()[0].state, cerebro_tui::model::RowState::Dead);
@@ -6833,7 +6833,7 @@ mod main_tests {
         let mut host = SessionHost::default();
         let mut app = standby_app(
             supervising(),
-            vec![planner_row("Xavier", cerebro_tui::model::RowState::Dead)],
+            vec![ux_row("Xavier", cerebro_tui::model::RowState::Dead)],
             None,
             Utc::now(),
         );
@@ -6880,10 +6880,10 @@ mod main_tests {
         let now = Utc::now();
         let mut host = SessionHost::default();
         let mut ledger = cerebro_tui::triggers::StartLedger::default();
-        let roster = planner_roster(&["Xavier"]);
+        let roster = ux_roster(&["Xavier"]);
         let mut app = standby_app(
             supervising(),
-            vec![planner_row("Xavier", cerebro_tui::model::RowState::Dead)],
+            vec![ux_row("Xavier", cerebro_tui::model::RowState::Dead)],
             Some(short_buffer()),
             now,
         );
@@ -6899,7 +6899,7 @@ mod main_tests {
         // later tick. Without a backoff (cb-kcs.4.2's), that is the whole of Q5.
         app.set_exits(host.exits());
         app.finish_refresh(
-            Ok(vec![planner_row("Xavier", cerebro_tui::model::RowState::Dead)]),
+            Ok(vec![ux_row("Xavier", cerebro_tui::model::RowState::Dead)]),
             now,
         );
         assert_eq!(app.fleet_rows()[0].state, cerebro_tui::model::RowState::Dead);
@@ -6954,10 +6954,10 @@ mod main_tests {
         let now = Utc::now();
         let mut host = SessionHost::default();
         let mut ledger = cerebro_tui::triggers::StartLedger::default();
-        let roster = planner_roster(&["Xavier"]);
+        let roster = ux_roster(&["Xavier"]);
         let mut app = standby_app(
             supervising(),
-            vec![planner_row("Xavier", cerebro_tui::model::RowState::Dead)],
+            vec![ux_row("Xavier", cerebro_tui::model::RowState::Dead)],
             Some(short_buffer()),
             now,
         );
@@ -6966,7 +6966,7 @@ mod main_tests {
 
         assert!(host.is_live("Xavier"));
         let line = one_line(dir.path(), "decisions", "start");
-        assert!(line.contains(r#""agent":"Xavier","role":"planner","reason":"buffer 0 of 2","bead":"cb-a","by":"trigger""#), "{line}");
+        assert!(line.contains(r#""agent":"Xavier","role":"ux","reason":"UX 0 of 2","bead":"cb-a","by":"trigger""#), "{line}");
         host.kill(&paths, "Xavier");
         settle_gone(&mut host, "Xavier");
     }
@@ -7006,7 +7006,7 @@ mod main_tests {
         let declaration = declaring_with_table(
             "Cyclops",
             "Xavier\nBeast",
-            "Cyclops\timplementer\timplementer\nXavier\tplanner\tinteractive\nBeast\tplanner\tinteractive\n",
+            "Cyclops\timplementer\timplementer\nXavier\tux\tinteractive\nBeast\tux\tinteractive\n",
         );
         let mut logger = logging(dir.path());
         let now = Utc::now();
@@ -7034,10 +7034,10 @@ mod main_tests {
         // has been polled once, so a role taken from the fleet pane is the empty string here
         // ALWAYS rather than rarely - and Emacs writes the real one into the same file.
         assert!(
-            arms[0].contains(r#""agent":"Xavier","role":"planner","by":"roster""#),
+            arms[0].contains(r#""agent":"Xavier","role":"ux","by":"roster""#),
             "{}", arms[0]
         );
-        assert!(arms[1].contains(r#""agent":"Beast","role":"planner","by":"roster""#), "{}", arms[1]);
+        assert!(arms[1].contains(r#""agent":"Beast","role":"ux","by":"roster""#), "{}", arms[1]);
         // And the autostarted name got a `start` line instead, as the navigator's own act.
         let start = one_line(dir.path(), "decisions", "start");
         assert!(
@@ -7176,7 +7176,7 @@ mod main_tests {
         let now = Utc::now();
         let mut host = SessionHost::default();
         let mut ledger = cerebro_tui::triggers::StartLedger::default();
-        let roster = planner_roster(&["Xavier"]);
+        let roster = ux_roster(&["Xavier"]);
         // Four failed starts already, and the last one long enough ago that the backoff has run
         // out: the fifth is the one that gives up.
         // The end is BEFORE the start: a launch that never became a session leaves the previous
@@ -7186,7 +7186,7 @@ mod main_tests {
         ledger.set_failures("Xavier", 4);
         let mut app = standby_app(
             supervising(),
-            vec![planner_row("Xavier", cerebro_tui::model::RowState::Dead)],
+            vec![ux_row("Xavier", cerebro_tui::model::RowState::Dead)],
             Some(short_buffer()),
             now,
         );
@@ -7196,7 +7196,7 @@ mod main_tests {
         assert!(!host.is_live("Xavier"), "the fifth start is not attempted");
         let gave_up = one_line(dir.path(), "decisions", "give-up");
         assert!(
-            gave_up.contains(r#""agent":"Xavier","role":"planner","failed_starts":5"#),
+            gave_up.contains(r#""agent":"Xavier","role":"ux","failed_starts":5"#),
             "the count INCLUDES the start that just failed: {gave_up}"
         );
         let error = one_line(dir.path(), "errors", "error");
@@ -7217,14 +7217,14 @@ mod main_tests {
         let mut ledger = cerebro_tui::triggers::StartLedger::default();
         // Two planners, so the second is held by role-start spacing while the first starts -
         // and two candidates, so what holds it is the spacing and not an empty queue.
-        let roster = planner_roster(&["Xavier", "Beast"]);
+        let roster = ux_roster(&["Xavier", "Beast"]);
         let mut spacing = BTreeMap::new();
-        spacing.insert("planner".to_string(), 30);
+        spacing.insert("ux".to_string(), 30);
         let mut app = standby_app(
             supervising(),
             vec![
-                planner_row("Xavier", cerebro_tui::model::RowState::Dead),
-                planner_row("Beast", cerebro_tui::model::RowState::Dead),
+                ux_row("Xavier", cerebro_tui::model::RowState::Dead),
+                ux_row("Beast", cerebro_tui::model::RowState::Dead),
             ],
             Some(two_candidates()),
             now,
@@ -7242,7 +7242,7 @@ mod main_tests {
         // substrings, because both the ORDER and the null-not-false shape are what is pinned and
         // a parse would prove neither.
         let xavier = evaluations[0];
-        assert!(xavier.contains(r#""agent":"Xavier","role":"planner","reason":"buffer 0 of 2""#), "{xavier}");
+        assert!(xavier.contains(r#""agent":"Xavier","role":"ux","reason":"UX 0 of 2""#), "{xavier}");
         assert!(xavier.contains(r#""planned":0,"planned_ids":null,"implementers":0,"p0_unplanned":null"#), "{xavier}");
         assert!(xavier.contains(r#""p4_unranked":0,"merged_unverified":0,"stale_verdicts":0"#), "{xavier}");
         assert!(xavier.contains(r#""held_by_guard":null,"spaced_out":null,"spacing":30"#), "{xavier}");
@@ -7613,10 +7613,10 @@ mod main_tests {
         let now = Utc::now();
         let mut host = SessionHost::default();
         let mut ledger = cerebro_tui::triggers::StartLedger::default();
-        let roster = planner_roster(&["Xavier"]);
+        let roster = ux_roster(&["Xavier"]);
         let mut app = standby_app(
             read_only,
-            vec![planner_row("Xavier", cerebro_tui::model::RowState::Dead)],
+            vec![ux_row("Xavier", cerebro_tui::model::RowState::Dead)],
             Some(short_buffer()),
             now,
         );
@@ -7904,7 +7904,7 @@ mod main_tests {
     ) -> (App, cerebro_tui::triggers::StartLedger) {
         let app = standby_app(
             supervising(),
-            vec![planner_row("Xavier", cerebro_tui::model::RowState::Dead)],
+            vec![ux_row("Xavier", cerebro_tui::model::RowState::Dead)],
             Some(work),
             now,
         );
@@ -7921,7 +7921,7 @@ mod main_tests {
         let dir = tempfile::tempdir().unwrap();
         let paths = scratch(dir.path(), "sleep 5");
         let now = Utc::now();
-        let roster = planner_roster(&["Xavier"]);
+        let roster = ux_roster(&["Xavier"]);
         let mut host = SessionHost::default();
         // One failed start behind it: the first entry of the schedule is 0, so it comes straight
         // back.
@@ -7939,7 +7939,7 @@ mod main_tests {
         app.handed.clear();
         let later = now + chrono::Duration::seconds(5);
         app.finish_refresh(
-            Ok(vec![planner_row("Xavier", cerebro_tui::model::RowState::Dead)]),
+            Ok(vec![ux_row("Xavier", cerebro_tui::model::RowState::Dead)]),
             later,
         );
         start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &roster, later);
@@ -7978,7 +7978,7 @@ mod main_tests {
         let dir = tempfile::tempdir().unwrap();
         let paths = scratch(dir.path(), "sleep 5");
         let now = Utc::now();
-        let roster = planner_roster(&["Xavier"]);
+        let roster = ux_roster(&["Xavier"]);
         let mut host = SessionHost::default();
         // An empty board: the planner's condition is false, and the countdown wins anyway.
         let (mut app, mut ledger) = backing_off(3, 60, empty_board(), now);
@@ -7998,7 +7998,7 @@ mod main_tests {
         let dir = tempfile::tempdir().unwrap();
         let paths = scratch(dir.path(), "sleep 5");
         let now = Utc::now();
-        let roster = planner_roster(&["Xavier"]);
+        let roster = ux_roster(&["Xavier"]);
         let mut host = SessionHost::default();
         // Four failures behind it and the fourth's ten minutes counted out.
         let (mut app, mut ledger) = backing_off(4, 700, short_buffer(), now);
@@ -8033,7 +8033,7 @@ mod main_tests {
         let dir = tempfile::tempdir().unwrap();
         let paths = scratch(dir.path(), "sleep 5");
         let now = Utc::now();
-        let roster = planner_roster(&["Xavier"]);
+        let roster = ux_roster(&["Xavier"]);
         let mut host = SessionHost::default();
         let (mut app, mut ledger) = backing_off(4, 700, short_buffer(), now);
         assert_eq!(app.fleet_rows()[0].state, cerebro_tui::model::RowState::Standby);
@@ -8050,7 +8050,7 @@ mod main_tests {
         let dir = tempfile::tempdir().unwrap();
         let paths = scratch(dir.path(), "sleep 5");
         let now = Utc::now();
-        let roster = planner_roster(&["Xavier"]);
+        let roster = ux_roster(&["Xavier"]);
         let mut host = SessionHost::default();
         let (mut app, mut ledger) = backing_off(3, 100, short_buffer(), now);
         // A pass ran and ended: the three before it do not count.
@@ -8073,7 +8073,7 @@ mod main_tests {
         let mut ledger = cerebro_tui::triggers::StartLedger::default();
         let mut app = standby_app(
             supervising(),
-            vec![planner_row("Xavier", cerebro_tui::model::RowState::Dead)],
+            vec![ux_row("Xavier", cerebro_tui::model::RowState::Dead)],
             None,
             now,
         );

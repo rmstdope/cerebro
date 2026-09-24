@@ -35,7 +35,6 @@ pub enum AgentKind {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RolePolicy {
     None,
-    Planner,
     Ux,
     Producer,
     Bugfixer,
@@ -53,7 +52,6 @@ impl RolePolicy {
             })
             .find_map(|(name, policy)| (name == role).then_some(policy))
             .map_or(Self::None, |policy| match policy {
-                "planner" => Self::Planner,
                 "ux" => Self::Ux,
                 "producer" => Self::Producer,
                 "bugfixer" => Self::Bugfixer,
@@ -66,7 +64,7 @@ impl RolePolicy {
     }
 
     pub fn is_planning(self) -> bool {
-        matches!(self, Self::Planner | Self::Ux)
+        matches!(self, Self::Ux)
     }
 }
 
@@ -924,7 +922,7 @@ pub struct WorkBuckets {
     pub claimed: Vec<Bead>,
     pub planned: Vec<Bead>,
     pub being_planned: Vec<Bead>,
-    /// The beads whose experience the `ux` agent has agreed and that no build-designer has planned
+    /// The beads a producer could take: `ux:agreed` or `ux:none`, unclaimed and unplanned
     /// yet (cb-lz5.1). Empty on every board not running the cb-lz5 trial, which is why the pane
     /// hides this section rather than drawing it as `(none)`.
     pub ux_agreed: Vec<Bead>,
@@ -960,7 +958,7 @@ pub struct WorkBuckets {
     pub epics: BTreeMap<String, String>,
 }
 
-/// One row of a planning role's candidate script (`plan-candidates`, `stage-candidates <stage>`),
+/// One row of the planning role's candidate script (`stage-candidates ux`),
 /// in the script's own order: priority, then id. The scripts print whole bead rows; only these two
 /// fields are read.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -973,7 +971,6 @@ pub struct Candidate {
 /// role that is not a planning role.
 pub fn candidate_command(role: &str) -> Option<(&'static str, &'static [&'static str])> {
     match RolePolicy::for_role(role) {
-        RolePolicy::Planner => Some(("plan-candidates", &[])),
         RolePolicy::Ux => Some(("stage-candidates", &["ux"])),
         _ => None,
     }
@@ -1985,14 +1982,11 @@ mod tests {
 
     #[test]
     fn candidate_command_names_each_planning_roles_script() {
-        assert_eq!(candidate_command("planner"), Some(("plan-candidates", &[][..])));
         assert_eq!(candidate_command("ux"), Some(("stage-candidates", &["ux"][..])));
+        assert_eq!(candidate_command("planner"), None, "the planner role is retired");
         assert_eq!(candidate_command("build-design"), None);
         assert_eq!(candidate_command("verifier"), None);
         assert_eq!(candidate_command("implementer"), None);
-        for role in ["planner", "ux"] {
-            assert!(candidate_command(role).is_some(), "{role} has a candidate script");
-        }
     }
 
     #[test]
@@ -2001,6 +1995,8 @@ mod tests {
         assert_eq!(RolePolicy::for_role("implementer"), RolePolicy::None);
         assert_eq!(RolePolicy::for_role("bugfixer"), RolePolicy::Bugfixer);
         assert_eq!(RolePolicy::for_role("build-design"), RolePolicy::None);
+        assert_eq!(RolePolicy::for_role("planner"), RolePolicy::None);
+        assert_eq!(RolePolicy::for_role("ux"), RolePolicy::Ux);
         assert_eq!(RolePolicy::for_role("verifier"), RolePolicy::None);
         assert_eq!(RolePolicy::for_role("consumer-only-role"), RolePolicy::None);
         assert!(RolePolicy::Producer.is_builder());
@@ -2030,7 +2026,8 @@ mod tests {
             row("Rogue", "producer"),
             row("Beast", "ux"),
         ];
-        let want: BTreeSet<String> = ["planner", "ux"].iter().map(|r| r.to_string()).collect();
+        // `planner` is a retired role with no policy, so it runs no candidate script.
+        let want: BTreeSet<String> = ["ux"].iter().map(|r| r.to_string()).collect();
         assert_eq!(planning_roles_of(&rows), want);
         assert!(planning_roles_of(&[]).is_empty());
     }

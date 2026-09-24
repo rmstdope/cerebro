@@ -112,6 +112,37 @@ impl B {
 }
 
 #[test]
+fn reports_metadata_changed_on_the_first_of_repeated_inherent_implementations() {
+    let before = r#"
+struct Example;
+
+/// First implementation.
+impl Example {
+    fn first() {}
+}
+
+impl Example {
+    fn second() {}
+}
+"#;
+    let after = r#"
+struct Example;
+
+impl Example {
+    fn first() {}
+}
+
+impl Example {
+    fn second() {}
+}
+"#;
+
+    let changed = changed_metadata(before, after);
+    assert_eq!(changed.len(), 1);
+    assert_eq!(changed[0].identity, "impl Example");
+}
+
+#[test]
 fn recognizes_generic_implementations_fields_and_variants() {
     let source = r#"
 /// Generic implementation.
@@ -136,6 +167,80 @@ enum Choice {
     assert!(found.contains_key("impl Example < T >::fn value"));
     assert!(found.contains_key("struct Record::field field"));
     assert!(found.contains_key("enum Choice::variant First"));
+}
+
+#[test]
+fn reports_metadata_changes_for_generic_implementations_fields_variants_unions_and_uses() {
+    let cases = [
+        (
+            "impl Example < T >",
+            r#"
+/// Generic implementation.
+impl<T> Example<T> {}
+"#,
+            r#"
+impl<T> Example<T> {}
+"#,
+        ),
+        (
+            "struct Record::field field",
+            r#"
+struct Record {
+    /// A documented field.
+    field: String,
+}
+"#,
+            r#"
+struct Record {
+    field: String,
+}
+"#,
+        ),
+        (
+            "enum Choice::variant First",
+            r#"
+enum Choice {
+    /// A documented variant.
+    First,
+}
+"#,
+            r#"
+enum Choice {
+    First,
+}
+"#,
+        ),
+        (
+            "union Bits::field value",
+            r#"
+union Bits {
+    /// A documented field.
+    value: u64,
+}
+"#,
+            r#"
+union Bits {
+    value: u64,
+}
+"#,
+        ),
+        (
+            "use std :: collections :: BTreeMap",
+            r#"
+/// A documented import.
+use std::collections::BTreeMap;
+"#,
+            r#"
+use std::collections::BTreeMap;
+"#,
+        ),
+    ];
+
+    for (identity, before, after) in cases {
+        let changed = changed_metadata(before, after);
+        assert_eq!(changed.len(), 1, "{identity}");
+        assert_eq!(changed[0].identity, identity);
+    }
 }
 
 #[test]
@@ -179,28 +284,38 @@ fn changed_metadata(before: &str, after: &str) -> Vec<MetadataChange> {
     let after = item_map(after);
     before
         .into_iter()
-        .filter_map(|(identity, before)| {
-            let after = after.get(&identity)?;
-            (before.docs != after.docs || before.attributes != after.attributes).then(|| {
-                MetadataChange {
-                    identity,
-                    before,
-                    after: after.clone(),
-                }
-            })
+        .flat_map(|(identity, before_items)| {
+            let Some(after_items) = after.get(&identity) else {
+                return Vec::new();
+            };
+            before_items
+                .into_iter()
+                .zip(after_items)
+                .filter_map(|(before, after)| {
+                    (before.docs != after.docs || before.attributes != after.attributes).then(
+                        || MetadataChange {
+                            identity: identity.clone(),
+                            before,
+                            after: after.clone(),
+                        },
+                    )
+                })
+                .collect()
         })
         .collect()
 }
 
-fn item_map(source: &str) -> BTreeMap<String, ItemBoundary> {
+fn item_map(source: &str) -> BTreeMap<String, Vec<ItemBoundary>> {
     let file = syn::parse_file(source).expect("the Rust fixture must parse");
     let mut collector = Collector::default();
     collector.collect_items(&file.items);
     collector
         .items
         .into_iter()
-        .map(|item| (item.identity.clone(), item))
-        .collect()
+        .fold(BTreeMap::new(), |mut items, item| {
+            items.entry(item.identity.clone()).or_default().push(item);
+            items
+        })
 }
 
 #[derive(Default)]

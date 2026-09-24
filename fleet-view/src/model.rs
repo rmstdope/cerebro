@@ -1978,6 +1978,24 @@ mod tests {
     /// already exists: `human`, exact `planned` and an assignee all win over it, because the
     /// fleet view hands both cb-lz5 agents their bead by assignee and a bead must show under
     /// `Being planned` while one of them has it (cb-10d.2.2).
+    #[test]
+    fn partition_beads_puts_an_agreed_bead_in_its_own_bucket() {
+        let beads = vec![
+            bead("agreed", "open", "feature", &["ux:agreed"]),
+            bead("agreed-planned", "open", "feature", &["ux:agreed", "planned"]),
+            Bean::assigned(bead("agreed-held", "open", "feature", &["ux:agreed"]), "Beast"),
+            bead("agreed-paused", "open", "feature", &["ux:agreed", "human"]),
+            bead("plain", "open", "feature", &[]),
+        ];
+        let buckets = partition_beads(beads);
+        let ids = |v: &Vec<Bead>| v.iter().map(|b| b.id.clone()).collect::<Vec<_>>();
+        assert_eq!(ids(&buckets.ux_agreed), vec!["agreed"]);
+        assert_eq!(ids(&buckets.planned), vec!["agreed-planned"]);
+        assert_eq!(ids(&buckets.being_planned), vec!["agreed-held"]);
+        assert_eq!(ids(&buckets.paused), vec!["agreed-paused"]);
+        assert_eq!(ids(&buckets.unplanned), vec!["plain"]);
+    }
+
     /// A bead carrying `verdict:stale` is Psylocke's until she records a verdict, whatever else
     /// it carries: every builder queue excludes it, so drawing it under Ready to produce showed
     /// a producer's bead nobody would be started on (cb-wf24).
@@ -2013,24 +2031,6 @@ mod tests {
         assert_eq!(ids(&buckets.second_look_beads), vec!["handed-back", "plain"]);
         assert_eq!(ids(&buckets.ux_agreed), vec!["agreed"]);
         assert!(buckets.unplanned.is_empty());
-    }
-
-    #[test]
-    fn partition_beads_puts_an_agreed_bead_in_its_own_bucket() {
-        let beads = vec![
-            bead("agreed", "open", "feature", &["ux:agreed"]),
-            bead("agreed-planned", "open", "feature", &["ux:agreed", "planned"]),
-            Bean::assigned(bead("agreed-held", "open", "feature", &["ux:agreed"]), "Beast"),
-            bead("agreed-paused", "open", "feature", &["ux:agreed", "human"]),
-            bead("plain", "open", "feature", &[]),
-        ];
-        let buckets = partition_beads(beads);
-        let ids = |v: &Vec<Bead>| v.iter().map(|b| b.id.clone()).collect::<Vec<_>>();
-        assert_eq!(ids(&buckets.ux_agreed), vec!["agreed"]);
-        assert_eq!(ids(&buckets.planned), vec!["agreed-planned"]);
-        assert_eq!(ids(&buckets.being_planned), vec!["agreed-held"]);
-        assert_eq!(ids(&buckets.paused), vec!["agreed-paused"]);
-        assert_eq!(ids(&buckets.unplanned), vec!["plain"]);
     }
 
     /// `ux:none` is the navigator's word at filing that there is nothing to agree, so it lands

@@ -48,21 +48,21 @@ done
 pass "prints the ready UX-agreed beads sorted by priority then id"
 pass "an assigned UX-agreed bead is never assignable (bd ready --unassigned)"
 
-# --- planned means "a producer's own build plan", and only rework carries it unclaimed ------------
+# --- an unclaimed planned bead is a producer's own returned plan ---------------------------------
 #
-# `reopen-failed --fault build` keeps `planned` (the design was fine) and clears the claim, so the
-# one unclaimed planned bead a producer may take is a reopened one (cb-gc45). Anything else planned
-# and unclaimed is a producer that has not released it yet, or a plan somebody else wrote.
+# `planned` is added by the producer under its claim, so an unclaimed one is a plan a producer left
+# behind: `reopen-failed --fault build` (rework, cb-gc45) or a session that died and was unclaimed
+# (cb-lcfq). Both are producer work; the planner whose plans this once guarded against is retired.
 
 cat > "$stub/ready.json" <<'JSON'
 [{"id":"cb-rework","priority":0,"labels":["ux:agreed","planned","verification:failed"]},
- {"id":"cb-planned","priority":0,"labels":["ux:agreed","planned"]},
+ {"id":"cb-orphan","priority":0,"labels":["ux:agreed","planned"]},
  {"id":"cb-fresh","priority":1,"labels":["ux:agreed"]}]
 JSON
 out="$(run)"
-[[ "$(jq -c '[.[].id]' <<<"$out")" == '["cb-rework","cb-fresh"]' ]] \
-  || fail "a reopened planned bead is rework and assignable; a planned bead without a failed verification is not, got $out"
-pass "a bead reopened for a build fault is assignable as rework; other planned beads are not"
+[[ "$(jq -c '[.[].id]' <<<"$out")" == '["cb-orphan","cb-rework","cb-fresh"]' ]] \
+  || fail "every unclaimed planned bead with a stage label is assignable, got $out"
+pass "a planned bead a producer left behind is assignable, rework or orphan"
 
 # --- ux:none is the other way past the UX stage ---------------------------------------------------
 #

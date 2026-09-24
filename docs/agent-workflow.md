@@ -599,8 +599,9 @@ straight back to the UX agent.
 To put one back into circulation after you have answered, or ask Cerebro to:
 
 ```bash
-bd update <id> --remove-label human                                  # back to a producer
-bd update <id> --remove-label human --remove-label ux:agreed         # back to UX, with needs-ui-decision kept
+bd update <id> --remove-label human                                  # back to whoever held it
+bd update <id> --remove-label human --remove-label ux:agreed --remove-label ux:none \
+  --remove-label planned --add-label needs-ui-decision               # back to UX, resuming from the notes
 ```
 
 ## Watching without interfering

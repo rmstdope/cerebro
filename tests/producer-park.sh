@@ -105,8 +105,12 @@ reset "$mine"
 run Storm cb-x scope "The requested API contract is undecided" >/dev/null \
   || fail "a scope decision is parked"
 log="$(cat "$stub/bd.log")"
-grep -q -- "update cb-x --remove-label planned --add-label human --add-label needs-ui-decision" <<<"$log" \
-  || fail "a scope decision is parked for the navigator with both parking labels: $log"
+grep -q -- "update cb-x --remove-label planned --add-label human " <<<"$log" \
+  || fail "a scope decision is parked for the navigator with human: $log"
+# `needs-ui-decision` would make the fleet view keep it parked after its blockers close and make
+# Cerebro offer it to UX; a scope question is nobody's but the navigator's (cb-lcfq).
+! grep -q -- "needs-ui-decision" <<<"$log" \
+  || fail "a scope park is not a UI question: $log"
 grep -q -- "--set-metadata paused_at=" <<<"$log" \
   || fail "a scope pause records when it began: $log"
 ! grep -q -- "remove-label ux:agreed" <<<"$log" \

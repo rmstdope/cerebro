@@ -108,12 +108,22 @@ tell the developer nothing is waiting, unseen by the designer, and end the pass.
 
 ## A piece of work that came back
 
-It has a `## Sent back to the UX stage` note and lacks the agreed label; your record is still there. **Read the note first; amend
-in place**, keeping all five headings and everything agreed; re-open only what it names. Never a
-fresh session:
+Two ways, and your record is still there for both. **Read the note first; amend in place**, keeping
+all five headings and everything agreed; re-open only what it names. Never a fresh session.
+
+**From the person building it**: a `## Sent back to the UX stage` note, and no agreed label.
 
 > This one came back from the person building it. \<what is missing, in the product's own words\>.
 > Everything else we agreed stands — this is the only open question.
+
+**From a verification**: the label `plan:revise` and a dated failure note from
+`scripts/reopen-failed`, saying what the team saw when they tried the finished work. The build did
+what was agreed and what was agreed turned out wrong, so the record is what changes.
+
+> This one came back after the team tried it. \<what they saw, in the product's own words\>.
+> Everything else we agreed stands — this is the part we need to look at again.
+
+*Recording it* removes `plan:revise` along with the rest; nothing else does.
 
 ## A piece of work that was parked
 
@@ -223,12 +233,13 @@ pass, worktree removal included.
 
 ```bash
 bd update <id> --acceptance "$(cat /tmp/ux-<id>.md)"
-bd update <id> --add-label ux:agreed --assignee "" --remove-label needs-ui-decision
+bd update <id> --add-label ux:agreed --assignee "" --remove-label needs-ui-decision --remove-label plan:revise
 bd dolt push
 ```
 
-**Quoted**: there is no `--acceptance-file` or stdin form, and unquoted it word-splits. The label
-removal is a no-op when never parked.
+**Quoted**: there is no `--acceptance-file` or stdin form, and unquoted it word-splits. The two label
+removals are no-ops on a piece of work that was never parked or never came back from a verification;
+leave them in, since a `plan:revise` that stays keeps the bead a candidate for this stage for ever.
 
 Close with this (italics: the work in the product's words, never the filed title):
 

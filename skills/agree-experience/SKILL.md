@@ -72,17 +72,61 @@ or another's.
 .cerebro/cerebro/scripts/roster --role ux            # the design agents, in roster order
 ```
 
-## What of the planner's skill applies
+## Interview, don't ask
 
-Followed as written in `skills/plan-bead/SKILL.md`:
+- **Be relentless about the shape, and expect several rounds.** Everything a person sees is
+  settled before you record; what is yours you decide, the rest you ask.
+- **Never present one option.** At least two variants that differ visibly, with the cost of the
+  difference in one line. A detail you decide is not presented.
+- **Recommend one option whenever you present variants**, as *The interview* says: an
+  established industry-standard pattern first, else the most user-friendly, with the reason in
+  one line.
+- **A chosen variant opens the walk** of the surface listed under *The interview*: the states,
+  what closes it, keyboard and focus, the words, a narrow window, what persists.
+- **Mock the states, not the happy path.** Put the empty and error states on the page.
+- **Batch up to four questions** in the question tool. The `file://` links go **inside** the
+  question text and each option's description, or in the same message as a prose question; never
+  in an earlier message (`bd recall planner-mockup-links`: the navigator has flagged this twice).
+- **Every drawing is a full `file://` URL**, one per variant, labelled with the option name,
+  never a bare path:
 
-| Section | What it gives you |
-|---|---|
-| *Interview, don't ask* | never one option; mock the states rather than the happy path; `file://` links **inside** the question tool's own text and each option's description; up to four questions at a time; re-state the paths every round; ask once whether they looked, if the answer comes back faster than a look would take |
-| *Anything you commit, you commit from a worktree of your own* | the worktree, the documentation pull request, the self-merge carve-out for a `docs/`-only change the navigator has already read line by line, and the removal afterwards |
+  ```
+  Option A — file:///Users/…/scratchpad/<bead-id>-sidebar-a.html
+  Option B — file:///Users/…/scratchpad/<bead-id>-sidebar-b.html
+  ```
 
-Its plan headings (you write five in `acceptance`), *Decided by me* and buffer are not yours; never read
-`planner-buffer --ux-count`.
+- **Say to open them before answering.** Re-state the paths on every round.
+- **An answer that engages only with your prose, or comes back faster than a look would take**,
+  gets one "did you see it?".
+
+The chosen drawing goes to `docs/ui/` in a `docs(<bead>): mockup` pull request from your own
+worktree (below), and the record names its path on main. Once CI is green, check the diff and
+merge it yourself, with no review sub-agent:
+
+```bash
+gh pr merge <n> --squash --delete-branch
+```
+
+That holds only while the diff is confined to `docs/` and matches what the designer saw;
+otherwise it is a normal reviewed pull request under the consumer's root `CLAUDE.md`.
+
+## Anything you commit, you commit from a worktree of your own
+
+Never branch in the main checkout: it moves someone else's HEAD. The one recipe every role uses:
+
+```bash
+.cerebro/cerebro/scripts/prepare-worktree --path .cerebro/worktrees/<id>-mockup \
+  --branch <id>-mockup --from origin/main
+cd <repo>/.cerebro/worktrees/<id>-mockup
+```
+
+Only under `.cerebro/worktrees/`: `bd` and cargo find their configuration by walking up. The
+`-mockup` suffix keeps the path free for the producer's worktree. Install no dependencies. Once
+merged, remove it from the main checkout, as *Ending a pass* says. Check `pwd` before every git
+command: a shell's directory persists.
+
+The plan headings, *Decided by me* and the build are the producer's; you write five headings in
+`acceptance` and nothing else.
 
 ## The piece of work you were given
 

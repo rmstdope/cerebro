@@ -1,5 +1,7 @@
 # Decisions, and the beads that established them
 
+> **History.** Rules attributed below to `agents/planner.md`, `skills/plan-bead`, `skills/design-the-build` and `skills/implement-bead` outlived those files; where a rule still applies it now lives in `agree-experience` or `produce-bead`.
+
 The prompts under `agents/` and `skills/` state rules and the cost that justifies them, but they
 name no bead. A bead id is provenance for **this** repository's history: an agent running in a
 consumer's checkout cannot resolve one, and a citation it cannot check is a cost to its credibility

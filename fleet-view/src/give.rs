@@ -7,11 +7,10 @@ use std::collections::BTreeMap;
 use unicode_width::UnicodeWidthStr;
 
 use crate::lifecycle::row_is_alive;
-use crate::model::{Bead, FleetRow, Releasing, RolePolicy, RowState};
+use crate::model::{past_ux_stage, Bead, FleetRow, Releasing, RolePolicy, RowState};
 
 const PLANNED_LABEL: &str = "planned";
 const BUGFIX_LABEL: &str = "bugfix";
-const UX_AGREED_LABEL: &str = "ux:agreed";
 
 /// Which kind of work a role takes from the board.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -71,7 +70,7 @@ fn standing_for(
     }
     let planned = bead.labels.iter().any(|l| l == PLANNED_LABEL);
     let bugfix = bead.labels.iter().any(|l| l == BUGFIX_LABEL);
-    let ux_agreed = bead.labels.iter().any(|l| l == UX_AGREED_LABEL);
+    let ux_agreed = past_ux_stage(bead);
     match stage {
         Stage::Builder if !planned => Standing::WrongStage(Stage::Builder),
         Stage::Producer if !ux_agreed && !planned => Standing::WrongStage(Stage::Producer),
@@ -436,6 +435,20 @@ mod tests {
         let agreed = candidates(&bead("cb-x", &["ux:agreed"], None), &rows, &s, &r);
         assert_eq!(agreed[1].standing, Standing::Free);
         assert_eq!(unplanned[2].standing, Standing::Free);
+    }
+
+    /// A bead filed as changing nothing a person sees is a producer's and never a designer's
+    /// (cb-uump).
+    #[test]
+    fn ux_none_is_producer_work_and_not_designer_work() {
+        let rows = vec![
+            row("P", "producer", RowState::Standby, None),
+            row("U", "ux", RowState::Standby, None),
+        ];
+        let (s, r) = none();
+        let c = candidates(&bead("cb-x", &["ux:none"], None), &rows, &s, &r);
+        assert_eq!(c[0].standing, Standing::Free);
+        assert_eq!(c[1].standing, Standing::WrongStage(Stage::Designer));
     }
 
     #[test]

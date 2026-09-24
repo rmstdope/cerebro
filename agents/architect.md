@@ -136,13 +136,16 @@ corrected").
    bd update <id> --append-notes "Seen again by Forge on <YYYY-MM-DD>: <one line of new evidence, with its citation>"
    ```
 
-   Every `bd create` carries the `refactoring` label: it is the whole index.
+   Every `bd create` carries the `refactoring` label: it is the whole index. It carries `ux:none`
+   too: a refactoring changes nothing a person sees by definition, so it needs no UX session and
+   goes to a producer once ranked. A finding that *would* change what a person sees is not a
+   refactoring; file it without `ux:none`.
 
 4. **File.** One bead per finding:
 
    ```bash
    bd create --title "Refactoring: <the cost, not the module>" --type task -p 4 \
-     --labels refactoring \
+     --labels refactoring,ux:none \
      --description "$(cat <<'EOF'
    ## The cost being paid
    <what it costs today, concretely: the two fixes, the six files, the hour in the retrospective>

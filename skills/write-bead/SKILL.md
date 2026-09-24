@@ -40,7 +40,10 @@ Three things, and the bead is not describable until you have them all:
 Ask through the question tool, up to four questions per round, each round chosen from what the last
 one answered. There is no cap on rounds: keep going until you can describe the work.
 
-The third is **not** a design question: record a *yes* in the description, and design nothing.
+The third is **not** a design question: record a *yes* in the description, and design nothing. A
+*no* is recorded as the label `ux:none` at filing (below): it is the navigator's word that there is
+no experience to agree, and the one thing that lets a bead reach a producer without a UX session.
+Nobody else may add it, and a producer that finds otherwise sends the bead to UX.
 
 When you have all three, file the bead without asking for approval.
 
@@ -50,7 +53,8 @@ Write the description to a file first:
 
 ```bash
 bd create "<the title>" --type task -p 4 --body-file /tmp/bead-body.md \
-  --acceptance "<what done looks like, in the navigator's own terms>"
+  --acceptance "<what done looks like, in the navigator's own terms>" \
+  --labels ux:none      # only when the answer to the third question was no
 bd dolt push
 ```
 

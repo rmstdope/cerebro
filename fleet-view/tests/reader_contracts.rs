@@ -260,3 +260,19 @@ fn the_stage_label_matches_the_shell() {
         "the label this view buckets on is the one the shell prints"
     );
 }
+
+/// The skip label is the shell's to declare too (cb-uump): a drift is a bead filed as invisible
+/// that a producer is started on while the view draws it as unplanned.
+#[test]
+fn the_skip_label_matches_the_shell() {
+    let output = std::process::Command::new(repo_root().join("scripts/stage-candidates"))
+        .arg("--print-skip-label")
+        .output()
+        .expect("this checkout's scripts/stage-candidates must run");
+    assert!(output.status.success(), "--print-skip-label exits 0");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        model::ux_none_label(),
+        "the skip label this view buckets on is the one the shell prints"
+    );
+}

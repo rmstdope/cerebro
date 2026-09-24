@@ -65,7 +65,7 @@ reset "$mine"
 run Storm cb-x ux "The mockup omits the empty state" >/dev/null \
   || fail "a UX decision is sent back"
 log="$(cat "$stub/bd.log")"
-grep -q -- "update cb-x --remove-label ux:agreed --remove-label planned --add-label needs-ui-decision" <<<"$log" \
+grep -q -- "update cb-x --remove-label ux:agreed --remove-label ux:none --remove-label planned --add-label needs-ui-decision" <<<"$log" \
   || fail "the update takes the agreed label and the plan off and marks the open question: $log"
 grep -q -- "--append-notes ## Sent back to the UX stage" <<<"$log" \
   || fail "the note carries the heading the UX stage reads a returned piece of work by: $log"
@@ -82,6 +82,22 @@ grep -q -- "unclaim cb-x --if-assignee Storm" <<<"$log" \
 [[ "$(tail -1 "$stub/bd.log")" == *"dolt push"* ]] \
   || fail "the return is pushed: $log"
 pass "sends a UX question back to the UX stage, releases the bead, and pushes"
+
+# --- a bead filed as invisible may still be sent to UX, and then stops being invisible -------------
+#
+# `ux:none` was the navigator's word at filing that nothing a person sees changes. A producer that
+# finds otherwise may add the UX stop, never skip it: the label comes off with the return, so the
+# bead is a UX candidate and no producer re-takes it (cb-uump).
+
+reset '[{"id":"cb-x","status":"in_progress","assignee":"Storm","labels":["ux:none","planned"]}]'
+run Storm cb-x ux "The migration changes the wording of the summary line" >/dev/null \
+  || fail "a ux:none bead may be sent to the UX stage"
+log="$(cat "$stub/bd.log")"
+grep -q -- "--remove-label ux:none" <<<"$log" \
+  || fail "the invisible-by-declaration label comes off with the return: $log"
+grep -q -- "--add-label needs-ui-decision" <<<"$log" \
+  || fail "the open question is marked: $log"
+pass "sends a bead filed as invisible to the UX stage and removes ux:none"
 
 # --- scope is the navigator's, and is parked ------------------------------------------------------
 
@@ -120,15 +136,15 @@ out="$(run Storm cb-x ux "The mockup is ambiguous" 2>"$work_dir/err")" || status
   || fail "another producer's bead is not changed"
 pass "does not park another producer's bead"
 
-# --- legacy planned work stays on the legacy hand-back path -------------------------------------
+# --- a bead that never passed the UX gate is not producer work -------------------------------------
 
 reset '[{"id":"cb-x","status":"in_progress","assignee":"Storm","labels":["planned"]}]'
 status=0
 out="$(run Storm cb-x ux "The mockup is ambiguous" 2>"$work_dir/err")" || status=$?
-[[ $status -eq 1 && -z "$out" ]] || fail "a non-UX bead is rejected"
+[[ $status -eq 1 && -z "$out" ]] || fail "a bead with neither ux:agreed nor ux:none is rejected"
 ! grep -qE "update|unclaim|dolt push" "$stub/bd.log" \
-  || fail "a non-UX bead is not changed"
-pass "does not park planned legacy work"
+  || fail "a non-producer bead is not changed"
+pass "refuses a bead that carries neither ux:agreed nor ux:none"
 
 # --- a claim lost between the read and update changes nothing ------------------------------------
 

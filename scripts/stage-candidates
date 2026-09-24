@@ -56,9 +56,13 @@ set -euo pipefail
 # ONE PLACE THE SHELL SPELLS IT: `scripts/planner-buffer` asks for it through
 # `--print-stage-label` rather than repeating the literal.
 stage_label="ux:agreed"
+# The label that says there is no experience to agree: the navigator answered at filing that nothing
+# a person sees changes (cb-uump). The ux stage never takes such a bead, and a producer takes it as
+# it would an agreed one. Spelled here and asked for through `--print-skip-label`, the same way.
+skip_label="ux:none"
 
 usage() {
-  echo "usage: stage-candidates <ux|build-design> | stage-candidates --print-stage-label" >&2
+  echo "usage: stage-candidates <ux|build-design> | stage-candidates --print-stage-label | stage-candidates --print-skip-label" >&2
   exit 2
 }
 
@@ -74,6 +78,9 @@ while [[ $# -gt 0 ]]; do
       # that meant to ask for candidates would get the label and exit 0.
       [[ -z "$mode" && $# -eq 1 ]] || usage
       printf '%s\n' "$stage_label"; exit 0 ;;
+    --print-skip-label)
+      [[ -z "$mode" && $# -eq 1 ]] || usage
+      printf '%s\n' "$skip_label"; exit 0 ;;
     ux|build-design)
       [[ -z "$mode" ]] || usage
       mode="$1"; shift ;;
@@ -96,12 +103,13 @@ if ! raw="$("$script_dir/work-beads" --status open)"; then
   exit 1
 fi
 
-if ! out="$(printf '%s' "$raw" | jq --arg mode "$mode" --arg stage "$stage_label" '. as $all
+if ! out="$(printf '%s' "$raw" | jq --arg mode "$mode" --arg stage "$stage_label" --arg skip "$skip_label" '. as $all
     | (reduce $all[] as $b ({}; .[$b.id] = $b)) as $by_id
     | def held: ((.assignee // "") != "");
       def satisfied:
         if $mode == "ux"
         then ((.labels // []) | index("planned")) or ((.labels // []) | index($stage))
+             or ((.labels // []) | index($skip))
         else ((.labels // []) | index("planned")) end;
       def unsatisfied_blocker($id):
         (($by_id[$id] // null) as $b | $b != null and ($b | satisfied | not))
@@ -111,6 +119,7 @@ if ! out="$(printf '%s' "$raw" | jq --arg mode "$mode" --arg stage "$stage_label
         | select((.labels // []) | index("human")         | not)
         | select((.labels // []) | index("verdict:stale") | not)
         | select((.labels // []) | index("bugfix")        | not)
+        | select((.labels // []) | index($skip)           | not)
         | select(held | not)
         | select(((.labels // []) | index("verification:failed") | not)
                  or ((.labels // []) | index("plan:revise")))

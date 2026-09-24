@@ -100,6 +100,18 @@ out="$(run)"
   || fail "a P4 or unprioritised bead is never assignable, got $out"
 pass "an unranked bead reaches no producer"
 
+# --- a bead handed back to the verifier is hers until she looks (cb-wf24) -----------------------
+cat > "$stub/ready.json" <<'JSON'
+[{"id":"cb-handed","priority":0,"labels":["ux:agreed","verification:failed","second-look"]},
+ {"id":"cb-fresh","priority":1,"labels":["ux:agreed"]}]
+JSON
+out="$(run)"
+[[ "$(jq -c '[.[].id]' <<<"$out")" == '["cb-fresh"]' ]] \
+  || fail "a second-look bead is never assignable, got $out"
+log="$(cat "$stub/bd.log")"
+[[ "$log" == *"--exclude-label second-look"* ]] || fail "bd is asked to exclude second-look: $log"
+pass "a bead handed back to the verifier is not assignable"
+
 # --- retired and unknown roles are usage errors --------------------------------------------------
 
 status=0

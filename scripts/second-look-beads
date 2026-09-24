@@ -12,12 +12,15 @@
 #   verdict:stale   a failed verdict formed against a commit main has since moved past. Set by the
 #                   fleet view's verdict sweep, and it decides nothing about whether the finding
 #                   still holds - that is what it hands back.
-#   handed back     `verification:failed`, and NEITHER `planned` NOR `plan:revise`. An implementer
-#                   read the failure, found nothing left to build, and handed it back
-#                   (implement-bead's hand-back block). The state is an ABSENCE of the other two
-#                   labels, deliberately: `plan:revise` means a planner has it and `planned` means
-#                   an implementer has it, so "neither" is exactly "nobody" - and acting on the
-#                   bead in any way clears it, with no cleanup step anybody has to remember.
+#   second-look     a producer read the failure, found nothing left to build, and handed it back
+#                   (produce-bead, *Handing back*, the no-`human` variation), which sets this label
+#                   and nothing else does. Until cb-wf24 the state was an ABSENCE - `verification:
+#                   failed` with neither `planned` nor `plan:revise` - which is also exactly what a
+#                   producer's own queue offers, so the two sides raced for the bead. Every builder
+#                   and UX queue excludes the label; `reopen-failed` and the verifier's pass recipe
+#                   remove it.
+#
+# A bead carrying `human` is the navigator's, whichever of the two it also carries.
 #
 # Three details decide whether this works, and each fails silently if it is wrong:
 #
@@ -39,12 +42,9 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 "$script_dir/work-beads" --status open | jq -r '
   .[]
+  | select(([.labels[]?] | index("human")) | not)
   | select(
       ([.labels[]?] | index("verdict:stale"))
-      or (
-        ([.labels[]?] | index("verification:failed"))
-        and ([.labels[]?] | index("planned") | not)
-        and ([.labels[]?] | index("plan:revise") | not)
-      )
+      or ([.labels[]?] | index("second-look"))
     )
   | .id'

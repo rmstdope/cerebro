@@ -1011,6 +1011,9 @@ const PAUSED_LABEL: &str = "human";
 /// verdict was formed against, and the bead is Psylocke's until she looks again. Every builder
 /// queue excludes it (`scripts/assignable-beads`, `bugfix-candidates`, `stage-candidates`).
 const STALE_VERDICT_LABEL: &str = "verdict:stale";
+/// Set by a producer's hand-back when nothing is left to build (produce-bead, *Handing back*):
+/// the bead is the verifier's second look, and every builder and UX queue excludes it (cb-wf24).
+const SECOND_LOOK_LABEL: &str = "second-look";
 const PLANNED_LABEL: &str = "planned";
 /// The stage label the UX agent adds when a bead's experience has been agreed (cb-lz5.1).
 /// The shell owner is `scripts/stage-candidates --print-stage-label`, and
@@ -1168,7 +1171,11 @@ pub fn partition_beads(beads: Vec<Bead>) -> WorkBuckets {
             "open" => {
                 if bead.labels.iter().any(|l| l == PAUSED_LABEL) {
                     buckets.paused.push(bead);
-                } else if bead.labels.iter().any(|l| l == STALE_VERDICT_LABEL) {
+                } else if bead
+                    .labels
+                    .iter()
+                    .any(|l| l == STALE_VERDICT_LABEL || l == SECOND_LOOK_LABEL)
+                {
                     buckets.second_look_beads.push(bead);
                 } else if bead.labels.iter().any(|l| l == PLANNED_LABEL) {
                     buckets.planned.push(bead);
@@ -2012,6 +2019,21 @@ mod tests {
         assert_eq!(ids(&buckets.paused), vec!["stale-paused"]);
         assert_eq!(ids(&buckets.ux_agreed), vec!["agreed"]);
         assert!(buckets.planned.is_empty());
+    }
+
+    /// The producer's hand-back mark is the other label that makes a bead the verifier's; a
+    /// parked one is still the navigator's first (cb-wf24).
+    #[test]
+    fn partition_beads_puts_a_handed_back_bead_under_second_look() {
+        let buckets = partition_beads(vec![
+            bead("handed", "open", "task", &["ux:agreed", "verification:failed", "second-look"]),
+            bead("handed-paused", "open", "task", &["second-look", "human"]),
+            bead("agreed", "open", "task", &["ux:agreed"]),
+        ]);
+        let ids = |v: &Vec<Bead>| v.iter().map(|b| b.id.clone()).collect::<Vec<_>>();
+        assert_eq!(ids(&buckets.second_look_beads), vec!["handed"]);
+        assert_eq!(ids(&buckets.paused), vec!["handed-paused"]);
+        assert_eq!(ids(&buckets.ux_agreed), vec!["agreed"]);
     }
 
     /// The script's own list is the other way onto the second look: a hand-back is defined by

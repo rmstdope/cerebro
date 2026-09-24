@@ -83,10 +83,10 @@ role that touches a label not in it is changing the pipeline for every consumer.
 | **merged, unverified** | closed, no `verification` state | the producer's `bd close` | Psylocke, through `scripts/work-beads`, a child of an epic included; the family is swept for the whole once every child is closed |
 | **not worth a look** | `verification=not-needed` | Psylocke, from `scripts/app-paths --classify` | nobody; terminal |
 | **verified** | `verification=passed`, `verified_at=<sha>` | Psylocke (`verifier-pass-epic-family` for a family) | nobody, unless main moves past it |
-| **overtaken since verified** | `verdict:stale` | `scripts/sweep-verdicts.sh` | Psylocke re-verifies and removes it; every other candidate script excludes it |
+| **failed, and main moved on** | `verdict:stale` | the navigator's `x` on a verdict-sweep finding (`scripts/sweep-verdicts.sh` finds; the fleet view writes) | Psylocke re-verifies and removes it; every other candidate script excludes it |
 | **failed, build at fault** | reopened, P0, `verification:failed`, `planned` kept | `scripts/reopen-failed --fault build` | a producer, as ordinary rework against the same design |
 | **failed, plan at fault** | reopened, P0, `verification:failed`, `plan:revise`, `planned` removed | `scripts/reopen-failed --fault plan` | a `ux` agent, which amends the agreed experience in place |
-| **handed back, nothing to build** | `verification:failed`, neither `planned` nor `plan:revise`, `human` **not** added | a producer (see the exception below) | Psylocke, through `scripts/second-look-beads` |
+| **handed back, nothing to build** | `second-look`, `verification:failed`, no `planned`, no `human` | a producer's no-`human` hand-back (`produce-bead`, *Handing back*), and nothing else | Psylocke, through `scripts/second-look-beads`; every builder and UX queue excludes the label, and her verdict removes it |
 | **a refactoring** | `refactoring`, title `Refactoring: …` | Forge | ranked and routed like any other bead; the label is Forge's own index |
 | **an epic with children** | type `epic`, at least one child | anyone splitting | nobody: `scripts/work-beads` skips it while it has a child. A childless epic is real work and routes normally. Whoever closes the last child closes it |
 
@@ -119,11 +119,12 @@ bd dolt push             # or no other machine learns it was released
 - `bd unclaim` matters because `bd update` sets no status: without it the bead stays `in_progress`
   under an agent that has left.
 
-**Exception (written in full in `produce-bead`):** a bead carrying `verification:failed`, handed
-back because nothing is left to implement, runs all three commands but adds **no `human`** and no
-`paused_at`. It is left open, unclaimed, with `verification:failed` and neither `planned` nor
-`plan:revise` — what `scripts/second-look-beads` matches to send it back to the verifier. Only the
-verifier ever adds `plan:revise`.
+**Exception (written in full in `produce-bead`, *Handing back*):** a bead carrying
+`verification:failed`, handed back because nothing is left to implement, runs all three commands
+but adds **no `human`** and no `paused_at`, and adds **`second-look`** instead: the one label that
+says the verifier holds it, which `scripts/second-look-beads` matches and every builder and UX
+queue excludes. Only the verifier ever adds `plan:revise`, and only her verdict removes
+`second-look`.
 
 **A UX agent escalating has no claim**, so it runs the first and third commands with
 `--assignee ""` in place of the second — never `bd unclaim`.

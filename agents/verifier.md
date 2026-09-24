@@ -92,10 +92,12 @@ could never match.
 
 Two states reach you through it:
 
-- **`verdict:stale`** — set by the verdict sweep (`sweep-verdicts.sh`) when main has moved past the
-  commit a failed verdict was formed against. It decides nothing about the finding.
-- **handed back** — `verification:failed` with neither `planned` nor `plan:revise`: an implementer
-  found nothing left to build, and its notes say why.
+- **`verdict:stale`** — set by the navigator's `x` on a verdict-sweep finding (`sweep-verdicts.sh`
+  finds it; the fleet view writes the label) when main has moved past the commit a failed verdict
+  was formed against. It decides nothing about the finding.
+- **`second-look`** — a producer read the failure, found nothing left to build, and handed the
+  bead back with this label; its notes say why. Only that hand-back sets it, and every builder
+  and UX queue refuses a bead carrying it, so it is yours until you act.
 
 **Run it first, and take what it returns before any closed-bead candidates**, because both states
 hold the bead out of every other queue. A handed-back bead takes one of the three outcomes below;
@@ -106,7 +108,7 @@ acting on it in any of those ways clears the state, and doing nothing leaves it 
 
   ```bash
   bd set-state <id> verification=passed --reason "re-verified at <short sha>; the finding no longer holds"
-  bd update <id> --set-metadata verified_at=<full sha> --remove-label verdict:stale
+  bd update <id> --set-metadata verified_at=<full sha> --remove-label verdict:stale --remove-label second-look
   bd dolt push
   ```
 

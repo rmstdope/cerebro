@@ -261,11 +261,13 @@ for: a bead that is not yours or has no tree; a review that could not be obtaine
 red CI budget spent; a finding about approach, scope or the audience you may not decide. A genuine
 UX or scope question is not a hand-back but `producer-park` (step 2). **One variation**: a bead
 carrying `verification:failed` that you hand back because there is **nothing left to implement**
-(the surface is already there, or another bead carries it) drops the `human` and the `paused_at`,
-so that `scripts/second-look-beads` sends it back to the verifier rather than to the navigator:
+(the surface is already there, or another bead carries it) drops the `human` and the `paused_at`
+and adds `second-look`, the one label that makes it the verifier's: `scripts/second-look-beads`
+lists it, every builder and UX queue refuses it, and Psylocke removes it when she records a
+verdict. Nobody but this hand-back sets it:
 
 ```bash
-bd update <id> --remove-label planned --append-notes "<why there is nothing to build>"
+bd update <id> --remove-label planned --add-label second-look --append-notes "<why there is nothing to build>"
 bd unclaim <id>
 bd dolt push
 ```

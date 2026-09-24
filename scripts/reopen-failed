@@ -162,9 +162,12 @@ bd -C "$root" set-state "$bead" verification=failed --reason "failed verificatio
 bd -C "$root" update "$bead" --set-metadata "verified_at=$sha" \
   || die_step "the verified_at metadata" "$bead"
 
-# Harmless when it is not there.
+# Harmless when they are not there. `second-look` is the producer's hand-back mark (cb-wf24): a
+# fresh verdict is the verifier acting on it, which ends the second look either way.
 bd -C "$root" update "$bead" --remove-label "verdict:stale" \
   || die_step "removing verdict:stale" "$bead"
+bd -C "$root" update "$bead" --remove-label "second-look" \
+  || die_step "removing second-look" "$bead"
 
 if [[ "$fault" == "plan" ]]; then
   bd -C "$root" update "$bead" --remove-label planned --add-label "plan:revise" \

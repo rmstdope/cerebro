@@ -49,10 +49,12 @@ run() {
 cat > "$stub_stdout" <<'JSON'
 [
   {"id":"ah-stale",       "issue_type":"bug",  "labels":["verdict:stale"]},
-  {"id":"ah-handed-back", "issue_type":"bug",  "labels":["verification:failed"]},
+  {"id":"ah-handed-back", "issue_type":"bug",  "labels":["verification:failed","second-look"]},
+  {"id":"ah-unlabelled",  "issue_type":"bug",  "labels":["verification:failed"]},
   {"id":"ah-implementer", "issue_type":"bug",  "labels":["verification:failed","planned"]},
   {"id":"ah-planner",     "issue_type":"bug",  "labels":["verification:failed","plan:revise"]},
-  {"id":"ah-both",        "issue_type":"bug",  "labels":["verdict:stale","verification:failed"]},
+  {"id":"ah-both",        "issue_type":"bug",  "labels":["verdict:stale","second-look"]},
+  {"id":"ah-parked",      "issue_type":"bug",  "labels":["second-look","human"]},
   {"id":"ah-planned-0th", "issue_type":"bug",  "labels":["planned","verification:failed"]},
   {"id":"ah-ordinary",    "issue_type":"task", "labels":["planned"]},
   {"id":"ah-nolabels",    "issue_type":"task"}
@@ -69,8 +71,20 @@ listed() {
 listed ah-stale        || fail "an open verdict:stale bead was not listed"
 pass "lists an open verdict:stale bead"
 
-listed ah-handed-back  || fail "an open verification:failed bead with neither other label was not listed"
-pass "lists a bead handed back as nothing-to-build"
+listed ah-handed-back  || fail "an open bead carrying second-look was not listed"
+pass "lists a bead handed back as nothing-to-build, by its second-look label"
+
+# --- the hand-back is a label, never an absence (cb-wf24) --------------------------------------
+#
+# `verification:failed` with neither `planned` nor `plan:revise` used to mean "handed back". It is
+# also what a producer's own queue offers, what a bugfix build-fault bead looks like, and what a
+# re-agreed plan-fault bead looks like, so the two sides raced. Only the producer's hand-back sets
+# `second-look`, and a bead parked for the navigator is theirs, not the verifier's.
+if listed ah-unlabelled; then fail "a verification:failed bead without the second-look label was listed - the absence rule is back"; fi
+pass "does not infer a hand-back from what a bead lacks"
+
+if listed ah-parked; then fail "a second-look bead carrying human was listed - the navigator has it"; fi
+pass "does not list a second-look bead parked for the navigator"
 
 # --- the states somebody else already owns ------------------------------------------------------
 if listed ah-implementer; then fail "a verification:failed bead carrying 'planned' was listed - an implementer has it"; fi

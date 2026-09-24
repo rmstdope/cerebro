@@ -133,7 +133,8 @@ labelled='[{"id":"tt-plain","issue_type":"task","priority":2,"labels":[]},
            {"id":"tt-stale","issue_type":"task","priority":2,"labels":["verdict:stale","plan:revise"]},
            {"id":"tt-agreed-planned","issue_type":"task","priority":2,"labels":["ux:agreed","planned"]},
            {"id":"tt-agreed-held","issue_type":"task","priority":2,"labels":["ux:agreed","planning:Beast"]},
-           {"id":"tt-none","issue_type":"task","priority":2,"labels":["ux:none"]}]'
+           {"id":"tt-none","issue_type":"task","priority":2,"labels":["ux:none"]},
+           {"id":"tt-second","issue_type":"task","priority":2,"labels":["second-look"]}]'
 
 # --- the ux stage takes what is not yet agreed ---------------------------------------------------
 set_stub "$labelled"
@@ -145,6 +146,7 @@ pass "the ux stage takes what is not yet agreed"
 
 # --- ux:none is the navigator's word that there is nothing to agree ------------------------------
 case " $ids " in *" tt-none "*) fail "the ux stage kept a bead filed as touching nothing a person sees: '$ids'";; esac
+case " $ids " in *" tt-second "*) fail "the ux stage kept a bead handed back to the verifier: '$ids'";; esac
 label="$(run --print-skip-label)"
 [ "$label" = "ux:none" ] || fail "--print-skip-label printed '$label', not ux:none"
 pass "a bead filed with ux:none skips the ux stage, and the label is printed for the fleet view"

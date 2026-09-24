@@ -231,6 +231,8 @@ argv_has update "verified_at=$sha40" \
   || fail "reopens-unassigns-and-records: verified_at was not the full sha"
 argv_has_pair update --remove-label "verdict:stale" \
   || fail "reopens-unassigns-and-records: verdict:stale was not removed"
+argv_has_pair update --remove-label "second-look" \
+  || fail "reopens-unassigns-and-records: second-look was not removed (cb-wf24)"
 # The order: reopen, then the assignee clear, then the rest.
 [ "$(grep -c 'ARG:--assignee' "$stub_dir/argv.update")" -ge 1 ] \
   || fail "reopens-unassigns-and-records: no assignee clear at all"

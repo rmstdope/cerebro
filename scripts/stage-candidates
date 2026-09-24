@@ -106,6 +106,7 @@ if ! out="$(printf '%s' "$raw" | jq --arg mode "$mode" --arg stage "$stage_label
         | select((.labels // []) | index("planned")       | not)
         | select((.labels // []) | index("human")         | not)
         | select((.labels // []) | index("verdict:stale") | not)
+        | select((.labels // []) | index("second-look")   | not)
         | select((.labels // []) | index("bugfix")        | not)
         | select((.labels // []) | index($skip)           | not)
         | select(held | not)

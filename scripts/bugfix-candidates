@@ -14,14 +14,14 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$("$script_dir/consumer-root" --shared)"
 
 if ! raw="$(bd --readonly -C "$root" ready --label bugfix --exclude-label human \
-        --exclude-label verdict:stale --exclude-type epic --unassigned --json --brief -n 0)"; then
+        --exclude-label verdict:stale --exclude-label second-look --exclude-type epic --unassigned --json --brief -n 0)"; then
   echo "bugfix-candidates: bd ready failed - cannot list the candidates" >&2
   exit 1
 fi
 
 # P4 is unranked, and the bugfixer is handed this list's first entry, so the filter lives here; a
 # missing priority is read the same way (cb-7dun).
-if ! out="$(printf '%s' "$raw" | jq '[ .[] | select((.priority // 4) < 4) | {id, priority} ] | sort_by(.priority, .id)' 2>/dev/null)"; then
+if ! out="$(printf '%s' "$raw" | jq '[ .[] | select((.priority // 4) < 4) | select((.labels // []) | index("second-look") | not) | {id, priority} ] | sort_by(.priority, .id)' 2>/dev/null)"; then
   echo "bugfix-candidates: bd ready did not print JSON this script can read" >&2
   exit 1
 fi

@@ -48,7 +48,7 @@ root="$("$script_dir/consumer-root" --shared)"
 # `--print-skip-label` are where the two words are declared; this script repeats them because it
 # runs on every fleet-view tick and a second process per tick is not affordable.
 if ! raw="$(bd --readonly -C "$root" ready --exclude-label human \
-        --exclude-label verdict:stale --exclude-label bugfix \
+        --exclude-label verdict:stale --exclude-label second-look --exclude-label bugfix \
         --exclude-type epic --unassigned --json --brief -n 0)"; then
   echo "assignable-beads: bd ready failed - cannot list the assignable beads" >&2
   exit 1
@@ -59,6 +59,7 @@ fi
 # so the filter lives here, with a missing priority read the same way (cb-7dun).
 if ! out="$(printf '%s' "$raw" | jq '[ .[]
       | select((.priority // 4) < 4)
+      | select((.labels // []) | index("second-look") | not)
       | select(((.labels // []) | index("ux:agreed")) or ((.labels // []) | index("ux:none")))
       | select(((.labels // []) | index("planned") | not)
                or ((.labels // []) | index("verification:failed")))

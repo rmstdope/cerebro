@@ -56,6 +56,18 @@ out="$(run)"
   || fail "a P4 or unprioritised bug is never a bugfix candidate, got $out"
 pass "an unranked bug reaches no bugfixer"
 
+# --- a bug handed back to the verifier is hers until she looks (cb-wf24) ------------------------
+cat > "$stub/ready.json" <<'JSON'
+[{"id":"cb-handed","priority":0,"labels":["bugfix","verification:failed","second-look"]},
+ {"id":"cb-fresh","priority":1,"labels":["bugfix"]}]
+JSON
+out="$(run)"
+[[ "$(jq -c '[.[].id]' <<<"$out")" == '["cb-fresh"]' ]] \
+  || fail "a second-look bug is never a bugfix candidate, got $out"
+log="$(cat "$stub/bd.log")"
+[[ "$log" == *"--exclude-label second-look"* ]] || fail "bd is asked to exclude second-look: $log"
+pass "a bug handed back to the verifier is not a bugfix candidate"
+
 # --- any argument is a usage error ---------------------------------------------------------------
 
 status=0

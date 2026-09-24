@@ -41,6 +41,21 @@ for want in --readonly " ready " "--label bugfix" "--exclude-label human" \
 done
 pass "prints the ready bugfix beads sorted by priority then id"
 
+# --- an unranked bug reaches no bugfixer --------------------------------------------------------
+#
+# A bug is filed at P4 like everything else and ranked by Cerebro with the navigator; the bugfixer
+# is handed this list's first entry, so P4 (and a missing priority) is dropped here.
+
+cat > "$stub/ready.json" <<'JSON'
+[{"id":"cb-unranked","priority":4,"labels":["bugfix"]},
+ {"id":"cb-nopriority","labels":["bugfix"]},
+ {"id":"cb-ranked","priority":2,"labels":["bugfix"]}]
+JSON
+out="$(run)"
+[[ "$(jq -c '[.[].id]' <<<"$out")" == '["cb-ranked"]' ]] \
+  || fail "a P4 or unprioritised bug is never a bugfix candidate, got $out"
+pass "an unranked bug reaches no bugfixer"
+
 # --- any argument is a usage error ---------------------------------------------------------------
 
 status=0

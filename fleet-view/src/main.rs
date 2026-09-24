@@ -962,14 +962,6 @@ fn start_due(
                     reason.clone().map_or(serde_json::Value::Null, serde_json::Value::from),
                 ),
                 ("planned", serde_json::Value::from(facts.planned)),
-                (
-                    "planned_ids",
-                    if facts.planned_ids.is_empty() {
-                        serde_json::Value::Null
-                    } else {
-                        serde_json::Value::from(facts.planned_ids.clone())
-                    },
-                ),
                 ("implementers", serde_json::Value::from(facts.implementers)),
                 (
                     "p0_unplanned",
@@ -1615,8 +1607,8 @@ fn arm_and_autostart(
 }
 
 /// The roles a spacing is asked about, once, at startup.
-const SPACED_ROLES: [&str; 6] =
-    ["implementer", "producer", "bugfixer", "verifier", "orchestrator", "ux"];
+const SPACED_ROLES: [&str; 5] =
+    ["producer", "bugfixer", "verifier", "orchestrator", "ux"];
 
 /// The startup line, naming both halves of the roster's declaration - because the declaration did
 /// both and only one of them is otherwise audible. An empty half drops its clause along with the
@@ -2856,7 +2848,7 @@ mod main_tests {
     /// cb-lz5 roles silently fall back to no spacing at all while their peers have one.
     #[test]
     fn spaced_roles_covers_every_board_backed_role() {
-        for role in ["implementer", "bugfixer", "verifier", "orchestrator", "ux"] {
+        for role in ["producer", "bugfixer", "verifier", "orchestrator", "ux"] {
             assert!(SPACED_ROLES.contains(&role), "{role} is asked about spacing");
         }
     }
@@ -3085,7 +3077,7 @@ mod main_tests {
         app.finish_refresh(
             Ok(vec![cerebro_tui::model::FleetRow {
                 name: "Storm".into(),
-                role: "implementer".into(),
+                role: "producer".into(),
                 kind: AgentKind::Interactive,
                 state: RowState::Working,
                 phase: None,
@@ -3762,7 +3754,7 @@ mod main_tests {
             Ok((0..30)
                 .map(|i| FleetRow {
                     name: format!("A{i:02}"),
-                    role: "implementer".into(),
+                    role: "producer".into(),
                     kind: AgentKind::Interactive,
                     state: RowState::Dead,
                     phase: None,
@@ -3848,7 +3840,7 @@ mod main_tests {
             Ok((0..30)
                 .map(|i| cerebro_tui::model::FleetRow {
                     name: format!("A{i:02}"),
-                    role: "implementer".into(),
+                    role: "producer".into(),
                     kind: AgentKind::Interactive,
                     state: RowState::Dead,
                     phase: None,
@@ -3890,7 +3882,7 @@ mod main_tests {
         app.finish_refresh(
             Ok(vec![cerebro_tui::model::FleetRow {
                 name: "Storm".into(),
-                role: "implementer".into(),
+                role: "producer".into(),
                 kind: cerebro_tui::model::AgentKind::Implementer,
                 state: cerebro_tui::model::RowState::Idle,
                 phase: None,
@@ -4067,7 +4059,7 @@ mod main_tests {
     fn fleet_row(name: &str, kind: cerebro_tui::model::AgentKind, state: cerebro_tui::model::RowState) -> cerebro_tui::model::FleetRow {
         cerebro_tui::model::FleetRow {
             name: name.into(),
-            role: "implementer".into(),
+            role: "producer".into(),
             kind,
             state,
             phase: None,
@@ -5471,7 +5463,7 @@ mod main_tests {
             },
             RosterEntry {
                 name: "Cyclops".into(),
-                role: "implementer".into(),
+                role: "producer".into(),
                 kind: AgentKind::Implementer,
             },
         ];
@@ -5566,7 +5558,6 @@ mod main_tests {
     fn planned_beads(n: usize) -> cerebro_tui::model::WorkBuckets {
         let mut buckets = planned_only(n);
         buckets.assignable = (0..n).map(|i| format!("cb-p{i}")).collect();
-        buckets.implementer_assignable = buckets.assignable.clone();
         buckets
     }
 
@@ -5591,7 +5582,7 @@ mod main_tests {
 
     /// Spacing off, so what these tests measure is the pick and not the peer window.
     fn no_spacing() -> std::collections::BTreeMap<String, u64> {
-        [("implementer".to_string(), 0u64)].into_iter().collect()
+        [("producer".to_string(), 0u64)].into_iter().collect()
     }
 
     fn builders_started(beads: usize) -> usize {
@@ -6733,7 +6724,7 @@ mod main_tests {
         let lines = disarm_lines(&paths);
         assert_eq!(lines.len(), 1, "one line for one disarm: {lines:?}");
         assert_eq!(lines[0]["agent"], "Cyclops");
-        assert_eq!(lines[0]["role"], "implementer");
+        assert_eq!(lines[0]["role"], "producer");
         assert_eq!(lines[0]["by"], "kill");
 
         // The standby disarm beside it.
@@ -6992,7 +6983,7 @@ mod main_tests {
         assert!(state.host.is_live("Rogue"));
         let line = one_line(dir.path(), "decisions", "start");
         assert!(
-            line.contains(r#""agent":"Rogue","role":"implementer","reason":null,"bead":null,"by":"navigator""#),
+            line.contains(r#""agent":"Rogue","role":"producer","reason":null,"bead":null,"by":"navigator""#),
             "{line}"
         );
         state.host.kill(&paths, "Rogue");
@@ -7006,7 +6997,7 @@ mod main_tests {
         let declaration = declaring_with_table(
             "Cyclops",
             "Xavier\nBeast",
-            "Cyclops\timplementer\timplementer\nXavier\tux\tinteractive\nBeast\tux\tinteractive\n",
+            "Cyclops\tproducer\timplementer\nXavier\tux\tinteractive\nBeast\tux\tinteractive\n",
         );
         let mut logger = logging(dir.path());
         let now = Utc::now();
@@ -7041,7 +7032,7 @@ mod main_tests {
         // And the autostarted name got a `start` line instead, as the navigator's own act.
         let start = one_line(dir.path(), "decisions", "start");
         assert!(
-            start.contains(r#""agent":"Cyclops","role":"implementer","reason":null,"bead":null,"by":"navigator""#),
+            start.contains(r#""agent":"Cyclops","role":"producer","reason":null,"bead":null,"by":"navigator""#),
             "{start}"
         );
         host.kill(&paths, "Cyclops");
@@ -7074,12 +7065,12 @@ mod main_tests {
 
         let end = one_line(dir.path(), "decisions", "end");
         assert!(
-            end.contains(r#""agent":"Rogue","role":"implementer","state":"waiting","bead":"cb-kcs.4.4","stop_flag":null"#),
+            end.contains(r#""agent":"Rogue","role":"producer","state":"waiting","bead":"cb-kcs.4.4","stop_flag":null"#),
             "{end}"
         );
         let retire = one_line(dir.path(), "decisions", "retire");
         assert!(
-            retire.contains(r#""agent":"Storm","role":"implementer","state":"idle","bead":null,"stop_flag":"set""#),
+            retire.contains(r#""agent":"Storm","role":"producer","state":"idle","bead":null,"stop_flag":"set""#),
             "{retire}"
         );
     }
@@ -7243,7 +7234,7 @@ mod main_tests {
         // a parse would prove neither.
         let xavier = evaluations[0];
         assert!(xavier.contains(r#""agent":"Xavier","role":"ux","reason":"UX 0 of 2""#), "{xavier}");
-        assert!(xavier.contains(r#""planned":0,"planned_ids":null,"implementers":0,"p0_unplanned":null"#), "{xavier}");
+        assert!(xavier.contains(r#""planned":0,"implementers":0,"p0_unplanned":null"#), "{xavier}");
         assert!(xavier.contains(r#""p4_unranked":0,"merged_unverified":0,"stale_verdicts":0"#), "{xavier}");
         assert!(xavier.contains(r#""held_by_guard":null,"spaced_out":null,"spacing":30"#), "{xavier}");
         assert!(xavier.contains(r#""backed_off":null,"stop_flag":null,"disarmed":null,"failed_starts":0}"#), "{xavier}");

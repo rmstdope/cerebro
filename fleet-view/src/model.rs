@@ -939,9 +939,6 @@ pub struct WorkBuckets {
     /// The ids a producer may be handed, in `scripts/assignable-beads`' order (priority, then
     /// id). `partition_beads` leaves it empty; `readers::read_work` fills it (cb-10d.1).
     pub assignable: Vec<String>,
-    /// The ids a legacy implementer may be handed, in `scripts/assignable-beads implementer`
-    /// order. Kept separately so producer fleets do not consume planned work and vice versa.
-    pub implementer_assignable: Vec<String>,
     /// The ids a bugfixer may be handed, in `scripts/bugfix-candidates`' order (priority, then
     /// id). `partition_beads` leaves it empty; `readers::read_work` fills it.
     pub bugfixable: Vec<String>,

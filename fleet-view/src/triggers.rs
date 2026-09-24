@@ -209,7 +209,7 @@ pub const GIVE_UP_AFTER: u32 = 5;
 pub fn wake_interval(role: &str) -> i64 {
     match role {
         "verifier" => 300,
-        "implementer" | "producer" | "bugfixer" | "ux" => 0,
+        "producer" | "bugfixer" | "ux" => 0,
         _ => WAKE_INTERVAL_DEFAULT,
     }
 }
@@ -217,7 +217,7 @@ pub fn wake_interval(role: &str) -> i64 {
 /// `cerebro-role-start-spacing`, the fallback for a role the project declares nothing about.
 pub fn default_spacing(role: &str) -> Option<u64> {
     match role {
-        "implementer" | "producer" | "bugfixer" | "ux" => Some(30),
+        "producer" | "bugfixer" | "ux" => Some(30),
         _ => None,
     }
 }
@@ -249,17 +249,10 @@ pub struct TriggerFacts {
     pub ux_agreed: usize,
     /// How many planned, unclaimed, unparked beads there are.
     pub planned: usize,
-    /// Ids of the planned, unclaimed, unparked beads - what an implementer may actually claim.
-    pub planned_ids: Vec<String>,
-    /// Planned-bead revisions keyed by id, so a replanned bead under the same id still moves the
-    /// implementer fingerprint.
-    pub planned_revisions: Vec<(String, Option<DateTime<Utc>>)>,
-    /// The beads the next implementer start may be handed: `WorkBuckets::assignable` minus every
+    /// The beads the next producer start may be handed: `WorkBuckets::assignable` minus every
     /// bead already spoken for (`spoken_for`), in the script's order. `take` removes one handed out
-    /// earlier in the same tick (cb-10d.1).
+    /// earlier in the same tick.
     pub assignable_ids: Vec<String>,
-    /// The legacy implementer queue, kept distinct from producer work.
-    pub implementer_assignable_ids: Vec<String>,
     /// The beads the next bugfixer start may be handed: `WorkBuckets::bugfixable` minus every
     /// bead already spoken for (`spoken_for`), in the script's order. `take` removes one handed
     /// out earlier in the same tick.
@@ -393,16 +386,8 @@ impl TriggerFacts {
             planning_candidates,
             planned: planned.len(),
             ux_agreed: agreed.len(),
-            planned_ids: planned.iter().map(|bead| bead.id.clone()).collect(),
-            planned_revisions: planned.iter().map(|bead| (bead.id.clone(), bead.updated_at)).collect(),
             assignable_ids: buckets
                 .assignable
-                .iter()
-                .filter(|id| !spoken_for.contains(*id))
-                .cloned()
-                .collect(),
-            implementer_assignable_ids: buckets
-                .implementer_assignable
                 .iter()
                 .filter(|id| !spoken_for.contains(*id))
                 .cloned()
@@ -466,10 +451,6 @@ pub struct AgentFacts<'a> {
 /// wake interval, not this guard, is what keeps it from starting too often.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Fingerprint {
-    Implementer {
-        planned_ids: Vec<String>,
-        planned_revisions: Vec<(String, Option<DateTime<Utc>>)>,
-    },
     Producer {
         assignable_ids: Vec<String>,
     },
@@ -498,10 +479,6 @@ fn candidate_pairs(facts: &TriggerFacts, role: &str) -> Vec<(String, Option<u8>)
 
 pub fn fingerprint(role: &str, facts: &TriggerFacts) -> Option<Fingerprint> {
     match role {
-        "implementer" => Some(Fingerprint::Implementer {
-            planned_ids: facts.planned_ids.clone(),
-            planned_revisions: facts.planned_revisions.clone(),
-        }),
         "producer" => Some(Fingerprint::Producer {
             assignable_ids: facts.assignable_ids.clone(),
         }),
@@ -593,8 +570,6 @@ fn condition(facts: &TriggerFacts, agent: &AgentFacts<'_>) -> Option<String> {
             (facts.merged_unverified > 0)
                 .then(|| format!("{} merged, unverified", facts.merged_unverified))
         }
-        "implementer" => (!facts.implementer_assignable_ids.is_empty())
-            .then(|| format!("{} planned, unclaimed", facts.implementer_assignable_ids.len())),
         "producer" => (!facts.assignable_ids.is_empty())
             .then(|| format!("{} UX-agreed, unclaimed", facts.assignable_ids.len())),
         "bugfixer" => (!facts.bugfixable_ids.is_empty())
@@ -799,7 +774,6 @@ pub fn standby_label(
 ) -> Option<String> {
     match role {
         "ux" => Some(format!("→ agreed {}/{}", facts.ux_agreed, facts.ux_want())),
-        "implementer" => Some("→ planned".to_string()),
         "producer" => Some("→ agreed build".to_string()),
         "bugfixer" => Some("→ bugs".to_string()),
         "verifier" => Some("→ merged".to_string()),
@@ -816,7 +790,7 @@ pub fn standby_label(
     }
 }
 
-/// The bead the next implementer start is given: the first assignable one, or `None` (cb-10d.1).
+/// The bead the next producer start is given: the first assignable one, or `None`.
 pub fn next_bead(facts: &TriggerFacts) -> Option<&str> {
     facts.assignable_ids.first().map(String::as_str)
 }
@@ -826,8 +800,7 @@ pub fn next_bugfix(facts: &TriggerFacts) -> Option<&str> {
     facts.bugfixable_ids.first().map(String::as_str)
 }
 
-/// Whether ROLE is started with a bead the view picked: `implementer` (cb-10d.1) and the three
-/// planning roles (cb-10d.2.2).
+/// Whether ROLE is started with a bead the view picked: builders and the planning roles.
 pub fn hands_a_bead(role: &str) -> bool {
     let policy = RolePolicy::for_role(role);
     policy.is_builder() || policy == RolePolicy::Bugfixer || policy.is_planning()
@@ -839,7 +812,7 @@ pub fn first_candidate(candidates: &[Candidate]) -> Option<&Candidate> {
     candidates.iter().find(|c| !matches!(c.priority, Some(4) | None))
 }
 
-/// The bead the next start of ROLE is given: an implementer's first assignable bead, a planning
+/// The bead the next start of ROLE is given: a producer's first assignable bead, a planning
 /// role's `first_candidate`, and `None` for any other role.
 pub fn bead_for<'a>(facts: &'a TriggerFacts, role: &str) -> Option<&'a str> {
     match RolePolicy::for_role(role) {
@@ -855,7 +828,6 @@ impl TriggerFacts {
     /// out earlier in THIS tick is not handed again, to any role.
     pub fn take(&mut self, id: &str) {
         self.assignable_ids.retain(|candidate| candidate != id);
-        self.implementer_assignable_ids.retain(|candidate| candidate != id);
         self.bugfixable_ids.retain(|candidate| candidate != id);
         for list in self.planning_candidates.values_mut() {
             list.retain(|candidate| candidate.id != id);
@@ -1051,7 +1023,7 @@ mod tests {
         FleetRow {
             name: name.into(),
             role: role.into(),
-            kind: if role == "implementer" {
+            kind: if role == "producer" {
                 AgentKind::Implementer
             } else {
                 AgentKind::Interactive
@@ -1069,7 +1041,7 @@ mod tests {
     }
 
     fn facts_for(beads: Vec<Bead>, candidates: &[(&str, Vec<(&str, u8)>)]) -> TriggerFacts {
-        let roster = roster(&[("Xavier", "ux"), ("Cyclops", "implementer")]);
+        let roster = roster(&[("Xavier", "ux"), ("Cyclops", "producer")]);
         let mut buckets = partition_beads(beads);
         buckets.candidates = cands(candidates);
         TriggerFacts::derive(&buckets, &roster, &BTreeSet::new(), |_| false, GhAnswer::Unanswered, 1)
@@ -1159,10 +1131,10 @@ mod tests {
             let roster = roster(&[
                 ("Xavier", "ux"),
                 ("Beast", "ux"),
-                ("Cyclops", "implementer"),
-                ("Rogue", "implementer"),
-                ("Storm", "implementer"),
-                ("Gambit", "implementer"),
+                ("Cyclops", "producer"),
+                ("Rogue", "producer"),
+                ("Storm", "producer"),
+                ("Gambit", "producer"),
             ]);
             TriggerFacts::derive(
                 &partition_beads(beads),
@@ -1280,12 +1252,11 @@ mod tests {
     fn assignable_facts(assignable: &[&str], spoken: &[&str]) -> TriggerFacts {
         let buckets = WorkBuckets {
             assignable: assignable.iter().map(|id| id.to_string()).collect(),
-            implementer_assignable: assignable.iter().map(|id| id.to_string()).collect(),
             ..WorkBuckets::default()
         };
         TriggerFacts::derive(
             &buckets,
-            &roster(&[("Cyclops", "implementer")]),
+            &roster(&[("Cyclops", "producer")]),
             &spoken.iter().map(|id| id.to_string()).collect(),
             |_| false,
             GhAnswer::Unanswered,
@@ -1297,17 +1268,17 @@ mod tests {
     fn an_implementer_starts_only_for_a_bead_nobody_holds() {
         let one = assignable_facts(&["cb-a", "cb-b"], &["cb-a"]);
         assert_eq!(
-            condition(&one, &agent_of("implementer")),
-            Some("1 planned, unclaimed".to_string())
+            condition(&one, &agent_of("producer")),
+            Some("1 UX-agreed, unclaimed".to_string())
         );
         assert_eq!(next_bead(&one), Some("cb-b"));
 
         let none = assignable_facts(&["cb-a", "cb-b"], &["cb-a", "cb-b"]);
-        assert_eq!(condition(&none, &agent_of("implementer")), None);
+        assert_eq!(condition(&none, &agent_of("producer")), None);
         assert_eq!(next_bead(&none), None);
         assert_eq!(
-            standby_label("implementer", &none, agent_of("implementer"), at(0)).as_deref(),
-            Some("\u{2192} planned")
+            standby_label("producer", &none, agent_of("producer"), at(0)).as_deref(),
+            Some("\u{2192} agreed build")
         );
     }
 
@@ -1318,7 +1289,7 @@ mod tests {
         assert_eq!(next_bead(&facts), Some("cb-b"));
         facts.take("cb-b");
         assert_eq!(next_bead(&facts), None);
-        assert_eq!(condition(&facts, &agent_of("implementer")), None);
+        assert_eq!(condition(&facts, &agent_of("producer")), None);
     }
 
     #[test]
@@ -1392,8 +1363,8 @@ mod tests {
     #[test]
     fn spoken_for_is_row_beads_handed_and_releasing() {
         let rows = vec![
-            row("Cyclops", "implementer", RowState::Working, Some("cb-1")),
-            row("Storm", "implementer", RowState::Standby, None),
+            row("Cyclops", "producer", RowState::Working, Some("cb-1")),
+            row("Storm", "producer", RowState::Standby, None),
         ];
         let handed: BTreeMap<String, String> =
             [("Storm".to_string(), "cb-2".to_string())].into_iter().collect();
@@ -1445,7 +1416,7 @@ mod tests {
             .map(|(name, role)| RosterEntry {
                 name: (*name).to_string(),
                 role: (*role).to_string(),
-                kind: if *role == "implementer" {
+                kind: if *role == "producer" {
                     AgentKind::Implementer
                 } else {
                     AgentKind::Interactive
@@ -1472,9 +1443,9 @@ mod tests {
         ]);
         let roster = roster(&[
             ("Xavier", "ux"),
-            ("Cyclops", "implementer"),
-            ("Rogue", "implementer"),
-            ("Storm", "implementer"),
+            ("Cyclops", "producer"),
+            ("Rogue", "producer"),
+            ("Storm", "producer"),
         ]);
         buckets.candidates = cands(&[("ux", vec![("cb-9zz", 0)])]);
         // Storm has been told to finish: it takes no further bead, so it is not counted.
@@ -1486,10 +1457,6 @@ mod tests {
         assert_eq!(
             facts.planning_candidates["ux"],
             vec![Candidate { id: "cb-9zz".into(), priority: Some(0) }]
-        );
-        assert_eq!(
-            facts.planned_ids,
-            vec!["cb-p1".to_string(), "cb-p2".to_string()]
         );
         assert_eq!(facts.unranked_ids, vec!["cb-rank".to_string()]);
         assert_eq!(facts.merged_unverified, 1);
@@ -1599,10 +1566,7 @@ mod tests {
             planning_candidates: BTreeMap::new(),
             ux_agreed: 0,
             planned: 0,
-            planned_ids: Vec::new(),
-            planned_revisions: Vec::new(),
             assignable_ids: Vec::new(),
-            implementer_assignable_ids: Vec::new(),
             bugfixable_ids: Vec::new(),
             unranked_ids: Vec::new(),
             merged_unverified: 0,
@@ -1673,11 +1637,6 @@ mod tests {
 
         let mut planned = empty_facts();
         planned.assignable_ids = vec!["cb-a".into(), "cb-b".into(), "cb-c".into()];
-        planned.implementer_assignable_ids = vec!["cb-p".into()];
-        assert_eq!(
-            trigger(&planned, agent("implementer"), at(0)),
-            Some("1 planned, unclaimed".to_string())
-        );
         assert_eq!(
             trigger(&planned, agent("producer"), at(0)),
             Some("3 UX-agreed, unclaimed".to_string())
@@ -1708,8 +1667,8 @@ mod tests {
         );
         // The UX agents and the builders have no floor: a short buffer is the fleet idle.
         assert_eq!(
-            trigger(&planned, AgentFacts { started_at: Some(at(0)), ..agent("implementer") }, at(1)),
-            Some("1 planned, unclaimed".to_string())
+            trigger(&planned, AgentFacts { started_at: Some(at(0)), ..agent("producer") }, at(1)),
+            Some("3 UX-agreed, unclaimed".to_string())
         );
     }
 
@@ -1724,73 +1683,45 @@ mod tests {
     #[test]
     fn a_pass_that_changed_nothing_does_not_start_another() {
         let mut facts = empty_facts();
-        facts.planned_ids = vec!["cb-a".into()];
         facts.assignable_ids = vec!["cb-a".into()];
-        facts.implementer_assignable_ids = vec!["cb-a".into()];
-        let print = fingerprint("implementer", &facts).expect("an implementer has one");
+        let print = fingerprint("producer", &facts).expect("a producer has one");
         let held = AgentFacts {
-            role: "implementer",
+            role: "producer",
             started_at: Some(at(0)),
             ended_at: Some(at(60)),
             last_fingerprint: Some(&print),
         };
         assert_eq!(trigger(&facts, held, at(120)), None);
 
-        // One more planned bead is work the last pass did not see.
+        // One more agreed bead is work the last pass did not see.
         let mut moved = facts.clone();
-        moved.planned_ids.push("cb-b".into());
-        moved.implementer_assignable_ids.push("cb-b".into());
+        moved.assignable_ids.push("cb-b".into());
         assert_eq!(
             trigger(&moved, held, at(120)),
-            Some("2 planned, unclaimed".to_string())
+            Some("2 UX-agreed, unclaimed".to_string())
         );
     }
 
     #[test]
     fn a_launch_that_never_became_a_pass_is_not_held() {
         let mut facts = empty_facts();
-        facts.planned_ids = vec!["cb-a".into()];
         facts.assignable_ids = vec!["cb-a".into()];
-        facts.implementer_assignable_ids = vec!["cb-a".into()];
-        let print = fingerprint("implementer", &facts).expect("an implementer has one");
+        let print = fingerprint("producer", &facts).expect("a producer has one");
         // Started, and no end recorded after it: the launch died before it became a pass.
         let never_ran = AgentFacts {
-            role: "implementer",
+            role: "producer",
             started_at: Some(at(60)),
             ended_at: Some(at(10)),
             last_fingerprint: Some(&print),
         };
         assert_eq!(
             trigger(&facts, never_ran, at(120)),
-            Some("1 planned, unclaimed".to_string())
+            Some("1 UX-agreed, unclaimed".to_string())
         );
         // And a role this view has never started has no fingerprint to be held by.
         assert_eq!(
-            trigger(&facts, agent("implementer"), at(120)),
-            Some("1 planned, unclaimed".to_string())
-        );
-    }
-
-    #[test]
-    fn a_replanned_bead_under_the_same_id_breaks_the_implementer_guard() {
-        let mut before = empty_facts();
-        before.planned_ids = vec!["cb-a".into()];
-        before.assignable_ids = vec!["cb-a".into()];
-        before.implementer_assignable_ids = vec!["cb-a".into()];
-        before.planned_revisions = vec![("cb-a".into(), Some(at(10)))];
-        let print = fingerprint("implementer", &before).expect("an implementer has one");
-        let held = AgentFacts {
-            role: "implementer",
-            started_at: Some(at(0)),
-            ended_at: Some(at(60)),
-            last_fingerprint: Some(&print),
-        };
-
-        let mut after = before.clone();
-        after.planned_revisions = vec![("cb-a".into(), Some(at(120)))];
-        assert_eq!(
-            trigger(&after, held, at(180)),
-            Some("1 planned, unclaimed".to_string())
+            trigger(&facts, agent("producer"), at(120)),
+            Some("1 UX-agreed, unclaimed".to_string())
         );
     }
 
@@ -1883,11 +1814,9 @@ mod tests {
 
     #[test]
     fn the_standby_label_is_a_closed_vocabulary() {
-        let mut facts = empty_facts();
-        facts.planned_ids = vec!["cb-p".to_string()];
-        let facts = facts;
+        let facts = empty_facts();
         assert_eq!(standby_label("ux", &facts, agent("ux"), at(0)).as_deref(), Some("→ agreed 0/4"));
-        assert_eq!(standby_label("implementer", &facts, agent("implementer"), at(0)).as_deref(), Some("→ planned"));
+        assert_eq!(standby_label("producer", &facts, agent("producer"), at(0)).as_deref(), Some("→ agreed build"));
         assert_eq!(standby_label("verifier", &facts, agent("verifier"), at(0)).as_deref(), Some("→ merged"));
         assert_eq!(standby_label("orchestrator", &facts, agent("orchestrator"), at(0)).as_deref(), Some("→ unranked"));
         // A role this view has no rule for - a consumer's own word - has no cell at all, and
@@ -1900,12 +1829,12 @@ mod tests {
 
     #[test]
     fn a_peer_started_inside_the_window_holds_the_second_start() {
-        let fleet = roster(&[("Xavier", "ux"), ("Beast", "ux"), ("Rogue", "implementer")]);
+        let fleet = roster(&[("Xavier", "ux"), ("Beast", "ux"), ("Rogue", "producer")]);
         let peers = role_peers("Beast", "ux", &fleet);
         assert_eq!(peers, vec!["Xavier"]);
         // A role with one holder has no peers, which is what makes this answer "no" for every
         // role but the UX agents and the builders without naming any of them.
-        assert!(role_peers("Rogue", "implementer", &fleet).is_empty());
+        assert!(role_peers("Rogue", "producer", &fleet).is_empty());
 
         let mut started = BTreeMap::new();
         started.insert("Xavier".to_string(), at(0));
@@ -1921,7 +1850,7 @@ mod tests {
     fn a_declared_spacing_beats_the_default_including_zero() {
         let mut declared = BTreeMap::new();
         assert_eq!(spacing_for("ux", &declared), Some(30));
-        assert_eq!(spacing_for("implementer", &declared), Some(30));
+        assert_eq!(spacing_for("producer", &declared), Some(30));
         assert_eq!(spacing_for("verifier", &declared), None);
         declared.insert("ux".to_string(), 0);
         assert_eq!(spacing_for("ux", &declared), Some(0));
@@ -1999,11 +1928,11 @@ mod tests {
     #[test]
     fn a_start_is_recorded_with_what_triggered_it() {
         let mut facts = empty_facts();
-        facts.planned_ids = vec!["cb-a".into()];
+        facts.assignable_ids = vec!["cb-a".into()];
         let mut ledger = StartLedger::default();
-        ledger.note_started("Rogue", at(10), fingerprint("implementer", &facts));
+        ledger.note_started("Rogue", at(10), fingerprint("producer", &facts));
         assert_eq!(ledger.started_at("Rogue"), Some(at(10)));
-        assert_eq!(ledger.fingerprint("Rogue"), fingerprint("implementer", &facts).as_ref());
+        assert_eq!(ledger.fingerprint("Rogue"), fingerprint("producer", &facts).as_ref());
         assert_eq!(ledger.started_at_map().get("Rogue"), Some(&at(10)));
     }
 
@@ -2047,7 +1976,6 @@ mod tests {
         TriggerFacts {
             ux_agreed,
             planning_candidates: cands(&[("ux", vec![("cb-1", 2)])]),
-            planned_ids: vec!["cb-2".to_string()],
             implementers,
             ..empty_facts()
         }
@@ -2327,8 +2255,8 @@ mod tests {
             standby_label("ux", &facts, agent("ux"), at(0)).as_deref()
         );
         assert_eq!(
-            standby_cell("implementer", &facts, agent("implementer"), at(0), 0, 0).as_deref(),
-            Some("\u{2192} planned")
+            standby_cell("producer", &facts, agent("producer"), at(0), 0, 0).as_deref(),
+            Some("\u{2192} agreed build")
         );
         // A cadence role backs off the same way, and its own cell is what the countdown replaces
         // (cb-kcs.4.3 gave every armable role a cell; a role this view has no rule for still has

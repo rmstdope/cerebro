@@ -633,7 +633,6 @@ pub fn read_work(
 ) -> Result<WorkBuckets, ReadError> {
     let mut buckets = model::partition_beads(read_beads(paths, programs, commands)?);
     buckets.assignable = read_assignable(paths, commands)?;
-    buckets.implementer_assignable = buckets.assignable.clone();
     buckets.bugfixable = read_bugfixable(paths, commands)?;
     buckets.second_look = read_second_look(paths, commands)?;
     // Sequential, on this one thread, in `BTreeSet` order: a pool would reorder which error is
@@ -1591,7 +1590,6 @@ mod tests {
 
         let work = read_work(&paths, &Programs::default(), &fake, &BTreeSet::new()).unwrap();
         assert_eq!(work.assignable, ["cb-b", "cb-a"]);
-        assert_eq!(work.implementer_assignable, ["cb-b", "cb-a"]);
         let calls = fake.calls();
         let args: Vec<Vec<String>> = calls
             .iter()
@@ -1815,7 +1813,7 @@ mod tests {
         let paths = paths_at(Path::new("/consumer"));
         let fake = FakeCommands::new(|call: &Call| match call.args.first().map(String::as_str) {
             Some("role_start_spacing_planner") => Ok(b"45\n".to_vec()),
-            Some("role_start_spacing_implementer") => Ok(b"30s\n".to_vec()),
+            Some("role_start_spacing_producer") => Ok(b"30s\n".to_vec()),
             Some("role_start_spacing_verifier") => Err(ReadError::Exit {
                 source: "project-conf".into(),
                 status: Some(1),
@@ -1826,7 +1824,7 @@ mod tests {
 
         let (declared, complaints) = read_role_spacing(
             &paths,
-            &["planner", "implementer", "verifier", "orchestrator"],
+            &["planner", "producer", "verifier", "orchestrator"],
             &fake,
         );
         assert_eq!(declared.get("planner"), Some(&45));
@@ -1834,11 +1832,11 @@ mod tests {
         assert_eq!(declared.get("verifier"), None);
         assert_eq!(declared.get("orchestrator"), None);
         // A value that is not a whole number of seconds is a third answer, said out loud once.
-        assert_eq!(declared.get("implementer"), None);
+        assert_eq!(declared.get("producer"), None);
         assert_eq!(
             complaints,
             vec![
-                "project.conf: role_start_spacing_implementer is not a whole number of seconds (\"30s\"); using 30.".to_string()
+                "project.conf: role_start_spacing_producer is not a whole number of seconds (\"30s\"); using 30.".to_string()
             ]
         );
     }

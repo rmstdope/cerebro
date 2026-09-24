@@ -7,7 +7,7 @@ bead added to the view and why; the module map and the rules a change must keep 
 
 `.cerebro/cerebro/scripts/cerebro-tui` opens `cerebro-tui`, a Rust/Ratatui program that draws the
 the fleet and the work queues - seven of them since cb-lz5.1, which
-added a `UX agreed {n}` section between `Being planned` and `Unplanned` for beads carrying the
+added a `UX agreed {n}` section (since cb-2f4s titled `Ready to produce`, as it also holds `ux:none` beads) between `Being planned` and `Unplanned` for beads carrying the
 `ux:agreed` stage label, hidden entirely when empty, and which starts the two cb-lz5 roles `ux`
 and `build-design` off queues of their own; the combined `planner` role reads the union of the
 two buckets and is unaffected. **Since cb-kcs.1 what it may do at all is

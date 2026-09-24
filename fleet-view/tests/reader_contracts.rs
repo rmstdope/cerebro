@@ -243,7 +243,7 @@ fn real_fleet_health_output_matches_the_health_struct() {
 }
 
 /// The stage label this view partitions on is `scripts/stage-candidates`'s to declare, and the
-/// two copies drifting apart is a `UX agreed` section that never draws a row (cb-lz5.1).
+/// two copies drifting apart is a `Ready to produce` section that never draws a row (cb-lz5.1).
 ///
 /// `--print-stage-label` resolves no root and reads no board, which is why cb-lz5.1.1 built that
 /// mode and why this case can run in CI.

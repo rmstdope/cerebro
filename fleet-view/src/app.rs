@@ -966,7 +966,7 @@ pub const WORK_ROWS_PER_SECTION: usize = 8;
 
 /// The title of the one Work section that is hidden rather than drawn as `(none)` when empty
 /// (cb-lz5.1). Spelled once, because the array entry and the skip must not drift.
-pub const UX_AGREED_SECTION: &str = "UX agreed";
+pub const UX_AGREED_SECTION: &str = "Ready to produce";
 
 /// How a section orders its rows and what it puts at the far end of one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1453,7 +1453,7 @@ pub fn bead_body(detail: &BeadDetail, width: usize) -> Vec<BeadBodyLine> {
 /// presses), and History is LAST - the `M-x cerebro` order, so the two views read alike.
 ///
 /// Nothing at all for Sweeps - not even a blank - when there are no findings and no error. That
-/// is deliberately unlike the queues, which print `(none)` - all but `UX agreed`, which is
+/// is deliberately unlike the queues, which print `(none)` - all but `Ready to produce`, which is
 /// hidden when empty for this same reason (cb-lz5.1): an empty Sweeps section is the
 /// ORDINARY result of every render but one. A FAILED sweep with nothing to keep still draws its
 /// header, because a clean fleet and a fleet nobody could look at must not draw the same blank.
@@ -7313,7 +7313,7 @@ mod tests {
                 "finding unassign:cb-a",
                 "finding recheck:cb-b",
                 "blank",
-                // The queues, in the order work moves in read backwards. `UX agreed` is not
+                // The queues, in the order work moves in read backwards. `Ready to produce` is not
                 // among them: it is empty here, and empty is the one section that is hidden.
                 "header Claimed 2",
                 // P0 before P1: the section's own order, which the document owns now.

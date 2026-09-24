@@ -52,8 +52,13 @@ run() {
 
 children_for() {
   # $1 epic id, as recorded by the last `bd children` call's argv.
-  grep -xF -A2 "ARG:children" "$stub_dir/argv.children" \
-    | grep -xF "ARG:$1" >/dev/null
+  awk -v id="ARG:$1" '
+    $0 == "ARG:children" {
+      if ((getline first) > 0 && first == id) found = 1
+      if ((getline second) > 0 && second == id) found = 1
+    }
+    END { exit !found }
+  ' "$stub_dir/argv.children"
 }
 
 # --- includes an OPEN eligible epic and a CLOSED one when family is unverified ------------------

@@ -255,7 +255,7 @@ pass "an epic with children is not a candidate"
 # The header may explain the rule; the code may not restate it. A second copy of the epic rule is
 # what this script exists to end, so the assertion is on the code with comment lines stripped.
 code="$(grep -v '^[[:space:]]*#' "$consumer/.claude/cerebro/scripts/plan-candidates")"
-if printf '%s' "$code" | grep -q 'epic'; then
+if grep -q 'epic' <<<"$code"; then
   fail "plan-candidates spells an epic rule of its own; work-beads owns that since cb-hzl"
 fi
 pass "plan-candidates spells no epic rule of its own"

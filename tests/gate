@@ -37,6 +37,11 @@ if ! bash scripts/suite-runner tests; then
   status=1
 fi
 
+echo "== pipefail pipeline check =="
+if ! scripts/pipefail-pipelines; then
+  status=1
+fi
+
 echo "== cargo test =="
 # The Rust workspace (fleet-view/, cb-vyp.1) is gated the same way as everything else: locked, so
 # a gate never resolves a dependency crates.io was not asked to fix in place, and --all-targets so

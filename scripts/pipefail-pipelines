@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+#
+# pipefail-pipelines - find test pipelines whose downstream reader may close before its writer
+# drains under `set -o pipefail`.
+#
+# `grep -q` and `head` answer as soon as they have enough input. Their writer can then receive
+# SIGPIPE, and pipefail turns a true assertion into a failure. Test sources use the shared
+# drain-safe helpers in tests/lib/consumer.sh instead.
+#
+#   no arguments
+#   stdout  one finding per unsafe pipeline
+#   exit 0  no findings
+#   exit 1  findings
+#   exit 2  usage or scan failure
+
+set -uo pipefail
+
+if [[ $# -gt 0 ]]; then
+  echo "usage: pipefail-pipelines" >&2
+  exit 2
+fi
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+cd "$root" || exit 2
+
+paths="$(mktemp)" || {
+  echo "pipefail-pipelines: cannot create a source list" >&2
+  exit 2
+}
+trap 'rm -f "$paths"' EXIT
+
+if ! git ls-files --cached --others --exclude-standard -z -- tests >"$paths"; then
+  echo "pipefail-pipelines: cannot enumerate test sources with git" >&2
+  exit 2
+fi
+
+findings=0
+
+while IFS= read -r -d '' path; do
+  [[ "$path" == *.sh && -f "$path" ]] || continue
+  output="$(awk -v path="$path" '
+    /^[[:space:]]*#/ { next }
+
+    function early_reader(command) {
+      if (command ~ /^[[:space:]]*head([[:space:]]|$)/) return "head"
+      if (command !~ /^[[:space:]]*grep([[:space:]]|$)/) return ""
+      if (command ~ /(^|[[:space:]])--quiet([[:space:]]|$)/ ||
+          command ~ /(^|[[:space:]])-[[:alnum:]]*q[[:alnum:]]*([[:space:]]|$)/) return "quiet grep"
+      return ""
+    }
+
+    {
+      if (pending_pipe) {
+        reader = early_reader($0)
+        if (reader != "") {
+          printf "unsafe pipeline: %s:%d (%s may exit before its writer drains)\n", path, NR, reader
+        }
+        pending_pipe = 0
+      }
+
+      if (match($0, /\|[[:space:]]*(head|grep)([[:space:]]|$)/)) {
+        command = substr($0, RSTART + 1)
+        reader = early_reader(command)
+        if (reader != "") {
+          printf "unsafe pipeline: %s:%d (%s may exit before its writer drains)\n", path, NR, reader
+        }
+      }
+
+      line = $0
+      sub(/[[:space:]]+$/, "", line)
+      if (line ~ /[^|]\|$/) pending_pipe = 1
+    }
+  ' "$path")" || {
+    echo "pipefail-pipelines: could not scan $path" >&2
+    exit 2
+  }
+  [[ -n "$output" ]] || continue
+  printf '%s\n' "$output"
+  count="$(wc -l <<<"$output")"
+  findings=$((findings + count))
+done <"$paths"
+
+[[ $findings -eq 0 ]] || exit 1

@@ -287,7 +287,7 @@ pass "the build-design stage does not accept an agreed blocker"
 # `work-beads` has owned that rule since cb-hzl. The header may explain it; the code may not restate
 # it. The assertion is on the code with comment lines stripped.
 code="$(grep -v '^[[:space:]]*#' "$consumer/.claude/cerebro/scripts/stage-candidates")"
-if printf '%s' "$code" | grep -q 'epic'; then
+if grep -q 'epic' <<<"$code"; then
   fail "stage-candidates spells an epic rule of its own; work-beads owns that since cb-hzl"
 fi
 pass "stage-candidates spells no epic rule of its own"

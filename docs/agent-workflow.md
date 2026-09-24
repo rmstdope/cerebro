@@ -612,8 +612,10 @@ and the window holding the checkout's lease is also the one that acts:
 .cerebro/cerebro/scripts/cerebro-tui     # needs cargo; anywhere inside the consumer
 ```
 
-It draws the same fleet rows and the same six queues — Claimed, Planned unclaimed, Being planned,
-Unplanned, Waiting on you, Merged unverified — as two separately bordered widgets stacked one above
+It draws the same fleet rows and the same queues — Claimed, Planned unclaimed, Being planned,
+Ready to produce, Unplanned, Waiting on you, Second look (a bead Psylocke must look at again:
+`verdict:stale`, or a hand-back on her second-look list; drawn only when there is one), Merged
+unverified — as two separately bordered widgets stacked one above
 the other, Fleet on top and Work below, each scrolling independently of the other. Its header says
 what it is allowed to do, in one of exactly four spellings: `Cerebro — starting` for the moment
 before it has the lease, then `Cerebro — supervising`. The other two are spent where there is

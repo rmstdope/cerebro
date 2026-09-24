@@ -635,6 +635,7 @@ pub fn read_work(
     buckets.assignable = read_assignable(paths, commands)?;
     buckets.bugfixable = read_bugfixable(paths, commands)?;
     buckets.second_look = read_second_look(paths, commands)?;
+    model::apply_second_look(&mut buckets);
     // Sequential, on this one thread, in `BTreeSet` order: a pool would reorder which error is
     // reported. A failure fails the whole read, this module's standing rule (cb-10d.2.2).
     for role in planning_roles {

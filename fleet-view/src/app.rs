@@ -967,6 +967,9 @@ pub const WORK_ROWS_PER_SECTION: usize = 8;
 /// The title of the one Work section that is hidden rather than drawn as `(none)` when empty
 /// (cb-lz5.1). Spelled once, because the array entry and the skip must not drift.
 pub const UX_AGREED_SECTION: &str = "Ready to produce";
+/// The beads on Psylocke's second-look list (`WorkBuckets::second_look_beads`); hidden while
+/// empty, like `UX_AGREED_SECTION`, since most boards have none most of the time (cb-wf24).
+pub const SECOND_LOOK_SECTION: &str = "Second look";
 
 /// How a section orders its rows and what it puts at the far end of one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1547,13 +1550,14 @@ fn sections_body<'a>(
     buckets: &'a WorkBuckets,
     now: DateTime<Utc>,
 ) -> Vec<WorkBodyLine<'a>> {
-    let sections: [(&'static str, &'a Vec<Bead>, SectionKind); 7] = [
+    let sections: [(&'static str, &'a Vec<Bead>, SectionKind); 8] = [
         ("Claimed", &buckets.claimed, SectionKind::Open),
         ("Planned, unclaimed", &buckets.planned, SectionKind::Open),
         ("Being planned", &buckets.being_planned, SectionKind::Open),
         (UX_AGREED_SECTION, &buckets.ux_agreed, SectionKind::Open),
         ("Unplanned", &buckets.unplanned, SectionKind::Open),
         ("Waiting on you", &buckets.paused, SectionKind::Paused),
+        (SECOND_LOOK_SECTION, &buckets.second_look_beads, SectionKind::Open),
         ("Merged, unverified", &buckets.merged, SectionKind::Merged),
     ];
     let planned_ready: std::collections::BTreeSet<String> =
@@ -1564,7 +1568,7 @@ fn sections_body<'a>(
         // combined `planner' role no bead ever carries `ux:agreed', so an always-drawn header
         // would put a permanently empty section on every fleet not running the cb-lz5 trial. The
         // rule Sweeps, Health and History already follow, applied to one queue.
-        if title == UX_AGREED_SECTION && beads.is_empty() {
+        if (title == UX_AGREED_SECTION || title == SECOND_LOOK_SECTION) && beads.is_empty() {
             continue;
         }
         if index > 0 {
@@ -1697,6 +1701,7 @@ fn apply_pending_priority(overlay: &BTreeMap<String, PendingPriority>, buckets: 
         &mut buckets.ux_agreed,
         &mut buckets.unplanned,
         &mut buckets.paused,
+        &mut buckets.second_look_beads,
         &mut buckets.merged,
     ] {
         for bead in section.iter_mut() {
@@ -7584,6 +7589,55 @@ mod tests {
             .position(|l| matches!(l, WorkBodyLine::SectionHeader { title: "Unplanned", count: 0 }))
             .expect("Unplanned still draws its own header");
         assert_eq!(body[unplanned + 1], WorkBodyLine::Empty);
+    }
+
+    /// A bead on Psylocke's second-look list is drawn under its own header, between Waiting on
+    /// you and Merged, and never under Ready to produce; the header is hidden while the list is
+    /// empty, like the producer queue (cb-wf24).
+    #[test]
+    fn work_body_draws_a_second_look_section_and_hides_it_when_empty() {
+        let mut app = App::default();
+        app.finish_work_refresh(
+            Ok(WorkBuckets {
+                second_look_beads: vec![test_bead("cb-again", Some(0))],
+                ..WorkBuckets::default()
+            }),
+            at(0),
+        );
+        let body = work_body(&app, at(0));
+        let index_of = |want: &str| {
+            body.iter()
+                .position(|l| matches!(l, WorkBodyLine::SectionHeader { title, .. } if *title == want))
+                .unwrap_or_else(|| panic!("the {want} header is drawn"))
+        };
+        let second = index_of(SECOND_LOOK_SECTION);
+        assert!(index_of("Waiting on you") < second);
+        assert!(second < index_of("Merged, unverified"));
+        assert!(matches!(
+            body[second],
+            WorkBodyLine::SectionHeader { title: SECOND_LOOK_SECTION, count: 1 }
+        ));
+        let row = body
+            .iter()
+            .position(|l| matches!(l, WorkBodyLine::Bead { bead, .. } if bead.id == "cb-again"))
+            .expect("the bead's own row is drawn");
+        assert!(second < row && row < index_of("Merged, unverified"));
+        assert!(
+            !body.iter().any(
+                |l| matches!(l, WorkBodyLine::SectionHeader { title, .. } if *title == UX_AGREED_SECTION)
+            ),
+            "a second-look bead is not a producer's"
+        );
+
+        let mut app = App::default();
+        app.finish_work_refresh(Ok(WorkBuckets::default()), at(0));
+        let body = work_body(&app, at(0));
+        assert!(
+            !body.iter().any(
+                |l| matches!(l, WorkBodyLine::SectionHeader { title, .. } if *title == SECOND_LOOK_SECTION)
+            ),
+            "an empty second-look list draws no header"
+        );
     }
 
     /// Without the new bucket in `apply_pending_priority`, a keystroke on one of its rows leaves

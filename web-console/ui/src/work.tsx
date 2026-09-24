@@ -17,7 +17,7 @@ export const lanesOf = (work: Work): Lane[] => [
   { name: "Designing UX", icon: PenTool, beads: work.being_planned },
   { name: "UX designed", icon: ClipboardCheck, beads: [...work.ux_agreed, ...work.planned] },
   { name: "In progress", icon: Loader, beads: work.claimed },
-  { name: "Unverified", icon: ShieldQuestion, beads: work.merged },
+  { name: "Unverified", icon: ShieldQuestion, beads: [...work.merged, ...(work.second_look_beads ?? [])] },
 ];
 
 const types: Record<string, [LucideIcon, string]> = {

@@ -344,6 +344,7 @@ impl TriggerFacts {
             &buckets.ux_agreed,
             &buckets.unplanned,
             &buckets.paused,
+            &buckets.second_look_beads,
         ]
         .into_iter()
         .flatten()

@@ -945,6 +945,12 @@ pub struct WorkBuckets {
     /// The open beads that need Psylocke's second look, in `scripts/second-look-beads`' order.
     /// `partition_beads` leaves it empty; `readers::read_work` fills it.
     pub second_look: Vec<String>,
+    /// The beads drawn under *Second look*: every open bead carrying `verdict:stale` (put here
+    /// by `partition_beads`), plus every id `second_look` names (moved here by
+    /// `apply_second_look`). A hand-back is defined by what the bead lacks, so only the script can
+    /// name it; without this bucket such a bead drew under Ready to produce while every builder
+    /// queue refused it (cb-wf24).
+    pub second_look_beads: Vec<Bead>,
     /// Each planning role's candidates, keyed by role, in its script's order (cb-10d.2.2).
     /// `partition_beads` leaves it empty; `readers::read_work` fills it for exactly the roles it
     /// was asked for, so a role absent from the map was not asked for - which is not the same as
@@ -1001,6 +1007,10 @@ pub struct Releasing {
 const SKIPPED_ISSUE_TYPES: [&str; 2] = ["epic", "event"];
 const CONDITIONAL_ISSUE_TYPE: &str = "epic";
 const PAUSED_LABEL: &str = "human";
+/// Set by the navigator's `x` on a verdict-sweep finding: main moved past the commit a failed
+/// verdict was formed against, and the bead is Psylocke's until she looks again. Every builder
+/// queue excludes it (`scripts/assignable-beads`, `bugfix-candidates`, `stage-candidates`).
+const STALE_VERDICT_LABEL: &str = "verdict:stale";
 const PLANNED_LABEL: &str = "planned";
 /// The stage label the UX agent adds when a bead's experience has been agreed (cb-lz5.1).
 /// The shell owner is `scripts/stage-candidates --print-stage-label`, and
@@ -1106,6 +1116,30 @@ fn is_bookkeeping(
     !(bead.status == "closed" && closed_parents.contains(&bead.id))
 }
 
+/// Move every bead `buckets.second_look` names out of the open queues into `second_look_beads`,
+/// keeping the queues' order. An id the board does not carry is ignored: the script and the
+/// `bd list` read are two moments, and a bead closed between them is nobody's to draw.
+pub fn apply_second_look(buckets: &mut WorkBuckets) {
+    let wanted: BTreeSet<&str> = buckets.second_look.iter().map(String::as_str).collect();
+    if wanted.is_empty() {
+        return;
+    }
+    let mut moved = Vec::new();
+    for queue in [
+        &mut buckets.planned,
+        &mut buckets.being_planned,
+        &mut buckets.ux_agreed,
+        &mut buckets.unplanned,
+    ] {
+        let (take, keep): (Vec<Bead>, Vec<Bead>) = std::mem::take(queue)
+            .into_iter()
+            .partition(|bead| wanted.contains(bead.id.as_str()));
+        *queue = keep;
+        moved.extend(take);
+    }
+    buckets.second_look_beads.extend(moved);
+}
+
 /// Split BEADS into the fleet panel's seven buckets.
 ///
 /// Exact precedence, matching `emacs/cerebro.el:4652-4764` except the verifier-driven closed-epic
@@ -1134,6 +1168,8 @@ pub fn partition_beads(beads: Vec<Bead>) -> WorkBuckets {
             "open" => {
                 if bead.labels.iter().any(|l| l == PAUSED_LABEL) {
                     buckets.paused.push(bead);
+                } else if bead.labels.iter().any(|l| l == STALE_VERDICT_LABEL) {
+                    buckets.second_look_beads.push(bead);
                 } else if bead.labels.iter().any(|l| l == PLANNED_LABEL) {
                     buckets.planned.push(bead);
                 } else if is_assigned(&bead) {
@@ -1958,6 +1994,43 @@ mod tests {
         assert_eq!(ids(&buckets.being_planned), vec!["agreed-held"]);
         assert_eq!(ids(&buckets.paused), vec!["agreed-paused"]);
         assert_eq!(ids(&buckets.unplanned), vec!["plain"]);
+    }
+
+    /// A bead carrying `verdict:stale` is Psylocke's until she records a verdict, whatever else
+    /// it carries: every builder queue excludes it, so drawing it under Ready to produce showed
+    /// a producer's bead nobody would be started on (cb-wf24).
+    #[test]
+    fn partition_beads_puts_a_stale_verdict_bead_under_second_look() {
+        let buckets = partition_beads(vec![
+            bead("stale-agreed", "open", "task", &["ux:agreed", "verification:failed", "verdict:stale"]),
+            bead("stale-planned", "open", "task", &["planned", "verdict:stale"]),
+            bead("stale-paused", "open", "task", &["human", "verdict:stale"]),
+            bead("agreed", "open", "task", &["ux:agreed"]),
+        ]);
+        let ids = |v: &Vec<Bead>| v.iter().map(|b| b.id.clone()).collect::<Vec<_>>();
+        assert_eq!(ids(&buckets.second_look_beads), vec!["stale-agreed", "stale-planned"]);
+        assert_eq!(ids(&buckets.paused), vec!["stale-paused"]);
+        assert_eq!(ids(&buckets.ux_agreed), vec!["agreed"]);
+        assert!(buckets.planned.is_empty());
+    }
+
+    /// The script's own list is the other way onto the second look: a hand-back is defined by
+    /// what the bead lacks, so only `scripts/second-look-beads` can say it. Its ids are moved out
+    /// of the open queues into the same bucket, and an id it names that is not on the board is
+    /// ignored (cb-wf24).
+    #[test]
+    fn apply_second_look_moves_the_scripts_ids_out_of_the_open_queues() {
+        let mut buckets = partition_beads(vec![
+            bead("handed-back", "open", "task", &["ux:agreed", "verification:failed"]),
+            bead("agreed", "open", "task", &["ux:agreed"]),
+            bead("plain", "open", "task", &[]),
+        ]);
+        buckets.second_look = vec!["handed-back".into(), "plain".into(), "gone".into()];
+        apply_second_look(&mut buckets);
+        let ids = |v: &Vec<Bead>| v.iter().map(|b| b.id.clone()).collect::<Vec<_>>();
+        assert_eq!(ids(&buckets.second_look_beads), vec!["handed-back", "plain"]);
+        assert_eq!(ids(&buckets.ux_agreed), vec!["agreed"]);
+        assert!(buckets.unplanned.is_empty());
     }
 
     /// `ux:none` is the navigator's word at filing that there is nothing to agree, so it lands

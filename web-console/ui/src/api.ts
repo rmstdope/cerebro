@@ -23,6 +23,9 @@ export type Work = {
   unplanned: Bead[];
   paused: Bead[];
   merged: Bead[];
+  /// Psylocke's second look: `verdict:stale`, or a hand-back on her list. Optional so an older
+  /// fleet view's snapshot still parses (cb-wf24).
+  second_look_beads?: Bead[];
   epics?: Record<string, string>;
 };
 export type Snapshot<T> = { state: "fresh"; value: T; updated_at: string } | { state: "stale"; value: T; error: string; updated_at: string } | { state: "unavailable"; error: string };

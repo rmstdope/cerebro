@@ -17,7 +17,7 @@ use axum::{
     Json, Router,
 };
 use cerebro_tui::{
-    read_bead_record, read_fleet, read_health, read_work, CommandRunner, Commands, FleetHealth, FleetRow, Programs,
+    read_bead_record, read_fleet, read_health, read_work, BeadRecord, CommandRunner, Commands, FleetHealth, FleetRow, Programs,
     PublishedSession, ReaderPaths, SupervisionMode, WorkBuckets,
 };
 use chrono::{DateTime, Utc};
@@ -277,7 +277,7 @@ fn character_boundary(bytes: &[u8]) -> usize {
 async fn bead_record(
     State(state): State<SnapshotState>,
     Path(id): Path<String>,
-) -> Result<Json<serde_json::Map<String, serde_json::Value>>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<BeadRecord>, (StatusCode, Json<serde_json::Value>)> {
     if !is_plain_name(&id, &['.']) || id.starts_with('-') {
         return Err((
             StatusCode::BAD_REQUEST,

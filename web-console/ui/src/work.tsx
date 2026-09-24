@@ -220,18 +220,42 @@ export function WorkBoard({ work, agents, onOpen, onChanged, keys = true }: { wo
   </div>;
 }
 
-const texts: [string, string][] = [["description", "Description"], ["design", "Design"], ["acceptance_criteria", "Acceptance criteria"], ["notes", "Notes"]];
-const facts: [string, string][] = [["owner", "Owner"], ["created_by", "Created by"], ["created_at", "Created"], ["updated_at", "Updated"], ["started_at", "Started"],
-  ["closed_at", "Closed"], ["close_reason", "Close reason"], ["parent", "Parent"], ["external_ref", "External ref"]];
-/// Fields shown by name above, or not worth a line: what is left is shown as it came.
-const shownElsewhere = new Set(["id", "title", "status", "issue_type", "labels", "priority", "assignee", "dependencies", "dependents", "metadata", "revision",
-  ...texts.map(([key]) => key), ...facts.map(([key]) => key)]);
-
 const plain = (value: unknown) => typeof value === "string" ? value : JSON.stringify(value);
 const when = (value: unknown) => {
   const time = typeof value === "string" ? Date.parse(value) : NaN;
   return Number.isNaN(time) ? plain(value) : new Date(time).toLocaleString();
 };
+const nameOf = (key: string) => key.replaceAll("_", " ").replace(/^./, first => first.toUpperCase());
+/// Identity fields already appear in the dialog header or raw record. Every other string is a
+/// document tab and every other scalar is a fact, so new `bd` fields need no UI wiring.
+const identityFields = new Set(["id", "title", "status", "issue_type", "labels", "priority", "assignee", "revision"]);
+const relatedFields = new Set(["dependencies", "dependents"]);
+const factNames = new Map([["owner", "Owner"], ["created_by", "Created by"], ["created_at", "Created"], ["updated_at", "Updated"],
+  ["started_at", "Started"], ["closed_at", "Closed"], ["close_reason", "Close reason"], ["parent", "Parent"], ["external_ref", "External ref"]]);
+type RecordFields = {
+  texts: [string, string][];
+  facts: [string, unknown][];
+  metadata: [string, unknown][];
+  related: [string, BeadRecord[]][];
+};
+
+function fieldsOf(record?: BeadRecord): RecordFields {
+  const fields: RecordFields = { texts: [], facts: [], metadata: [], related: [] };
+  if (!record) return fields;
+  for (const [key, value] of Object.entries(record)) {
+    if (value === null || value === undefined || value === "" || identityFields.has(key)) continue;
+    if (key === "metadata" && typeof value === "object" && !Array.isArray(value)) {
+      fields.metadata.push(...Object.entries(value));
+    } else if (relatedFields.has(key) && Array.isArray(value)) {
+      fields.related.push([key, value.filter((item): item is BeadRecord => typeof item === "object" && item !== null && !Array.isArray(item))]);
+    } else if (typeof value === "string" && !factNames.has(key)) {
+      fields.texts.push([key, value]);
+    } else {
+      fields.facts.push([key, value]);
+    }
+  }
+  return fields;
+}
 
 function Related({ title, beads }: { title: string; beads: BeadRecord[] }) {
   return <section aria-label={title}>
@@ -245,22 +269,17 @@ function Related({ title, beads }: { title: string; beads: BeadRecord[] }) {
   </section>;
 }
 
-function Facts({ record, summary }: { record?: BeadRecord; summary: [string, ReactNode][] }) {
-  const present = (key: string) => record?.[key] !== undefined && record[key] !== null && record[key] !== "";
-  const metadata = record?.metadata && typeof record.metadata === "object" ? Object.entries(record.metadata as object) : [];
-  const rest = Object.entries(record ?? {}).filter(([key, value]) => !shownElsewhere.has(key) && value !== null && value !== undefined && value !== "");
+function Facts({ fields, summary }: { fields: RecordFields; summary: [string, ReactNode][] }) {
   const rows: [string, ReactNode][] = [
     ...summary,
-    ...facts.filter(([key]) => present(key)).map(([key, name]): [string, string] => [name, key.endsWith("_at") ? when(record![key]) : plain(record![key])]),
-    ...metadata.map(([key, value]): [string, string] => [key, key.endsWith("_at") ? when(value) : plain(value)]),
-    ...rest.map(([key, value]): [string, string] => [key.replaceAll("_", " "), plain(value)]),
+    ...fields.facts.map(([key, value]): [string, string] => [factNames.get(key) ?? key.replaceAll("_", " "), key.endsWith("_at") ? when(value) : plain(value)]),
+    ...fields.metadata.map(([key, value]): [string, string] => [key, key.endsWith("_at") ? when(value) : plain(value)]),
   ];
   return <div className="space-y-5">
     <dl className="grid grid-cols-[140px_1fr] gap-x-4 gap-y-2.5 text-sm">
       {rows.map(([term, value]) => <Fragment key={term}><dt className="text-muted-foreground">{term}</dt><dd className="break-words">{value}</dd></Fragment>)}
     </dl>
-    {record?.dependencies?.length ? <Related title="Depends on" beads={record.dependencies} /> : null}
-    {record?.dependents?.length ? <Related title="Needed by" beads={record.dependents} /> : null}
+    {fields.related.map(([key, beads]) => beads.length ? <Related key={key} title={key === "dependencies" ? "Depends on" : "Needed by"} beads={beads} /> : null)}
   </div>;
 }
 
@@ -275,6 +294,7 @@ function Text({ source }: { source: string }) {
 export function BeadDialog({ bead, lane, epic, onClose }: { bead: Bead; lane?: string; epic?: string; onClose: () => void }) {
   const read = useBeadRecord(bead.id);
   const record = read.state === "read" ? read.record : undefined;
+  const fields = fieldsOf(record);
   const summary: [string, ReactNode][] = [
     ["Workflow", lane ?? bead.status],
     ["Epic", epic ?? "—"],
@@ -282,7 +302,7 @@ export function BeadDialog({ bead, lane, epic, onClose }: { bead: Bead; lane?: s
     ["Attention", bead.labels.includes("human") ? "Awaiting human input" : "—"],
   ];
   const tabs: [string, string][] = [["overview", "Overview"],
-    ...texts.filter(([key]) => typeof record?.[key] === "string" && record[key] !== ""), ...(record ? [["raw", "Raw"] as [string, string]] : [])];
+    ...fields.texts.map(([key]) => [key, nameOf(key)] as [string, string]), ...(record ? [["raw", "Raw"] as [string, string]] : [])];
   const [tab, setTab] = useState("overview");
   const buttons = useRef(new Map<string, HTMLButtonElement>());
   const step = (event: React.KeyboardEvent, at: number) => {
@@ -316,12 +336,12 @@ export function BeadDialog({ bead, lane, epic, onClose }: { bead: Bead; lane?: s
       </div>
       <div role="tabpanel" id="bead-panel" aria-labelledby={`bead-tab-${tab}`} tabIndex={0} className="-mx-4 min-h-0 flex-1 overflow-y-auto px-4 pb-2 outline-none">
         {tab === "overview" && <>
-          <Facts record={record} summary={summary} />
+          <Facts fields={fields} summary={summary} />
           {read.state === "loading" && <p className="mt-4 text-sm text-muted-foreground">Loading the rest of this bead…</p>}
           {read.state === "failed" && <p role="alert" className="mt-4 text-sm text-destructive">Couldn’t load the rest of this bead: {read.error}</p>}
         </>}
         {tab === "raw" && record && <pre className="font-mono text-xs break-words whitespace-pre-wrap text-muted-foreground">{JSON.stringify(record, null, 2)}</pre>}
-        {tab !== "overview" && tab !== "raw" && typeof record?.[tab] === "string" && <Text source={record[tab] as string} />}
+        {tab !== "overview" && tab !== "raw" && <Text source={fields.texts.find(([key]) => key === tab)?.[1] ?? ""} />}
       </div>
     </DialogContent>
   </Dialog>;

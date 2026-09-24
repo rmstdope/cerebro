@@ -28,7 +28,7 @@ use chrono::{DateTime, Utc};
 
 use crate::sweeps::{self, Candidate, Finding, LiveSession, Snapshot, Sweep};
 use crate::model::{
-    self, Bead, BeadDetailFields, FleetRow, GhIssue, GhPull, GhSnapshot, ProcessRow, RosterEntry, StateInputs,
+    self, Bead, BeadDetailFields, BeadRecord, FleetRow, GhIssue, GhPull, GhSnapshot, ProcessRow, RosterEntry, StateInputs,
     StateObservation, StateRecord, WorkBuckets,
 };
 
@@ -608,7 +608,7 @@ pub fn read_bead_record(
     programs: &Programs,
     commands: &dyn CommandRunner,
     id: &str,
-) -> Result<serde_json::Map<String, serde_json::Value>, ReadError> {
+) -> Result<BeadRecord, ReadError> {
     let root = paths.shared_root.to_string_lossy().into_owned();
     let args = ["--readonly", "-C", &root, "show", id, "--json"];
     let stdout = commands.run(&programs.bd, &args, None, BD_TIMEOUT)?;
@@ -616,13 +616,7 @@ pub fn read_bead_record(
         source: Invocation::new(&programs.bd, &args),
         message,
     };
-    let rows: Vec<serde_json::Value> =
-        serde_json::from_slice(&stdout).map_err(|e| invalid(e.to_string()))?;
-    match rows.into_iter().next() {
-        Some(serde_json::Value::Object(record)) => Ok(record),
-        Some(_) => Err(invalid("bd show answered with something other than a bead".into())),
-        None => Err(invalid("bd show answered with an empty array".into())),
-    }
+    model::parse_bead_record(&stdout).map_err(|message| invalid(message))
 }
 
 /// The whole bead panel in one read: one `bd` answer, partitioned by `model::partition_beads`.
@@ -2241,6 +2235,7 @@ mod tests {
         );
         assert!(read_bead_record(&paths, &Programs::default(), &FakeCommands::always("[]"), "x").is_err());
         assert!(read_bead_record(&paths, &Programs::default(), &FakeCommands::always("[1]"), "x").is_err());
+        assert!(read_bead_record(&paths, &Programs::default(), &FakeCommands::always(r#"[{"id":"x"},{"id":"y"}]"#), "x").is_err());
     }
 
     #[test]

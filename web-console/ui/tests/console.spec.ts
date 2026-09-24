@@ -422,7 +422,7 @@ test("an open bead shows everything bd holds about it, a tab per text", async ({
   await page.route("/api/beads/cb-4", route => route.fulfill({ json: {
     id: "cb-4", title: "Fourth", status: "in_progress", issue_type: "feature", labels: ["planned", "ux:agreed"], owner: "henrik@example.com",
     created_at: "2026-09-22T12:58:07Z", created_by: "Henrik", parent: "cb-0", close_reason: "Delivered in PR #1",
-    description: "What it is, with <b>markup</b> left as text.", design: "## Context\n\nHow it is built:\n\n- one\n- two", acceptance_criteria: "It works.",
+    description: "What it is, with <b>markup</b> left as text.", design: "## Context\n\nHow it is built:\n\n- one\n- two", acceptance_criteria: "It works.", runbook: "Start with the safe path.",
     metadata: { paused_at: "2026-09-22T13:46:37Z" }, comment_count: 3, revision: "r-42",
     dependencies: [{ id: "cb-0", title: "The epic", status: "open", issue_type: "epic", dependency_type: "parent-child" }],
   } }));
@@ -431,7 +431,7 @@ test("an open bead shows everything bd holds about it, a tab per text", async ({
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByText("ux:agreed")).toBeVisible();
   const tabs = dialog.getByRole("tab");
-  await expect(tabs).toHaveText(["Overview", "Description", "Design", "Acceptance criteria", "Raw"]);
+  await expect(tabs).toHaveText(["Overview", "Description", "Design", "Acceptance criteria", "Runbook", "Raw"]);
   await expect(dialog.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
   const panel = dialog.getByRole("tabpanel");
   for (const text of ["henrik@example.com", "Henrik", "Delivered in PR #1", "paused_at", "comment count", "3"])
@@ -447,6 +447,9 @@ test("an open bead shows everything bd holds about it, a tab per text", async ({
   await expect(dialog.getByRole("tab", { name: "Description" })).toHaveAttribute("aria-selected", "true");
   await expect(panel).toContainText("with <b>markup</b> left as text.");
   await expect(panel.locator("b")).toHaveCount(0);
+
+  await dialog.getByRole("tab", { name: "Runbook" }).click();
+  await expect(panel).toContainText("Start with the safe path.");
 
   await dialog.getByRole("tab", { name: "Raw" }).click();
   await expect(panel).toContainText('"revision": "r-42"');

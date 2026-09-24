@@ -87,7 +87,7 @@ pub mod ui;
 
 pub use model::{
     derive_fleet, parse_processes, parse_roster, partition_beads, session_liveness, AgentKind,
-    Bead, FleetRow, ModelError, ProcessRow, RosterEntry, RowState, SessionLiveness, StateInputs,
+    Bead, BeadRecord, FleetRow, ModelError, ProcessRow, RosterEntry, RowState, SessionLiveness, StateInputs,
     StateObservation, StateRecord, WorkBuckets, FleetHealth,
 };
 pub use readers::{

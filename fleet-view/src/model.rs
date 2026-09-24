@@ -728,6 +728,26 @@ pub struct BeadDetailFields {
     pub design: Option<String>,
 }
 
+/// One complete `bd show` record. Its transparent JSON representation keeps the reader/service
+/// boundary faithful to `bd`, while giving callers one named type instead of a raw map.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
+#[serde(transparent)]
+pub struct BeadRecord(pub serde_json::Map<String, serde_json::Value>);
+
+impl BeadRecord {
+    pub fn get(&self, key: &str) -> Option<&serde_json::Value> {
+        self.0.get(key)
+    }
+}
+
+impl std::ops::Deref for BeadRecord {
+    type Target = serde_json::Map<String, serde_json::Value>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 /// `bd show <id> --json` answers with a ONE-ELEMENT ARRAY, never a bare object. Parsing it as an
 /// object fails on every bead, which would read as "bd is broken" rather than as a mistake.
 /// An empty array is an id `bd` does not know, and is an error rather than an empty detail.
@@ -736,6 +756,16 @@ pub fn parse_bead_detail(json: &[u8]) -> Result<BeadDetailFields, String> {
     rows.into_iter()
         .next()
         .ok_or_else(|| "bd show answered with an empty array".to_string())
+}
+
+/// Parse the complete record `bd show` supplies for a single bead.
+pub fn parse_bead_record(json: &[u8]) -> Result<BeadRecord, String> {
+    let mut rows: Vec<BeadRecord> = serde_json::from_slice(json).map_err(|e| e.to_string())?;
+    match rows.len() {
+        1 => Ok(rows.pop().expect("one record was counted")),
+        0 => Err("bd show answered with an empty array".to_string()),
+        _ => Err("bd show answered with more than one record".to_string()),
+    }
 }
 
 // --- GitHub, and the beads linked to it -------------------------------------------------------
@@ -2365,6 +2395,22 @@ mod tests {
     #[test]
     fn an_empty_array_is_an_error() {
         assert!(parse_bead_detail(b"[]").is_err());
+    }
+
+    #[test]
+    fn a_complete_bead_record_is_parsed_from_a_one_element_object_array() {
+        let record = parse_bead_record(
+            br#"[{"id":"cb-1","runbook":"Deploy it.","effort":3,"metadata":{"k":"v"}}]"#,
+        )
+        .expect("a one-element object array parses");
+
+        assert_eq!(record.get("id"), Some(&serde_json::json!("cb-1")));
+        assert_eq!(record.get("runbook"), Some(&serde_json::json!("Deploy it.")));
+        assert_eq!(record.get("effort"), Some(&serde_json::json!(3)));
+        assert_eq!(record.get("metadata"), Some(&serde_json::json!({"k":"v"})));
+        assert!(parse_bead_record(b"[]").is_err());
+        assert!(parse_bead_record(b"[1]").is_err());
+        assert!(parse_bead_record(br#"[{"id":"cb-1"},{"id":"cb-2"}]"#).is_err());
     }
 
     // --- fleet health --------------------------------------------------------------------------

@@ -18,7 +18,9 @@ five lanes, searchable, filterable by type and priority, and grouped by epic: a 
 nearest dotted-id ancestor, named from the `epics` map in `/api/work`. A click selects a card and a
 second click, or `Enter`, opens it; the arrow keys move the selection, up and down within a lane
 and left and right to the nearest lane with a card in it. An open bead shows everything
-`bd show` holds about it, read on opening through `GET /api/beads/<id>` (a 502 carrying the reason
+`bd show` holds about it: status, priority, type and labels under its title, then a tab each for
+the overview (every fact and its dependencies), each of its texts rendered as markdown (raw HTML
+stays text) and the raw JSON, with the arrow keys moving between tabs. It is read on opening through `GET /api/beads/<id>` (a 502 carrying the reason
 when `bd` fails). An agent that is asking, or
 a bead waiting for human input, is named in a banner above both tabs.
 

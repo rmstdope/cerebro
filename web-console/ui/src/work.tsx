@@ -6,6 +6,8 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { cn } from "@/lib/utils";
+import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { typingInto } from "./actions";
 import { type Agent, type Bead, type BeadRecord, type Work, epicOf, stateOf, useBeadRecord } from "./api";
 
@@ -201,53 +203,83 @@ function Related({ title, beads }: { title: string; beads: BeadRecord[] }) {
   </section>;
 }
 
-function BeadDetails({ record }: { record: BeadRecord }) {
-  const present = (key: string) => record[key] !== undefined && record[key] !== null && record[key] !== "";
-  const metadata = record.metadata && typeof record.metadata === "object" ? Object.entries(record.metadata as object) : [];
-  const rest = Object.entries(record).filter(([key, value]) => !shownElsewhere.has(key) && value !== null && value !== undefined && value !== "");
-  const rows: [string, string][] = [
-    ...facts.filter(([key]) => present(key)).map(([key, name]): [string, string] => [name, key.endsWith("_at") ? when(record[key]) : plain(record[key])]),
+function Facts({ record, summary }: { record?: BeadRecord; summary: [string, ReactNode][] }) {
+  const present = (key: string) => record?.[key] !== undefined && record[key] !== null && record[key] !== "";
+  const metadata = record?.metadata && typeof record.metadata === "object" ? Object.entries(record.metadata as object) : [];
+  const rest = Object.entries(record ?? {}).filter(([key, value]) => !shownElsewhere.has(key) && value !== null && value !== undefined && value !== "");
+  const rows: [string, ReactNode][] = [
+    ...summary,
+    ...facts.filter(([key]) => present(key)).map(([key, name]): [string, string] => [name, key.endsWith("_at") ? when(record![key]) : plain(record![key])]),
     ...metadata.map(([key, value]): [string, string] => [key, key.endsWith("_at") ? when(value) : plain(value)]),
     ...rest.map(([key, value]): [string, string] => [key.replaceAll("_", " "), plain(value)]),
   ];
-  return <>
-    <dl className="grid grid-cols-[120px_1fr] gap-x-4 gap-y-2.5 text-sm">
+  return <div className="space-y-5">
+    <dl className="grid grid-cols-[140px_1fr] gap-x-4 gap-y-2.5 text-sm">
       {rows.map(([term, value]) => <Fragment key={term}><dt className="text-muted-foreground">{term}</dt><dd className="break-words">{value}</dd></Fragment>)}
     </dl>
-    {record.dependencies?.length ? <Related title="Depends on" beads={record.dependencies} /> : null}
-    {record.dependents?.length ? <Related title="Needed by" beads={record.dependents} /> : null}
-    {texts.filter(([key]) => present(key)).map(([key, name]) => <section key={key} aria-label={name}>
-      <h3 className="mb-1.5 text-xs font-medium tracking-wider text-muted-foreground uppercase">{name}</h3>
-      <div className="rounded-lg border bg-muted/30 p-3 text-sm leading-relaxed break-words whitespace-pre-wrap">{plain(record[key])}</div>
-    </section>)}
-  </>;
+    {record?.dependencies?.length ? <Related title="Depends on" beads={record.dependencies} /> : null}
+    {record?.dependents?.length ? <Related title="Needed by" beads={record.dependents} /> : null}
+  </div>;
+}
+
+/// A bead's text as markdown. Raw HTML in it is shown as text, never rendered: beads carry what
+/// GitHub issues and agents wrote.
+function Text({ source }: { source: string }) {
+  return <div className="bead-text text-sm leading-relaxed break-words">
+    <Markdown remarkPlugins={[remarkGfm]} components={{ a: ({ node: _, ...props }) => <a {...props} target="_blank" rel="noreferrer" /> }}>{source}</Markdown>
+  </div>;
 }
 
 export function BeadDialog({ bead, lane, epic, onClose }: { bead: Bead; lane?: string; epic?: string; onClose: () => void }) {
   const read = useBeadRecord(bead.id);
-  const rows: [string, ReactNode][] = [
+  const record = read.state === "read" ? read.record : undefined;
+  const summary: [string, ReactNode][] = [
     ["Workflow", lane ?? bead.status],
-    ["Priority", <PriorityBadge priority={bead.priority} />],
-    ["Type", <span className="inline-flex items-center gap-1.5 capitalize"><TypeIcon type={bead.issue_type} />{bead.issue_type}</span>],
     ["Epic", epic ?? "—"],
     ["Current owner", bead.assignee ?? "—"],
     ["Attention", bead.labels.includes("human") ? "Awaiting human input" : "—"],
-    ["Status", bead.status],
-    ["Labels", bead.labels.length ? <span className="flex flex-wrap gap-1">{bead.labels.map(label => <Badge key={label} variant="secondary">{label}</Badge>)}</span> : "—"],
   ];
+  const tabs: [string, string][] = [["overview", "Overview"],
+    ...texts.filter(([key]) => typeof record?.[key] === "string" && record[key] !== ""), ...(record ? [["raw", "Raw"] as [string, string]] : [])];
+  const [tab, setTab] = useState("overview");
+  const buttons = useRef(new Map<string, HTMLButtonElement>());
+  const step = (event: React.KeyboardEvent, at: number) => {
+    const to = event.key === "ArrowRight" ? at + 1 : event.key === "ArrowLeft" ? at - 1 : event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : undefined;
+    if (to === undefined) return;
+    event.preventDefault();
+    const key = tabs[(to + tabs.length) % tabs.length][0];
+    setTab(key);
+    buttons.current.get(key)?.focus();
+  };
+  const labels = record && Array.isArray(record.labels) ? record.labels.map(plain) : bead.labels;
+  const status = typeof record?.status === "string" ? record.status : bead.status;
+  const type = typeof record?.issue_type === "string" ? record.issue_type : bead.issue_type;
   return <Dialog open onOpenChange={open => { if (!open) onClose(); }}>
-    <DialogContent className="flex max-h-[90vh] flex-col sm:max-w-3xl">
+    <DialogContent className="flex h-[85vh] flex-col gap-3 sm:max-w-3xl">
       <DialogHeader>
         <DialogDescription className="font-mono">{bead.id} · read-only</DialogDescription>
         <DialogTitle className="text-lg">{bead.title}</DialogTitle>
+        <div className="flex flex-wrap items-center gap-1.5 text-xs">
+          <Badge variant="outline">{status}</Badge>
+          <PriorityBadge priority={bead.priority} />
+          <Badge variant="outline" className="capitalize"><TypeIcon type={type} />{type}</Badge>
+          {labels.map(label => <Badge key={label} variant="secondary">{label}</Badge>)}
+        </div>
       </DialogHeader>
-      <div className="-mx-4 min-h-0 space-y-5 overflow-y-auto px-4">
-        <dl className="grid grid-cols-[120px_1fr] gap-x-4 gap-y-2.5 text-sm">
-          {rows.map(([term, value]) => <Fragment key={term}><dt className="text-muted-foreground">{term}</dt><dd>{value}</dd></Fragment>)}
-        </dl>
-        {read.state === "loading" && <p className="text-sm text-muted-foreground">Loading the rest of this bead…</p>}
-        {read.state === "failed" && <p role="alert" className="text-sm text-destructive">Couldn’t load the rest of this bead: {read.error}</p>}
-        {read.state === "read" && <BeadDetails record={read.record} />}
+      <div role="tablist" aria-label="Bead" className="-mx-4 flex gap-1 overflow-x-auto border-b px-4">
+        {tabs.map(([key, name], at) => <button key={key} role="tab" id={`bead-tab-${key}`} aria-selected={tab === key} aria-controls="bead-panel"
+          tabIndex={tab === key ? 0 : -1} ref={element => { if (element) buttons.current.set(key, element); else buttons.current.delete(key); }}
+          onClick={() => setTab(key)} onKeyDown={event => step(event, at)}
+          className={cn("-mb-px shrink-0 border-b-2 px-3 py-2 text-sm transition-colors", tab === key ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground")}>{name}</button>)}
+      </div>
+      <div role="tabpanel" id="bead-panel" aria-labelledby={`bead-tab-${tab}`} tabIndex={0} className="-mx-4 min-h-0 flex-1 overflow-y-auto px-4 pb-2 outline-none">
+        {tab === "overview" && <>
+          <Facts record={record} summary={summary} />
+          {read.state === "loading" && <p className="mt-4 text-sm text-muted-foreground">Loading the rest of this bead…</p>}
+          {read.state === "failed" && <p role="alert" className="mt-4 text-sm text-destructive">Couldn’t load the rest of this bead: {read.error}</p>}
+        </>}
+        {tab === "raw" && record && <pre className="font-mono text-xs break-words whitespace-pre-wrap text-muted-foreground">{JSON.stringify(record, null, 2)}</pre>}
+        {tab !== "overview" && tab !== "raw" && typeof record?.[tab] === "string" && <Text source={record[tab] as string} />}
       </div>
     </DialogContent>
   </Dialog>;

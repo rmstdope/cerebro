@@ -418,26 +418,39 @@ test("the arrow keys move around the board and Enter opens the card", async ({ p
   await expect(selectedCard(page)).toContainText("cb-5");
 });
 
-test("an open bead shows everything bd holds about it", async ({ page }) => {
+test("an open bead shows everything bd holds about it, a tab per text", async ({ page }) => {
   await board(page);
   await page.route("/api/beads/cb-4", route => route.fulfill({ json: {
-    id: "cb-4", title: "Fourth", status: "in_progress", issue_type: "feature", owner: "henrik@example.com",
+    id: "cb-4", title: "Fourth", status: "in_progress", issue_type: "feature", labels: ["planned", "ux:agreed"], owner: "henrik@example.com",
     created_at: "2026-09-22T12:58:07Z", created_by: "Henrik", parent: "cb-0", close_reason: "Delivered in PR #1",
-    description: "What it is.\nSecond line.", design: "## Context\nHow it is built.", acceptance_criteria: "It works.", notes: "A note.",
-    metadata: { paused_at: "2026-09-22T13:46:37Z" }, comment_count: 3,
+    description: "What it is, with <b>markup</b> left as text.", design: "## Context\n\nHow it is built:\n\n- one\n- two", acceptance_criteria: "It works.",
+    metadata: { paused_at: "2026-09-22T13:46:37Z" }, comment_count: 3, revision: "r-42",
     dependencies: [{ id: "cb-0", title: "The epic", status: "open", issue_type: "epic", dependency_type: "parent-child" }],
   } }));
 
   await page.getByText("Fourth").dblclick();
   const dialog = page.getByRole("dialog");
-  await expect(dialog.getByRole("region", { name: "Description" })).toContainText("What it is.\nSecond line.");
-  await expect(dialog.getByRole("region", { name: "Design" })).toContainText("How it is built.");
-  await expect(dialog.getByRole("region", { name: "Acceptance criteria" })).toContainText("It works.");
-  await expect(dialog.getByRole("region", { name: "Notes" })).toContainText("A note.");
-  await expect(dialog.getByRole("region", { name: "Depends on" })).toContainText("The epic");
-  await expect(dialog.getByRole("region", { name: "Depends on" })).toContainText("parent-child");
+  await expect(dialog.getByText("ux:agreed")).toBeVisible();
+  const tabs = dialog.getByRole("tab");
+  await expect(tabs).toHaveText(["Overview", "Description", "Design", "Acceptance criteria", "Raw"]);
+  await expect(dialog.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
+  const panel = dialog.getByRole("tabpanel");
   for (const text of ["henrik@example.com", "Henrik", "Delivered in PR #1", "paused_at", "comment count", "3"])
-    await expect(dialog).toContainText(text);
+    await expect(panel).toContainText(text);
+  await expect(panel.getByRole("region", { name: "Depends on" })).toContainText("The epic");
+  await expect(panel.getByRole("region", { name: "Depends on" })).toContainText("parent-child");
+
+  await dialog.getByRole("tab", { name: "Design" }).click();
+  await expect(panel.getByRole("heading", { name: "Context" })).toBeVisible();
+  await expect(panel.getByRole("listitem")).toHaveText(["one", "two"]);
+
+  await dialog.getByRole("tab", { name: "Design" }).press("ArrowLeft");
+  await expect(dialog.getByRole("tab", { name: "Description" })).toHaveAttribute("aria-selected", "true");
+  await expect(panel).toContainText("with <b>markup</b> left as text.");
+  await expect(panel.locator("b")).toHaveCount(0);
+
+  await dialog.getByRole("tab", { name: "Raw" }).click();
+  await expect(panel).toContainText('"revision": "r-42"');
 });
 
 test("a bead whose details cannot be read says so", async ({ page }) => {

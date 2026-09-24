@@ -32,13 +32,13 @@ run() {
 cat > "$stub/ready.json" <<'JSON'
 [{"id":"cb-c","priority":1,"title":"c","labels":["ux:agreed"]},
  {"id":"cb-b","priority":0,"title":"b","labels":["ux:agreed"]},
- {"id":"cb-a","priority":1,"title":"a"}]
+ {"id":"cb-a","priority":1,"title":"a","labels":["ux:agreed"]}]
 JSON
 out="$(run)"
 [[ "$(jq -c . <<<"$out")" == '[{"id":"cb-b","priority":0},{"id":"cb-a","priority":1},{"id":"cb-c","priority":1}]' ]] \
   || fail "the ready beads come back sorted by priority then id, got $out"
 log="$(cat "$stub/bd.log")"
-for want in --readonly " ready " "--label ux:agreed" "--exclude-label human" \
+for want in --readonly " ready " "--exclude-label human" \
             "--exclude-label verdict:stale" "--exclude-label bugfix" \
             "--exclude-type epic" "-n 0" "--unassigned"; do
   [[ "$log" == *"$want"* ]] || fail "bd is asked with $want, got: $log"
@@ -63,6 +63,26 @@ out="$(run)"
 [[ "$(jq -c '[.[].id]' <<<"$out")" == '["cb-rework","cb-fresh"]' ]] \
   || fail "a reopened planned bead is rework and assignable; a planned bead without a failed verification is not, got $out"
 pass "a bead reopened for a build fault is assignable as rework; other planned beads are not"
+
+# --- ux:none is the other way past the UX stage ---------------------------------------------------
+#
+# The navigator said at filing that nothing a person sees changes (cb-uump), so there is no
+# experience to agree; a producer takes it as it would an agreed bead. A bead with neither label is
+# still waiting for a designer, however ready `bd ready` says it is.
+
+cat > "$stub/ready.json" <<'JSON'
+[{"id":"cb-none","priority":1,"labels":["ux:none"]},
+ {"id":"cb-agreed","priority":1,"labels":["ux:agreed"]},
+ {"id":"cb-unagreed","priority":0,"labels":[]},
+ {"id":"cb-nolabels","priority":0}]
+JSON
+out="$(run)"
+[[ "$(jq -c '[.[].id]' <<<"$out")" == '["cb-agreed","cb-none"]' ]] \
+  || fail "ux:none and ux:agreed are assignable, a bead with neither is not, got $out"
+log="$(cat "$stub/bd.log")"
+[[ "$log" != *"--label ux:agreed"* ]] \
+  || fail "the stage label is not asked of bd, since either of two labels admits a bead: $log"
+pass "a bead filed as touching nothing a person sees is assignable without a UX pass"
 
 # --- retired and unknown roles are usage errors --------------------------------------------------
 

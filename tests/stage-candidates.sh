@@ -134,7 +134,8 @@ labelled='[{"id":"tt-plain","issue_type":"task","priority":2,"labels":[]},
            {"id":"tt-revise","issue_type":"task","priority":2,"labels":["verification:failed","plan:revise"]},
            {"id":"tt-stale","issue_type":"task","priority":2,"labels":["verdict:stale","plan:revise"]},
            {"id":"tt-agreed-planned","issue_type":"task","priority":2,"labels":["ux:agreed","planned"]},
-           {"id":"tt-agreed-held","issue_type":"task","priority":2,"labels":["ux:agreed","planning:Beast"]}]'
+           {"id":"tt-agreed-held","issue_type":"task","priority":2,"labels":["ux:agreed","planning:Beast"]},
+           {"id":"tt-none","issue_type":"task","priority":2,"labels":["ux:none"]}]'
 
 # --- the ux stage takes what is not yet agreed ---------------------------------------------------
 set_stub "$labelled"
@@ -144,12 +145,19 @@ ids="$(run ux | ids_of)"
   || fail "the ux stage listed '$ids', not the five beads still needing a designer (a planning label holds nothing since cb-10d.2.2)"
 pass "the ux stage takes what is not yet agreed"
 
+# --- ux:none is the navigator's word that there is nothing to agree ------------------------------
+case " $ids " in *" tt-none "*) fail "the ux stage kept a bead filed as touching nothing a person sees: '$ids'";; esac
+label="$(run --print-skip-label)"
+[ "$label" = "ux:none" ] || fail "--print-skip-label printed '$label', not ux:none"
+pass "a bead filed with ux:none skips the ux stage, and the label is printed for the fleet view"
+
 # --- the build-design stage takes only what is agreed and not yet planned ------------------------
 set_stub "$labelled"
 set_stub_for children '[]'
 ids="$(run build-design | ids_of)"
 [ "$ids" = "tt-agreed tt-agreed-held " ] || fail "the build-design stage listed '$ids', not the two agreed beads (a planning label holds nothing since cb-10d.2.2)"
 pass "the build-design stage takes only what is agreed and not yet planned"
+case " $ids " in *" tt-none "*) fail "ux:none is not an agreed experience for a build-design stage: '$ids'";; esac
 
 case " $ids " in *" tt-bugfix "*) fail "the build-design stage kept a bugfix-labelled bead: '$ids'";; esac
 ids="$(run ux | ids_of)"

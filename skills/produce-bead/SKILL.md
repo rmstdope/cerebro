@@ -11,7 +11,11 @@ claimed for you; `bugfix` beads stay with the bugfixer.
 1. Confirm the prompt's bead is `in_progress` and assigned to you; with no bead in the prompt, run
    `end-pass` and stop. Work only in the prepared worktree. Write `working --bead <id> --phase
    design` at once, before reading anything else (*State file*, below).
-2. Read its acceptance and mockup. The agreed experience is fixed. Decide the architecture, files,
+2. Read its acceptance and mockup. A bead carrying `ux:none` instead of `ux:agreed` has no mockup
+   and no agreed experience under the five headings: the navigator said at filing that nothing a
+   person sees changes, so design from the description and the acceptance line it was filed with. If the build turns out to touch anything a person sees, hand it to UX
+   (`producer-park … ux`, below) rather than deciding the shape yourself.
+   The agreed experience is fixed. Decide the architecture, files,
    increments, test plan, validation, and any non-UX details. Write those decisions to the bead's
    `design` field under the usual eight plan headings, then add `planned`. A missing `design` field
    or `planned` label is the normal producer input, never a reason to return it for build design.

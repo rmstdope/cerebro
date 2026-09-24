@@ -1012,11 +1012,30 @@ const PLANNED_LABEL: &str = "planned";
 /// The shell owner is `scripts/stage-candidates --print-stage-label`, and
 /// `fleet-view/tests/reader_contracts.rs` holds this copy to it.
 const UX_AGREED_LABEL: &str = "ux:agreed";
+/// The label the navigator's filing interview adds when nothing a person sees changes (cb-uump):
+/// no experience to agree, so the bead is a producer's without a UX pass and sits in the same
+/// bucket as an agreed one. The shell owner is `scripts/stage-candidates --print-skip-label`, and
+/// `fleet-view/tests/reader_contracts.rs` holds this copy to it.
+const UX_NONE_LABEL: &str = "ux:none";
 
 /// The stage label this view partitions on, for the contract test that holds it to
 /// `scripts/stage-candidates --print-stage-label`.
 pub fn ux_agreed_label() -> &'static str {
     UX_AGREED_LABEL
+}
+
+/// The skip label this view partitions on, for the contract test that holds it to
+/// `scripts/stage-candidates --print-skip-label`.
+pub fn ux_none_label() -> &'static str {
+    UX_NONE_LABEL
+}
+
+/// Whether BEAD is past the UX stage: agreed by a designer, or filed as changing nothing a person
+/// sees. The one Rust spelling of the question `scripts/assignable-beads` answers in the shell.
+pub fn past_ux_stage(bead: &Bead) -> bool {
+    bead.labels
+        .iter()
+        .any(|l| l == UX_AGREED_LABEL || l == UX_NONE_LABEL)
 }
 const SETTLED_LABELS: [&str; 2] = ["verification:passed", "verification:not-needed"];
 
@@ -1125,7 +1144,7 @@ pub fn partition_beads(beads: Vec<Bead>) -> WorkBuckets {
                     buckets.planned.push(bead);
                 } else if is_assigned(&bead) {
                     buckets.being_planned.push(bead);
-                } else if bead.labels.iter().any(|l| l == UX_AGREED_LABEL) {
+                } else if past_ux_stage(&bead) {
                     buckets.ux_agreed.push(bead);
                 } else {
                     buckets.unplanned.push(bead);
@@ -1944,6 +1963,23 @@ mod tests {
         assert_eq!(ids(&buckets.planned), vec!["agreed-planned"]);
         assert_eq!(ids(&buckets.being_planned), vec!["agreed-held"]);
         assert_eq!(ids(&buckets.paused), vec!["agreed-paused"]);
+        assert_eq!(ids(&buckets.unplanned), vec!["plain"]);
+    }
+
+    /// `ux:none` is the navigator's word at filing that there is nothing to agree, so it lands
+    /// where an agreed bead does and loses to the same buckets (cb-uump).
+    #[test]
+    fn partition_beads_treats_ux_none_as_past_the_ux_stage() {
+        let buckets = partition_beads(vec![
+            bead("none", "open", "task", &["ux:none"]),
+            bead("none-planned", "open", "task", &["ux:none", "planned"]),
+            bead("none-paused", "open", "task", &["ux:none", "human"]),
+            bead("plain", "open", "task", &[]),
+        ]);
+        let ids = |v: &Vec<Bead>| v.iter().map(|b| b.id.clone()).collect::<Vec<_>>();
+        assert_eq!(ids(&buckets.ux_agreed), vec!["none"]);
+        assert_eq!(ids(&buckets.planned), vec!["none-planned"]);
+        assert_eq!(ids(&buckets.paused), vec!["none-paused"]);
         assert_eq!(ids(&buckets.unplanned), vec!["plain"]);
     }
 

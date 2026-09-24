@@ -44,9 +44,10 @@ if [[ "$status" != "in_progress" || "$assignee" != "$name" ]]; then
   exit 1
 fi
 if ! printf '%s' "$shown" \
-  | jq -e '(if type == "array" then .[0] else . end) | (.labels // [] | index("ux:agreed")) != null' \
+  | jq -e '(if type == "array" then .[0] else . end)
+           | ((.labels // [] | index("ux:agreed")) != null) or ((.labels // [] | index("ux:none")) != null)' \
   >/dev/null; then
-  echo "producer-park: $id is not UX-agreed producer work" >&2
+  echo "producer-park: $id is not producer work (neither ux:agreed nor ux:none)" >&2
   exit 1
 fi
 
@@ -54,8 +55,11 @@ if [[ "$decision" == "ux" ]]; then
   # A UX question is the designer's. The agreed label comes off so `stage-candidates ux` offers
   # the bead again and `assignable-beads` stops offering it; the note's heading is what
   # `agree-experience` reads a returned piece of work by; nothing is parked for a person.
+  # `ux:none` comes off too: a producer may add the UX stop the navigator skipped at filing, never
+  # the other way round (cb-uump).
   bd --actor "$name" -C "$root" update "$id" \
     --remove-label ux:agreed \
+    --remove-label ux:none \
     --remove-label planned \
     --add-label needs-ui-decision \
     --append-notes "## Sent back to the UX stage

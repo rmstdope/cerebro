@@ -90,7 +90,7 @@ run() {
 }
 
 open='[{"id":"cb-x","status":"open","assignee":""}]'
-ready='[{"id":"cb-x","priority":1}]'
+ready='[{"id":"cb-x","priority":1,"labels":["ux:agreed"]}]'
 
 # --- claims as the agent and writes the handover before pushing ---------------------------------
 

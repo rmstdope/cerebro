@@ -22,7 +22,7 @@ pub enum Stage {
     Designer,
 }
 
-/// `producer` -> Producer; `bugfixer` -> Bugfixer; the planning roles -> Designer; anything
+/// `implementer` -> Builder; `bugfixer` -> Bugfixer; the planning roles -> Designer; anything
 /// else -> None.
 pub fn stage_of(role: &str) -> Option<Stage> {
     match RolePolicy::for_role(role) {

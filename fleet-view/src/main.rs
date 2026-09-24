@@ -5678,7 +5678,7 @@ mod main_tests {
         settle_gone(&mut host, "Beast");
     }
 
-    /// Two standby uxers and two candidates: each is handed its own bead in one tick,
+    /// Two standby build-designers and two candidates: each is handed its own bead in one tick,
     /// the second never offered the first's (cb-10d.2.2).
     #[test]
     fn two_planners_are_given_two_different_beads() {

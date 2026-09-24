@@ -103,7 +103,7 @@ pub enum PaneContent<T> {
 /// Optional emphasis for a bead row in the Work pane.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WorkBeadTone {
-    /// A planned, unclaimed bead an producer could take right now.
+    /// A planned, unclaimed bead an implementer could take right now.
     Ready,
     /// A planned, unclaimed bead waiting on blockers.
     Waiting,
@@ -1896,7 +1896,7 @@ pub struct App {
     /// give-up and a view that may not supervise disarm; a pass that merely ends does not, which
     /// is the whole point of the set. `docs/ui/cb-op0-arming.html` §6 is the table.
     pub armed: BTreeSet<String>,
-    /// The view's own record of what it handed each producer it started, until that session
+    /// The view's own record of what it handed each implementer it started, until that session
     /// reports (cb-10d.1). Memory only. Written by `main::start_due`, `s`, and autostart; dropped
     /// by `main::give_back` and by a confirmed `k`. NOT `FleetRow::bead`, which stays the state
     /// file's.

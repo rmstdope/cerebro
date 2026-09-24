@@ -2787,7 +2787,7 @@ mod tests {
 
     // ---- cb-10d.1: the starting row ------------------------------------------------------------
 
-    /// A supervising app whose one producer, Rogue, was handed cb-4xz and holds ROW_STATE.
+    /// A supervising app whose one implementer, Rogue, was handed cb-4xz and holds ROW_STATE.
     fn handed_app(row_state: RowState) -> App {
         let mut app = App::new();
         app.set_supervision(SupervisionMode::Supervising);

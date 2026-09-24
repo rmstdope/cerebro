@@ -42,7 +42,6 @@ CARRIERS=(
   agents/reviewer.md
   agents/user-feedback.md
   agents/verifier.md
-  skills/implement-bead/SKILL.md
   skills/agree-experience/SKILL.md
   skills/produce-bead/SKILL.md
 )

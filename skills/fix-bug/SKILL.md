@@ -7,8 +7,9 @@ description: The bug-fix role — take one bug bead, reproduce it with a failing
 
 Take one bug bead from report to merge. The route is fixed: **reproduce first, then fix**.
 
-Use `skills/produce-bead/SKILL.md` for the mechanics only: state writes, review loop, CI wait,
-merge, close, and ending the pass. Do **not** apply its planned-bead plan-validation gates here;
+Use `skills/produce-bead/SKILL.md` for the mechanics only: state writes, *Known traps* from
+`.cerebro/traps.md` before you touch the code, the review loop, the CI wait, *The retrospective*
+before the merge, the merge, the close, and ending the pass. Do **not** apply its planned-bead plan-validation gates here;
 bugfix beads run through this reproduction-first contract instead.
 
 ## The bug-fix contract

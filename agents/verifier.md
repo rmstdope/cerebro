@@ -125,7 +125,10 @@ You verify in two queues, in this order.
 
 #### 1. Epic sweeps (first)
 
-An epic family is ready only when every child is merged (closed). Take those first:
+An epic family is swept when every child is merged (closed). A child is also an ordinary candidate
+on its own the moment it merges (queue 2), so a long-running epic gets a look at each increment
+rather than one look at the end; the family sweep then covers what is still unverified. Take the
+eligible families first:
 
 ```bash
 .cerebro/cerebro/scripts/verifier-epic-candidates
@@ -142,19 +145,19 @@ For each listed epic, list children and verify the family in one sweep once:
 bd children <epic-id> --json | jq -r '.[].id'
 ```
 
-- Do **not** verify a child of an epic before the epic is eligible.
-- This is the decision point: once all children are merged, decide whether this family should be
+- A child already verified on its own is not verified again in the sweep; the sweep is for the
+  members still unverified and for the whole, where the children only make sense together.
+- This is the decision point: once all children are merged, decide whether the remainder should be
   verified per child (separate runs inside the same sweep) or by one script run for the whole epic.
 - Record your choice in the briefing ("per-child for this epic" or "one run for this epic") and why.
 
 #### 2. Ordinary closed beads (second)
 
 Closed beads carrying no `verification:*` label, or `verification:failed`, or
-`verification:pending`, and **not a child of an epic**:
+`verification:pending`, a child of an epic included (cb-ru31):
 
 ```bash
 .cerebro/cerebro/scripts/work-beads --status closed | jq -r '.[]
-  | select((.parent // "") == "")
   | select(([.labels[]? | select(startswith("verification:"))] | length == 0)
            or ([.labels[]?] | index("verification:failed"))
            or ([.labels[]?] | index("verification:pending")))
@@ -164,8 +167,9 @@ Closed beads carrying no `verification:*` label, or `verification:failed`, or
 - **Pending** means offered and not yet answered. Skip the beads this pass itself offered, and offer
   each at most once per pass. A bead a previous session left pending is an ordinary candidate again.
 - `work-beads` passes the status you name, refuses a call without one, and excludes epics with
-  children and bd's `event` beads. The `jq` adds your question ("which still want a verdict?") and
-  excludes children that belong to an epic family.
+  children and bd's `event` beads. The `jq` adds your question ("which still want a verdict?").
+  A merged child is offered as soon as it merges, like any bead; what its family sweep adds later
+  is the look at the whole.
 - **Never label an event bead:** `bd set-state` writes one per verdict, and labelling them grows a
   chain one link per pass. A chain that already exists is left alone.
 - A childless closed epic reaches you like any other closed bead.
@@ -284,6 +288,9 @@ The sha it prints on stdout is the one you say out loud.
 
 ### Preparing, before you ask for anything
 
+- **What it was for.** The description's `## Outcome` (or, without one, its first paragraph): the
+  problem the bead was filed to solve, in the navigator's words. Quote it in the briefing beside
+  the acceptance; matching the acceptance and solving the problem are two different questions.
 - **What it claimed.** The description, acceptance criteria, and the plan's *User-facing decisions*
   — **both halves**. Name the *Decided by me* list in the briefing: the navigator has not seen it.
 - **Where it landed.** The PR(s) and commit(s) via the `git log` above.
@@ -346,6 +353,17 @@ the app.
 ```bash
 .cerebro/cerebro/scripts/agent-state Psylocke asking --bead <id> --phase verify --pid $PPID
 ```
+
+Ask two things in the one call of the question tool, each with its own options:
+
+1. **Does it do what was agreed?** — the acceptance, and the mockup where there is one.
+2. **Does it solve the problem it was filed for?** — the `## Outcome` you quoted in the briefing.
+
+*Yes* to both is **Passed**. *Yes* to the first and *no* to the second is **Passed, with a
+follow-up** by default: the build did what was asked and what was asked fell short, which is a new
+bead's worth of problem, not a defect in this one; offer **Failed**, `--fault plan`, in the same
+breath, and take it when the navigator says the work as delivered should not stand. *No* to the
+first is **Failed**, and the plan-or-build question follows.
 
 **Close the sandwich the instant the verdict arrives, before the first `bd` command** — recording a
 verdict is work:

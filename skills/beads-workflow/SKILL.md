@@ -71,9 +71,9 @@ role that touches a label not in it is changing the pipeline for every consumer.
 | **unranked** | open, priority 4 | whoever filed it: `write-bead` (Cerebro), Moira, Forge, Psylocke's follow-up | Cerebro ranks it with the navigator (`--priority`); no other role touches a P4 bead |
 | **asked about, not ranked** | P4, `triage:declined` | Cerebro, when the navigator was away | nobody, until the navigator removes the label or Cerebro ranks it |
 | **a bug** | `bugfix` (set at filing, never removed) | `write-bead` or Moira | Bishop, through `scripts/bugfix-candidates`; UX and producers never see it |
-| **waiting for UX** | ranked, no `ux:agreed`, unassigned | ranking | a `ux` agent, through `scripts/stage-candidates --ux`; the fleet view assigns without claiming |
+| **waiting for UX** | ranked, no `ux:agreed`, unassigned | ranking | a `ux` agent, through `scripts/stage-candidates ux`; the fleet view assigns without claiming |
 | **being designed** | open, assigned to a `ux` agent, not `in_progress` | `scripts/assign-bead` | that agent only; it clears the assignee when its pass ends, or the fleet view does when the session dies |
-| **UX-agreed** | `ux:agreed`, unassigned, no `planned` | the `ux` agent (`agree-experience`); children of a split parent inherit it | a producer, through `scripts/assignable-beads producer`, claimed for it by the fleet view |
+| **UX-agreed** | `ux:agreed`, unassigned, no `planned` | the `ux` agent (`agree-experience`); children of a split parent inherit it | a producer, through `scripts/assignable-beads`, claimed for it by the fleet view |
 | **being produced** | `in_progress`, assignee is the producer | `scripts/assign-bead` | that producer only. It writes `design`, adds `planned` while keeping its claim, builds, merges, closes |
 | **waiting on the navigator** | open, unassigned, `human`, `planned` removed | any role escalating; `scripts/producer-park`; a `ux` agent parking | nobody: `bd human list` and the fleet view's *Waiting on you*. Every candidate script excludes `human`. The navigator (or Cerebro's unpark sweep) removes it |
 | **parked on a UI question** | `needs-ui-decision` **and** `human` | `producer-park … ux` or a `ux` agent when nobody answered | as above; when `human` comes off, `needs-ui-decision` tells the next `ux` agent which question it holds, and that agent removes it when it records |

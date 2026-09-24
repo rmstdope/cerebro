@@ -404,12 +404,14 @@ It does the reopen, the assignee clear, P0, the dated failure note, `verificatio
 push; there is no second `bd dolt push`. Never retype its steps by hand: the assignee clear is the
 step prose used to drop, and a reopened bead with an assignee is picked up by nobody.
 
-- **`--fault build`** (the default): `planned` stays, and **it adds `plan:revise` to nothing**.
-- **`--fault plan`**: `planned` comes off and `plan:revise` goes on; a planner revises the plan in
-  place.
+- **`--fault build`** (the default): `planned` stays, and **it adds `plan:revise` to nothing**. A
+  producer takes the bead as rework against the same design (`scripts/assignable-beads` offers a
+  planned bead only when `verification:failed` sits beside it).
+- **`--fault plan`**: `planned` comes off and `plan:revise` goes on; a `ux` agent revises the
+  agreed experience in place.
 
-`plan:revise` is what planners look for and you are the only role that sets it; removing `planned`
-alone means nothing to them. The script walks up closed ancestors, refuses a cycle, and is safe to
+`plan:revise` is what the `ux` stage looks for and you are the only role that sets it; removing
+`planned` alone means nothing to it. The script walks up closed ancestors, refuses a cycle, and is safe to
 re-run at the cost of a duplicated note.
 
 ## When a verification itself goes wrong

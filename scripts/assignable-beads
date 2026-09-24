@@ -34,14 +34,23 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$("$script_dir/consumer-root" --shared)"
 
 # Captured before the pipe, so a failure leaves stdout empty (see `scripts/plan-candidates`).
-if ! raw="$(bd --readonly -C "$root" ready --label ux:agreed --exclude-label planned --exclude-label human \
+#
+# `planned` is NOT excluded at `bd`. A producer adds it to its own bead while it holds the claim, so
+# an unclaimed planned bead is one of two things: a bead `reopen-failed --fault build` gave back -
+# the design was fine, the build was not, and it keeps `planned` with `verification:failed` beside
+# it - or a plan nobody is building. The first is rework a producer takes; the second is not
+# offered (cb-gc45). The `jq` below tells them apart, which `bd ready`'s label flags cannot.
+if ! raw="$(bd --readonly -C "$root" ready --label ux:agreed --exclude-label human \
         --exclude-label verdict:stale --exclude-label bugfix \
         --exclude-type epic --unassigned --json --brief -n 0)"; then
   echo "assignable-beads: bd ready failed - cannot list the assignable beads" >&2
   exit 1
 fi
 
-if ! out="$(printf '%s' "$raw" | jq '[ .[] | {id, priority} ] | sort_by(.priority, .id)' 2>/dev/null)"; then
+if ! out="$(printf '%s' "$raw" | jq '[ .[]
+      | select(((.labels // []) | index("planned") | not)
+               or ((.labels // []) | index("verification:failed")))
+      | {id, priority} ] | sort_by(.priority, .id)' 2>/dev/null)"; then
   echo "assignable-beads: bd ready did not print JSON this script can read" >&2
   exit 1
 fi

@@ -119,7 +119,7 @@ Write `gate` before you first run the fast gate. **Before the PR, classify what 
 run the gate the project declares**, every leg of it:
 
 ```bash
-git diff --name-only -z origin/main...HEAD |
+git diff --name-only -z "origin/$(.cerebro/cerebro/scripts/default-branch)...HEAD" |
   xargs -0 .cerebro/cerebro/scripts/build-workload --classify
 .cerebro/cerebro/scripts/project-conf gate_fast     # the fast gate: what to run before the PR
 .cerebro/cerebro/scripts/project-conf gate_full     # everything the project has
@@ -224,8 +224,8 @@ gh api "repos/<owner>/<repo>/branches/$(.cerebro/cerebro/scripts/default-branch)
 
 Catch up on GitHub, then wait for CI again with no local re-gate: write `rebase`, run
 `gh api -X PUT "repos/<owner>/<repo>/pulls/<n>/update-branch"`, poll `mergeStateStatus` until it is
-not `BEHIND`, write `ci`. A `422` is a real conflict: `git fetch origin main && git rebase
-origin/main`, resolve, `git push --force-with-lease`, back to `ci`.
+not `BEHIND`, write `ci`. A `422` is a real conflict: fetch and rebase onto `origin/<default branch>` (the branch
+`scripts/default-branch` prints), resolve, `git push --force-with-lease`, back to `ci`.
 
 **Before waiting on CI after any push that could have raced main**, poll `gh pr view <n> --json
 mergeable,mergeStateStatus,headRefOid` until the head is yours and neither field is `UNKNOWN`.

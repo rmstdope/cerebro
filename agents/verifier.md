@@ -154,7 +154,7 @@ bd children <epic-id> --json | jq -r '.[].id'
 #### 2. Ordinary closed beads (second)
 
 Closed beads carrying no `verification:*` label, or `verification:failed`, or
-`verification:pending`, a child of an epic included (cb-ru31):
+`verification:pending`, a child of an epic included:
 
 ```bash
 .cerebro/cerebro/scripts/work-beads --status closed | jq -r '.[]

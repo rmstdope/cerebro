@@ -76,22 +76,16 @@ struct SnapshotCache {
 type Slot<T> = tokio::sync::Mutex<SlotState<T>>;
 
 struct SlotState<T> {
-    /// The last good read, which a failed one is served as stale.
-    cache: Option<CachedSnapshot<T>>,
+    /// The last good protocol snapshot, which a failed read serves as stale.
+    retained: Option<Snapshot<T>>,
     /// The last answer, and when its read finished.
     last: Option<(Instant, Snapshot<T>)>,
 }
 
 impl<T> Default for SlotState<T> {
     fn default() -> Self {
-        Self { cache: None, last: None }
+        Self { retained: None, last: None }
     }
-}
-
-#[derive(Clone)]
-struct CachedSnapshot<T> {
-    value: T,
-    updated_at: DateTime<Utc>,
 }
 
 #[derive(Clone, Serialize)]
@@ -99,6 +93,7 @@ struct CachedSnapshot<T> {
 enum Snapshot<T> {
     Fresh {
         value: T,
+        updated_at: DateTime<Utc>,
     },
     Stale {
         value: T,
@@ -685,7 +680,12 @@ struct EventChanges {
 
 impl EventChanges {
     fn observe<T: Serialize>(&mut self, name: &str, snapshot: &Snapshot<T>) -> bool {
-        let current = serde_json::to_string(snapshot).expect("snapshot serialization cannot fail");
+        let mut current = serde_json::to_value(snapshot).expect("snapshot serialization cannot fail");
+        current
+            .as_object_mut()
+            .expect("snapshot serialization is an object")
+            .remove("updated_at");
+        let current = serde_json::to_string(&current).expect("snapshot serialization cannot fail");
         let previous = match name {
             "fleet" => &mut self.fleet,
             "work" => &mut self.work,
@@ -724,19 +724,25 @@ where
         }));
     let answer = match read {
         Ok(value) => {
-            slot.cache = Some(CachedSnapshot {
-                value: value.clone(),
+            let snapshot = Snapshot::Fresh {
+                value,
                 updated_at: Utc::now(),
-            });
-            Snapshot::Fresh { value }
+            };
+            slot.retained = Some(snapshot.clone());
+            snapshot
         }
-        Err(error) => match slot.cache.clone() {
-            Some(snapshot) => Snapshot::Stale {
-                value: snapshot.value,
+        Err(error) => match slot.retained.as_ref() {
+            Some(Snapshot::Fresh { value, updated_at }) => Snapshot::Stale {
+                value: value.clone(),
                 error: error.to_string(),
-                updated_at: snapshot.updated_at,
+                updated_at: *updated_at,
             },
-            None => Snapshot::Unavailable {
+            Some(Snapshot::Stale { value, updated_at, .. }) => Snapshot::Stale {
+                value: value.clone(),
+                error: error.to_string(),
+                updated_at: *updated_at,
+            },
+            Some(Snapshot::Unavailable { .. }) | None => Snapshot::Unavailable {
                 error: error.to_string(),
             },
         },
@@ -765,6 +771,8 @@ impl std::error::Error for ServiceError {}
 
 #[cfg(test)]
 mod tests {
+    use chrono::Utc;
+
     use super::{EventChanges, Snapshot};
 
     #[test]
@@ -772,14 +780,32 @@ mod tests {
         let mut changes = EventChanges::default();
         let fresh = Snapshot::Fresh {
             value: vec!["Cyclops"],
+            updated_at: Utc::now(),
         };
         let changed = Snapshot::Fresh {
             value: vec!["Cyclops", "Storm"],
+            updated_at: Utc::now(),
         };
 
         assert!(!changes.observe("fleet", &fresh));
         assert!(!changes.observe("fleet", &fresh));
         assert!(changes.observe("fleet", &changed));
         assert!(!changes.observe("work", &fresh));
+    }
+
+    #[test]
+    fn event_changes_ignore_a_freshness_timestamp_refresh() {
+        let mut changes = EventChanges::default();
+        let first = Snapshot::Fresh {
+            value: vec!["Cyclops"],
+            updated_at: Utc::now(),
+        };
+        let refreshed = Snapshot::Fresh {
+            value: vec!["Cyclops"],
+            updated_at: Utc::now() + chrono::Duration::seconds(1),
+        };
+
+        assert!(!changes.observe("fleet", &first));
+        assert!(!changes.observe("fleet", &refreshed));
     }
 }

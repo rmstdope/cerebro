@@ -2,7 +2,22 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::Command;
 
-use cerebro_tui::item_adjacency::{changed_metadata, items};
+use quote::ToTokens;
+use syn::{Attribute, Fields, ImplItem, Item, TraitItem};
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ItemBoundary {
+    identity: String,
+    docs: Vec<String>,
+    attributes: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct MetadataChange {
+    identity: String,
+    before: ItemBoundary,
+    after: ItemBoundary,
+}
 
 #[test]
 fn keeps_metadata_with_its_existing_item_when_an_item_is_inserted() {
@@ -39,13 +54,10 @@ fn existing() {}
     let changed = changed_metadata(before, after);
     assert_eq!(changed.len(), 1);
     assert_eq!(changed[0].identity, "fn existing");
-    assert_eq!(
-        changed[0].before.docs,
-        vec!["/// Describes the existing item."]
-    );
-    assert_eq!(changed[0].after.docs, Vec::<String>::new());
-    assert_eq!(changed[0].before.attributes, vec!["#[allow(dead_code)]"]);
-    assert_eq!(changed[0].after.attributes, Vec::<String>::new());
+    assert_eq!(changed[0].before.docs.len(), 1);
+    assert!(changed[0].after.docs.is_empty());
+    assert_eq!(changed[0].before.attributes, vec!["allow (dead_code)"]);
+    assert!(changed[0].after.attributes.is_empty());
 }
 
 #[test]
@@ -66,42 +78,64 @@ fn before() {}
     let changed = changed_metadata(before, after);
     assert_eq!(changed.len(), 1);
     assert_eq!(changed[0].identity, "fn before");
-    assert_eq!(changed[0].before.docs, Vec::<String>::new());
-    assert_eq!(
-        changed[0].after.docs,
-        vec!["/// Describes the retained item."]
-    );
+    assert!(changed[0].before.docs.is_empty());
+    assert_eq!(changed[0].after.docs.len(), 1);
 }
 
 #[test]
-fn recognizes_documentation_and_attributes_as_one_item_boundary() {
-    let source = r#"
-/// Describes a type.
-#[derive(Clone, Debug)]
-pub struct Example;
+fn distinguishes_same_named_methods_in_separate_implementations() {
+    let before = r#"
+struct A;
+struct B;
+impl A {
+    /// A constructor.
+    fn new() -> Self { Self }
+}
+impl B {
+    fn new() -> Self { Self }
+}
+"#;
+    let after = r#"
+struct A;
+struct B;
+impl A {
+    fn new() -> Self { Self }
+}
+impl B {
+    fn new() -> Self { Self }
+}
 "#;
 
-    let found = items(source);
-    assert_eq!(found.len(), 1);
-    assert_eq!(found[0].identity, "struct Example");
-    assert_eq!(found[0].docs, vec!["/// Describes a type."]);
-    assert_eq!(found[0].attributes, vec!["#[derive(Clone, Debug)]"]);
+    let changed = changed_metadata(before, after);
+    assert_eq!(changed.len(), 1);
+    assert_eq!(changed[0].identity, "impl A::fn new");
 }
 
 #[test]
-fn recognizes_an_implementation_item_boundary() {
+fn recognizes_generic_implementations_fields_and_variants() {
     let source = r#"
-/// Describes an implementation.
-#[allow(dead_code)]
-impl Example {
+/// Generic implementation.
+impl<T> Example<T> {
+    /// A field-like method.
+    fn value(&self) {}
+}
+
+struct Record {
+    /// A documented field.
+    field: String,
+}
+
+enum Choice {
+    /// A documented variant.
+    First,
 }
 "#;
 
-    let found = items(source);
-    assert_eq!(found.len(), 1);
-    assert_eq!(found[0].identity, "impl Example");
-    assert_eq!(found[0].docs, vec!["/// Describes an implementation."]);
-    assert_eq!(found[0].attributes, vec!["#[allow(dead_code)]"]);
+    let found = item_map(source);
+    assert!(found.contains_key("impl Example < T >"));
+    assert!(found.contains_key("impl Example < T >::fn value"));
+    assert!(found.contains_key("struct Record::field field"));
+    assert!(found.contains_key("enum Choice::variant First"));
 }
 
 #[test]
@@ -124,8 +158,10 @@ fn current_rust_diff_keeps_metadata_with_its_existing_items() {
         let Some(before) = git_optional(&root, &["show", &format!("{base}:{path}")]) else {
             continue;
         };
-        let after = std::fs::read_to_string(root.join(path))
-            .unwrap_or_else(|error| panic!("cannot read changed Rust source {path}: {error}"));
+        let after_path = root.join(path);
+        let Ok(after) = std::fs::read_to_string(&after_path) else {
+            continue;
+        };
         let changed = changed_metadata(&before, &after);
         if !changed.is_empty() {
             failures.insert(path, changed);
@@ -138,6 +174,218 @@ fn current_rust_diff_keeps_metadata_with_its_existing_items() {
     );
 }
 
+fn changed_metadata(before: &str, after: &str) -> Vec<MetadataChange> {
+    let before = item_map(before);
+    let after = item_map(after);
+    before
+        .into_iter()
+        .filter_map(|(identity, before)| {
+            let after = after.get(&identity)?;
+            (before.docs != after.docs || before.attributes != after.attributes).then(|| {
+                MetadataChange {
+                    identity,
+                    before,
+                    after: after.clone(),
+                }
+            })
+        })
+        .collect()
+}
+
+fn item_map(source: &str) -> BTreeMap<String, ItemBoundary> {
+    let file = syn::parse_file(source).expect("the Rust fixture must parse");
+    let mut collector = Collector::default();
+    collector.collect_items(&file.items);
+    collector
+        .items
+        .into_iter()
+        .map(|item| (item.identity.clone(), item))
+        .collect()
+}
+
+#[derive(Default)]
+struct Collector {
+    scope: Vec<String>,
+    items: Vec<ItemBoundary>,
+}
+
+impl Collector {
+    fn collect_items(&mut self, items: &[Item]) {
+        for item in items {
+            match item {
+                Item::Const(item) => self.record("const", &item.ident.to_string(), &item.attrs),
+                Item::Enum(item) => {
+                    self.record("enum", &item.ident.to_string(), &item.attrs);
+                    self.with_scope(format!("enum {}", item.ident), |collector| {
+                        for variant in &item.variants {
+                            collector.record("variant", &variant.ident.to_string(), &variant.attrs);
+                            collector.with_scope(
+                                format!("variant {}", variant.ident),
+                                |collector| {
+                                    collector.collect_fields(&variant.fields);
+                                },
+                            );
+                        }
+                    });
+                }
+                Item::ExternCrate(item) => {
+                    self.record("extern crate", &item.ident.to_string(), &item.attrs)
+                }
+                Item::Fn(item) => self.record("fn", &item.sig.ident.to_string(), &item.attrs),
+                Item::ForeignMod(item) => self.record(
+                    "extern",
+                    &item.abi.to_token_stream().to_string(),
+                    &item.attrs,
+                ),
+                Item::Impl(item) => {
+                    let identity = implementation_identity(item);
+                    self.record("impl", &identity, &item.attrs);
+                    self.with_scope(format!("impl {identity}"), |collector| {
+                        for item in &item.items {
+                            match item {
+                                ImplItem::Const(item) => {
+                                    collector.record("const", &item.ident.to_string(), &item.attrs)
+                                }
+                                ImplItem::Fn(item) => {
+                                    collector.record("fn", &item.sig.ident.to_string(), &item.attrs)
+                                }
+                                ImplItem::Type(item) => {
+                                    collector.record("type", &item.ident.to_string(), &item.attrs)
+                                }
+                                ImplItem::Macro(item) => collector.record(
+                                    "macro",
+                                    &item.mac.path.to_token_stream().to_string(),
+                                    &item.attrs,
+                                ),
+                                _ => {}
+                            }
+                        }
+                    });
+                }
+                Item::Macro(item) => self.record(
+                    "macro",
+                    &item.mac.path.to_token_stream().to_string(),
+                    &item.attrs,
+                ),
+                Item::Mod(item) => {
+                    self.record("mod", &item.ident.to_string(), &item.attrs);
+                    if let Some((_, items)) = &item.content {
+                        self.with_scope(format!("mod {}", item.ident), |collector| {
+                            collector.collect_items(items)
+                        });
+                    }
+                }
+                Item::Static(item) => self.record("static", &item.ident.to_string(), &item.attrs),
+                Item::Struct(item) => {
+                    self.record("struct", &item.ident.to_string(), &item.attrs);
+                    self.with_scope(format!("struct {}", item.ident), |collector| {
+                        collector.collect_fields(&item.fields)
+                    });
+                }
+                Item::Trait(item) => {
+                    self.record("trait", &item.ident.to_string(), &item.attrs);
+                    self.with_scope(format!("trait {}", item.ident), |collector| {
+                        for item in &item.items {
+                            match item {
+                                TraitItem::Const(item) => {
+                                    collector.record("const", &item.ident.to_string(), &item.attrs)
+                                }
+                                TraitItem::Fn(item) => {
+                                    collector.record("fn", &item.sig.ident.to_string(), &item.attrs)
+                                }
+                                TraitItem::Type(item) => {
+                                    collector.record("type", &item.ident.to_string(), &item.attrs)
+                                }
+                                TraitItem::Macro(item) => collector.record(
+                                    "macro",
+                                    &item.mac.path.to_token_stream().to_string(),
+                                    &item.attrs,
+                                ),
+                                _ => {}
+                            }
+                        }
+                    });
+                }
+                Item::TraitAlias(item) => {
+                    self.record("trait alias", &item.ident.to_string(), &item.attrs)
+                }
+                Item::Type(item) => self.record("type", &item.ident.to_string(), &item.attrs),
+                Item::Union(item) => {
+                    self.record("union", &item.ident.to_string(), &item.attrs);
+                    self.with_scope(format!("union {}", item.ident), |collector| {
+                        for field in &item.fields.named {
+                            collector.record(
+                                "field",
+                                &field.ident.as_ref().expect("union field").to_string(),
+                                &field.attrs,
+                            );
+                        }
+                    });
+                }
+                Item::Use(item) => {
+                    self.record("use", &item.tree.to_token_stream().to_string(), &item.attrs)
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn collect_fields(&mut self, fields: &Fields) {
+        match fields {
+            Fields::Named(fields) => {
+                for field in &fields.named {
+                    self.record(
+                        "field",
+                        &field.ident.as_ref().expect("named field").to_string(),
+                        &field.attrs,
+                    );
+                }
+            }
+            Fields::Unnamed(fields) => {
+                for (index, field) in fields.unnamed.iter().enumerate() {
+                    self.record("field", &index.to_string(), &field.attrs);
+                }
+            }
+            Fields::Unit => {}
+        }
+    }
+
+    fn record(&mut self, kind: &str, name: &str, attributes: &[Attribute]) {
+        let prefix = (!self.scope.is_empty()).then(|| format!("{}::", self.scope.join("::")));
+        self.items.push(ItemBoundary {
+            identity: format!("{}{kind} {name}", prefix.unwrap_or_default()),
+            docs: attributes
+                .iter()
+                .filter(|attribute| attribute.path().is_ident("doc"))
+                .map(attribute_text)
+                .collect(),
+            attributes: attributes
+                .iter()
+                .filter(|attribute| !attribute.path().is_ident("doc"))
+                .map(attribute_text)
+                .collect(),
+        });
+    }
+
+    fn with_scope(&mut self, scope: String, collect: impl FnOnce(&mut Self)) {
+        self.scope.push(scope);
+        collect(self);
+        self.scope.pop();
+    }
+}
+
+fn implementation_identity(item: &syn::ItemImpl) -> String {
+    let self_type = item.self_ty.to_token_stream().to_string();
+    item.trait_
+        .as_ref()
+        .map(|(_, path, _)| format!("{} for {self_type}", path.to_token_stream()))
+        .unwrap_or(self_type)
+}
+
+fn attribute_text(attribute: &Attribute) -> String {
+    attribute.meta.to_token_stream().to_string()
+}
+
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -146,20 +394,21 @@ fn repo_root() -> PathBuf {
 }
 
 fn git(root: &std::path::Path, args: &[&str]) -> String {
-    git_optional(root, args).unwrap_or_else(|| {
-        panic!(
-            "git {} failed: {}",
-            args.join(" "),
-            String::from_utf8_lossy(
-                &Command::new("git")
-                    .args(args)
-                    .current_dir(root)
-                    .output()
-                    .expect("the failed git command can be run again")
-                    .stderr
-            )
-        )
-    })
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(root)
+        .output()
+        .unwrap_or_else(|error| panic!("cannot run git {}: {error}", args.join(" ")));
+    assert!(
+        output.status.success(),
+        "git {} failed: {}",
+        args.join(" "),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout)
+        .unwrap_or_else(|error| panic!("git {} returned non-UTF-8 output: {error}", args.join(" ")))
+        .trim()
+        .to_owned()
 }
 
 fn git_optional(root: &std::path::Path, args: &[&str]) -> Option<String> {

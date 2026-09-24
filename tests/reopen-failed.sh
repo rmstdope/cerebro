@@ -268,6 +268,13 @@ argv_has_pair update --remove-label planned \
   || fail "plan-fault-flips-the-labels: planned was not removed"
 argv_has_pair update --add-label "plan:revise" \
   || fail "plan-fault-flips-the-labels: plan:revise was not added"
+# The stage labels go too (cb-b26a): `stage-candidates ux` refuses a bead carrying either, and
+# `assignable-beads` admits one carrying `ux:agreed` with no `planned`, so a plan-fault bead that
+# kept its stage label went to a producer at P0 instead of back to a designer.
+argv_has_pair update --remove-label "ux:agreed" \
+  || fail "plan-fault-flips-the-labels: ux:agreed was not removed (cb-b26a)"
+argv_has_pair update --remove-label "ux:none" \
+  || fail "plan-fault-flips-the-labels: ux:none was not removed (cb-b26a)"
 pass "plan-fault-flips-the-labels"
 
 # --- build-fault-touches-neither-label ----------------------------------------------------------
@@ -281,6 +288,8 @@ grep -qxF "ARG:plan:revise" "$stub_dir/argv.update" \
   && fail "build-fault-touches-neither-label: plan:revise was added on the build branch"
 argv_has_pair update "--remove-label" "planned" \
   && fail "build-fault-touches-neither-label: planned was removed on the build branch"
+argv_has_pair update "--remove-label" "ux:agreed" \
+  && fail "build-fault-touches-neither-label: ux:agreed was removed on the build branch"
 pass "build-fault-touches-neither-label"
 
 # --- reopens-a-closed-parent-chain --------------------------------------------------------------

@@ -71,10 +71,11 @@ else
   # A scope question is the navigator's: parked in their one queue, with the pause dated.
   paused_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   note="Producer parking for a scope decision: $reason"
+  # `human` alone: `needs-ui-decision` is a designer's question, and on a scope park it would keep
+  # the fleet view from unparking the bead when its blockers close and make Cerebro offer it to UX.
   bd --actor "$name" -C "$root" update "$id" \
     --remove-label planned \
     --add-label human \
-    --add-label needs-ui-decision \
     --append-notes "$note" \
     --set-metadata "paused_at=$paused_at" \
     --if-assignee "$name" \

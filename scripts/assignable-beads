@@ -36,11 +36,11 @@ root="$("$script_dir/consumer-root" --shared)"
 
 # Captured before the pipe, so a failure leaves stdout empty (see `scripts/stage-candidates`).
 #
-# `planned` is NOT excluded at `bd`. A producer adds it to its own bead while it holds the claim, so
-# an unclaimed planned bead is one of two things: a bead `reopen-failed --fault build` gave back -
-# the design was fine, the build was not, and it keeps `planned` with `verification:failed` beside
-# it - or a plan nobody is building. The first is rework a producer takes; the second is not
-# offered (cb-gc45). The `jq` below tells them apart, which `bd ready`'s label flags cannot.
+# `planned` is NOT excluded. A producer adds it to its own bead while it holds the claim, so an
+# unclaimed planned bead is a plan a producer left behind: `reopen-failed --fault build` gave it
+# back as rework (cb-gc45), or the session died and the claim was released (cb-lcfq). Both are
+# producer work, and produce-bead resumes from the design rather than rewriting it. The exclusion
+# this replaces guarded against a legacy planner's plan; that role is retired.
 #
 # Nor is the stage label asked of `bd`: EITHER `ux:agreed` (a designer agreed the experience) OR
 # `ux:none` (the navigator said at filing that nothing a person sees changes, cb-uump) admits a
@@ -61,8 +61,6 @@ if ! out="$(printf '%s' "$raw" | jq '[ .[]
       | select((.priority // 4) < 4)
       | select((.labels // []) | index("second-look") | not)
       | select(((.labels // []) | index("ux:agreed")) or ((.labels // []) | index("ux:none")))
-      | select(((.labels // []) | index("planned") | not)
-               or ((.labels // []) | index("verification:failed")))
       | {id, priority} ] | sort_by(.priority, .id)' 2>/dev/null)"; then
   echo "assignable-beads: bd ready did not print JSON this script can read" >&2
   exit 1

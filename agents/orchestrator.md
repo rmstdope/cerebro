@@ -405,10 +405,13 @@ bd show <id> --json                                     # the notes: the reason,
 Unparking:
 
 ```bash
-bd update <id> --remove-label human --remove-label needs-ui-decision \
-               --remove-label pause:kept
+bd update <id> --remove-label human --remove-label pause:kept
 bd dolt push
 ```
+
+`needs-ui-decision` stays: it is the UX agent's own mark, telling the next UX pass to resume from
+the notes rather than open the interview again, and that agent removes it when it records. A scope
+park never carries it.
 
 Declining — asked, not settled:
 
@@ -434,15 +437,19 @@ A `null` `paused_at` is "Parked, with no timestamp", never "just now".
 
 Three options, in this order, your recommendation marked `(Recommended)`:
 
-- **Unpark it** — remove `human` (and `needs-ui-decision`, `pause:kept`), push, report.
-- **Send it back to UX** — offered **only** for a bead carrying `needs-ui-decision`. Remove
-  `human`, `pause:kept` **and `ux:agreed`**, record no answer, and **keep `needs-ui-decision`**;
-  that is the state `producer-park … ux` leaves, so the next UX pass takes it as a returned piece
-  of work, interviews the navigator and clears it. Without the `ux:agreed` removal a producer takes
-  it instead and finds a question it may not answer:
+- **Unpark it** — remove `human` and `pause:kept`, push, report. `needs-ui-decision` stays, as
+  above.
+- **Send it back to UX** — offered for a bead carrying `needs-ui-decision`, or for any bead the
+  navigator wants a designer to look at again. Remove `human`, `pause:kept`, `ux:agreed`,
+  `ux:none` **and `planned`**, add `needs-ui-decision` if it is missing, record no answer; that is
+  the state `producer-park … ux` leaves, so the next UX pass takes it as a returned piece of work,
+  interviews the navigator and clears it. With a stage label still on, a producer takes it instead
+  and finds a question it may not answer:
 
   ```bash
-  bd update <id> --remove-label human --remove-label pause:kept --remove-label ux:agreed
+  bd update <id> --remove-label human --remove-label pause:kept \
+    --remove-label ux:agreed --remove-label ux:none --remove-label planned \
+    --add-label needs-ui-decision
   bd dolt push
   ```
 - **Leave it parked** — `pause:kept`, and say so in the report.
@@ -450,7 +457,7 @@ Three options, in this order, your recommendation marked `(Recommended)`:
 An answer in the navigator's own words is appended verbatim in the update that unparks:
 
 ```bash
-bd update <id> --remove-label human --remove-label needs-ui-decision --remove-label pause:kept \
+bd update <id> --remove-label human --remove-label pause:kept \
   --append-notes "## Navigator's answer, $(date -u +%Y-%m-%d)
 
 <the answer, in the navigator's own words>"

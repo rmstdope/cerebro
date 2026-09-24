@@ -54,7 +54,11 @@ if ! raw="$(bd --readonly -C "$root" ready --exclude-label human \
   exit 1
 fi
 
+# P4 is unranked: the navigator has not chosen a priority, and only Cerebro touches such a bead
+# (beads-workflow, *Writing a good bead*). The fleet view hands a producer this list's first entry,
+# so the filter lives here, with a missing priority read the same way (cb-7dun).
 if ! out="$(printf '%s' "$raw" | jq '[ .[]
+      | select((.priority // 4) < 4)
       | select(((.labels // []) | index("ux:agreed")) or ((.labels // []) | index("ux:none")))
       | select(((.labels // []) | index("planned") | not)
                or ((.labels // []) | index("verification:failed")))

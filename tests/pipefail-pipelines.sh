@@ -86,6 +86,17 @@ grep -q '^unsafe pipeline: tests/multiline-head.sh:2 .*head' <<<"$out" \
   || fail "expected a multiline head finding, got: $out"
 pass "multiline quiet grep and head pipelines are reported"
 
+# --- a logical-or continuation is not a pipeline --------------------------------------------------
+
+fix="$(new_fixture)"
+printf 'false ||\n  %s\n' "$first_line" >"$fix/tests/logical-or.sh"
+git_q -C "$fix" add -A
+git_q -C "$fix" commit -q -m init
+run "$fix/scripts/pipefail-pipelines"
+[[ $status -eq 0 ]] || fail "a logical-or continuation must exit 0, got $status (output: $out)"
+[[ -z "$out" ]] || fail "a logical-or continuation must print nothing, got: $out"
+pass "a logical-or continuation is not a pipeline"
+
 # --- untracked source is scanned ------------------------------------------------------------------
 
 fix="$(new_fixture)"

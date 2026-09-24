@@ -111,10 +111,15 @@ tell the developer nothing is waiting, unseen by the designer, and end the pass.
 Two ways, and your record is still there for both. **Read the note first; amend in place**, keeping
 all five headings and everything agreed; re-open only what it names. Never a fresh session.
 
-**From the person building it**: a `## Sent back to the UX stage` note, and no agreed label.
+**From the person building it**: `needs-ui-decision`, a `## Sent back to the UX stage` note with
+their question under it, and no agreed label.
 
 > This one came back from the person building it. \<what is missing, in the product's own words\>.
 > Everything else we agreed stands — this is the only open question.
+
+If the note shows the same question was already sent back once, the builder and the record are
+not converging: settle it with the designer if one is present, and otherwise park it for the team
+(*When nobody answers*) rather than re-filing the same answer.
 
 **From a verification**: the label `plan:revise` and a dated failure note from
 `scripts/reopen-failed`, saying what the team saw when they tried the finished work. The build did

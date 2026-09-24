@@ -79,9 +79,33 @@ the three things went unanswered, so the planner knows to ask. The duplicate sea
 ## When one request is several beads
 
 Name the pieces you heard and ask whether to file one bead or several, before interviewing. Never
-split silently, and never file only the first. If several, interview and file them one at a time.
-Add a `bd dep add` edge only where the navigator says the order matters; a guessed edge makes
-`bd ready` lie.
+split silently, and never file only the first.
+
+If several, the request is an **epic with children**, filed as one family in one session, so that
+nobody has to decompose it later by hand:
+
+1. Interview the pieces one at a time, the same three things each; a piece is a child when a
+   producer could deliver it on its own and a person could tell it landed.
+2. File the parent first, then each child under it. Every one at P4; a child takes its parent's
+   priority when the parent is ranked (*Dependencies and breakdown* in `beads-workflow`), and the
+   navigator is asked about the parent only.
+
+   ```bash
+   bd create "<the outcome, as a whole>" --type epic -p 4 --body-file /tmp/epic-body.md
+   bd create "<one child>" --type task -p 4 --parent <epic-id> --body-file /tmp/child-1.md \
+     --acceptance "<what done looks like for this piece>" \
+     --labels ux:none      # only when this child's answer to the third question was no
+   bd dep add <later-child> <earlier-child>     # only where the navigator said the order matters
+   bd dolt push
+   ```
+
+   A guessed edge makes `bd ready` lie, so an edge is the navigator's word, never your inference.
+   Each child routes on its own from here: UX, or a producer when `ux:none`. The parent is
+   bookkeeping while it has children and is closed by whoever closes the last one.
+3. Report the family: the parent id and title, then each child on its own line.
+
+Never split a bead that is already `ux:agreed` or claimed: that work has left the interview, and a
+change to it goes through the navigator and the role that holds it.
 
 ## What you never do
 

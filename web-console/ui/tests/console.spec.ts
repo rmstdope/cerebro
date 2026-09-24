@@ -449,6 +449,14 @@ test("a bead whose details cannot be read says so", async ({ page }) => {
   await expect(page.getByRole("dialog")).toContainText("cb-6");
 });
 
+test("an answer that is not a bead is a failure, not an empty bead", async ({ page }) => {
+  await board(page);
+  await page.route("/api/beads/cb-6", route => route.fulfill({ contentType: "text/html", body: "<!doctype html><html></html>" }));
+
+  await page.getByText("Sixth").dblclick();
+  await expect(page.getByRole("dialog").getByRole("alert")).toContainText("Couldn’t load the rest of this bead");
+});
+
 test("a small screen's box still has room for its name and its controls", async ({ page }) => {
   const session = await hostSession(page, "\u001b[8;10;20t" + lines(1, 3));
   await expect(session.rows).toContainText("line 3");

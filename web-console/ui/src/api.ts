@@ -97,8 +97,10 @@ export function useBeadRecord(id: string) {
     setRead({ state: "loading" });
     fetch(`/api/beads/${encodeURIComponent(id)}`)
       .then(async response => {
-        const body = await response.json().catch(() => ({})) as { error?: string };
-        if (!response.ok) throw new Error(body.error ?? response.statusText);
+        const body = await response.json().catch(() => undefined) as { error?: string; id?: unknown } | undefined;
+        if (!response.ok) throw new Error(body?.error ?? response.statusText);
+        // A service too old to know this route answers with the page itself.
+        if (typeof body?.id !== "string") throw new Error("the console’s service didn’t answer with a bead; restart cerebro-web");
         return body as BeadRecord;
       })
       .then(record => { if (live) setRead({ state: "read", record }); },

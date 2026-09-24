@@ -412,6 +412,17 @@ set -e
 grep -q "gate_fast" <<<"$out" || fail "producer no gate: expected the message to name gate_fast, got: $out"
 pass "a producer with no fast gate is refused, and the message names the gate"
 
+# --- a bugfixer with no fast gate is refused too (cb-cjp7) -------------------------------------
+#
+# fix-bug runs the same fast gate produce-bead does before opening a PR, so a bugfixer without one
+# would improvise a gate exactly as a producer would.
+c="$(make_consumer nogatebugfixer)"
+status=0
+out="$(run_preflight "$c" bugfixer Bishop 2>&1)" || status=$?
+[[ $status -eq 2 ]] || fail "bugfixer no gate: expected exit 2, got $status: $out"
+grep -q "gate_fast" <<<"$out" || fail "bugfixer no gate: expected the message to name gate_fast, got: $out"
+pass "a bugfixer with no fast gate is refused, and the message names the gate"
+
 # --- a UX agent with no fast gate still launches ----------------------------------------------------
 #
 # A UX agent, a verifier or the orchestrator has no gate to run; refusing them would take the whole

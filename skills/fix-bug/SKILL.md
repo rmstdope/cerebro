@@ -28,7 +28,7 @@ bugfix beads run through this reproduction-first contract instead.
 
 ## When to hand back instead of forcing a fix
 
-Hand the bead back using `produce-bead`'s hand-back block when:
+Hand the bead back using `produce-bead`'s *Handing back* block when:
 
 - the bead does not describe a reproducible bug,
 - the bead's expected behaviour is ambiguous enough to need a product decision,

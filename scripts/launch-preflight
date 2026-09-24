@@ -237,14 +237,13 @@ fi
 # detected, would have its implementers improvising a gate and reporting green off it. Refuse at
 # launch instead, loudly and immediately, naming the gate rather than the submodule (ah-qled.5.1).
 #
-# ONLY an implementer. A planner, a verifier or the orchestrator has no gate to run, and refusing
-# them would take the whole fleet down over a key that does not concern them. The role IS the kind
-# here: `roster' derives `implementer' from exactly this value and nothing else, so asking it again
-# would only add a second place for the two to disagree.
-if [[ "$policy" == "implementer" || "$policy" == "producer" ]]; then
+# ONLY a builder: a producer, or the bugfixer, which runs the same fast gate before its PR
+# (cb-cjp7). A UX agent, the verifier or the orchestrator has no gate to run, and refusing them
+# would take the whole fleet down over a key that does not concern them.
+if [[ "$policy" == "producer" || "$policy" == "bugfixer" ]]; then
   gate_fast="$("$script_dir/project-conf" gate_fast 2>/dev/null)" || gate_fast=""
   if [[ -z "$gate_fast" ]]; then
-    "$script_dir/launch-refused" "$name" "this project declares no fast gate, and none could be detected - a producer has nothing to run before it opens a PR. Add a line like 'gate_fast <command>' (and 'gate_full <command>') to .cerebro/project.conf before starting $name"
+    "$script_dir/launch-refused" "$name" "this project declares no fast gate, and none could be detected - a builder has nothing to run before it opens a PR. Add a line like 'gate_fast <command>' (and 'gate_full <command>') to .cerebro/project.conf before starting $name"
     exit 2
   fi
 fi

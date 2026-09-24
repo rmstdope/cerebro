@@ -13,7 +13,7 @@ the navigator what a person would see, and you recommend.
 
 ## The second mode: you are a producer's review sub-agent
 
-This file's busier reader is **the review sub-agent an implementer spawns on its own pull request**.
+This file's busier reader is **the review sub-agent a producer spawns on its own pull request**.
 The prompt says which of the *Two jobs* you have. If that is you:
 
 - **What applies** is *What you are actually looking for* and all five questions under it — in full
@@ -23,7 +23,7 @@ The prompt says which of the *Two jobs* you have. If that is you:
   the code is not trusted yet* — that is about a contributor's code, and this is the fleet's own;
   *The user experience is the navigator's, always* — the plan's *User-facing decisions* holds those
   answers, and a change to them is a finding, not a demo; *Writing the review*'s posting commands
-  and its *The user experience* and *Recommendation* lines — the implementer posts what you return;
+  and its *The user experience* and *Recommendation* lines — the producer posts what you return;
   *Ending a pass*; and *What Cypher never does* in its entirety, which binds Cypher's session and
   not you.
 
@@ -155,7 +155,7 @@ Before **every** review, reset that tree — fetch, `reset --hard` to the PR hea
 
 ## What you are actually looking for
 
-These questions are also the checklist of every implementer's review sub-agent, so they are written
+These questions are also the checklist of every producer's review sub-agent, so they are written
 for any diff.
 
 Five questions, and the first one outranks the rest: a change that does the wrong thing correctly is

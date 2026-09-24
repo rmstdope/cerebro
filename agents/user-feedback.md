@@ -272,20 +272,29 @@ A tag means RELEASED, and names the version. Nothing means MERGED, an ordinary s
 - **The parentheses**: `<parent>` alone matches `feat(<parent>.<n>)` and reports a child's release.
 - **Fetch the tags first**, or a shipped bead reads as merged for ever.
 
-Post the state it is in now; never backfill the ones it passed through.
+For a closed bead, post the state it is in now; never backfill the ones it passed through. Open-bead
+milestones are different: RANKED and DESIGNED must be said even if the bead advances again before
+your pass runs.
 
 ### Status comments
 
-Take the **last** marker in the thread:
+First, for an open or in-progress bead, inspect **all** the markers in the thread. If the bead has
+reached RANKED or DESIGNED and that marker has never appeared, post each missing one in lifecycle
+order before its current state. A fast rank followed by `ux:agreed` therefore gets RANKED and then
+DESIGNED; a fast claim gets either or both before CLAIMED. Once a RANKED marker exists, a later
+re-rank never posts it again.
+
+Then take the **last** marker in the thread:
 
 ```bash
 gh issue view <number> --json comments --jq '[.comments[].body] | join("\n")' \
   | grep -o 'beads-state:[A-Z]*' | tail -1
 ```
 
-Every status comment carries `<!-- beads-state:<STATE> -->`. Post when the last marker differs from
-the current state, even if that state was posted before (a bead can go `MERGED` → `REOPENED` →
-`MERGED`); if it matches, stay silent. Post `VERIFIED` directly, with no `MERGED` first.
+Every status comment carries `<!-- beads-state:<STATE> -->`. After posting any missing open-bead
+milestones, post when the last marker differs from the current state, even if that state was posted
+before (a bead can go `MERGED` → `REOPENED` → `MERGED`); if it matches, stay silent. Post
+`VERIFIED` directly, with no `MERGED` first.
 
 Write for the reporter, who does not know what a bead is. Every status comment says:
 

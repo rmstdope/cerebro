@@ -19,11 +19,13 @@ claimed for you; `bugfix` beads stay with the bugfixer.
    fail against a design that was judged right. Read the dated failure note, amend the existing
    `design` in place rather than writing a new one, and keep `planned`.
    If the experience cannot be built as written because a genuine UX or scope decision is still
-   needed, park it only through
-   `.cerebro/cerebro/scripts/producer-park <name> <id> <ux|scope> "<what the navigator must decide>"`.
-   That records `needs-ui-decision`, releases your claim, and pushes. A missing build plan or an
-   implementation detail is never a reason to park: decide it in this plan. End the pass after a
-   genuine decision is parked.
+   needed, hand it on only through
+   `.cerebro/cerebro/scripts/producer-park <name> <id> <ux|scope> "<what must be decided>"`.
+   `ux` is for something the agreed experience does not settle (a state, a word, what closes it):
+   it goes straight back to the UX stage, with your question as the note. `scope` is for whether
+   the work itself is right: it goes to the navigator's queue. Both release your claim and push.
+   A missing build plan or an implementation detail is never a reason to hand on: decide it in
+   this plan. End the pass after a genuine decision is handed on.
 3. Design each test with the increment it proves. Work RED -> GREEN -> REFACTOR, beginning every
    increment with its failing test. Use `build`, `gate`, `review`, `ci`, `rebase`, and `merge` as
    the phase changes; heartbeat before long work.

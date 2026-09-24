@@ -2,8 +2,9 @@
 #
 # Proves `scripts/producer-park`: the only producer hand-back path for a
 # genuine UX or scope decision. An unplanned UX-agreed bead is designed by its
-# producer, not parked; this script only records a decision that must return to
-# the navigator.
+# producer, not parked; this script only records a decision somebody else must
+# make - a UX question goes back to the UX stage, a scope question to the
+# navigator.
 #
 #     bash tests/producer-park.sh
 
@@ -52,32 +53,51 @@ reset() {
 
 mine='[{"id":"cb-x","status":"in_progress","assignee":"Storm","labels":["ux:agreed","planned"]}]'
 
-# --- a genuine decision is parked, released, and pushed -----------------------------------------
+# --- a UX question goes straight back to the UX stage ---------------------------------------------
+#
+# Returning a UX question to the navigator's queue cost three sessions and a navigator turn before
+# a designer ever saw it (cb-2cj4). Now `ux` sends the bead back to the UX stage itself: the agreed
+# label comes off so `stage-candidates ux` offers it again and no producer re-takes it, the note
+# carries the heading `agree-experience` reads a returned piece of work by, and nothing is parked
+# for a person - no `human`, no `paused_at`.
 
 reset "$mine"
 run Storm cb-x ux "The mockup omits the empty state" >/dev/null \
-  || fail "a UX decision is parked"
+  || fail "a UX decision is sent back"
 log="$(cat "$stub/bd.log")"
-grep -q -- "update cb-x --remove-label planned --add-label human --add-label needs-ui-decision" <<<"$log" \
-  || fail "the update removes planned and records both parking labels: $log"
-grep -q -- "--set-metadata paused_at=" <<<"$log" \
-  || fail "the update records when the pause began: $log"
+grep -q -- "update cb-x --remove-label ux:agreed --remove-label planned --add-label needs-ui-decision" <<<"$log" \
+  || fail "the update takes the agreed label and the plan off and marks the open question: $log"
+grep -q -- "--append-notes ## Sent back to the UX stage" <<<"$log" \
+  || fail "the note carries the heading the UX stage reads a returned piece of work by: $log"
+grep -q -- "The mockup omits the empty state" <<<"$log" \
+  || fail "the note carries the reason: $log"
+! grep -q -- "--add-label human" <<<"$log" \
+  || fail "a UX question is the designer's, not the navigator's: $log"
+! grep -q -- "paused_at=" <<<"$log" \
+  || fail "a UX return is not a pause: $log"
 grep -q -- "--if-assignee Storm --if-status in_progress" <<<"$log" \
   || fail "the update is compare-and-swapped on the producer's claim: $log"
 grep -q -- "unclaim cb-x --if-assignee Storm" <<<"$log" \
   || fail "the producer releases only its own claim: $log"
 [[ "$(tail -1 "$stub/bd.log")" == *"dolt push"* ]] \
-  || fail "the parking transition is pushed: $log"
-pass "parks a UX decision with needs-ui-decision, releases it, and pushes"
+  || fail "the return is pushed: $log"
+pass "sends a UX question back to the UX stage, releases the bead, and pushes"
 
-# --- scope is the other explicit reason ----------------------------------------------------------
+# --- scope is the navigator's, and is parked ------------------------------------------------------
 
 reset "$mine"
 run Storm cb-x scope "The requested API contract is undecided" >/dev/null \
   || fail "a scope decision is parked"
-grep -q -- "needs-ui-decision" "$stub/bd.log" \
-  || fail "a scope decision still records needs-ui-decision"
-pass "parks a scope decision"
+log="$(cat "$stub/bd.log")"
+grep -q -- "update cb-x --remove-label planned --add-label human --add-label needs-ui-decision" <<<"$log" \
+  || fail "a scope decision is parked for the navigator with both parking labels: $log"
+grep -q -- "--set-metadata paused_at=" <<<"$log" \
+  || fail "a scope pause records when it began: $log"
+! grep -q -- "remove-label ux:agreed" <<<"$log" \
+  || fail "a scope question leaves the agreed experience standing: $log"
+[[ "$(tail -1 "$stub/bd.log")" == *"dolt push"* ]] \
+  || fail "the parking transition is pushed: $log"
+pass "parks a scope decision for the navigator"
 
 # --- anything else is refused before a board write ----------------------------------------------
 

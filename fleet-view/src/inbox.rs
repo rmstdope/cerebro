@@ -161,12 +161,19 @@ impl Drop for Inbox {
 mod tests {
     use super::*;
 
-    /// A pty whose child has stopped reading.
-    struct Stuck(std::sync::mpsc::Receiver<()>);
+    /// A pty whose child has stopped reading. It says when the first write has begun, so a test
+    /// knows the writer thread holds one message and the queue behind it is what is being
+    /// measured; without that, whether the thread had taken its first message yet decided how
+    /// many the queue refused (cb-v1wx: `[1 x16, 0, 0, 1]` on a slow runner).
+    struct Stuck {
+        entered: std::sync::mpsc::Sender<()>,
+        hold: std::sync::mpsc::Receiver<()>,
+    }
 
     impl Write for Stuck {
         fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
-            let _ = self.0.recv();
+            let _ = self.entered.send(());
+            let _ = self.hold.recv();
             Err(std::io::ErrorKind::BrokenPipe.into())
         }
         fn flush(&mut self) -> std::io::Result<()> {
@@ -177,8 +184,13 @@ mod tests {
     #[test]
     fn a_child_that_stopped_reading_refuses_more_than_its_queue() {
         let dir = tempfile::tempdir().unwrap();
-        let (release, stuck) = std::sync::mpsc::channel();
-        let inbox = Inbox::open_at(&dir.path().join("in.sock"), Arc::new(Mutex::new(Box::new(Stuck(stuck))))).unwrap();
+        let (release, hold) = std::sync::mpsc::channel();
+        let (entered, first_write) = std::sync::mpsc::channel();
+        let inbox = Inbox::open_at(
+            &dir.path().join("in.sock"),
+            Arc::new(Mutex::new(Box::new(Stuck { entered, hold }))),
+        )
+        .unwrap();
         let answer = || {
             let mut stream = UnixStream::connect(inbox.path()).unwrap();
             stream.write_all(&framed(b"x")).unwrap();
@@ -187,10 +199,17 @@ mod tests {
             taken[0]
         };
 
-        let answers: Vec<u8> = (0..QUEUED + 3).map(|_| answer()).collect();
+        // The first message is taken, and the writer thread blocks on it: from here the queue
+        // holds exactly what follows, whatever the runner's scheduling.
+        assert_eq!(answer(), 1);
+        first_write
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("the writer thread began writing the first message");
 
-        assert_eq!(answers[0], 1);
-        assert_eq!(*answers.last().unwrap(), 0, "{answers:?}");
+        let answers: Vec<u8> = (0..QUEUED + 2).map(|_| answer()).collect();
+        let mut expected = vec![1u8; QUEUED];
+        expected.extend([0, 0]);
+        assert_eq!(answers, expected);
         drop(release);
     }
 

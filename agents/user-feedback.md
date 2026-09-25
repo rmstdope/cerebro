@@ -274,6 +274,14 @@ A tag means RELEASED, and names the version. Nothing means MERGED, an ordinary s
 - **The parentheses**: `<parent>` alone matches `feat(<parent>.<n>)` and reports a child's release.
 - **Fetch the tags first**, or a shipped bead reads as merged for ever.
 
+**A bead with children** (an epic Cerebro or `write-bead` split; its children carry the same
+`external_ref`) is read through its family, since no commit is ever named for the parent itself:
+CLAIMED when any child is `in_progress`; MERGED when every child is closed; VERIFIED when every
+child carries `verification:passed` (or `not-needed`); RELEASED when every child's commit is in a
+release tag, naming the latest version; REOPENED when any child carries `verification:failed`
+after MERGED. Run the commit search per child. An issue with several linked beads is the same
+question over that set.
+
 For a closed bead, post the state it is in now; never backfill the ones it passed through. Open-bead
 milestones are different: RANKED and DESIGNED must be said even if the bead advances again before
 your pass runs.

@@ -183,12 +183,28 @@ bd update <child> <child> ... --priority=<n>
 Now that it is ranked, ask yourself whether one producer could deliver it in one pass and a person
 could tell it landed. If not, and it has no children yet, split it through *When one request is
 several beads* in `write-bead`: name the pieces you heard, ask whether to file one or several,
-interview each piece, file each child with `--parent <id> -p <the priority just set>` and
+interview each piece, **retype the parent to an epic before the first child**, file each child
+with `--parent <id> -p <the priority just set>`, the parent's `--external-ref` if it has one, and
 `ux:none` where its own answer to the third question was *no*, `bd dep add` only where the
-navigator says the order matters, and report the family. The parent becomes bookkeeping the moment
-it has a child (`scripts/work-beads` skips it), so nothing else is needed to keep it off the
-queues. Splitting is shaping the outcome into pieces, not planning a build: the architecture, files
-and increments stay the producer's.
+navigator says the order matters, and report the family:
+
+```bash
+bd update <id> --type epic                                   # first: only an epic with children is bookkeeping
+bd create "<one child>" --type task -p <n> --parent <id> --external-ref <the parent's, if any> \
+  --body-file /tmp/child-1.md --acceptance "<what done looks like for this piece>"
+bd dolt push
+```
+
+The retype is what takes the parent off every queue: `scripts/work-beads` skips an epic while it
+has a child, and only an epic. A task or bug given children and left as it was stays a UX and
+producer candidate and is never closed by the epic sweep. The `external_ref` copy is what keeps a
+GitHub issue's status comments flowing: Moira reads a family through its children. Splitting is
+shaping the outcome into pieces, not planning a build: the architecture, files and increments stay
+the producer's.
+
+**A childless epic the navigator will not split is a task**: `bd update <id> --type task` in the
+same breath as its ranking. The builder queues exclude the epic type, so an epic without
+children would be agreed by UX and then taken by nobody.
 
 **Never split** a bead that is `ux:agreed`, claimed, `in_progress`, or already a child: that work
 has left the interview, and a change to it goes through the navigator and the role that holds it.

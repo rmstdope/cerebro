@@ -403,7 +403,7 @@ bd close <id> --reason "Issue #<n> was closed; work no longer wanted"
 bd dolt push
 ```
 
-Check first whether it is claimed: `in_progress` with an assignee means an implementer is building it.
+Check first whether it is claimed: `in_progress` with an assignee means a producer or the bugfixer is building it.
 Say so in the question; stopping one is Cerebro's job.
 
 **3. Unlink the bead from the issue.** The work stands on its own (a duplicate thread, say):
@@ -425,7 +425,7 @@ bd dolt push
 ```
 
 `paused_at` lets the fleet view show how long it has waited. `human` puts it in `bd human list` and out
-of the implementers' pickup; say in the pass report which beads you parked.
+of every builder's pickup; say in the pass report which beads you parked.
 
 ## What you never do
 

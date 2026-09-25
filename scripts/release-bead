@@ -11,7 +11,7 @@
 #   released   the bead was in_progress and NAME's, and `bd unclaim --if-assignee NAME` took it back;
 #              or it was open and assigned to NAME - a planning role's assignment (cb-10d.2.1) - and
 #              `bd update --assignee "" --if-assignee NAME` cleared the assignee without touching status
-#   free       the bead is open with no assignee: nothing to unclaim, it is with the planned work
+#   free       the bead is open with no assignee: nothing to unclaim, it is back on the board
 #   elsewhere  anything else - another agent holds it, it is closed, or the unclaim's or unassign's
 #              compare-and-swap lost to somebody who took it meanwhile
 #

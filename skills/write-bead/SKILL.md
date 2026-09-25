@@ -11,7 +11,7 @@ Somebody has asked for a bead.
 
 Interview until a designer or developer picking the bead up cold knows what the navigator wants and
 why, and need not ask them again. No design decisions, no file lists, no test plans: those are the
-planner's and the navigator's. Which field each thing goes in, P4, and the title rule are *Writing a
+producer's and the navigator's. Which field each thing goes in, P4, and the title rule are *Writing a
 good bead* in `beads-workflow`.
 
 ## Before you ask anything: has this already been filed?
@@ -91,7 +91,7 @@ Invoked by hand outside a Cerebro session there is no pass: say it goes to the n
 ## When the navigator says "just file it"
 
 Honour it: skip the interview, write the bead from what they said, and name in your report which of
-the three things went unanswered, so the planner knows to ask. The duplicate search still runs.
+the three things went unanswered, so Cerebro's understand step knows to ask. The duplicate search still runs.
 
 ## When one request is several beads
 

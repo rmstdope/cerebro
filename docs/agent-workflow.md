@@ -82,7 +82,8 @@ on `g` or on its next five-second tick.
 | `n` / `p` | next / previous row |
 
 Under the list, the **bead panel** answers the questions you actually ask about the queue — Claimed,
-Planned unclaimed, Being planned, Unplanned, Merged unverified — with `0`–`4`, `+`/`-` and `u` to
+Planned unclaimed, Being planned, Ready to produce, Unplanned, Waiting on you, Second look, Merged
+unverified — with `0`–`4`, `+`/`-` and `u` to
 re-prioritise a bead on the spot, and `x` on a **Sweeps** finding to run the exact `bd close`, `bd update` or
 `bd set-state` it maps to, after confirming.
 
@@ -105,8 +106,10 @@ reads `standby` from the moment the view opens and the trigger is what starts it
 disarm it, and none of that is written to any
 file. `cerebro-wake-intervals` is the floor between two starts of one role, changeable while the
 fleet runs — **the UX role has none**: a short buffer is the fleet already idle, so it starts on
-the next five-second tick. That buffer counts every bead a producer can take, `ux:agreed` and
-`ux:none` alike, so filing invisible work fills it as surely as agreeing an experience does. What keeps that from looping over a trigger no pass can clear is two
+the next five-second tick. That buffer is the Ready to produce section: every open, unclaimed bead
+carrying `ux:agreed` or `ux:none`, so filing invisible work fills it as surely as agreeing an
+experience does (a returned plan that still carries `planned` sits under Planned unclaimed and is a
+producer's too, but is not counted). What keeps that from looping over a trigger no pass can clear is two
 comparisons rather than a clock: the counts leave out what is parked in your queue (`human`,
 `triage:declined`), and a role is not started again while its trigger names exactly the work its own
 last pass was started for. Anything that moves — a bead arrives, one is planned, a producer
@@ -137,7 +140,7 @@ does not start that name again, however it is armed, until you press `s`; `RET` 
 line.
 
 The State column names the
-**phase**: `design`, `build`, `gate`, `review`, `ci`, `rebase`, `merge` for a producer; `plan` for
+**phase**: `design`, `build`, `gate`, `review`, `ci`, `rebase`, `merge` for a producer and the bugfixer; `ux` for
 `ux`; `prepare`/`verify` for Psylocke; `read`/`check`/`walk`/`report` for Cypher; `sweep` for
 Moira and Cerebro (`release` and `triage` too); `daily`/`weekly` for Forge. The Bead/Phase column shows both
 timers — time on the bead, time in this phase — so one in `ci` for an hour says something is
@@ -218,8 +221,9 @@ cerebro's own default — twelve X-Men, Cyclops and Storm and Wolverine and Rogu
 list — which is a default rather than a rule: nothing in the launcher or the fleet view knows
 what an X-Man is, and a project whose builders are named for itself works exactly the same way.
 
-Each takes a UX-agreed bead, creates its own git worktree, writes its build and test design, works
-test-first, opens a PR, spawns a reviewer sub-agent and answers what it finds, waits for CI, merges and cleans up.
+Each takes a bead that is ready to produce, in the worktree the fleet view prepared for it, writes
+its build and test design, works test-first, opens a PR, spawns a reviewer sub-agent and answers
+what it finds, waits for CI and merges through the pull request.
 Then it reports itself `waiting` and **that session ends**: the fleet view keeps its buffer and
 starts a fresh one under the same name when there is another UX-agreed bead. They run on Sonnet,
 each with its own context.
@@ -325,8 +329,9 @@ state.
 
 ### Leftover worktrees
 
-Agents work in `.cerebro/worktrees/<bead>` and remove the tree when they finish. One that crashes, or
-whose bead somebody else merged, leaves it behind — and a stray tree holding `main` makes the next
+Agents work in `.cerebro/worktrees/<bead>`, made for them by the fleet view before the session
+starts and removed by it after the pass; no agent creates or removes a tree itself. A session that
+crashes, or whose bead somebody else merged, leaves it behind — and a stray tree holding `main` makes the next
 agent's `git checkout main` fail for no visible reason.
 
 **The fleet view removes a producer's tree** when its owner has left and nothing in it can be
@@ -363,7 +368,8 @@ them:
 .cerebro/cerebro/scripts/launch Moira
 ```
 
-One pass over the open issues, then a ten-minute sleep, then another. On each pass she acknowledges
+One pass over the open issues, then the session ends and the fleet view starts a fresh one when an
+issue or a linked bead moves, or hourly regardless. On each pass she acknowledges
 anything new so a reporter is never left wondering whether it arrived, brings you each issue that has
 no bead yet with a recommendation — bead, question to the reporter, or close — and for the ones that
 do have a bead, brings the issue's status comments up to date with what the bead is actually doing,
@@ -415,9 +421,9 @@ checks that the merged result actually does what it was supposed to, until **Psy
 .cerebro/cerebro/scripts/launch Psylocke
 ```
 
-She walks merged work since her last pass, but treats epics as families: when a bead belongs to an
-epic, she waits until that epic has all children closed, then verifies the family in one sweep.
-At that point she decides whether to run verification per child or as one run for the whole epic.
+She walks merged work since her last pass. A child of an epic is offered as soon as it merges, like
+any bead; once every child is closed she sweeps the family for what is still unverified and for
+the whole, deciding then whether to run it per child or as one run for the epic.
 She still works out on her own which candidates touched anything the audience could see — a change
 to `.claude/`, `docs/`, or CI is marked and skipped without ever bothering you — and for what
 remains, prepares everything before she asks for your time: what the bead (or epic) claimed, which
@@ -449,7 +455,8 @@ decision to you. Verification is information, not a gate.
 **What it costs**: a few minutes of your time per verification sweep — often one bead, sometimes a
 whole epic family once all its children are merged — on top of whatever it took to build it in the
 first place: starting the app, loading the report she names, and telling her what you saw. She
-sleeps **five minutes** between passes, so merged work is offered soon after you are back.
+never sleeps: the session ends after each pass and the fleet view starts a fresh one when a merged
+bead is unverified, a verdict is stale, or a bead is on her second-look list.
 
 She verifies in her own worktree, `.cerebro/worktrees/psylocke`, reset to `origin/main` immediately
 before every use — never the shared checkout, and never a build started before she fetched. Every
@@ -599,7 +606,7 @@ straight back to the UX agent.
 To put one back into circulation after you have answered, or ask Cerebro to:
 
 ```bash
-bd update <id> --remove-label human                                  # back to whoever held it
+bd update <id> --remove-label human --remove-label pause:kept        # back to whoever held it
 bd update <id> --remove-label human --remove-label ux:agreed --remove-label ux:none \
   --remove-label planned --add-label needs-ui-decision \
   --append-notes "## Sent back to the UX stage
@@ -642,7 +649,9 @@ board rather than to this checkout's sessions, `x` and the priority keys, act ei
 In a terminal:
 
 ```bash
-bd ready --label planned      # what builders can pick up
+.cerebro/cerebro/scripts/assignable-beads      # what a producer can pick up
+.cerebro/cerebro/scripts/bugfix-candidates     # what the bugfixer can pick up
+.cerebro/cerebro/scripts/stage-candidates ux   # what a UX agent can pick up
 bd list --status in_progress  # who is on what
 bd human list                 # waiting on you
 gh pr list                    # what is in flight

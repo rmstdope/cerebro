@@ -1137,13 +1137,14 @@ mod tests {
 
     #[test]
     fn the_ux_role_takes_a_p0_before_the_queue() {
-        let facts = facts_for(
+        let facts = facts_with_assignable(
             vec![
                 bead("cb-p0", "open", &[], 0),
                 bead("cb-a1", "open", &["ux:agreed"], 2),
                 bead("cb-a2", "open", &["ux:agreed"], 2),
             ],
             &[("ux", vec![("cb-p0", 0)])],
+            &["cb-a1", "cb-a2"],
         );
         assert_eq!(
             condition(&facts, &agent_of("ux")),

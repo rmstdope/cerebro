@@ -143,7 +143,7 @@ set_stub "$labelled"
 set_stub_for children '[]'
 ids="$(run ux | ids_of)"
 [ "$ids" = "tt-held tt-held-x tt-ideas tt-plain tt-revise tt-rework-back " ] \
-  || fail "the ux stage listed '$ids', not the five beads still needing a designer (a planning label holds nothing since cb-10d.2.2)"
+  || fail "the ux stage listed '$ids', not the six beads still needing a designer (a planning label holds nothing since cb-10d.2.2)"
 pass "the ux stage takes what is not yet agreed"
 
 # --- a plan-fault bead reaches this stage only once its stage label is gone (cb-b26a) -----------

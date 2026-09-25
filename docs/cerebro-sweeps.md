@@ -207,7 +207,7 @@ The cheap question is deliberate — it errs toward a second look rather than to
 building a no-op — and a mockup commit counts like any other, because the question is *has main
 moved*, not *was this bead delivered*.
 
-**What this buys, and what it does not.** Flagging takes the bead out of the two queues that would
+**What this buys, and what it does not.** Flagging takes the bead out of the three queues that would
 act on a stale verdict — every builder and UX queue (`assignable-beads`, `bugfix-candidates`,
 `stage-candidates`) excludes `verdict:stale` — and puts it at the top of Psylocke's next pass, which takes a stale bead first
 because re-reading a finding against current main is the cheapest verification there is. It does

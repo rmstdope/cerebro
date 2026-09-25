@@ -131,6 +131,7 @@ labelled='[{"id":"tt-plain","issue_type":"task","priority":2,"labels":[]},
            {"id":"tt-bugfix","issue_type":"bug","priority":2,"labels":["bugfix"]},
            {"id":"tt-revise","issue_type":"task","priority":2,"labels":["verification:failed","plan:revise"]},
            {"id":"tt-revise-agreed","issue_type":"task","priority":2,"labels":["ux:agreed","verification:failed","plan:revise"]},
+           {"id":"tt-rework-back","issue_type":"task","priority":2,"labels":["verification:failed","needs-ui-decision"]},
            {"id":"tt-stale","issue_type":"task","priority":2,"labels":["verdict:stale","plan:revise"]},
            {"id":"tt-agreed-planned","issue_type":"task","priority":2,"labels":["ux:agreed","planned"]},
            {"id":"tt-agreed-held","issue_type":"task","priority":2,"labels":["ux:agreed","planning:Beast"]},
@@ -141,7 +142,7 @@ labelled='[{"id":"tt-plain","issue_type":"task","priority":2,"labels":[]},
 set_stub "$labelled"
 set_stub_for children '[]'
 ids="$(run ux | ids_of)"
-[ "$ids" = "tt-held tt-held-x tt-ideas tt-plain tt-revise " ] \
+[ "$ids" = "tt-held tt-held-x tt-ideas tt-plain tt-revise tt-rework-back " ] \
   || fail "the ux stage listed '$ids', not the five beads still needing a designer (a planning label holds nothing since cb-10d.2.2)"
 pass "the ux stage takes what is not yet agreed"
 
@@ -151,6 +152,16 @@ pass "the ux stage takes what is not yet agreed"
 # stage label still on, the bead is not a ux candidate here and IS a producer's in assignable-beads.
 case " $ids " in *" tt-revise-agreed "*) fail "the ux stage listed a plan:revise bead still carrying ux:agreed: '$ids'";; esac
 pass "a plan:revise bead is a ux candidate only without its stage label, which reopen-failed removes"
+
+# --- a rework bead sent back to UX is a ux candidate (cb-0elv.1) --------------------------------
+#
+# `producer-park … ux` and Cerebro's send-back strip the stage label and add `needs-ui-decision`,
+# but a bead reopened for a build fault also carries `verification:failed` with no `plan:revise`;
+# without this arm no queue at all would take it. A failed bead with neither `plan:revise` nor
+# `needs-ui-decision` (tt-failed) is still somebody else's.
+case " $ids " in *" tt-rework-back "*) ;; *) fail "a failed bead sent back to UX with needs-ui-decision was not listed: '$ids'";; esac
+case " $ids " in *" tt-failed "*) fail "a failed bead with neither plan:revise nor needs-ui-decision was listed: '$ids'";; esac
+pass "a rework bead sent back to UX is a ux candidate; a bare failed bead is not"
 
 # --- ux:none is the navigator's word that there is nothing to agree ------------------------------
 case " $ids " in *" tt-none "*) fail "the ux stage kept a bead filed as touching nothing a person sees: '$ids'";; esac

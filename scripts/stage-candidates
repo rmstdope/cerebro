@@ -111,7 +111,8 @@ if ! out="$(printf '%s' "$raw" | jq --arg mode "$mode" --arg stage "$stage_label
         | select((.labels // []) | index($skip)           | not)
         | select(held | not)
         | select(((.labels // []) | index("verification:failed") | not)
-                 or ((.labels // []) | index("plan:revise")))
+                 or ((.labels // []) | index("plan:revise"))
+                 or ((.labels // []) | index("needs-ui-decision")))
         | select((.labels // []) | index($stage) | not)
         | select((($by_id[.parent // ""] // {}).assignee // "") == "")
         | select([ (.dependencies // [])[]

@@ -11,7 +11,7 @@ which you can also run by hand as `/write-bead`, and `project-definition`, which
 run it yourself, once, in a blank repository (the README says when). The verifier, the reviewer and the architect carry their
 whole job in their agent file. You do not need to read any of it to operate this.
 
-![The Cerebro fleet: the humans it answers to, nine agent roles, the bead board and the fleet view](cerebro-fleet.svg)
+![The Cerebro fleet: the humans it answers to, eight agent roles, the bead board and the fleet view](cerebro-fleet.svg)
 
 *The whole thing on one page. Regenerate with `python3 docs/cerebro-fleet.py` when a role or a flow
 changes — the SVG is generated, not drawn by hand.*
@@ -40,8 +40,9 @@ is the one place the route is written. Two rules hold it together, and both are 
 
 ## Who is in the fleet
 
-Eight roles. Seven are interactive sessions you talk to; the eighth is the producer, of which
-your project's roster declares as many as it wants.
+Eight roles. Six are interactive sessions started for a trigger and ended after their pass; two
+are builders, the bugfixer and the producer, each started with one bead claimed for it. Your
+project's roster declares as many producers as it wants.
 
 | Agent | Role | Runs on | What it is for |
 |---|---|---|---|
@@ -211,9 +212,11 @@ pass, keeps ownership by assignee (not claim), and restarts it when its queue ne
 **You** start producers — one session each, `s` in the fleet view or `launch <Name>` in a
 terminal — unless their `.cerebro/roster.conf` line says `autostart`, in which case the fleet view
 starts them for you as it opens. `standby` on a producer row arms it without starting it, and a
-UX-agreed, unclaimed bead is what starts it. There is no flag that puts a running producer to work: **a
-running producer is a working one**, and it claims the next agreed bead as soon as one exists. If you want another
-producer, start another session.
+bead a producer can take is what starts it, claimed for it by the fleet view before the session
+exists. There is no flag that puts a running producer to work: **a running producer is a working
+one**, on the one bead it was handed, and it ends when that bead is delivered; the fleet view starts
+a fresh one under the same name for the next. If you want another producer running at once, start
+another session.
 
 Producers carry the names your project declares in `.cerebro/roster.conf`, so that a fleet of
 them can be talked about without anyone counting session hashes. Declare none and you get
@@ -238,8 +241,8 @@ however long that takes. **A question waits until it is answered** (cb-0q1): no 
 into a waiting session, hands its bead to your queue, ends its pass or retires it, and Health and
 History say nothing about it either, so a waiting session never reads as a fleet running slowly.
 
-**The same is true of every interactive role** — Xavier, Beast, Cerebro, Moira, Psylocke, Cypher and
-Forge. Come back to a half-finished interview and you resume the conversation rather than restart
+**The same is true of every other role** — Xavier, Beast, Cerebro, Moira, Psylocke, Cypher, Forge and
+Bishop. Come back to a half-finished interview and you resume the conversation rather than restart
 from a written summary.
 
 That is a trade worth knowing before you step away: a session can sit occupied all afternoon, and a
@@ -597,10 +600,12 @@ Everything waiting on you, from every agent and every terminal, in one place:
 bd human list
 ```
 
-Beads arrive there for four reasons: a producer found the work itself in question (`producer-park
-… scope`); a user-facing question went unanswered while a UX agent was working on it; the review
-sub-agent could not be spawned or returned nothing usable; or CI stayed red after three attempts.
-The bead says which in its notes. A UX question a producer hits does not come to you: it goes
+Beads arrive there for six reasons: a producer found the work itself in question (`producer-park
+… scope`); a user-facing question went unanswered while a UX agent was working on it; a builder
+found its prepared tree missing, or a review finding about the approach it may not decide; the
+review sub-agent could not be spawned or returned nothing usable three times; CI stayed red past
+its budget; or Moira found the GitHub issue closed by hand while the bead was open. The bead says
+which in its notes. A UX question a producer hits does not come to you: it goes
 straight back to the UX agent.
 
 To put one back into circulation after you have answered, or ask Cerebro to:
@@ -685,18 +690,22 @@ Honest numbers from building this repository's own harness:
 
 ## When something goes wrong
 
-**An agent died and its bead is stuck.** A crashed session leaves its bead claimed and invisible.
-After about fifteen minutes of silence:
+**An agent died and its bead is stuck.** A crashed builder leaves its bead claimed. The fleet view
+notices the session is gone: if the bead's work is already on main it closes the bead, and
+otherwise it **keeps the claim and the worktree for a person**, since unpushed work may be in that
+tree, and logs why. Cerebro brings every kept claim to you on its sweep with a recommendation;
+unclaiming is your call, and once unclaimed the bead is offered to the next producer, which
+resumes from its design:
 
 ```bash
-bd reclaim --id <bead> --older-than 10m
-git worktree remove --force .cerebro/worktrees/<bead>
+bd unclaim <id>                                           # after reading the worktree
+git worktree remove --force .cerebro/worktrees/<bead>    # only when nothing in it is lost
 git worktree prune
 ```
 
-Only ever by `--id`. Without it, that command reaps every stale claim on the machine, including from
-an agent that is merely busy. The fleet view's **Sweeps** section finds these for you and `x` runs
-the exact command after confirming.
+`bd reclaim --id <bead> --older-than 10m` does the same for a lease that expired unheartbeated,
+and only ever by `--id`: without it, that command reaps every stale claim on the machine, including
+one an agent is merely busy on.
 
 **A bead is stuck in "Being planned" and nobody is planning it.** It is a bead assigned to a session
 that has ended, and the fleet view gives it back within a tick. By hand:

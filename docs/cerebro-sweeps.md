@@ -28,8 +28,8 @@ its ERT case with it; they are one rule in two places, and this is the half that
 A session that is gone while it still holds something is reconciled by the fleet view, every tick,
 with no sweep and no keypress:
 
-- **A gone implementer's claim** goes to `scripts/release-bead --ended`. When
-  `scripts/bead-delivery.sh` finds its work on main the bead is closed, as that implementer, with
+- **A gone builder's claim** goes to `scripts/release-bead --ended`. When
+  `scripts/bead-delivery.sh` finds its work on main the bead is closed, as that builder, with
   the fleet view named in the reason; otherwise it is kept, and nothing is written.
 - **Its worktree** goes to `scripts/release-bead --worktree`, which removes it only when nothing in it
   can be lost, and otherwise keeps it.
@@ -55,9 +55,9 @@ it is stale enough, and `x` runs the `bd close` shown, on confirmation. `cerebro
 enforces the ten-minute-since-last-child guard below; this prose is what it was built from.
 
 The third thing a sweep looks for, and the cheapest. An epic is nothing but its children: when the
-last one closes there is no work left under it, and the implementer that closed that child is meant
-to close the epic too (see `implement-bead`). It is the same seconds-wide gap as the claim above —
-an implementer that dies, or one that ran before that rule existed, leaves an epic open with every
+last one closes there is no work left under it, and the builder that closed that child is meant
+to close the epic too (see `produce-bead`, *Finishing*). It is the same seconds-wide gap as the claim above —
+a builder that dies, or one that ran before that rule existed, leaves an epic open with every
 child closed, sitting on `bd ready` and in every count of open work as a bead nobody can build.
 Two epics here were both found this way, at 2/2 children closed.
 
@@ -71,7 +71,7 @@ bd epic status --eligible-only --json | jq -r '.[] | "\(.epic.id)\t\(.closed_chi
 delivery to make here and none of the on-main test above applies. Two checks before closing:
 
 - **Nothing closed in the last ten minutes.** `bd children <epic> --json` and look at the most
-  recently closed child: an implementer closes its parent within seconds of the child, so a fresh
+  recently closed child: a builder closes its parent within seconds of the child, so a fresh
   close is an agent mid-cleanup and the epic is about to close itself.
 - **The count is the whole test, and the epic's own status is `open`.** Do not read the epic's scope
   and form a view on whether it is *really* finished — if there is work left it belongs in an open
@@ -80,7 +80,7 @@ delivery to make here and none of the on-main test above applies. Two checks bef
 Then, per epic:
 
 ```bash
-bd close <id> --reason "All children closed; closed by Cerebro, the implementer did not"
+bd close <id> --reason "All children closed; closed by Cerebro, the builder did not"
 bd dolt push
 ```
 
@@ -92,12 +92,12 @@ objection this file makes to `bd reclaim` without `--id`. Let bd find them; deci
 missed. That has not happened here — every parent in this database is an epic — but if you meet one,
 it is the same test by hand: `bd children <parent> --json`, all `closed`, close the parent.
 
-**Report every epic you closed**, with the same reasoning as a claim: it means an implementer did
+**Report every epic you closed**, with the same reasoning as a claim: it means a builder did
 not finish its own tidying, and the navigator wants to know. A pass that found none stays silent.
 
 **Psylocke reopens a closed parent chain when a failed verification reopens a child** (see
-`agents/verifier.md`), and the implementer that eventually re-closes that child re-closes the parent
-on its way out, the same as any other bead (see `implement-bead`). Neither of those fights this sweep
+`agents/verifier.md`), and the builder that eventually re-closes that child re-closes the parent
+on its way out, the same as any other bead (see `produce-bead`, *Finishing*). Neither of those fights this sweep
 — the "all children closed, nothing closed in the last ten minutes" test above already leaves a
 parent alone for as long as one child is genuinely open, reopened or not.
 
@@ -113,10 +113,10 @@ The fifth thing a sweep looks for, and the most damaging of the family, because 
 *highest-priority* work specifically. A bead reopened by a failed verification comes back
 `status=open` — **no lease** — but still naming its old assignee, and an open bead carrying an
 assignee is then never taken by `bd ready --claim`. It sits at the top of the queue looking
-perfectly healthy while every implementer walks past it.
+perfectly healthy while every builder walks past it.
 
 It happened twice within half an hour on 2026-08-23, and both times to a **P0**: each bead named an
-implementer that was demonstrably building something else at the time. One of them sat 32 minutes
+builder that was demonstrably building something else at the time. One of them sat 32 minutes
 while the session it named finished a different bead and then took a **P1** below it. Both were
 found only because a planner read `bd ready` by hand. Nothing in the fleet was looking, which is why a
 stranded **P0**'s Sweeps line renders in the `warning` face — the same face an `asking` session's
@@ -138,7 +138,7 @@ Four guards, each of which is a case the sweep must stay out of:
 - **The assignee is not a roster name.** Somebody assigned it by hand, and undoing a deliberate
   assignment is not the fleet view's to do.
 - **A live session is on this very bead.** It is a moment from claiming it; clearing the assignee
-  under it would achieve nothing and read as the fleet view fighting an implementer.
+  under it would achieve nothing and read as the fleet view fighting a builder.
 - **The bead was touched inside `cerebro-stale-assignee-minutes`** (ten, one sweep cycle, so a bead
   is effectively seen twice before it is offered). A bead somebody has just touched is one somebody
   is attending to. The clock is `updated_at`, and an edit resets it — which is right, and is also
@@ -150,14 +150,15 @@ running cannot be about to claim anything, so that case falls straight through t
 **What this buys, and what it does not.** Clearing the assignee makes the bead pickable, which on
 the reopen path is the difference between a P0 being built and a P0 being walked past. It does
 **not** answer why the assignee was left behind in the first place — whether that is `bd`, the
-reopen path in `agents/verifier.md`, or an implementer's own exit is a separate question and a
+reopen path in `agents/verifier.md`, or a builder's own exit is a separate question and a
 better fix. This sweep is a net, not a cure. Report every assignee you cleared and who it named, so
 the navigator can see the pattern rather than only its symptom.
 
 ## Failed verdicts main has moved past
 
 **The fleet view detects these too**, on the same ten-minute timer as the other four:
-`sweep-verdicts.sh` reports every `open` bead carrying `verification:failed` and not already
+`sweep-verdicts.sh` reports every `open` bead carrying `verification:failed` and `second-look` (a
+producer's word that nothing is left to build, so nobody else is routed to hold it) and not already
 carrying `verdict:stale`, the Sweeps section shows a line for each whose verdict main has moved past,
 and `x` runs the `bd set-state <id> verdict=stale` shown, on confirmation.
 `cerebro--verdict-finding` enforces the guards below; this prose is what it was built from.
@@ -173,7 +174,7 @@ Three beads in one project on 2026-08-23, all within a day:
 
 | Verdict was | What landed after | Cost |
 |---|---|---|
-| 4 merges behind | A sibling bead carrying exactly the wording the verification had called the sharper half | An implementer claimed it as a P0, found nothing to build, handed it back — two sessions and a planner pass |
+| 4 merges behind | A sibling bead carrying exactly the wording the verification had called the sharper half | A builder claimed it as a P0, found nothing to build, handed it back — two sessions and a planner pass |
 | 2 merges behind | A sibling that shipped the asked-for behaviour outright | Closed unbuilt |
 | 6 merges behind | Two later beads | A planner audit that found the shipped code matched the plan exactly, and named two causes that were both *correct behaviour* introduced after the verdict |
 
@@ -202,13 +203,13 @@ Three guards, each of which is a case the sweep must stay out of:
   would have missed the two-merge case above, one of the three this was filed for.
 
 Note what is *not* a guard: whether any of those merges touched the files this bead's plan names.
-The cheap question is deliberate — it errs toward a second look rather than toward an implementer
+The cheap question is deliberate — it errs toward a second look rather than toward a builder
 building a no-op — and a mockup commit counts like any other, because the question is *has main
 moved*, not *was this bead delivered*.
 
 **What this buys, and what it does not.** Flagging takes the bead out of the two queues that would
-act on a stale verdict — `implement-bead`'s pickup and `plan-bead`'s candidate queries both exclude
-`verdict:stale` — and puts it at the top of Psylocke's next pass, which takes a stale bead first
+act on a stale verdict — every builder and UX queue (`assignable-beads`, `bugfix-candidates`,
+`stage-candidates`) excludes `verdict:stale` — and puts it at the top of Psylocke's next pass, which takes a stale bead first
 because re-reading a finding against current main is the cheapest verification there is. It does
 **not** decide whether the verdict still holds: only Psylocke and the navigator do that. Nothing is
 destroyed either — the verdict, the notes and the plan all stay exactly as written, which is why the

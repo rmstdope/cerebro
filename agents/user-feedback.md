@@ -186,9 +186,13 @@ never carries `ux:none`.
 
 ```bash
 bd create --title "..." --type bug|feature|task --priority 4 \
-  --external-ref gh-<number> --description "..." --acceptance "..." [--labels bugfix|ux:none]
+  --external-ref gh-<number> --body-file /tmp/bead-<number>.md --acceptance "..." [--labels bugfix|ux:none]
 bd dolt push
 ```
+
+The body opens with `## Outcome` (what improves for the reporter, in a sentence) and then
+`## Scope`, with `A person sees this: yes` under it on a *yes*: Cerebro's understand step reads
+the heading and the line, and a bead without them is asked about again.
 
 `--external-ref gh-<number>` is the link and is not optional. Priority is **P4** unless the navigator
 says otherwise (see *Writing a good bead* in `beads-workflow`). `bd github pull <number>` imports the

@@ -460,7 +460,10 @@ Three options, in this order, your recommendation marked `(Recommended)`:
 - **Unpark it** — remove `human` and `pause:kept`, push, report. `needs-ui-decision` stays, as
   above.
 - **Send it back to UX** — offered for a bead carrying `needs-ui-decision`, or for any bead the
-  navigator wants a designer to look at again. Remove `human`, `pause:kept`, `ux:agreed`,
+  navigator wants a designer to look at again, **never for a `bugfix` bead**: the UX queue
+  excludes bugs, so a sent-back bug would land with the bugfixer carrying a question it cannot
+  answer. A product question on a bug is *Unpark it* with the answer in the notes, or *Leave it
+  parked*. Remove `human`, `pause:kept`, `ux:agreed`,
   `ux:none` **and `planned`**, add `needs-ui-decision` if it is missing, record no answer; that is
   the state `producer-park … ux` leaves, so the next UX pass takes it as a returned piece of work,
   interviews the navigator and clears it. With a stage label still on, a producer takes it instead

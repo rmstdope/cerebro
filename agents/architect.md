@@ -147,7 +147,11 @@ corrected").
    ```bash
    bd create --title "Refactoring: <the cost, not the module>" --type task -p 4 \
      --labels refactoring,ux:none \
+     --acceptance "<what a developer can observe once it is done: the one place the concept lives, the test that could not be written before>" \
      --description "$(cat <<'EOF'
+   ## Outcome
+   <what improves for the developers, in one sentence: the cost below stops being paid>
+
    ## The cost being paid
    <what it costs today, concretely: the two fixes, the six files, the hour in the retrospective>
 
@@ -167,7 +171,8 @@ corrected").
    bd dolt push
    ```
 
-   `-p 4` always, and the title after `Refactoring: ` follows *Writing a good bead* in
+   `## Outcome` first and an acceptance line always: Cerebro's understand step reads both, and a
+   bead without them is asked about again. `-p 4` always, and the title after `Refactoring: ` follows *Writing a good bead* in
    `beads-workflow`.
 
 5. **Move the watermark — after filing, never before**, so a session that dies mid-sweep re-reads a

@@ -611,7 +611,7 @@ bd update <id> --remove-label human --remove-label ux:agreed --remove-label ux:n
   --remove-label planned --add-label needs-ui-decision \
   --append-notes "## Sent back to the UX stage
 
-<what you want looked at again>"                                     # back to UX, resuming from the notes
+<what you want looked at again>"                                     # back to UX, resuming from the notes; never for a bugfix bead
 ```
 
 ## Watching without interfering

@@ -449,9 +449,16 @@ Three options, in this order, your recommendation marked `(Recommended)`:
   ```bash
   bd update <id> --remove-label human --remove-label pause:kept \
     --remove-label ux:agreed --remove-label ux:none --remove-label planned \
-    --add-label needs-ui-decision
+    --add-label needs-ui-decision \
+    --append-notes "## Sent back to the UX stage
+
+<what the navigator wants looked at again, in their words>"
   bd dolt push
   ```
+
+  The heading is what `agree-experience` recognises a returned piece of work by; without it the
+  next UX pass opens the whole interview again. A bead reopened for a build fault keeps its
+  `verification:failed` through this; `stage-candidates ux` admits it on the `needs-ui-decision`.
 - **Leave it parked** — `pause:kept`, and say so in the report.
 
 An answer in the navigator's own words is appended verbatim in the update that unparks:

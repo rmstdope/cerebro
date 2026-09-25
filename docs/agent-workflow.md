@@ -601,7 +601,10 @@ To put one back into circulation after you have answered, or ask Cerebro to:
 ```bash
 bd update <id> --remove-label human                                  # back to whoever held it
 bd update <id> --remove-label human --remove-label ux:agreed --remove-label ux:none \
-  --remove-label planned --add-label needs-ui-decision               # back to UX, resuming from the notes
+  --remove-label planned --add-label needs-ui-decision \
+  --append-notes "## Sent back to the UX stage
+
+<what you want looked at again>"                                     # back to UX, resuming from the notes
 ```
 
 ## Watching without interfering

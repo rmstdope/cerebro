@@ -120,6 +120,7 @@ while IFS= read -r bead; do
   entries+=("$entry")
 done < <(jq -c '.[]
   | select((.labels // []) | index("verification:failed"))
+  | select((.labels // []) | index("second-look"))
   | select(((.labels // []) | index("verdict:stale")) | not)' <<<"$bd_output")
 
 if [[ ${#entries[@]} -eq 0 ]]; then

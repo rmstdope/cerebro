@@ -65,21 +65,27 @@ absent_sha="0000000000000000000000000000000000000000"
 cat > "$beads_file" <<JSON
 [
   {"id": "ah-aaa", "title": "verdict main has moved past", "priority": 0,
-   "status": "open", "labels": ["verification:failed"],
+   "status": "open", "labels": ["verification:failed", "second-look"],
    "metadata": {"verified_at": "$verdict_sha"}},
   {"id": "ah-bbb", "title": "no metadata at all", "priority": 2,
-   "status": "open", "labels": ["verification:failed"]},
+   "status": "open", "labels": ["verification:failed", "second-look"]},
   {"id": "ah-ccc", "title": "commit not in this clone", "priority": 2,
-   "status": "open", "labels": ["verification:failed"],
+   "status": "open", "labels": ["verification:failed", "second-look"],
    "metadata": {"verified_at": "$absent_sha"}},
   {"id": "ah-ddd", "title": "commit not on the branch", "priority": 1,
-   "status": "open", "labels": ["verification:failed"],
+   "status": "open", "labels": ["verification:failed", "second-look"],
    "metadata": {"verified_at": "$off_branch_sha"}},
   {"id": "ah-eee", "title": "already flagged", "priority": 0,
-   "status": "open", "labels": ["verification:failed", "verdict:stale"],
+   "status": "open", "labels": ["verification:failed", "second-look", "verdict:stale"],
    "metadata": {"verified_at": "$verdict_sha"}},
   {"id": "ah-fff", "title": "passed, not failed", "priority": 0,
    "status": "open", "labels": ["verification:passed"],
+   "metadata": {"verified_at": "$verdict_sha"}},
+  {"id": "ah-ggg", "title": "a rebuild already queued for a producer", "priority": 0,
+   "status": "open", "labels": ["verification:failed", "ux:agreed", "planned"],
+   "metadata": {"verified_at": "$verdict_sha"}},
+  {"id": "ah-hhh", "title": "a rebuild already queued for UX", "priority": 0,
+   "status": "open", "labels": ["verification:failed", "plan:revise"],
    "metadata": {"verified_at": "$verdict_sha"}}
 ]
 JSON
@@ -90,6 +96,15 @@ out="$(cd "$consumer" && "$sweep" --json)" || fail "sweep-verdicts.sh --json exi
 jq -e . >/dev/null 2>&1 <<<"$out" || fail "output is not JSON: $out"
 
 field() { jq -r --arg id "$1" '.[] | select(.id == $id) | .'"$2" <<<"$out"; }
+
+# --- only a bead nobody else holds is a candidate (cb-0elv.3) -----------------------------------
+#
+# A failed bead already queued for a producer (rework) or for UX (plan:revise) is being acted on;
+# a "recheck" finding would let `x` pull it off that queue with `verdict:stale`. The sweep lists
+# only beads carrying `second-look`, which is the producer's word that nothing is left to build.
+[[ -z "$(field ah-ggg id)" ]] || fail "ah-ggg: a rebuild queued for a producer was listed"
+[[ -z "$(field ah-hhh id)" ]] || fail "ah-hhh: a rebuild queued for UX was listed"
+pass "a rebuild somebody is routed to hold is never a verdict-sweep candidate"
 
 # --- a failed verdict is emitted, with all five fields ------------------------------------------
 [[ "$(field ah-aaa title)" == "verdict main has moved past" ]] \

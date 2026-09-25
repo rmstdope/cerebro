@@ -242,10 +242,11 @@ pub struct TriggerFacts {
     /// view hands a planning session (`bead_for`) and what its condition reads are this one list,
     /// so a session is never started for a bead it cannot be given (cb-10d.2.2).
     pub planning_candidates: BTreeMap<String, Vec<Candidate>>,
-    /// How many unplanned, unparked beads a producer could take - the `ux` role's own buffer.
-    /// `ux:agreed` and `ux:none` both count: they sit in the same bucket (`model::past_ux_stage`)
-    /// and both feed a producer, so filing invisible work fills this buffer exactly as agreeing an
-    /// experience does. NO P4 filter, exactly as `planned` has none.
+    /// How many beads the next producer could be handed - the `ux` role's own buffer. It is the
+    /// length of `assignable_ids`, which is `scripts/assignable-beads`' answer minus what is
+    /// spoken for: ranked, unblocked, `ux:agreed` or `ux:none`, the second look excluded, planned
+    /// rework included. Counting the Ready-to-produce bucket instead let a backlog of unranked
+    /// `ux:none` beads read as a full buffer while no producer could be started (cb-f43t.2).
     pub ux_agreed: usize,
     /// How many planned, unclaimed, unparked beads there are.
     pub planned: usize,
@@ -326,10 +327,11 @@ impl TriggerFacts {
         gh: GhAnswer,
         ux_multiple: usize,
     ) -> Self {
-        let agreed: Vec<_> = buckets
-            .ux_agreed
+        let assignable_ids: Vec<String> = buckets
+            .assignable
             .iter()
-            .filter(|bead| !parked(&bead.labels))
+            .filter(|id| !spoken_for.contains(*id))
+            .cloned()
             .collect();
         let planned: Vec<_> = buckets
             .planned
@@ -387,13 +389,8 @@ impl TriggerFacts {
             undesigned_revisions,
             planning_candidates,
             planned: planned.len(),
-            ux_agreed: agreed.len(),
-            assignable_ids: buckets
-                .assignable
-                .iter()
-                .filter(|id| !spoken_for.contains(*id))
-                .cloned()
-                .collect(),
+            ux_agreed: assignable_ids.len(),
+            assignable_ids,
             bugfixable_ids: buckets
                 .bugfixable
                 .iter()
@@ -1043,9 +1040,20 @@ mod tests {
     }
 
     fn facts_for(beads: Vec<Bead>, candidates: &[(&str, Vec<(&str, u8)>)]) -> TriggerFacts {
+        facts_with_assignable(beads, candidates, &[])
+    }
+
+    /// `facts_for`, with `scripts/assignable-beads`' answer supplied too: the UX buffer counts
+    /// that list (cb-f43t.2), and a partition alone cannot say what the script would offer.
+    fn facts_with_assignable(
+        beads: Vec<Bead>,
+        candidates: &[(&str, Vec<(&str, u8)>)],
+        assignable: &[&str],
+    ) -> TriggerFacts {
         let roster = roster(&[("Xavier", "ux"), ("Cyclops", "producer")]);
         let mut buckets = partition_beads(beads);
         buckets.candidates = cands(candidates);
+        buckets.assignable = assignable.iter().map(|id| id.to_string()).collect();
         TriggerFacts::derive(&buckets, &roster, &BTreeSet::new(), |_| false, GhAnswer::Unanswered, 1)
     }
 
@@ -1093,7 +1101,7 @@ mod tests {
     /// work is waiting for a producer.
     #[test]
     fn the_ux_role_starts_while_the_agreed_queue_is_short() {
-        let facts = facts_for(
+        let facts = facts_with_assignable(
             vec![
                 bead("cb-u1", "open", &[], 2),
                 bead("cb-u2", "open", &[], 2),
@@ -1101,20 +1109,42 @@ mod tests {
                 bead("cb-a1", "open", &["ux:agreed"], 2),
             ],
             &[("ux", vec![("cb-u1", 2), ("cb-u2", 2), ("cb-u3", 2)])],
+            &["cb-a1"],
         );
         assert_eq!(facts.ux_want(), 2);
         assert_eq!(condition(&facts, &agent_of("ux")), Some("UX 1 of 2".to_string()));
     }
 
+    /// The buffer is what a producer can be handed, which is `scripts/assignable-beads`' answer
+    /// and not the Ready-to-produce bucket: that bucket has no P4 filter, so a backlog of
+    /// unranked `ux:none` beads read as a full buffer and no UX agent was started while the
+    /// producer list was empty (cb-f43t.2).
+    #[test]
+    fn unranked_invisible_beads_do_not_fill_the_ux_buffer() {
+        let facts = facts_with_assignable(
+            vec![
+                bead("cb-n1", "open", &["ux:none"], 4),
+                bead("cb-n2", "open", &["ux:none"], 4),
+                bead("cb-n3", "open", &["ux:none"], 4),
+                bead("cb-u1", "open", &[], 2),
+            ],
+            &[("ux", vec![("cb-u1", 2)])],
+            &[],
+        );
+        assert_eq!(facts.ux_agreed, 0);
+        assert_eq!(condition(&facts, &agent_of("ux")), Some("UX 0 of 2".to_string()));
+    }
+
     #[test]
     fn the_ux_role_takes_a_p0_before_the_queue() {
-        let facts = facts_for(
+        let facts = facts_with_assignable(
             vec![
                 bead("cb-p0", "open", &[], 0),
                 bead("cb-a1", "open", &["ux:agreed"], 2),
                 bead("cb-a2", "open", &["ux:agreed"], 2),
             ],
             &[("ux", vec![("cb-p0", 0)])],
+            &["cb-a1", "cb-a2"],
         );
         assert_eq!(
             condition(&facts, &agent_of("ux")),
@@ -1125,7 +1155,8 @@ mod tests {
 
     #[test]
     fn the_ux_role_is_held_when_nothing_is_undesigned() {
-        let facts = facts_for(vec![bead("cb-a1", "open", &["ux:agreed"], 2)], &[("ux", vec![])]);
+        let facts =
+            facts_with_assignable(vec![bead("cb-a1", "open", &["ux:agreed"], 2)], &[("ux", vec![])], &["cb-a1"]);
         assert_eq!(condition(&facts, &agent_of("ux")), None);
         assert_eq!(
             standby_label("ux", &facts, agent_of("ux"), at(0)),
@@ -1149,8 +1180,18 @@ mod tests {
                 ("Storm", "producer"),
                 ("Gambit", "producer"),
             ]);
+            // What `assignable-beads` would print for this board: the ranked agreed beads.
+            let assignable: Vec<String> = beads
+                .iter()
+                .filter(|b| {
+                    b.labels.iter().any(|l| l == "ux:agreed" || l == "ux:none") && b.priority != Some(4)
+                })
+                .map(|b| b.id.clone())
+                .collect();
+            let mut buckets = partition_beads(beads);
+            buckets.assignable = assignable;
             TriggerFacts::derive(
-                &partition_beads(beads),
+                &buckets,
                 &roster,
                 &std::collections::BTreeSet::new(),
                 |_| false,

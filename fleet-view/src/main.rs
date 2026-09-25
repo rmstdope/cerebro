@@ -5213,6 +5213,8 @@ mod main_tests {
             bead("cb-u1", Vec::new()),
         ]);
         buckets.candidates = [("ux".to_string(), vec![cerebro_tui::model::Candidate { id: "cb-u1".into(), priority: Some(2) }])].into_iter().collect();
+        // What `assignable-beads` would print for this board (cb-f43t.2): the UX buffer counts it.
+        buckets.assignable = vec!["cb-p1".into(), "cb-p2".into(), "cb-p3".into()];
         buckets
     }
 

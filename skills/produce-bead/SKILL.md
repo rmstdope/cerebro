@@ -22,12 +22,14 @@ claimed for you; `bugfix` beads stay with the bugfixer.
    Write those decisions to the bead's `design` field under the eight headings of *The plan*,
    below, then add `planned`. A missing `design` field
    or `planned` label is the normal producer input, never a reason to return it for build design.
-   A bead that already carries `planned` and a `design` is a producer's returned plan, never
-   redesigned from nothing: with `verification:failed` it is rework (the navigator saw the build
-   fail against a design that was judged right; read the dated failure note and amend the design in
-   place), otherwise a session died or the bead was unparked (read the notes, a `## Navigator's
-   answer` heading first, and the worktree's own log, then continue from the design). Keep
-   `planned` either way.
+   **A bead that already has a `design` is a producer's returned plan, never redesigned from
+   nothing**, whether or not `planned` is still on it (every park removes `planned`; a crash does
+   not). Read what shipped first, `git log origin/main -F --grep "(<id>):"`, so an increment main
+   already carries is skipped rather than redone. Then: with `verification:failed` it is rework
+   (the navigator saw the build fail against a design judged right; read the dated failure note and
+   amend the design in place); otherwise it was unparked or its session died (read the notes, a
+   `## Navigator's answer` heading first, and the worktree's own log, then continue from the
+   design, amending what the answer changes). Add `planned` back if it is missing.
    If the experience cannot be built as written because a genuine UX or scope decision is still
    needed, hand it on only through
    `.cerebro/cerebro/scripts/producer-park <name> <id> <ux|scope> "<what must be decided>"`.
@@ -82,7 +84,10 @@ both reading nothing.
 
    "None." under both for a bead with no user-facing surface, `ux:none` included.
 6. **Out of scope**: what a reader might assume is included and is not.
-7. **Validation**: the exact commands, and any human check, that prove the acceptance.
+7. **Validation**: the exact commands, and any human check, that prove the acceptance, opening
+   with the workload the preflight needs: `disk-preflight --workload rust` or
+   `disk-preflight --workload non-rust` (`scripts/assign-bead` reads that line; without it every
+   bead preflights as Rust).
 8. **Known traps**: the entries of `.cerebro/traps.md` this bead touches, with what the plan does
    about each, or "None.".
 
@@ -128,14 +133,26 @@ git diff --name-only -z "origin/$(.cerebro/cerebro/scripts/default-branch)...HEA
 .cerebro/cerebro/scripts/project-conf gate_full     # everything the project has
 ```
 
-If the classification says `rust` where the plan said otherwise, rerun `disk-preflight --workload
-rust` and use the private-target gate. A detected, undeclared gate is announced on stderr; read it.
-With no gate at all the launcher would have refused you, so an empty answer is a fault to report,
-never a licence to improvise one.
+The plan's *Validation* names the workload (`disk-preflight --workload rust` or `non-rust`); the
+fleet view ran that preflight before your tree was made. If the classification says `rust` where
+the plan said `non-rust`, run `.cerebro/cerebro/scripts/disk-preflight --workload rust` yourself
+before the gate, since the Rust build tree is what fills a disk. A detected, undeclared gate is
+announced on stderr; read it. With no gate at all the launcher would have refused you, so an empty
+answer is a fault to report, never a licence to improvise one.
+
+**Then run the plan's *Validation***, every command under that heading, and record its result in
+the PR body: the gate proves the tests, the validation proves the acceptance, and the verifier
+later runs the same commands. A validation that cannot pass is a plan that was wrong; amend the
+plan and say so, or hand back if the amendment is a decision you may not take.
 
 Then open the pull request under `beads-workflow` *Branch, commit and PR conventions*: the branch
-`<id>-short-description`, the subject `feat(<id>): …`, the body naming the bead and any deviation
-from the plan.
+`<id>-short-description`, the subject `feat(<id>): …`, the body naming the bead, the validation
+result, and any deviation from the plan.
+
+**A changed shared-root declaration is gated in a clone.** When the diff touches the consumer's
+`install`, `prewarm`, gate or `.cerebro/project.conf` lines, run the clone, submodule, install and
+fast-gate commands in a throwaway clone of the committed branch before the PR: your prepared tree
+proves nothing about a fresh checkout.
 
 ## Waiting, without ending your run
 
@@ -254,14 +271,23 @@ hand-back block**, three commands and never a chain:
 
 ```bash
 bd update <id> --remove-label planned --add-label human --append-notes "<what stopped it, and what would unblock it>" \
-  --set-metadata paused_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-bd unclaim <id>
+  --set-metadata paused_at=$(date -u +%Y-%m-%dT%H:%M:%SZ) --if-assignee <name>
+bd unclaim <id> --if-assignee <name>
 bd dolt push
 ```
 
-Why each command matters is `beads-workflow`, *The lifecycle a bead moves through*. It is the exit
-for: a bead that is not yours or has no tree; a review that could not be obtained three times; a
-red CI budget spent; a finding about approach, scope or the audience you may not decide. A genuine
+`--if-assignee <name>` on both: the block only ever releases your own claim. Why each command
+matters is `beads-workflow`, *The lifecycle a bead moves through*. It is the exit for: a bead with
+no tree; a review that could not be obtained three times; a red CI budget spent; a finding about
+approach, scope or the audience you may not decide. **A bead that is not yours** (another
+assignee, or not `in_progress`) is not handed back at all: say so in one line, touch nothing, and
+end the pass.
+
+**Asking instead of handing back.** For a question that genuinely blocks the bead you may ask
+the navigator: write `asking` with the bead and the current phase, ask plainly, and wait. No clock
+ends the question; the session, its claim and its worktree sit until somebody answers. Prefer a
+hand-back when the answer needs somebody awake or the bead can wait; handing back is always
+correct. A genuine
 UX or scope question is not a hand-back but `producer-park` (step 2). **One variation**: a bead
 carrying `verification:failed` that you hand back because there is **nothing left to implement**
 (the surface is already there, or another bead carries it) drops the `human` and the `paused_at`
@@ -270,8 +296,9 @@ lists it, every builder and UX queue refuses it, and Psylocke removes it when sh
 verdict. Nobody but this hand-back sets it:
 
 ```bash
-bd update <id> --remove-label planned --add-label second-look --append-notes "<why there is nothing to build>"
-bd unclaim <id>
+bd update <id> --remove-label planned --add-label second-look --append-notes "<why there is nothing to build>" \
+  --if-assignee <name>
+bd unclaim <id> --if-assignee <name>
 bd dolt push
 ```
 
@@ -306,8 +333,9 @@ README copy is lost with the worktree. The README is the format: **What happened
 "not established"), **Cost**, **Prevent by** (a file, a section, a step or a check; "be careful"
 is not a prevention), **Seen before**. Be specific enough to act on. **Record; do not fix**:
 changing the rules, the skills or CI is the navigator's, and Forge reads these files to propose
-it. A retrospective is a commit after the review, so it needs CI on the new head; decide whether
-its scope warrants a follow-up review before merging, as with any post-review change.
+it. A retrospective is a commit after the review, so it always needs CI on the new head (write
+`ci`, wait per *Waiting, without ending your run*); whether it also warrants a follow-up review is
+your call, as with any post-review change, and a `docs/`-only commit rarely does.
 
 ## Finishing
 
@@ -328,7 +356,7 @@ bd close <parent> --reason "All children closed; last was <id>, delivered in PR 
 ```
 
 An empty first line means no parent. Close the parent only when **every** child reads `closed`,
-then repeat one level up. A parent that plainly is not done stays open with `--append-notes`
+then repeat one level up; if the walk ran after the push, push again. A parent that plainly is not done stays open with `--append-notes`
 saying why; its scope is the navigator's. Say what you merged and anything the navigator should
 know, then finish: no second bead, no staying alive in case one appears.
 
@@ -379,6 +407,6 @@ Every write names your bead and pid:
 `.cerebro/cerebro/scripts/agent-state <name> working --bead <id> --phase <phase> --pid $PPID`.
 The phases, in order, are `design`, `build`, `gate`, `review`, `ci`, `rebase` and `merge`; a
 question is `asking` with the same bead and phase. `merge` covers the retrospective, the merge,
-the close and the cleanup; a retrospective that warrants a follow-up review goes back through
-`review` and `ci` first. Delivered, parked or handed back:
+the close and the cleanup; a retrospective goes back through `ci` first, and through `review`
+too when it warrants one. Delivered, parked or handed back:
 `.cerebro/cerebro/scripts/end-pass <name> --pid $PPID`, last.

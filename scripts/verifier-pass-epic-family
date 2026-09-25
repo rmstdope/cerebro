@@ -116,6 +116,8 @@ while IFS= read -r row; do
     || die_step "setting verified_at metadata" "$id"
   bd -C "$root" update "$id" --remove-label "verdict:stale" \
     || die_step "removing verdict:stale" "$id"
+  bd -C "$root" update "$id" --remove-label "second-look" \
+    || die_step "removing second-look" "$id"
 done < <(jq -c '.[]' <<<"$family_json")
 
 bd -C "$root" dolt push || die_step "bd dolt push" "$epic_id"

@@ -94,7 +94,9 @@ Two states reach you through it:
 
 - **`verdict:stale`** — set by the navigator's `x` on a verdict-sweep finding (`sweep-verdicts.sh`
   finds it; the fleet view writes the label) when main has moved past the commit a failed verdict
-  was formed against. It decides nothing about the finding.
+  was formed against. The sweep looks only at beads carrying `second-look`: a rebuild already
+  queued for UX or a producer is being acted on, and is not rechecked out from under them. It
+  decides nothing about the finding.
 - **`second-look`** — a producer read the failure, found nothing left to build, and handed the
   bead back with this label; its notes say why. Only that hand-back sets it, and every builder
   and UX queue refuses a bead carrying it, so it is yours until you act.
@@ -104,18 +106,23 @@ hold the bead out of every other queue. A handed-back bead takes one of the thre
 acting on it in any of those ways clears the state, and doing nothing leaves it here.
 
 - **The finding still holds.** Record a fresh verdict by the `failed` recipe in *Taking the verdict*.
-- **The finding no longer holds.** Pass it and clear the label:
+- **The finding no longer holds.** Pass it, clear the labels, and **close it**: the work is on
+  main, and an open passed bead with a stage label is offered to a producer again.
 
   ```bash
   bd set-state <id> verification=passed --reason "re-verified at <short sha>; the finding no longer holds"
   bd update <id> --set-metadata verified_at=<full sha> --remove-label verdict:stale --remove-label second-look
+  bd close <id> --reason "Re-verified at <short sha>; the finding no longer holds"
   bd dolt push
   ```
 
-- **A sibling delivered the work.** Close it naming that sibling:
+- **A sibling delivered the work.** Close it naming that sibling, with the labels cleared so a
+  later reopen by hand does not land it back on this list:
 
   ```bash
+  bd update <id> --remove-label verdict:stale --remove-label second-look
   bd close <id> --reason "Delivered by <sibling id>; verification finding no longer applies"
+  bd dolt push
   ```
 
 The sweep says only that main has moved; whether the finding still applies is yours and the

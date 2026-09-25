@@ -337,13 +337,14 @@ impl TriggerFacts {
             .filter(|bead| !parked(&bead.labels))
             .collect();
         let unranked_ids = unranked_ids(buckets);
+        // Not `paused`: `second-look-beads` skips `human`, so a parked stale bead is not on the
+        // list this count starts her for (cb-0elv.3).
         let stale_verdicts = [
             &buckets.claimed,
             &buckets.planned,
             &buckets.being_planned,
             &buckets.ux_agreed,
             &buckets.unplanned,
-            &buckets.paused,
             &buckets.second_look_beads,
         ]
         .into_iter()
@@ -1077,6 +1078,17 @@ mod tests {
         assert_eq!(facts.stale_verdicts, 1);
     }
 
+    /// A parked stale bead is the navigator's: `second-look-beads` skips `human`, so counting it
+    /// started Psylocke every five minutes for a list she could not see (cb-0elv.3).
+    #[test]
+    fn a_parked_stale_verdict_does_not_start_the_verifier() {
+        let facts = facts_for(
+            vec![bead("cb-parked", "open", &["human", "verification:failed", "verdict:stale"], 1)],
+            &[],
+        );
+        assert_eq!(facts.stale_verdicts, 0);
+    }
+
     /// The `ux` role's own queue is what it has NOT designed yet, and its buffer is how much
     /// work is waiting for a producer.
     #[test]
@@ -1437,7 +1449,7 @@ mod tests {
             bead("cb-decl", "open", &["triage:declined"], 4),
             bead("cb-rank", "open", &[], 4),
             bead("cb-park", "open", &["human"], 2),
-            bead("cb-stale", "open", &["human", "verdict:stale"], 0),
+            bead("cb-stale", "open", &["ux:agreed", "verdict:stale"], 0),
             bead("cb-p1", "open", &["planned"], 2),
             bead("cb-p2", "open", &["planned"], 2),
             bead("cb-done", "closed", &[], 2),
@@ -1461,7 +1473,8 @@ mod tests {
         );
         assert_eq!(facts.unranked_ids, vec!["cb-rank".to_string()]);
         assert_eq!(facts.merged_unverified, 1);
-        // A paused bead carrying `verdict:stale` is still a stale verdict.
+        // A stale verdict on a bead nobody has parked; a parked one is the navigator's and is
+        // not counted (cb-0elv.3), which `a_parked_stale_verdict_does_not_start_the_verifier` pins.
         assert_eq!(facts.stale_verdicts, 1);
         assert_eq!(facts.second_look, 0);
         assert_eq!(facts.implementers, 2);

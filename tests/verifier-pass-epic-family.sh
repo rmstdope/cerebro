@@ -86,6 +86,8 @@ fi
   || fail "verified_at was not written for every family member"
 [ "$(grep -cxF "ARG:verdict:stale" "$stub_dir/argv.update")" -eq 3 ] \
   || fail "verdict:stale was not removed for every family member"
+[ "$(grep -cxF "ARG:second-look" "$stub_dir/argv.update")" -eq 3 ] \
+  || fail "second-look was not removed for every family member (cb-0elv.3)"
 grep -qxF "ARG:dolt" "$stub_dir/argv.dolt" || fail "bd dolt push was not called"
 pass "records a passed epic family across epic and children"
 

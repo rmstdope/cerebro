@@ -130,6 +130,19 @@ for kind in build plan missing; do
 done
 pass "refuses parking for a non-UX, non-scope reason"
 
+# --- a bug bead is the bugfixer's, and never enters the UX route (cb-0elv.5) ---------------------
+#
+# `stage-candidates` excludes `bugfix`, so the `ux` branch would strand it; a product decision on
+# a bug is a `human` hand-back through produce-bead's *Handing back* block instead.
+reset '[{"id":"cb-x","status":"in_progress","assignee":"Bishop","labels":["bugfix","ux:none"]}]'
+status=0
+out="$(run Bishop cb-x ux "The expected behaviour is ambiguous" 2>"$work_dir/err")" || status=$?
+[[ $status -eq 1 && -z "$out" ]] || fail "a bugfix bead is refused, got $status: $out"
+! grep -qE "update|unclaim|dolt push" "$stub/bd.log" \
+  || fail "a bugfix bead is not changed"
+grep -q "bugfix" "$work_dir/err" || fail "the refusal names the bugfix route: $(cat "$work_dir/err")"
+pass "refuses a bugfix bead"
+
 # --- only the current producer can release the claimed bead -------------------------------------
 
 reset '[{"id":"cb-x","status":"in_progress","assignee":"Rogue","labels":["ux:agreed"]}]'

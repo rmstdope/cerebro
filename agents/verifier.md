@@ -436,7 +436,8 @@ step prose used to drop, and a reopened bead with an assignee is picked up by no
   planned bead only when `verification:failed` sits beside it).
 - **`--fault plan`**: `planned`, `ux:agreed` and `ux:none` come off and `plan:revise` goes on, so
   the bead is a UX candidate again; a `ux` agent revises the agreed experience in place and
-  re-adds `ux:agreed`.
+  re-adds `ux:agreed`. On a `bugfix` bead the script reads it as build and says so: a bug has no
+  agreed experience to revise, and its route never enters UX.
 
 `plan:revise` is what the `ux` stage looks for and you are the only role that sets it; removing
 `planned` alone means nothing to it. The script walks up closed ancestors, refuses a cycle, and is safe to

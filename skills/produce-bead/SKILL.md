@@ -118,18 +118,25 @@ navigator answers when present. An empty declaration is today's fleet: no gate, 
   `producer-park … ux`, never into the plan.
 - **`review`** — phase `review-gate`, after the sub-agent review is posted and every finding
   answered, and before the CI wait. The sub-agent pass runs first so what reaches the navigator
-  has been read once already. Ask for the review with the pull request's link, then poll GitHub
-  until the navigator has spoken, heartbeating inside the loop like any wait:
+  has been read once already. Note the newest review already on the pull request, ask for the
+  review with the pull request's link, then poll GitHub for a review **newer than that one** whose
+  state is a verdict, heartbeating inside the loop like any wait. The aggregate `reviewDecision`
+  is no use here: it stays `CHANGES_REQUESTED` after you push fixes until the navigator submits a
+  new review, so a loop keyed on it returns at once on every round after the first.
 
   ```bash
-  until d="$(gh pr view <n> --json reviewDecision -q .reviewDecision)" \
-        && [ "$d" = APPROVED -o "$d" = CHANGES_REQUESTED ]; do bd heartbeat <id>; sleep 30; done
+  reviews="repos/<owner>/<repo>/pulls/<n>/reviews"
+  last="$(gh api "$reviews" --jq '[.[] | select(.user.type != "Bot")] | last | .id // 0')"
+  until r="$(gh api "$reviews" --jq "[.[] | select(.id > $last and (.state == \"APPROVED\" or .state == \"CHANGES_REQUESTED\"))] | last")" \
+        && [ -n "$r" ] && [ "$r" != null ]; do bd heartbeat <id>; sleep 30; done
+  state="$(jq -r .state <<<"$r")"; last="$(jq -r .id <<<"$r")"
   ```
 
   `APPROVED` continues to `ci`. `CHANGES_REQUESTED` is a round of findings: every comment gets a
   change or a posted reply, as the sub-agent's did, then the sub-agent reads the delta if the
-  change warrants it, and the gate is asked again. The navigator's comments are answered on the
-  pull request, where they were made.
+  change warrants it, and the gate is asked again with `last` at the review just handled, so only
+  the navigator's next verdict ends the wait. The navigator's comments are answered on the pull
+  request, where they were made.
 - **`merge`** — phase `merge-gate`, after green checks and an approved review, in place of
   `gh pr merge`. The merge is the navigator's: park the bead for them with the pull request
   ready, release your claim and end the pass:

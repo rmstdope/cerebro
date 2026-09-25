@@ -423,6 +423,39 @@ out="$(run_preflight "$c" bugfixer Bishop 2>&1)" || status=$?
 grep -q "gate_fast" <<<"$out" || fail "bugfixer no gate: expected the message to name gate_fast, got: $out"
 pass "a bugfixer with no fast gate is refused, and the message names the gate"
 
+# --- the navigator's gates are checked at launch (cb-z719.1) ---------------------------------------
+#
+# `navigator_gates' names which of a producer's decisions the navigator takes part in: any of
+# plan, review, merge. A misspelt gate would silently gate nothing, which is worse than no gate, so
+# a builder is refused with the valid words named; an interactive role reads no gate and is never
+# checked.
+c="$(make_consumer gatesok)"
+printf 'gate_fast make check\nnavigator_gates review merge\n' > "$c/.cerebro/project.conf"
+run_preflight "$c" producer Cyclops || fail "gates review merge: expected exit 0"
+pass "a producer launches under a valid set of navigator gates"
+
+c="$(make_consumer gatesabsent)"
+echo "gate_fast make check" > "$c/.cerebro/project.conf"
+run_preflight "$c" producer Cyclops || fail "gates absent: expected exit 0"
+pass "a producer launches with no navigator gates declared"
+
+c="$(make_consumer gatesbad)"
+printf 'gate_fast make check\nnavigator_gates plann review\n' > "$c/.cerebro/project.conf"
+status=0
+out="$(run_preflight "$c" producer Cyclops 2>&1)" || status=$?
+[[ $status -eq 2 ]] || fail "gates misspelt: expected exit 2, got $status: $out"
+grep -q "plann" <<<"$out" || fail "gates misspelt: expected the message to name the bad word, got: $out"
+grep -q "plan, review, merge\|plan review merge" <<<"$out" || fail "gates misspelt: expected the message to name the valid words, got: $out"
+pass "a producer is refused under a misspelt navigator gate, and the message names the valid words"
+
+status=0
+out="$(run_preflight "$c" bugfixer Bishop 2>&1)" || status=$?
+[[ $status -eq 2 ]] || fail "gates misspelt, bugfixer: expected exit 2, got $status: $out"
+pass "a bugfixer is refused under a misspelt navigator gate too"
+
+run_preflight "$c" ux Xavier || fail "gates misspelt, ux: expected exit 0"
+pass "a UX agent is never checked against the navigator gates"
+
 # --- a UX agent with no fast gate still launches ----------------------------------------------------
 #
 # A UX agent, a verifier or the orchestrator has no gate to run; refusing them would take the whole

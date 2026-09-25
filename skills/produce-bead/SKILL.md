@@ -24,8 +24,8 @@ claimed for you; `bugfix` beads stay with the bugfixer.
    or `planned` label is the normal producer input, never a reason to return it for build design.
    **A bead that already has a `design` is a producer's returned plan, never redesigned from
    nothing**, whether or not `planned` is still on it (every park removes `planned`; a crash does
-   not). Read what shipped first, `git log origin/main -F --grep "(<id>):"`, so an increment main
-   already carries is skipped rather than redone. Then: with `verification:failed` it is rework
+   not). Read what shipped first, `git log "origin/$(.cerebro/cerebro/scripts/default-branch)" -F
+   --grep "(<id>):"`, so an increment main already carries is skipped rather than redone. Then: with `verification:failed` it is rework
    (the navigator saw the build fail against a design judged right; read the dated failure note and
    amend the design in place); otherwise it was unparked or its session died (read the notes, a
    `## Navigator's answer` heading first, and the worktree's own log, then continue from the

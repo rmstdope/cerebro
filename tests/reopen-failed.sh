@@ -277,6 +277,20 @@ argv_has_pair update --remove-label "ux:none" \
   || fail "plan-fault-flips-the-labels: ux:none was not removed (cb-b26a)"
 pass "plan-fault-flips-the-labels"
 
+# --- a bug has no agreed experience to revise (cb-0elv.5) ---------------------------------------
+#
+# `--fault plan` on a `bugfix` bead is read as build: the bugfixer route never went through UX, so
+# `plan:revise` would send it to a stage that excludes it, and there is no stage label to strip.
+reset_stub
+set_show '[{"id":"tt-a","status":"closed","parent":null,"labels":["bugfix","verification:failed"]}]'
+run tt-a --sha "$sha40" --notes "n" --fault plan
+[ "$status" -eq 0 ] || fail "plan-fault-on-a-bug: expected exit 0, got $status ($err)"
+grep -qxF "ARG:plan:revise" "$stub_dir/argv.update" \
+  && fail "plan-fault-on-a-bug: plan:revise was added to a bugfix bead"
+argv_has_pair update "--remove-label" "planned" \
+  && fail "plan-fault-on-a-bug: planned was removed from a bugfix bead"
+pass "plan-fault-on-a-bug is read as a build fault"
+
 # --- build-fault-touches-neither-label ----------------------------------------------------------
 #
 # The case that stops a sound plan being sent back for a rewrite.

@@ -43,6 +43,14 @@ if [[ "$status" != "in_progress" || "$assignee" != "$name" ]]; then
   echo "producer-park: $id is not in progress for $name" >&2
   exit 1
 fi
+if printf '%s' "$shown" \
+  | jq -e '(if type == "array" then .[0] else . end) | (.labels // [] | index("bugfix")) != null' \
+  >/dev/null; then
+  # The bugfix route never enters UX (`stage-candidates` excludes it), so neither branch here can
+  # take a bug anywhere; a product decision on a bug is a `human` hand-back (cb-0elv.5).
+  echo "producer-park: $id is a bugfix bead; a bug is handed back through produce-bead's Handing back block, never parked for UX" >&2
+  exit 1
+fi
 if ! printf '%s' "$shown" \
   | jq -e '(if type == "array" then .[0] else . end)
            | ((.labels // [] | index("ux:agreed")) != null) or ((.labels // [] | index("ux:none")) != null)' \

@@ -171,7 +171,14 @@ bd -C "$root" update "$bead" --remove-label "verdict:stale" \
 bd -C "$root" update "$bead" --remove-label "second-look" \
   || die_step "removing second-look" "$bead"
 
-if [[ "$fault" == "plan" ]]; then
+# A `bugfix` bead has no agreed experience to revise: its route never went through UX, and
+# `plan:revise` would send it to a stage that excludes it. `--fault plan` on one is read as build,
+# and said so (cb-0elv.5).
+is_bugfix="$(printf '%s' "$status_json" \
+  | jq -r '(if type=="array" then .[0] else . end) | (((.labels // []) | index("bugfix")) != null)')"
+if [[ "$fault" == "plan" && "$is_bugfix" == "true" ]]; then
+  echo "reopen-failed: $bead is a bugfix bead, which has no agreed experience to revise; reopened as a build fault for the bugfixer" >&2
+elif [[ "$fault" == "plan" ]]; then
   bd -C "$root" update "$bead" --remove-label planned --remove-label ux:agreed --remove-label ux:none \
       --add-label "plan:revise" \
     || die_step "the plan:revise label flip" "$bead"

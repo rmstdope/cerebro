@@ -15,7 +15,8 @@ Nothing merges red. Before delivery, a producer obtains and addresses one indepe
 of the complete diff and bead. If its changes are substantial enough to make another review useful,
 the producer chooses the right follow-up scope and obtains it; minor, self-contained answers need
 not create a review loop. Unresolved findings, a red or missing check, or a reviewer that cannot
-produce a usable result go to a person.
+produce a usable result go to a person. Whether the navigator also takes part in the plan, the
+review or the merge is `navigator_gates` in `.cerebro/project.conf`; absent means none.
 
 ## Work tracking
 

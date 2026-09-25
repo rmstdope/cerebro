@@ -31,7 +31,8 @@ Nothing merges red. Before delivery, a producer obtains and addresses one indepe
 of the complete diff and bead. If its changes are substantial enough to make another review useful,
 the producer chooses the right follow-up scope and obtains it; minor, self-contained answers need
 not create a review loop. Unresolved findings, a red or missing check, or a reviewer that cannot
-produce a usable result go to the navigator.
+produce a usable result go to the navigator. This repository declares no `navigator_gates`, so its
+producers decide the plan, obtain the review and merge on their own.
 
 ## Work tracking
 

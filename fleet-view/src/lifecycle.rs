@@ -798,12 +798,12 @@ impl GiveBack {
     pub fn notice(self, name: &str, bead: &str) -> String {
         match self {
             GiveBack::DidNotStart => {
-                format!("{name} did not start; {bead} is back with the planned work.")
+                format!("{name} did not start; {bead} is back on the board.")
             }
             GiveBack::NeverStarted => {
-                format!("{name} never started; {bead} is back with the planned work.")
+                format!("{name} never started; {bead} is back on the board.")
             }
-            GiveBack::Stopped => format!("{name} was stopped; {bead} is back with the planned work."),
+            GiveBack::Stopped => format!("{name} was stopped; {bead} is back on the board."),
             // No sentence was agreed for it, and none is owed: `App::finish_write` says nothing
             // for an empty text.
             GiveBack::Ended => String::new(),
@@ -1521,10 +1521,10 @@ mod tests {
         let paths = paths(root);
         for (answer, expected) in [
             ("released\n", Some(ReleaseOutcome::Returned {
-                text: "Rogue did not start; cb-x is back with the planned work.".into(),
+                text: "Rogue did not start; cb-x is back on the board.".into(),
             })),
             ("free\n", Some(ReleaseOutcome::Returned {
-                text: "Rogue did not start; cb-x is back with the planned work.".into(),
+                text: "Rogue did not start; cb-x is back on the board.".into(),
             })),
             ("elsewhere\n", Some(ReleaseOutcome::Elsewhere)),
             ("running\n", Some(ReleaseOutcome::Running)),
@@ -1555,15 +1555,15 @@ mod tests {
     fn the_give_back_sentences_are_exact() {
         assert_eq!(
             GiveBack::DidNotStart.notice("Rogue", "cb-4xz"),
-            "Rogue did not start; cb-4xz is back with the planned work."
+            "Rogue did not start; cb-4xz is back on the board."
         );
         assert_eq!(
             GiveBack::NeverStarted.notice("Rogue", "cb-4xz"),
-            "Rogue never started; cb-4xz is back with the planned work."
+            "Rogue never started; cb-4xz is back on the board."
         );
         assert_eq!(
             GiveBack::Stopped.notice("Rogue", "cb-4xz"),
-            "Rogue was stopped; cb-4xz is back with the planned work."
+            "Rogue was stopped; cb-4xz is back on the board."
         );
         let fake = FakeCommands::new(|_| Ok(b"what\n".to_vec()));
         assert_eq!(

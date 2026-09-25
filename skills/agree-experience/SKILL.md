@@ -192,7 +192,7 @@ Never a word from this repository; use the replacement:
 |---|---|
 | bead, ticket, issue | this piece of work |
 | mockup, HTML, artboard | drawing |
-| the implementer, the agent | whoever builds this / the person building it |
+| the producer, the agent | whoever builds this / the person building it |
 | commit, branch, pull request, worktree, the board | *nothing at all* — it is not mentioned |
 | label, field, status | filed / recorded |
 | the navigator | the team |

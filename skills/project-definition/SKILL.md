@@ -34,7 +34,7 @@ refuse (never do the setup):
 
 > This project already has work on its board — N open beads, the first three: `<id>` <title>,
 > `<id>` <title>, `<id>` <title>. Project definition is for a blank repository; new work goes on
-> that board as a bead, and a planner session plans it. Stopping here; nothing was written.
+> that board as a bead, and a UX session agrees it. Stopping here; nothing was written.
 
 **Other tracked files** — read every file found (over fifty: list by directory, read
 ten), then ask:
@@ -75,7 +75,7 @@ Follow up: environments; where data lives; who deploys, how often; what "down" m
 ### 3. What is it built with?
 
 > Which stacks are on the table? And which have you already ruled out, and why — the ruled-out ones
-> matter as much, because a planner will otherwise propose them.
+> matter as much, because a producer will otherwise decide them.
 
 Ask the ruled-out stacks **explicitly**. Follow up: language, framework, database, package manager,
 test runner. Then:
@@ -249,7 +249,7 @@ indented two spaces under their epic; the commit sha; then:
 >
 > ```bash
 > git push origin <default_branch>
-> .cerebro/cerebro/scripts/cerebro-tui  # then press s on a planner's row
+> .cerebro/cerebro/scripts/cerebro-tui  # then press s on a UX agent's row
 > ```
 
 No project summary.

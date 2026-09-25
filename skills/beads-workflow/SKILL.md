@@ -30,9 +30,10 @@ that agent before the session starts, choosing from:
 .cerebro/cerebro/scripts/assignable-beads            # what a builder may be given
 ```
 
-It excludes `human` (already waiting on the navigator), `epic` (a split parent, with children
-rather than a plan), `verdict:stale` (waiting for the verifier, not a builder), and `bugfix`
-(bug beads go to the bugfixer flow).
+It offers only a ranked bead (P0 to P3) carrying `ux:agreed` or `ux:none`, and excludes `human`
+(already waiting on the navigator), `epic` (a split parent, with children rather than a plan),
+`verdict:stale` and `second-look` (the verifier's), and `bugfix` (the bugfixer's own queue,
+`scripts/bugfix-candidates`, with the same rules).
 
 **`bugfix` is a routing label, not decoration.** A bead carrying it is worked by the `bugfixer`
 role directly and does not go through UX or the producer queue.

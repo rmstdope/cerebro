@@ -881,7 +881,7 @@ pub struct GhSnapshot {
 ///
 /// The port of `cerebro--linked-beads` (`emacs/cerebro.el:2240`). What Moira is started for
 /// besides an issue that moved: her other job is keeping each linked issue's status comments in
-/// step with its bead - CREATED, PLANNED, CLAIMED, MERGED, VERIFIED - and every one of those
+/// step with its bead - CREATED, RANKED, DESIGNED, CLAIMED, MERGED, VERIFIED - and every one of those
 /// happens on the board, so the issue's own `updatedAt` does not move for it. Without this the
 /// hourly floor was the only thing covering them, an hour late (cb-b4m).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]

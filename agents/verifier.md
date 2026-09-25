@@ -432,8 +432,8 @@ push; there is no second `bd dolt push`. Never retype its steps by hand: the ass
 step prose used to drop, and a reopened bead with an assignee is picked up by nobody.
 
 - **`--fault build`** (the default): `planned` stays, and **it adds `plan:revise` to nothing**. A
-  producer takes the bead as rework against the same design (`scripts/assignable-beads` offers a
-  planned bead only when `verification:failed` sits beside it).
+  producer takes the bead as rework against the same design (`scripts/assignable-beads` offers any
+  unclaimed bead with a stage label, `planned` or not; `produce-bead` resumes from the design).
 - **`--fault plan`**: `planned`, `ux:agreed` and `ux:none` come off and `plan:revise` goes on, so
   the bead is a UX candidate again; a `ux` agent revises the agreed experience in place and
   re-adds `ux:agreed`. On a `bugfix` bead the script reads it as build and says so: a bug has no

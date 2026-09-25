@@ -25,11 +25,13 @@ claimed for you; `bugfix` beads stay with the bugfixer.
    **A bead that already has a `design` is a producer's returned plan, never redesigned from
    nothing**, whether or not `planned` is still on it (every park removes `planned`; a crash does
    not). Read what shipped first, `git log "origin/$(.cerebro/cerebro/scripts/default-branch)" -F
-   --grep "(<id>):"`, so an increment main already carries is skipped rather than redone. Then: with `verification:failed` it is rework
-   (the navigator saw the build fail against a design judged right; read the dated failure note and
-   amend the design in place); otherwise it was unparked or its session died (read the notes, a
-   `## Navigator's answer` heading first, and the worktree's own log, then continue from the
-   design, amending what the answer changes). Add `planned` back if it is missing.
+   --grep "(<id>):"`, so an increment main already carries is skipped rather than redone. Then
+   read the notes, newest first: a `## Sent back to the UX stage` heading means the acceptance was
+   amended after this design was written, so reread the acceptance and amend the design to it; a
+   `## Navigator's answer` heading means a scope question was settled, so amend the design to the
+   answer; a dated failure note with neither means rework, the build failed against a design
+   judged right, so amend the design to the failure. Otherwise the session died: read the
+   worktree's own log and continue. Add `planned` back if it is missing.
    If the experience cannot be built as written because a genuine UX or scope decision is still
    needed, hand it on only through
    `.cerebro/cerebro/scripts/producer-park <name> <id> <ux|scope> "<what must be decided>"`.
@@ -215,7 +217,8 @@ bd dolt push
 
 *No findings.* is a complete review. **Every finding gets a change or a posted reply** naming it by
 number and saying why not; a finding can be wrong, and a reasoned reply is an answer. A finding
-about approach, scope or what the audience sees is a hand-back. A tool failure, an empty response,
+about what the audience sees goes to UX and one about scope to the navigator, both through
+`producer-park` (step 2); a finding about the approach you may not decide is a hand-back. A tool failure, an empty response,
 or one with neither findings nor an explicit no-findings verdict is unusable: retry that head up
 to three times, heartbeating between; after three, leave the PR open, record the attempts in the
 notes, hand back with `human`, and end the pass.
@@ -255,9 +258,11 @@ against main is a PR to close unmerged, and a bead to close as delivered by whoe
 
 Immediately before merging, all four together: a full review covered this bead's diff, you decided
 whether any later change needed a follow-up review, the head is neither behind under `strict` nor
-conflicting, and every required check on the current head is green. Then:
+conflicting, and every required check on the current head is green. Then write `merge`, which
+covers the merge, the close and the cleanup, and merge:
 
 ```bash
+.cerebro/cerebro/scripts/agent-state <name> working --bead <id> --phase merge --pid $PPID
 gh pr merge <n> --squash --delete-branch
 ```
 
@@ -279,7 +284,7 @@ bd dolt push
 `--if-assignee <name>` on both: the block only ever releases your own claim. Why each command
 matters is `beads-workflow`, *The lifecycle a bead moves through*. It is the exit for: a bead with
 no tree; a review that could not be obtained three times; a red CI budget spent; a finding about
-approach, scope or the audience you may not decide. **A bead that is not yours** (another
+the approach you may not decide. **A bead that is not yours** (another
 assignee, or not `in_progress`) is not handed back at all: say so in one line, touch nothing, and
 end the pass.
 
@@ -293,7 +298,10 @@ carrying `verification:failed` that you hand back because there is **nothing lef
 (the surface is already there, or another bead carries it) drops the `human` and the `paused_at`
 and adds `second-look`, the one label that makes it the verifier's: `scripts/second-look-beads`
 lists it, every builder and UX queue refuses it, and Psylocke removes it when she records a
-verdict. Nobody but this hand-back sets it:
+verdict. Nobody but this hand-back sets it. **Once per bead**: if the notes already carry a
+second-look hand-back and Psylocke sent it back as still holding, you and she disagree about what
+is left to build, and the third opinion is the navigator's: use the `human` form above instead,
+saying so.
 
 ```bash
 bd update <id> --remove-label planned --add-label second-look --append-notes "<why there is nothing to build>" \

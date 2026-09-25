@@ -182,7 +182,9 @@ the open question it names, opening on it rather than the full introduction; nev
 
 ## A piece of work with children, and one with none
 
-Agreed as a whole, children or not; never split or retype. Later children inherit `ux:agreed`.
+You are given a bead with no children, since an epic with children never reaches this stage
+(`scripts/work-beads` skips it); agree it as a whole, and never split or retype it. A child of a
+family is agreed on its own, like any other piece of work.
 
 ## How you talk to a designer
 

@@ -15,8 +15,10 @@ test, then `build`, `gate`, `review`, `ci`, `rebase`, `merge`); *Workspace* and 
 *Building*, whose fast gate you run before the PR; *Waiting, without ending your run*; *The review
 loop*, where the reviewer reads the diff against **the bead's bug claim and your reproduction
 test**, since a bug bead has no plan, and your posted review says so in place of "the plan";
-*Red CI*; *Merging*; *The retrospective*; *Finishing*, the parent walk included. You write no
-`design` and add no `planned`: the reproduction test is the plan. *Known traps* from
+*Red CI*; *Merging*; *The retrospective*; *Finishing*, the parent walk included; and *The
+navigator's gates*, where your `plan` gate puts the reproduction test and the fix you intend to the
+navigator before you touch the implementation, and `review` and `merge` read as written. You write
+no `design` and add no `planned`: the reproduction test is the plan. *Known traps* from
 `.cerebro/traps.md` are read before you touch the code.
 
 ## The bug-fix contract

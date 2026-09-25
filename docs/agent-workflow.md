@@ -106,10 +106,11 @@ reads `standby` from the moment the view opens and the trigger is what starts it
 disarm it, and none of that is written to any
 file. `cerebro-wake-intervals` is the floor between two starts of one role, changeable while the
 fleet runs — **the UX role has none**: a short buffer is the fleet already idle, so it starts on
-the next five-second tick. That buffer is the Ready to produce section: every open, unclaimed bead
-carrying `ux:agreed` or `ux:none`, so filing invisible work fills it as surely as agreeing an
-experience does (a returned plan that still carries `planned` sits under Planned unclaimed and is a
-producer's too, but is not counted). What keeps that from looping over a trigger no pass can clear is two
+the next five-second tick. That buffer is what a producer could be handed next, the same list
+`assignable-beads` prints: ranked, unblocked, `ux:agreed` or `ux:none`, a returned plan included.
+Filing invisible work fills it as surely as agreeing an experience does, once the bead is ranked;
+an unranked `ux:none` bead sits under Ready to produce but counts for nothing until Cerebro ranks
+it. What keeps that from looping over a trigger no pass can clear is two
 comparisons rather than a clock: the counts leave out what is parked in your queue (`human`,
 `triage:declined`), and a role is not started again while its trigger names exactly the work its own
 last pass was started for. Anything that moves — a bead arrives, one is planned, a producer

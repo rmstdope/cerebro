@@ -199,7 +199,7 @@ shaping the outcome into pieces, not planning a build: the architecture, files a
 the producer's.
 
 **A childless epic the navigator will not split is a task**: `bd update <id> --type task` in the
-same breath as its ranking. The candidate scripts exclude the epic type, so an epic without
+same breath as its ranking. The builder queues exclude the epic type, so an epic without
 children would be agreed by UX and then taken by nobody.
 
 **Never split** a bead that is `ux:agreed`, claimed, `in_progress`, or already a child: that work

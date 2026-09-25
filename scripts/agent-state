@@ -32,8 +32,8 @@
 # in bash. It moved here from `cerebro--phases' when the Emacs fleet view was removed (cb-abs.1),
 # because this script's own refusal message is the only place a reader is ever sent to look for it.
 #
-#   producer        design build gate review ci rebase merge
-#   bugfixer        design build gate review ci rebase merge
+#   producer        design build gate review ci rebase merge   (asking: plan-gate review-gate merge-gate)
+#   bugfixer        design build gate review ci rebase merge   (asking: plan-gate review-gate merge-gate)
 #   ux              ux
 #   verifier        prepare verify
 #   user-feedback   sweep

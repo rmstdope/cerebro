@@ -20,7 +20,8 @@ claimed for you; `bugfix` beads stay with the bugfixer.
    consumer root if it exists: a trap is a fact a plan cannot be written correctly without, so
    name every trap the bead touches and what the plan does about it; a missing file is ordinary.
    Write those decisions to the bead's `design` field under the eight headings of *The plan*,
-   below, then add `planned`. A missing `design` field
+   below, then add `planned`. If the project declares the `plan` gate (*The navigator's gates*),
+   put the plan to the navigator now and build nothing until it is approved. A missing `design` field
    or `planned` label is the normal producer input, never a reason to return it for build design.
    **A bead that already has a `design` is a producer's returned plan, never redesigned from
    nothing**, whether or not `planned` is still on it (every park removes `planned`; a crash does
@@ -44,11 +45,12 @@ claimed for you; `bugfix` beads stay with the bugfixer.
    (*Workspace*), beginning every increment with its failing test. Use `build`, `gate`, `review`,
    `ci`, `rebase`, and `merge` as the phase changes; heartbeat before long work.
 4. Run the fast gate (*Building*), open the pull request, obtain and address one independent, full
-   review of the complete diff and bead (*The review loop*), wait for CI (*Waiting, without ending
-   your run*; *Red CI*), write *The retrospective* if one is due, merge through the pull request
-   and never otherwise (*Merging*), close the bead and its parent when you were the last child
-   (*Finishing*), and run `end-pass` last. A bead you cannot finish goes back through *Handing
-   back*.
+   review of the complete diff and bead (*The review loop*), then the navigator's review if the
+   `review` gate is declared, wait for CI (*Waiting, without ending your run*; *Red CI*), write
+   *The retrospective* if one is due, merge through the pull request and never otherwise
+   (*Merging*), or hand the merge to the navigator if the `merge` gate is declared, close the bead
+   and its parent when you were the last child (*Finishing*), and run `end-pass` last. A bead you
+   cannot finish goes back through *Handing back*.
 
 ## The plan
 
@@ -92,6 +94,65 @@ both reading nothing.
    bead preflights as Rust).
 8. **Known traps**: the entries of `.cerebro/traps.md` this bead touches, with what the plan does
    about each, or "None.".
+
+## The navigator's gates
+
+Which of your decisions the navigator takes part in is the project's declaration, read once at the
+start of the pass:
+
+```bash
+.cerebro/cerebro/scripts/project-conf navigator_gates      # any of: plan review merge; empty means none
+```
+
+Each gate is a question to the navigator and waits like every other question: write `asking` with
+the gate's phase word, ask through the question tool, and write `working` again as the first thing
+you do with the answer. No clock ends it; the fleet view shows the row at its gate, and the
+navigator answers when present. An empty declaration is today's fleet: no gate, no question.
+
+- **`plan`** — phase `plan-gate`, after the design is written and before the first increment. The
+  question carries what the navigator needs to judge the build without opening the bead: the
+  *Files to change, and what to reuse* (the public surface of anything new, where state lives),
+  the *Increments* in order, and every line of *Decided by me*. Options: approve, or amend. An
+  amendment is written into the design under the heading it touches before `build` starts, and a
+  question the navigator answers with a change to the agreed experience goes to UX through
+  `producer-park … ux`, never into the plan.
+- **`review`** — phase `review-gate`, after the sub-agent review is posted and every finding
+  answered, and before the CI wait. The sub-agent pass runs first so what reaches the navigator
+  has been read once already. Note the newest review already on the pull request, ask for the
+  review with the pull request's link, then poll GitHub for a review **newer than that one** whose
+  state is a verdict, heartbeating inside the loop like any wait. The aggregate `reviewDecision`
+  is no use here: it stays `CHANGES_REQUESTED` after you push fixes until the navigator submits a
+  new review, so a loop keyed on it returns at once on every round after the first.
+
+  ```bash
+  reviews="repos/<owner>/<repo>/pulls/<n>/reviews"
+  last="$(gh api "$reviews" --jq '[.[] | select(.user.type != "Bot")] | last | .id // 0')"
+  until r="$(gh api "$reviews" --jq "[.[] | select(.id > $last and (.state == \"APPROVED\" or .state == \"CHANGES_REQUESTED\"))] | last")" \
+        && [ -n "$r" ] && [ "$r" != null ]; do bd heartbeat <id>; sleep 30; done
+  state="$(jq -r .state <<<"$r")"; last="$(jq -r .id <<<"$r")"
+  ```
+
+  `APPROVED` continues to `ci`. `CHANGES_REQUESTED` is a round of findings: every comment gets a
+  change or a posted reply, as the sub-agent's did, then the sub-agent reads the delta if the
+  change warrants it, and the gate is asked again with `last` at the review just handled, so only
+  the navigator's next verdict ends the wait. The navigator's comments are answered on the pull
+  request, where they were made.
+- **`merge`** — phase `merge-gate`, after green checks and an approved review, in place of
+  `gh pr merge`. The merge is the navigator's: park the bead for them with the pull request
+  ready, release your claim and end the pass:
+
+  ```bash
+  bd update <id> --add-label human --append-notes "## Ready to merge
+
+PR #<n>, reviewed and green at <sha>; the merge is yours." \
+    --set-metadata paused_at=$(date -u +%Y-%m-%dT%H:%M:%SZ) --if-assignee <name>
+  bd unclaim <id> --if-assignee <name>
+  bd dolt push
+  ```
+
+  The navigator merges through GitHub and closes the bead; if they unpark it instead, the next
+  producer resumes from the design, finds the pull request merged or still open, and finishes
+  through *Merging* and *Finishing*. Never merge yourself under this gate, whatever the checks say.
 
 ## Workspace
 
@@ -414,7 +475,8 @@ corrected").
 Every write names your bead and pid:
 `.cerebro/cerebro/scripts/agent-state <name> working --bead <id> --phase <phase> --pid $PPID`.
 The phases, in order, are `design`, `build`, `gate`, `review`, `ci`, `rebase` and `merge`; a
-question is `asking` with the same bead and phase. `merge` covers the retrospective, the merge,
+question is `asking` with the same bead and phase, and a navigator's gate is `asking` with
+`plan-gate`, `review-gate` or `merge-gate` (*The navigator's gates*). `merge` covers the retrospective, the merge,
 the close and the cleanup; a retrospective goes back through `ci` first, and through `review`
 too when it warrants one. Delivered, parked or handed back:
 `.cerebro/cerebro/scripts/end-pass <name> --pid $PPID`, last.

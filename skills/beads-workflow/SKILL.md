@@ -73,7 +73,7 @@ role that touches a label not in it is changing the pipeline for every consumer.
 | **asked about, not ranked** | P4, `triage:declined` | Cerebro, when the navigator was away | nobody, until the navigator removes the label or Cerebro ranks it |
 | **a bug** | `bugfix` (set at filing, never removed) | `write-bead` or Moira | Bishop, through `scripts/bugfix-candidates`; UX and producers never see it |
 | **waiting for UX** | ranked, neither `ux:agreed` nor `ux:none`, unassigned | ranking | a `ux` agent, through `scripts/stage-candidates ux`; the fleet view assigns without claiming |
-| **invisible by declaration** | `ux:none` | the navigator's *no* to "does it touch anything a person sees or presses?", asked by whoever files or first understands the bead: `write-bead`, Moira's triage, Cerebro's understand step; Forge on every refactoring. Never on a `bugfix` bead, whose route skips UX anyway | a producer, exactly as a UX-agreed bead. Only a producer removes it (`producer-park … ux`), when the build turns out to touch what a person sees; a *yes* is recorded in the description as `A person sees this: yes`, so nobody asks again |
+| **invisible by declaration** | `ux:none` | the navigator's *no* to "does it touch anything a person sees or presses?", asked by whoever files or first understands the bead: `write-bead`, Moira's triage, Cerebro's understand step; Forge on every refactoring. Never on a `bugfix` bead, whose route skips UX anyway | a producer, exactly as a UX-agreed bead. Removed only on the way back to UX: `producer-park … ux`, Cerebro's *Send it back to UX*, or `reopen-failed --fault plan`; a *yes* is recorded in the description as `A person sees this: yes`, so nobody asks again |
 | **being designed** | open, assigned to a `ux` agent, not `in_progress` | `scripts/assign-bead` | that agent only; it clears the assignee when its pass ends, or the fleet view does when the session dies |
 | **UX-agreed** | `ux:agreed`, unassigned | the `ux` agent (`agree-experience`) | a producer, through `scripts/assignable-beads`, claimed for it by the fleet view. An unclaimed bead that already has a `design` (with or without `planned`: every park removes the label, a crash does not) is a producer's returned plan and is resumed from that design |
 | **being produced** | `in_progress`, assignee is the producer | `scripts/assign-bead` | that producer only. It writes `design`, adds `planned` while keeping its claim, builds, merges, closes |
@@ -142,9 +142,9 @@ user sends a parked bead back to a UX agent to interview live, `human` comes off
 
 ## Claiming, and not colliding
 
-**Producers claim before exploring.** Reading the bead with `bd show` is not exploring; reading
-code or asking the navigator is. The claim is atomic, so a failure means somebody else won: do not
-retry.
+**The claim is made before the session starts.** `scripts/assign-bead` claims the bead as the
+producer or bugfixer and pushes, then the launcher hands the id over in the prompt; a session never
+claims for itself, and a bead not `in_progress` for the named session is not its to work.
 
 **Heartbeat while you work.** A claim's lease is about five minutes and only `bd heartbeat <id>`
 renews it. Send one at every phase gate and before anything long (a full smoke run, a CI watch);
@@ -166,8 +166,9 @@ bd reclaim --id <bead> --older-than 10m        # one named bead, never a sweep
 Anything wider — no `--id`, a shorter window, a live claim — is the navigator's call. The fleet
 view removes a dead agent's tree when nothing in it can be lost, and keeps it for a person otherwise.
 
-**Push the claim immediately.** Leases never leave the machine that granted them; status and
-assignee travel only on `bd dolt push`/`bd dolt pull`.
+**Every board write is pushed at once.** Leases never leave the machine that granted them; status
+and assignee travel only on `bd dolt push`/`bd dolt pull`, which is why `assign-bead` pushes the
+claim before the session exists.
 
 **Check your working directory before any `git` command.** A shell's directory persists, so one
 `cd` into another agent's worktree leaves later commands — a `git checkout -b` included — there.

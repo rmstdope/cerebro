@@ -397,7 +397,8 @@ epic id itself), then push. Use the family helper so closure and verdict stay al
 ```
 
 It closes any still-open member of the family, sets `verification=passed` on the epic and every
-child, writes `verified_at=<full sha>` on each, removes `verdict:stale`, and pushes once.
+child, writes `verified_at=<full sha>` on each, removes `verdict:stale` and `second-look`, and
+pushes once.
 
 **2. Passed, with a follow-up.** Mark it passed as above, **and** file the niggle:
 
@@ -427,11 +428,11 @@ child bead(s) with the same command, one id at a time, naming in `--notes` that 
 from the epic sweep.
 
 It does the reopen, the assignee clear, P0, the dated failure note, `verification=failed`,
-`verified_at`, dropping `verdict:stale`, the plan-or-build label flip, every closed ancestor, and the
-push; there is no second `bd dolt push`. Never retype its steps by hand: the assignee clear is the
+`verified_at`, dropping `verdict:stale` and `second-look`, the plan-or-build label flip, every closed
+ancestor, and the push; there is no second `bd dolt push`. Never retype its steps by hand: the assignee clear is the
 step prose used to drop, and a reopened bead with an assignee is picked up by nobody.
 
-- **`--fault build`** (the default): `planned` stays, and **it adds `plan:revise` to nothing**. A
+- **`--fault build`**: `planned` stays, and **it adds `plan:revise` to nothing**. A
   producer takes the bead as rework against the same design (`scripts/assignable-beads` offers any
   unclaimed bead with a stage label, `planned` or not; `produce-bead` resumes from the design).
 - **`--fault plan`**: `planned`, `ux:agreed` and `ux:none` come off and `plan:revise` goes on, so

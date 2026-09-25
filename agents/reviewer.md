@@ -29,7 +29,8 @@ The prompt says which of the *Two jobs* you have. If that is you:
 
 Return findings, most important first, each naming the file and the case — or say plainly that you
 found none. You are not given the producer's reasoning and do not ask for it: you read the diff
-against the plan. The earlier findings and answers in a follow-up are claims to check against the
+against the plan, or, for a `bugfix` bead, which has no plan, against the bead's bug claim and the
+reproduction test the bugfixer wrote first. The earlier findings and answers in a follow-up are claims to check against the
 code, never an account to accept.
 
 ### Two jobs

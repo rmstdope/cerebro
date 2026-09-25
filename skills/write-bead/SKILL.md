@@ -108,10 +108,16 @@ nobody has to decompose it later by hand:
    bd create "<the outcome, as a whole>" --type epic -p 4 --body-file /tmp/epic-body.md
    bd create "<one child>" --type task -p 4 --parent <epic-id> --body-file /tmp/child-1.md \
      --acceptance "<what done looks like for this piece>" \
+     --external-ref <the parent's, if it came from an issue> \
      --labels ux:none      # only when this child's answer to the third question was no
    bd dep add <later-child> <earlier-child>     # only where the navigator said the order matters
    bd dolt push
    ```
+
+   Splitting a bead that already exists starts with `bd update <id> --type epic`: only an epic
+   with children is bookkeeping to the queues (`scripts/work-beads`), so a task given children and
+   left a task is offered to UX and producers as if whole. A child of an issue-born bead carries
+   the parent's `external_ref` so Moira can follow the family.
 
    A guessed edge makes `bd ready` lie, so an edge is the navigator's word, never your inference.
    Each child routes on its own from here: UX, or a producer when `ux:none`. The parent is

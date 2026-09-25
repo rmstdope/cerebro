@@ -89,7 +89,7 @@ role that touches a label not in it is changing the pipeline for every consumer.
 | **failed, plan at fault** | reopened, P0, `verification:failed`, `plan:revise`; `planned`, `ux:agreed` and `ux:none` removed | `scripts/reopen-failed --fault plan` | a `ux` agent, as an ordinary UX candidate; it amends the agreed experience in place, re-adds `ux:agreed` and removes `plan:revise` |
 | **handed back, nothing to build** | `second-look`, `verification:failed`, no `planned`, no `human` | a producer's no-`human` hand-back (`produce-bead`, *Handing back*), and nothing else | Psylocke, through `scripts/second-look-beads`; every builder and UX queue excludes the label, and her verdict removes it |
 | **a refactoring** | `refactoring`, title `Refactoring: …` | Forge | ranked and routed like any other bead; the label is Forge's own index |
-| **an epic with children** | type `epic`, at least one child, each child carrying the parent's `external_ref` | `write-bead` filing a family; Cerebro splitting at ranking, which retypes the parent to `epic` first | nobody: `scripts/work-beads` skips it while it has a child. Whoever closes the last child closes it. A childless epic is retyped to `task` at ranking, since the builder queues exclude the epic type |
+| **an epic with children** | type `epic`, at least one child, each child carrying the parent's `external_ref`, and `bugfix` when the parent is a bug | `write-bead` filing a family; Cerebro splitting at ranking, which retypes the parent to `epic` first | nobody: `scripts/work-beads` skips it while it has a child. Whoever closes the last child closes it. A childless epic is retyped to `task` at ranking, since the builder queues exclude the epic type |
 
 Three rules that the table depends on:
 

@@ -186,12 +186,15 @@ several beads* in `write-bead`: name the pieces you heard, ask whether to file o
 interview each piece, **retype the parent to an epic before the first child**, file each child
 with `--parent <id> -p <the priority just set>`, the parent's `--external-ref` if it has one, and
 `ux:none` where its own answer to the third question was *no*, `bd dep add` only where the
-navigator says the order matters, and report the family:
+navigator says the order matters, and report the family. **A child of a `bugfix` bead is a bug**:
+`--type bug --labels bugfix`, never asked the third question and never `ux:none`, so the pieces
+stay on the bugfixer's route; the parent keeps `bugfix` as it becomes an epic.
 
 ```bash
 bd update <id> --type epic                                   # first: only an epic with children is bookkeeping
 bd create "<one child>" --type task -p <n> --parent <id> --external-ref <the parent's, if any> \
   --body-file /tmp/child-1.md --acceptance "<what done looks like for this piece>"
+# a child of a bugfix parent: --type bug --labels bugfix instead, and no ux:none
 bd dolt push
 ```
 

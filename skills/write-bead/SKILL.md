@@ -101,8 +101,9 @@ split silently, and never file only the first.
 If several, the request is an **epic with children**, filed as one family in one session, so that
 nobody has to decompose it later by hand:
 
-1. Interview the pieces one at a time, the same three things each; a piece is a child when a
-   producer could deliver it on its own and a person could tell it landed.
+1. Interview the pieces one at a time, the same three things each (the first two only for a
+   bug: its route never enters UX); a piece is a child when a producer, or the bugfixer, could
+   deliver it on its own and a person could tell it landed.
 2. File the parent first, then each child under it. Every one at P4; a child takes its parent's
    priority when the parent is ranked (*Dependencies and breakdown* in `beads-workflow`), and the
    navigator is asked about the parent only.
@@ -120,7 +121,9 @@ nobody has to decompose it later by hand:
    Splitting a bead that already exists starts with `bd update <id> --type epic`: only an epic
    with children is bookkeeping to the queues (`scripts/work-beads`), so a task given children and
    left a task is offered to UX and producers as if whole. A child of an issue-born bead carries
-   the parent's `external_ref` so Moira can follow the family.
+   the parent's `external_ref` so Moira can follow the family. **A child of a `bugfix` bead is
+   filed `--type bug --labels bugfix` and never `ux:none`**: the pieces of a bug are bugs, on the
+   bugfixer's route, and the parent keeps `bugfix` as it becomes an epic.
 
    A guessed edge makes `bd ready` lie, so an edge is the navigator's word, never your inference.
    Each child routes on its own from here: UX, or a producer when `ux:none`. The parent is

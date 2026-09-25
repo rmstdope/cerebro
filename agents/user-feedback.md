@@ -77,7 +77,10 @@ That comes before everything else and applies to every open issue, whatever stat
 bd list --external-ref gh-<number> --all --json    # is there a bead for this issue?
 ```
 
-`--all`, or a closed bead reads back as no bead and a tracked issue is triaged again.
+`--all`, or a closed bead reads back as no bead and a tracked issue is triaged again. **One issue is
+one unit**: when the list holds several beads (a family Cerebro or `write-bead` split, each child
+carrying the issue's ref), walk the issue once, read the family as *The states* says, and post one
+comment per state for the whole, never one per bead.
 
 Empty means it is new (*A new issue*). Non-empty means it is tracked (*An issue that has a bead*).
 
@@ -275,12 +278,14 @@ A tag means RELEASED, and names the version. Nothing means MERGED, an ordinary s
 - **Fetch the tags first**, or a shipped bead reads as merged for ever.
 
 **A bead with children** (an epic Cerebro or `write-bead` split; its children carry the same
-`external_ref`) is read through its family, since no commit is ever named for the parent itself:
-CLAIMED when any child is `in_progress`; MERGED when every child is closed; VERIFIED when every
-child carries `verification:passed` (or `not-needed`); RELEASED when every child's commit is in a
+`external_ref`) is read through its family, since no commit is ever named for the parent itself.
+The open rungs, furthest true wins: RANKED when the parent's priority is below P4; DESIGNED when
+every child that is not `ux:none` or `bugfix` carries `ux:agreed`; CLAIMED when any child is
+`in_progress`. The closed states: MERGED when every child is closed; VERIFIED when every child
+carries `verification:passed` (or `not-needed`); RELEASED when every child's commit is in a
 release tag, naming the latest version; REOPENED when any child carries `verification:failed`
-after MERGED. Run the commit search per child. An issue with several linked beads is the same
-question over that set.
+after MERGED. Run the commit search per child. An issue with several linked beads that are not one
+family is the same question over that set, and still one comment per state.
 
 For a closed bead, post the state it is in now; never backfill the ones it passed through. Open-bead
 milestones are different: RANKED and DESIGNED must be said even if the bead advances again before
@@ -372,14 +377,15 @@ Your issue list is `--state open`, so **sweep for this at the end of every pass*
 
 ```bash
 bd list --status open --json \
-  | jq -r '.[] | select((.external_ref // "") | startswith("gh-")) | "\(.id)\t\(.external_ref)"' \
-  | while IFS=$'\t' read -r bead ref; do
+  | jq -r '.[] | select((.external_ref // "") | startswith("gh-")) | .external_ref' | sort -u \
+  | while read -r ref; do
       state=$(gh issue view "${ref#gh-}" --json state --jq .state 2>/dev/null)
-      [ "$state" = "CLOSED" ] && echo "$bead	$ref"
+      [ "$state" = "CLOSED" ] && echo "$ref"
     done
 ```
 
-The normal path never produces one, since you close only on RELEASED and that means a closed bead. So
+One row per issue, not per bead: a split family is one question, put through its parent. The
+normal path never produces one, since you close only on RELEASED and that means a closed bead. So
 somebody closed it by hand, for reasons that want opposite answers and look identical from outside.
 
 Bring the navigator who closed it and when, the `stateReason`, any closing comment, and where the bead
@@ -403,8 +409,9 @@ bd close <id> --reason "Issue #<n> was closed; work no longer wanted"
 bd dolt push
 ```
 
-Check first whether it is claimed: `in_progress` with an assignee means a producer or the bugfixer is building it.
-Say so in the question; stopping one is Cerebro's job.
+Check first whether any bead of the issue is claimed, with `bd list --external-ref gh-<n> --all`:
+`in_progress` with an assignee means a producer or the bugfixer is building it (the open-only
+sweep above cannot see that). Say so in the question; stopping one is Cerebro's job.
 
 **3. Unlink the bead from the issue.** The work stands on its own (a duplicate thread, say):
 
@@ -415,7 +422,8 @@ bd dolt push
 
 An empty string clears it. Post nothing to the closed thread.
 
-**If the navigator is away, park the bead**, or the next pass asks the same question again:
+**If the navigator is away, park the bead**, or the next pass asks the same question again; for
+a family, park the parent alone, so the children keep their places in the queues:
 
 ```bash
 bd update <id> --add-label human \

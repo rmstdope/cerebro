@@ -219,7 +219,8 @@ Each of these answers one question in one place. Add a caller, never a second co
   for ending a pass; `scripts/agent-alive` is the predicate.
 - `scripts/stage-candidates`, `scripts/assignable-beads`, `scripts/bugfix-candidates`,
   `scripts/second-look-beads` — which beads a UX agent, a producer, the bugfixer or the verifier
-  may be given; each excludes P4 and what another role holds. `scripts/assign-bead` claims or
+  may be given; each excludes what another role holds, and the two builder queues exclude P4
+  (the fleet view skips P4 for the UX queue itself; the second look has no priority). `scripts/assign-bead` claims or
   assigns and `scripts/release-bead --ended` takes back what a gone session still held; the other
   writers of a bead's route are `scripts/producer-park` (a producer's return to UX or the
   navigator), `scripts/reopen-failed` (a failed verification) and

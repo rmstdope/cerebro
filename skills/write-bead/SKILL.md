@@ -126,7 +126,8 @@ nobody has to decompose it later by hand:
    bugfixer's route, and the parent keeps `bugfix` as it becomes an epic.
 
    A guessed edge makes `bd ready` lie, so an edge is the navigator's word, never your inference.
-   Each child routes on its own from here: UX, or a producer when `ux:none`. The parent is
+   Each child routes on its own from here: UX, a producer when `ux:none`, or the bugfixer when
+   `bugfix`. The parent is
    bookkeeping while it has children and is closed by whoever closes the last one.
 3. Report the family: the parent id and title, then each child on its own line.
 

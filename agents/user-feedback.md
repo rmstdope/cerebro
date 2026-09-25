@@ -178,9 +178,11 @@ Four answers:
 symptom, a bead describes work. Follow `beads-workflow` for what a good one contains. Ask one more
 thing in the same question, as `write-bead` does: **does the change touch anything a person sees
 or presses?** A *no* files `--labels ux:none`, the navigator's word that there is nothing to
-agree, and the bead reaches a producer without a UX session; a *yes* files nothing extra. Nobody
-but the navigator, at filing, may skip that stage. A `bugfix` bead never carries `ux:none`: the
-bugfixer route skips UX anyway.
+agree, and the bead reaches a producer without a UX session; a *yes* is written into the
+description as the line `A person sees this: yes` under `## Scope`, so Cerebro's understand step
+sees it answered and does not ask again. The rule of who may set the label is the *invisible by
+declaration* row in `beads-workflow`. A `bugfix` bead is asked neither: its route skips UX, and it
+never carries `ux:none`.
 
 ```bash
 bd create --title "..." --type bug|feature|task --priority 4 \

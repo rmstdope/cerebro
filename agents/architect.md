@@ -137,9 +137,10 @@ corrected").
    ```
 
    Every `bd create` carries the `refactoring` label: it is the whole index. It carries `ux:none`
-   too: a refactoring changes nothing a person sees by definition, so it needs no UX session and
-   goes to a producer once ranked. A finding that *would* change what a person sees is not a
-   refactoring; file it without `ux:none`.
+   too, under the *invisible by declaration* row of the routing table in `beads-workflow`: a
+   refactoring changes nothing a person sees by definition, so it needs no UX session and goes to
+   a producer once ranked. A finding that *would* change what a person sees is not a refactoring;
+   file it without `ux:none`, with `A person sees this: yes` under its scope.
 
 4. **File.** One bead per finding:
 

@@ -122,15 +122,19 @@ navigator's attention per bead, and `triage:declined` is there for "not now".
 `write-bead`: its interview asks the three things a bead is not describable without — **what the
 outcome is**, **what done looks like from the outside**, and **whether the change touches anything
 a person sees or presses**. Check which the bead already answers (a bead filed through
-`write-bead` or by Forge answers all three: an `## Outcome` heading, an acceptance line, and either
-`ux:none` or a stated *yes*). Ask the navigator **only** what is missing, through the question tool,
-and write each answer back before ranking:
+`write-bead`, by Moira or by Forge answers all three: an `## Outcome` heading, an acceptance line,
+and either `ux:none` or the line `A person sees this: yes` under `## Scope`). A `bugfix` bead is
+never asked the third: its route skips UX, and it never carries `ux:none`. Ask the navigator
+**only** what is missing, through the question tool, and write each answer back before ranking:
 
 ```bash
-bd update <id> --description "$(cat /tmp/desc-<id>.md)"    # opens with ## Outcome, then ## Scope
+bd update <id> --description "$(cat /tmp/desc-<id>.md)"    # opens with ## Outcome, then ## Scope, with "A person sees this: yes" on a yes
 bd update <id> --acceptance "<what done looks like, in the navigator's own terms>"
-bd update <id> --add-label ux:none                          # only on a no to the third question
+bd update <id> --add-label ux:none                          # only on a no to the third question, never on a bug
 ```
+
+This is the filing interview done late, which is why you may set `ux:none` here; the rule of who
+may is the *invisible by declaration* row in `beads-workflow`.
 
 Rewrite a title that falls short of *Writing a good bead* in `beads-workflow` in the same update.
 On a bead from a GitHub issue the navigator may not know the answer either: offer Moira's *ask the

@@ -246,6 +246,18 @@ if [[ "$policy" == "producer" || "$policy" == "bugfixer" ]]; then
     "$script_dir/launch-refused" "$name" "this project declares no fast gate, and none could be detected - a builder has nothing to run before it opens a PR. Add a line like 'gate_fast <command>' (and 'gate_full <command>') to .cerebro/project.conf before starting $name"
     exit 2
   fi
+  # The navigator's gates (cb-z719.1): which of a builder's decisions the navigator takes part in.
+  # Any subset of plan, review and merge, in any order; absent means none. A misspelt word would
+  # gate nothing and say nothing, so it is refused here, where the valid words can be named.
+  navigator_gates="$("$script_dir/project-conf" navigator_gates 2>/dev/null)" || navigator_gates=""
+  for gate in $navigator_gates; do
+    case "$gate" in
+      plan|review|merge) ;;
+      *)
+        "$script_dir/launch-refused" "$name" "navigator_gates names '$gate', which is not a gate; the gates are plan, review, merge (any of them, in any order). Fix .cerebro/project.conf before starting $name"
+        exit 2 ;;
+    esac
+  done
 fi
 
 "$script_dir/sync-symlinks.sh" >/dev/null

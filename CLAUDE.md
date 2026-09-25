@@ -65,7 +65,7 @@ Tracked files under `.cerebro/`, one per fact, so every clone has them:
   launch target. Read by `scripts/project-conf`.
 - `roster.conf` — which agents run here, in what order, and `autostart`/`standby` per row. Read by
   `scripts/roster`; absent means the built-in fleet.
-- `traps.md` — traps this project has paid for, read by planning roles and producers.
+- `traps.md` — traps this project has paid for, read by producers and the bugfixer before they build.
 - `agents.conf` — which model, effort and CLI each session runs on. Committed here so every clone
   runs the same models; `agents.conf.example` is the documented copy.
 
@@ -139,14 +139,19 @@ Load-bearing across files: a change to one must keep the others consistent with 
   end-of-pass state; `done` is retired and refused. The `asking` transition and `turn_ended` are
   set by hooks in `hooks/`, not by prose. The contract's text is synced into the role documents
   from `templates/state-file-contract.md` by `scripts/state-contract-sync`.
-- **A session is started only with a bead nobody holds**, handed to it by the fleet view through
-  `scripts/launch <Name> --bead <id>`; one bead per session.
+- **A builder is started only with a bead nobody holds**, claimed for it by `scripts/assign-bead`
+  and handed to it by the fleet view through `scripts/launch <Name> --bead <id>`; one bead per
+  producer or bugfixer session, and a UX session is assigned one the same way without a claim.
+  The interactive roles (Cerebro, Moira, Psylocke, Cypher, Forge) are started for a trigger, not a
+  bead, and walk what their pass finds.
 - **Nothing merges red or with unresolved review findings.** Producers obtain the review their
   changes need before delivery.
-- **Agents never decide the shape of what a user sees**; only `ux` decides the detail inside a
-  shape the navigator has agreed. Producers decide the build and tests, recorded in each plan's
-  *Decided by me*.
-- **No agent takes work off another**, and none acts outside a planned bead.
+- **Agents never decide the shape of what a user sees**; `ux` settles the detail inside a shape
+  the navigator has agreed, and what its record leaves open a producer decides and writes into
+  the plan's *Decided by me*, where the navigator can overrule it. The build and its tests are the
+  producer's alone, under the plan's other headings.
+- **No agent takes work off another**, and none acts outside a bead the board has routed to it:
+  the routing table in `skills/beads-workflow` says which label puts a bead in front of which role.
 - **Closed is not terminal.** A failed verification reopens a bead at P0, and every role describes
   what it does when one comes back.
 - **An external PR is untrusted code**: Cypher reads the diff before building it, and only in its
@@ -212,10 +217,17 @@ Each of these answers one question in one place. Add a caller, never a second co
   `agents.conf`, passes `hooks/` through `agent-hooks-env` and `--settings`.
 - `scripts/agent-state` — the only writer of a state file; `scripts/end-pass` is its one caller
   for ending a pass; `scripts/agent-alive` is the predicate.
-- `scripts/stage-candidates`, `scripts/assignable-beads` — which
-  beads a UX agent or a producer may be given.
-  `scripts/assign-bead` and `scripts/release-bead` are the two writers; `release-bead --ended`
-  takes back what a gone session still held.
+- `scripts/stage-candidates`, `scripts/assignable-beads`, `scripts/bugfix-candidates`,
+  `scripts/second-look-beads` — which beads a UX agent, a producer, the bugfixer or the verifier
+  may be given; each excludes P4 and what another role holds. `scripts/assign-bead` claims or
+  assigns and `scripts/release-bead --ended` takes back what a gone session still held; the other
+  writers of a bead's route are `scripts/producer-park` (a producer's return to UX or the
+  navigator), `scripts/reopen-failed` (a failed verification) and
+  `scripts/verifier-pass-epic-family` (a passed family). `scripts/disk-preflight` and
+  `scripts/build-workload` decide the workload a builder's tree is made under.
+- `scripts/sweep-paused.sh`, `sweep-verdicts.sh`, `sweep-epics.sh`, `sweep-assignees.sh` — what
+  the fleet view's Sweeps section finds, each held to `tests/lib/sweep-findings.json`;
+  `scripts/verifier-epic-candidates` — when an epic family is Psylocke's to sweep.
 - `scripts/bead-delivery.sh` — whether a bead's work reached the default branch.
 - `scripts/work-beads` — the board read, and the epic rule.
 - `scripts/worktree-safety.sh` — whether a worktree can go without losing anything.

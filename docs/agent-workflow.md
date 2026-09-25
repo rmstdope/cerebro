@@ -142,7 +142,8 @@ does not start that name again, however it is armed, until you press `s`; `RET` 
 line.
 
 The State column names the
-**phase**: `design`, `build`, `gate`, `review`, `ci`, `rebase`, `merge` for a producer and the bugfixer; `ux` for
+**phase**: `design`, `build`, `gate`, `review`, `ci`, `rebase`, `merge` for a producer and the bugfixer, and
+`plan-gate`, `review-gate`, `merge-gate` when one is waiting on you at a gate you declared (*How involved you are*); `ux` for
 `ux`; `prepare`/`verify` for Psylocke; `read`/`check`/`walk`/`report` for Cypher; `sweep` for
 Moira and Cerebro (`release` and `triage` too); `daily`/`weekly` for Forge. The Bead/Phase column shows both
 timers — time on the bead, time in this phase — so one in `ci` for an hour says something is
@@ -260,6 +261,37 @@ other open PR stale, and where the branch protection sets `strict` each of them 
 catch-up and a fresh CI run — and CI is
 where the browser suites actually run now, in parallel jobs producers no longer serialize behind
 locally. The orchestrator will say so if you ask for more, once, and then do as it is told.
+
+### How involved you are
+
+By default a producer decides everything technical about a bead on its own: the architecture,
+the files, the tests, the review (by a sub-agent it spawns) and the merge. You see the result when
+Psylocke puts it in front of you. If you want a hand in those decisions, declare which ones in
+`.cerebro/project.conf`, any of the three, in any order:
+
+```
+navigator_gates plan review merge
+```
+
+- **`plan`** — before it builds anything, the producer puts its design to you: the files it will
+  change and what it will reuse, the increments in order, and every detail it decided inside the
+  agreed shape. You approve, or amend, and the amendment goes into the design. This is where you
+  take part in architecture. It costs you a few minutes per bead, before any code exists.
+- **`review`** — after the fleet's own review has read the pull request and the producer has
+  answered it, the producer asks you to review the pull request on GitHub and waits for your
+  approval. Your comments are answered there like any finding, and a request for changes is
+  another round. This is where you read the code. It costs you a review per bead.
+- **`merge`** — with checks green and the review approved, the producer leaves the merge to you:
+  the bead lands in your queue with a *Ready to merge* note naming the pull request, and you merge
+  on GitHub and close the bead (or unpark it, and the next producer finishes). It costs you a
+  click per bead, and it means nothing reaches main without your hand.
+
+A gate waits exactly as a question does: the row sits in `asking` at `plan-gate`, `review-gate`
+or `merge-gate` until you answer, and nothing times it out. Declare none for the fleet as it
+runs today; all three for a fleet that decides nothing technical without you. The bugfixer reads
+the same declaration, its plan being the reproduction test and the fix it intends. Which gates a
+project wants tends to change over its life: a young codebase gains from `plan`, a mature one
+from `review`.
 
 ### The orchestrator
 

@@ -380,9 +380,11 @@ lost, and Cerebro runs the full sweep every two hours. You can run it yourself a
 
 It only removes a worktree when **nothing can be lost from it**: the tree is clean, the work is
 already on main, and nothing has touched it for half an hour. Anything else it keeps and tells you
-why. Note that it asks GitHub whether the branch's PR merged, rather than looking for its commits on
-main — with `--squash` merges the commits are never there, so the naive check would keep every
-worktree for ever.
+why. Note that with `--squash` merges a branch's own commits are never on main, so the naive check
+would keep every worktree for ever: the pruner first looks for a commit on main that names the
+tree's bead (the same test the fleet uses to call a bead delivered, which needs no network), and
+only then asks GitHub whether the branch's PR merged. A tree that contains a submodule, which git
+refuses to remove by its own command, is deleted directly once those tests hold.
 
 Creating one is owned too: `scripts/prepare-worktree` is the single recipe every role uses, because
 `git worktree add` does not initialise the `.cerebro/cerebro` submodule and five producers hit

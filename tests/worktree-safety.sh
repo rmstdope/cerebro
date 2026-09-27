@@ -67,6 +67,42 @@ out="$(cerebro_worktree_keep_reason "$tree" main none 1440)"
 [[ "$out" == "it holds work that is not on main yet" ]] || fail "none keeps a warm tree, got: $out"
 pass "merged_check none keeps a recently written tree with a commit"
 
+# --- a squash-merged bead is landed by its delivery commit, with no network -----------------------
+#
+# cb-7suc: a squash merge rewrites the branch's commits, so ancestry says "not on main", and when
+# `gh` cannot answer (no network, not authenticated, another repository) the tree was kept for
+# ever. The tree is named for its bead, and a commit on origin/main naming that bead
+# (`scripts/bead-delivery.sh`, the fleet's own delivery test) is what "landed" means here.
+
+tree="$(make_tree sq-1)"
+commit_in "$tree"
+git_q -C "$consumer" checkout -q main
+echo squashed >> "$consumer/squash.txt"
+git_q -C "$consumer" add squash.txt
+git_q -C "$consumer" commit -q -m "feat(sq-1): the squash of that branch"
+git_q -C "$consumer" push -q origin main
+git_q -C "$consumer" fetch -q origin
+out="$(GH_MERGED=0 cerebro_worktree_keep_reason "$tree" main gh 1440)"
+[[ -z "$out" ]] || fail "a squash-merged bead's tree is landed by its delivery commit, got: $out"
+GH_MERGED=0 cerebro_worktree_landed "$tree" main gh 1440 || fail "landed is exit 0 for a delivered bead without gh"
+pass "a squash-merged bead's tree is landed by the commit that names it, with no network"
+
+# A suffix on the tree's name (a second attempt, a mockup tree) still names the bead.
+tree2="$(make_tree sq-1-2)"
+commit_in "$tree2"
+GH_MERGED=0 cerebro_worktree_landed "$tree2" main gh 1440 || fail "a -2 tree of a delivered bead is landed"
+tree3="$(make_tree sq-1-mockup)"
+commit_in "$tree3"
+GH_MERGED=0 cerebro_worktree_landed "$tree3" main gh 1440 || fail "a -mockup tree of a delivered bead is landed"
+pass "a tree named <bead>-2 or <bead>-mockup is judged by its bead"
+
+# A bead nothing on main names is still not landed.
+tree4="$(make_tree sq-9)"
+commit_in "$tree4"
+out="$(GH_MERGED=0 cerebro_worktree_keep_reason "$tree4" main gh 1440)"
+[[ "$out" == "it holds work that is not on main yet" ]] || fail "an undelivered bead is kept, got: $out"
+pass "a bead no commit on main names is still kept"
+
 # --- removal deletes the tree and its branch -----------------------------------------------------
 
 tree="$(make_tree gone)"
@@ -74,6 +110,35 @@ cerebro_worktree_remove "$consumer" "$tree" || fail "removal is exit 0"
 [[ ! -e "$tree" ]] || fail "the tree is removed"
 ! git -C "$consumer" show-ref --verify --quiet refs/heads/gone-branch || fail "the branch is deleted"
 pass "removal deletes the tree and its branch"
+
+# --- a tree containing a submodule is removed all the same ------------------------------------------
+#
+# cb-7suc: `git worktree remove` refuses any tree that contains a submodule, whatever its state
+# ("working trees containing submodules cannot be moved or removed"), so every tree of a consumer
+# with a submodule was kept as "git would not remove it": 74 of 80 on one machine. The caller has
+# already established the tree is clean and landed, so the directory goes and the registration is
+# pruned; a locked tree is still refused (below).
+
+sub_origin="$work_dir/sub.git"
+git init -q --bare "$sub_origin"
+sub_src="$work_dir/sub-src"
+git init -q "$sub_src" && git_q -C "$sub_src" commit -q --allow-empty -m init && git_q -C "$sub_src" push -q "$sub_origin" HEAD:main
+git_q -C "$consumer" checkout -q main
+git_q -C "$consumer" -c protocol.file.allow=always submodule add -q "$sub_origin" vendor/sub
+git_q -C "$consumer" commit -q -m "add a submodule"
+git_q -C "$consumer" push -q origin main
+git_q -C "$consumer" fetch -q origin
+tree="$(make_tree withsub)"
+# Initialised, as `prepare-worktree` initialises `.cerebro/cerebro` in every builder's tree: git
+# refuses on a populated submodule directory, not on the `.gitmodules` entry alone.
+git_q -C "$tree" -c protocol.file.allow=always submodule update -q --init
+[[ -f "$tree/.gitmodules" && -d "$tree/vendor/sub" ]] || fail "the fixture tree carries an initialised submodule"
+git -C "$consumer" worktree remove "$tree" 2>/dev/null && fail "the fixture does not reproduce git's refusal; the case proves nothing"
+cerebro_worktree_remove "$consumer" "$tree" || fail "a clean, landed tree with a submodule is removed"
+[[ ! -e "$tree" ]] || fail "the tree with a submodule is gone"
+git -C "$consumer" worktree list --porcelain | grep -q "worktree $tree$" && fail "the registration is pruned"
+! git -C "$consumer" show-ref --verify --quiet refs/heads/withsub-branch || fail "its branch is deleted"
+pass "a clean, landed tree containing a submodule is removed, and its registration pruned"
 
 # --- git's refusal is a status of 1 --------------------------------------------------------------
 

@@ -87,14 +87,16 @@ out="$(GH_MERGED=0 cerebro_worktree_keep_reason "$tree" main gh 1440)"
 GH_MERGED=0 cerebro_worktree_landed "$tree" main gh 1440 || fail "landed is exit 0 for a delivered bead without gh"
 pass "a squash-merged bead's tree is landed by the commit that names it, with no network"
 
-# A suffix on the tree's name (a second attempt, a mockup tree) still names the bead.
-tree2="$(make_tree sq-1-2)"
+# A stage suffix on the tree's name (a drawing, a retrospective) still names the bead; a bead id
+# that ends in a digit is not stripped into a bead that does not exist.
+tree2="$(make_tree sq-1-mockup)"
 commit_in "$tree2"
-GH_MERGED=0 cerebro_worktree_landed "$tree2" main gh 1440 || fail "a -2 tree of a delivered bead is landed"
-tree3="$(make_tree sq-1-mockup)"
+GH_MERGED=0 cerebro_worktree_landed "$tree2" main gh 1440 || fail "a -mockup tree of a delivered bead is landed"
+tree3="$(make_tree sq-1-retro)"
 commit_in "$tree3"
-GH_MERGED=0 cerebro_worktree_landed "$tree3" main gh 1440 || fail "a -mockup tree of a delivered bead is landed"
-pass "a tree named <bead>-2 or <bead>-mockup is judged by its bead"
+GH_MERGED=0 cerebro_worktree_landed "$tree3" main gh 1440 || fail "a -retro tree of a delivered bead is landed"
+[[ "$(cerebro_worktree_bead "$tree")" == "sq-1" ]] || fail "sq-1 is one candidate, itself: got $(cerebro_worktree_bead "$tree" | tr '\n' ' ')"
+pass "a tree named <bead>-mockup or <bead>-retro is judged by its bead, and an id ending in a digit is not stripped"
 
 # A bead nothing on main names is still not landed.
 tree4="$(make_tree sq-9)"
@@ -122,7 +124,11 @@ pass "removal deletes the tree and its branch"
 sub_origin="$work_dir/sub.git"
 git init -q --bare "$sub_origin"
 sub_src="$work_dir/sub-src"
-git init -q "$sub_src" && git_q -C "$sub_src" commit -q --allow-empty -m init && git_q -C "$sub_src" push -q "$sub_origin" HEAD:main
+git init -q -b main "$sub_src"
+git -C "$sub_src" config user.name "cerebro tests"
+git -C "$sub_src" config user.email "tests@cerebro.invalid"
+git_q -C "$sub_src" commit -q --allow-empty -m init
+git_q -C "$sub_src" push -q "$sub_origin" HEAD:main
 git_q -C "$consumer" checkout -q main
 git_q -C "$consumer" -c protocol.file.allow=always submodule add -q "$sub_origin" vendor/sub
 git_q -C "$consumer" commit -q -m "add a submodule"

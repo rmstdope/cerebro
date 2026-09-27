@@ -14,7 +14,7 @@
 #       deleted directly) and its branch; exit 1 when git would not remove it
 #   cerebro_worktree_bead <tree>
 #       the beads the tree may have been made for, one per line: its name, then less a
-#       `-mockup' or `-2' suffix
+#       `-mockup' or `-retro' suffix
 #
 # The pruner's other rules - only trees under `.cerebro/worktrees/', the verifier's exception, the
 # stale-minutes rule - stay in `prune-worktrees.sh': they are about trees nobody vouches for, and
@@ -32,17 +32,18 @@
 #              not; exit 0 means the work landed.
 
 # The beads a worktree may have been made for, one per line, most specific first: its directory
-# name as it stands, then less the suffix the UX stage adds for a drawing (`<bead>-mockup'), then
-# less the one `assign-bead' adds when a name is taken (`<bead>-2'). Candidates rather than one
-# answer, because a bead id ends in `-<word>' itself (`cb-7suc', `sq-1') and stripping blindly
-# would name a bead that does not exist.
+# name as it stands (`assign-bead' names a builder's tree for its bead exactly; a taken name goes
+# on the BRANCH, never the directory), then less the suffix the UX stage adds for a drawing
+# (`<bead>-mockup') or the verifier for a retrospective (`<bead>-retro'). Candidates rather than
+# one answer, because a bead id ends in `-<word>' itself (`cb-7suc', `sq-1') and stripping
+# blindly would name a bead that does not exist.
 cerebro_worktree_bead() {
   local name
   name="$(basename "$1")"
   printf '%s\n' "$name"
   case "$name" in
     *-mockup) printf '%s\n' "${name%-mockup}" ;;
-    *-[0-9]|*-[0-9][0-9]) printf '%s\n' "${name%-*}" ;;
+    *-retro)  printf '%s\n' "${name%-retro}" ;;
   esac
 }
 

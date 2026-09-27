@@ -122,7 +122,7 @@ pass "removal deletes the tree and its branch"
 # pruned; a locked tree is still refused (below).
 
 sub_origin="$work_dir/sub.git"
-git init -q --bare "$sub_origin"
+git init -q --bare -b main "$sub_origin"
 sub_src="$work_dir/sub-src"
 git init -q -b main "$sub_src"
 git -C "$sub_src" config user.name "cerebro tests"

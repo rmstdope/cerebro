@@ -1033,6 +1033,11 @@ fn start_due(
         };
 
         ledger.set_failures(name, if failed { failures + 1 } else { 0 });
+        // What the guard measures the next start against: the queue as this pass FINDS it,
+        // handed bead included. Taken after `facts.take` below, the record already lacked that
+        // bead, so a pass that did exactly its one bead left the live queue equal to the record
+        // and the unchanged-work guard held the only bugfixer while candidates waited (cb-r9ac).
+        let found = triggers::fingerprint(role, &facts);
         // `clears_flag` is `false` and can only be: a flagged name was skipped above.
         match lifecycle::start(host, paths, name, false, bead.as_deref()) {
             Ok(_) => {
@@ -1042,7 +1047,7 @@ fn start_due(
                     // The within-tick rule: the next row in this loop is not handed it again.
                     facts.take(id);
                 }
-                ledger.note_started(name, now, triggers::fingerprint(role, &facts));
+                ledger.note_started(name, now, found);
                 let reason = reason.unwrap_or_default();
                 log_start(logger, name, role, Some(&reason), bead.as_deref(), now);
                 app.set_notice(triggers::start_notice(name, &reason));
@@ -5882,6 +5887,73 @@ mod main_tests {
             host.kill(&paths, name);
             settle_gone(&mut host, name);
         }
+    }
+
+    /// cb-r9ac: the fingerprint a start is measured against is the queue as the pass FOUND it,
+    /// handed bead included. Recorded after `facts.take`, it already lacked that bead, so a pass
+    /// that did exactly its one bead left the live queue equal to the record and the guard held
+    /// the only bugfixer for twenty minutes while three candidates waited.
+    #[test]
+    fn a_pass_that_took_its_bead_off_the_queue_is_not_held_as_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+        let mut ledger = cerebro_tui::triggers::StartLedger::default();
+        let roster = implementer_roster(&["Rogue"]);
+        let mut app = standby_app(
+            supervising(),
+            vec![implementer_row("Rogue", cerebro_tui::model::RowState::Dead)],
+            Some(planned_beads(2)),
+            now,
+        );
+
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &no_spacing(), 1, &roster, now);
+
+        let handed = app.handed.get("Rogue").cloned().expect("Rogue was handed a bead");
+        host.kill(&paths, "Rogue");
+        settle_gone(&mut host, "Rogue");
+        let ended = now + chrono::Duration::seconds(600);
+        ledger.note_ended("Rogue", ended);
+
+        let facts_of = |work: &cerebro_tui::model::WorkBuckets| {
+            TriggerFacts::derive(
+                work,
+                &roster,
+                &std::collections::BTreeSet::new(),
+                |_| false,
+                triggers::GhAnswer::Unanswered,
+                1,
+            )
+        };
+        let agent = || triggers::AgentFacts {
+            role: "producer",
+            ended_at: ledger.ended_at("Rogue"),
+            started_at: ledger.started_at("Rogue"),
+            last_fingerprint: ledger.fingerprint("Rogue"),
+        };
+
+        // The pass merged and closed its bead: the queue lost one and the other still waits.
+        let mut done = planned_beads(2);
+        done.assignable.retain(|id| *id != handed);
+        done.planned.retain(|bead| bead.id != handed);
+        let after = facts_of(&done);
+        assert!(
+            !triggers::held_by_unchanged_work(&after, agent()),
+            "a pass that took {handed} off the queue changed what the role reads"
+        );
+        assert_eq!(
+            triggers::trigger(&after, agent(), ended + chrono::Duration::seconds(3600)),
+            Some("1 UX-agreed, unclaimed".to_string()),
+            "the remaining candidate starts the next pass"
+        );
+
+        // The pass gave its bead back untouched: the queue is as it was found, and the guard holds.
+        let untouched = facts_of(&planned_beads(2));
+        assert!(
+            triggers::held_by_unchanged_work(&untouched, agent()),
+            "a pass that left the queue exactly as it found it is held"
+        );
     }
 
     #[test]

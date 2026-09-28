@@ -142,7 +142,7 @@ git_q -C "$tree" -c protocol.file.allow=always submodule update -q --init
 git -C "$consumer" worktree remove "$tree" 2>/dev/null && fail "the fixture does not reproduce git's refusal; the case proves nothing"
 cerebro_worktree_remove "$consumer" "$tree" || fail "a clean, landed tree with a submodule is removed"
 [[ ! -e "$tree" ]] || fail "the tree with a submodule is gone"
-git -C "$consumer" worktree list --porcelain | grep -q "worktree $tree$" && fail "the registration is pruned"
+[[ "$(git -C "$consumer" worktree list --porcelain; echo)" != *"worktree $tree"$'\n'* ]] || fail "the registration is pruned"
 ! git -C "$consumer" show-ref --verify --quiet refs/heads/withsub-branch || fail "its branch is deleted"
 pass "a clean, landed tree containing a submodule is removed, and its registration pruned"
 

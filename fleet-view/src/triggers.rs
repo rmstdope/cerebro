@@ -606,6 +606,11 @@ fn condition(facts: &TriggerFacts, agent: &AgentFacts<'_>) -> Option<String> {
 /// The `ended_at > started_at` clause is what makes it hold a pass that ran and never a launch
 /// that never became one. The fingerprint is recorded when a launch is *attempted*, so without it
 /// a launch that died silently would buy this guard's silence for nothing.
+///
+/// The record is the queue as the pass FOUND it, the bead it was handed included (cb-r9ac). A
+/// pass that closes that bead therefore reads as changed, and one that gives it back untouched
+/// as unchanged; a record taken after the hand-off cannot tell the two apart and held the only
+/// bugfixer while three candidates waited.
 fn unchanged(facts: &TriggerFacts, agent: &AgentFacts<'_>) -> bool {
     let (Some(last), Some(now_print)) = (agent.last_fingerprint, fingerprint(agent.role, facts))
     else {

@@ -11,7 +11,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$repo_root/tests/lib/consumer.sh"
 
-consumer="$(consumer_new repo --origin --link assign-bead assignable-beads roster consumer-root)"
+consumer="$(consumer_new repo --origin --link assign-bead assignable-beads roster consumer-root candidate-label-policy.jq)"
 printf 'Rogue producer\nCyclops producer\nBishop bugfixer\nBeast ux\nIceman ux\nCerebro orchestrator\n' > "$consumer/.cerebro/roster.conf"
 state="$consumer/.cerebro/state"
 stub="$work_dir/stub"

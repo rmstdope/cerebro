@@ -10,7 +10,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$repo_root/tests/lib/consumer.sh"
 
-consumer="$(consumer_new repo --link bugfix-candidates consumer-root)"
+consumer="$(consumer_new repo --link bugfix-candidates consumer-root candidate-label-policy.jq)"
 stub="$work_dir/stub"
 mkdir -p "$stub"
 cat > "$stub/bd" <<'STUB'

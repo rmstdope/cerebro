@@ -83,6 +83,7 @@ done
 [[ -n "$mode" ]] || usage
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$script_dir/candidate-label-policy.sh"
 
 # Captured before the pipe rather than piped straight into `jq`, for this reason about the same
 # call: under `pipefail` a `work-beads` failure inside a pipeline is this
@@ -93,7 +94,9 @@ if ! raw="$("$script_dir/work-beads" --status open)"; then
   exit 1
 fi
 
-if ! out="$(printf '%s' "$raw" | jq --arg mode "$mode" --arg stage "$stage_label" --arg skip "$skip_label" '. as $all
+if ! out="$(printf '%s' "$raw" | jq -L "$script_dir" --arg mode "$mode" --arg stage "$stage_label" --arg skip "$skip_label" --arg verifier_only_label "$verifier_only_label" '
+    include "candidate-label-policy";
+    . as $all
     | (reduce $all[] as $b ({}; .[$b.id] = $b)) as $by_id
     | def held: ((.assignee // "") != "");
       def satisfied:
@@ -106,7 +109,7 @@ if ! out="$(printf '%s' "$raw" | jq --arg mode "$mode" --arg stage "$stage_label
         | select((.labels // []) | index("planned")       | not)
         | select((.labels // []) | index("human")         | not)
         | select((.labels // []) | index("verdict:stale") | not)
-        | select((.labels // []) | index("second-look")   | not)
+        | without_verifier_only_label($verifier_only_label)
         | select((.labels // []) | index("bugfix")        | not)
         | select((.labels // []) | index($skip)           | not)
         | select(held | not)

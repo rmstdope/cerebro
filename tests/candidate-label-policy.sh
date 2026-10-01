@@ -49,14 +49,20 @@ run() {
     bash "$scripts/$script" "$@"
 }
 
+: > "$work_dir/bd.log"
 out="$(run assignable-beads)"
 [[ "$(jq -c '[.[].id]' <<<"$out")" == '["cb-producer"]' ]] \
   || fail "the producer queue did not apply the shared verifier-only label policy: $out"
+[[ "$(cat "$work_dir/bd.log")" == *"--exclude-label fixture-verifier-only"* ]] \
+  || fail "the producer query did not use the shared verifier-only label: $(cat "$work_dir/bd.log")"
 pass "the producer queue applies the shared verifier-only label policy"
 
+: > "$work_dir/bd.log"
 out="$(run bugfix-candidates)"
 [[ "$(jq -c '[.[].id]' <<<"$out")" == '["cb-bugfixer"]' ]] \
   || fail "the bugfixer queue did not apply the shared verifier-only label policy: $out"
+[[ "$(cat "$work_dir/bd.log")" == *"--exclude-label fixture-verifier-only"* ]] \
+  || fail "the bugfixer query did not use the shared verifier-only label: $(cat "$work_dir/bd.log")"
 pass "the bugfixer queue applies the shared verifier-only label policy"
 
 out="$(run stage-candidates ux)"

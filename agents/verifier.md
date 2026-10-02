@@ -302,6 +302,11 @@ The sha it prints on stdout is the one you say out loud.
   the acceptance; matching the acceptance and solving the problem are two different questions.
 - **What it claimed.** The description, acceptance criteria, and the plan's *User-facing decisions*
   — **both halves**. Name the *Decided by me* list in the briefing: the navigator has not seen it.
+- **For a bug, how it was triggered.** A `bugfix` bead carries the bugfixer's latest
+  `## The bug, as fixed` note: what was wrong, how its test triggered it, and how to trigger it by
+  hand. Build the manual check from *How to trigger it by hand*: reproduce the steps that showed the
+  bug and confirm it no longer shows. A bug bead without the note is a finding: say so in the
+  briefing and work the steps out from the test it names.
 - **Where it landed.** The PR(s) and commit(s) via the `git log` above.
 - **What to run**, from `.cerebro/worktrees/psylocke`. **The project declares it; you never work it
   out.**

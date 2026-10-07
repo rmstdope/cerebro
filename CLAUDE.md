@@ -225,7 +225,11 @@ Each of these answers one question in one place. Add a caller, never a second co
   assigns and `scripts/release-bead --ended` takes back what a gone session still held; the other
   writers of a bead's route are `scripts/producer-park` (a producer's return to UX or the
   navigator), `scripts/reopen-failed` (a failed verification) and
-  `scripts/verifier-pass-epic-family` (a passed family). `scripts/disk-preflight` and
+  `scripts/verifier-pass-epic-family` (a passed family). These queues and writers take their
+  labels from `scripts/candidate-label-policy.sh`, where each hand-off between roles is a named
+  transition (`route_flags_for`) the writers apply; `tests/label-routes.sh` runs every transition
+  and proves the bead lands in exactly the queue meant to take it. The sweeps, the fleet view's Rust and most skill
+  snippets still spell labels themselves; the policy's header lists them. `scripts/disk-preflight` and
   `scripts/build-workload` decide the workload a builder's tree is made under.
 - `scripts/sweep-paused.sh`, `sweep-verdicts.sh`, `sweep-epics.sh`, `sweep-assignees.sh` — what
   the fleet view's Sweeps section finds, each held to `tests/lib/sweep-findings.json`;

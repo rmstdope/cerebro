@@ -43,13 +43,12 @@
 
 set -euo pipefail
 
-# The label that says a bead's experience is agreed and its build is not yet designed. THIS IS THE
-# ONE PLACE THE SHELL SPELLS IT, asked for through `--print-stage-label` rather than repeated.
-stage_label="ux:agreed"
-# The label that says there is no experience to agree: the navigator answered at filing that nothing
-# a person sees changes (cb-uump). The ux stage never takes such a bead, and a producer takes it as
-# it would an agreed one. Spelled here and asked for through `--print-skip-label`, the same way.
-skip_label="ux:none"
+# The label that says a bead's experience is agreed (`stage_label`), and the one that says there is
+# no experience to agree (`skip_label`, cb-uump), are spelled in `candidate-label-policy.sh` with
+# every other routing label (cb-q6yb). A caller in another language asks for them through
+# `--print-stage-label` and `--print-skip-label` rather than repeating them.
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$script_dir/candidate-label-policy.sh"
 
 usage() {
   echo "usage: stage-candidates ux | stage-candidates --print-stage-label | stage-candidates --print-skip-label" >&2
@@ -82,9 +81,6 @@ done
 
 [[ -n "$mode" ]] || usage
 
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$script_dir/candidate-label-policy.sh"
-
 # Captured before the pipe rather than piped straight into `jq`, for this reason about the same
 # call: under `pipefail` a `work-beads` failure inside a pipeline is this
 # script's failure too, but this script must leave stdout EMPTY on a failure, and a pipeline that
@@ -94,34 +90,35 @@ if ! raw="$("$script_dir/work-beads" --status open)"; then
   exit 1
 fi
 
-if ! out="$(printf '%s' "$raw" | jq -L "$script_dir" --arg mode "$mode" --arg stage "$stage_label" --arg skip "$skip_label" --arg verifier_only_label "$verifier_only_label" '
+if ! out="$(printf '%s' "$raw" | jq -L "$script_dir" --arg mode "$mode" \
+    --arg human "$human_label" \
+    --arg stale "$stale_verdict_label" --arg verifier_only_label "$verifier_only_label" \
+    --arg bugfix "$bugfix_label" --arg ui_question "$ui_question_label" \
+    --arg plan_revise "$plan_revise_label" '
     include "candidate-label-policy";
-    . as $all
+    $ARGS.positional as $past
+    | . as $all
     | (reduce $all[] as $b ({}; .[$b.id] = $b)) as $by_id
     | def held: ((.assignee // "") != "");
-      def satisfied:
-        ((.labels // []) | index("planned")) or ((.labels // []) | index($stage))
-        or ((.labels // []) | index($skip));
+      def satisfied: past_ux($past);
       def unsatisfied_blocker($id):
         (($by_id[$id] // null) as $b | $b != null and ($b | satisfied | not))
         or any($all[]; .parent == $id and (satisfied | not));
       [ $all[]
-        | select((.labels // []) | index("planned")       | not)
-        | select((.labels // []) | index("human")         | not)
-        | select((.labels // []) | index("verdict:stale") | not)
+        | select(past_ux($past)                  | not)
+        | select((.labels // []) | index($human)  | not)
+        | select((.labels // []) | index($stale)  | not)
         | without_verifier_only_label($verifier_only_label)
-        | select((.labels // []) | index("bugfix")        | not)
-        | select((.labels // []) | index($skip)           | not)
+        | select((.labels // []) | index($bugfix) | not)
         | select(held | not)
         | select(((.labels // []) | index("verification:failed") | not)
-                 or ((.labels // []) | index("plan:revise"))
-                 or ((.labels // []) | index("needs-ui-decision")))
-        | select((.labels // []) | index($stage) | not)
+                 or ((.labels // []) | index($plan_revise))
+                 or ((.labels // []) | index($ui_question)))
         | select((($by_id[.parent // ""] // {}).assignee // "") == "")
         | select([ (.dependencies // [])[]
                    | select(.type == "blocks")
                    | select(unsatisfied_blocker(.depends_on_id)) ] | length == 0)
-      ] | sort_by(.priority, .id)' 2>/dev/null)"; then
+      ] | sort_by(.priority, .id)' --args "${past_ux_labels[@]}" 2>/dev/null)"; then
   echo "stage-candidates: the bead list is not JSON this script can filter" >&2
   exit 1
 fi

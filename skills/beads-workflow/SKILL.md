@@ -57,7 +57,10 @@ and makes it the assignee without a claim; the UX agent clears the assignee when
 Routing is fixed: no agent chooses who is next. Each role leaves a **label** (or a `bd set-state`
 verification state) and the fleet view's candidate scripts read those labels to decide which role
 is started and given the bead. The one table below is the whole route; every role reads it, and a
-role that touches a label not in it is changing the pipeline for every consumer.
+role that touches a label not in it is changing the pipeline for every consumer. The queue and
+route scripts take these labels, and the named hand-offs between roles, from
+`scripts/candidate-label-policy.sh`; a label renamed here is renamed there, and in the other places
+its header lists.
 
 ```
   filed (P4) ──► ranked ──► ux:agreed ──► claimed ──► closed ──► verification=passed

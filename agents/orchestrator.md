@@ -470,12 +470,13 @@ Three options, in this order, your recommendation marked `(Recommended)`:
   `ux:none` **and `planned`**, add `needs-ui-decision` if it is missing, record no answer; that is
   the state `producer-park … ux` leaves, so the next UX pass takes it as a returned piece of work,
   interviews the navigator and clears it. With a stage label still on, a producer takes it instead
-  and finds a question it may not answer:
+  and finds a question it may not answer. The label change is the named `send_to_ux` hand-off, the
+  same one `producer-park` applies, so the two cannot drift apart (cb-q6yb). One `&&` chain, so a
+  policy that does not load writes nothing rather than half the change:
 
   ```bash
-  bd update <id> --remove-label human --remove-label pause:kept \
-    --remove-label ux:agreed --remove-label ux:none --remove-label planned \
-    --add-label needs-ui-decision \
+  source .cerebro/cerebro/scripts/candidate-label-policy.sh && route_flags_for send_to_ux &&
+  bd update <id> --remove-label human --remove-label pause:kept "${route_flags[@]}" \
     --append-notes "## Sent back to the UX stage
 
 <what the navigator wants looked at again, in their words>"

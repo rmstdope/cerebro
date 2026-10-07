@@ -50,6 +50,9 @@
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Every label this script writes is spelled there, beside the queues that read them, so a reopen
+# cannot leave a label the next queue refuses (cb-q6yb).
+source "$script_dir/candidate-label-policy.sh"
 
 usage() {
   echo "usage: reopen-failed <bead> --sha <full-sha> --notes <text> --fault plan|build [--reason <line>]" >&2
@@ -166,22 +169,23 @@ bd -C "$root" update "$bead" --set-metadata "verified_at=$sha" \
 
 # Harmless when they are not there. `second-look` is the producer's hand-back mark (cb-wf24): a
 # fresh verdict is the verifier acting on it, which ends the second look either way.
-bd -C "$root" update "$bead" --remove-label "verdict:stale" \
-  || die_step "removing verdict:stale" "$bead"
-bd -C "$root" update "$bead" --remove-label "second-look" \
-  || die_step "removing second-look" "$bead"
+route_flags_for fresh_verdict
+bd -C "$root" update "$bead" "${route_flags[@]}" \
+  || die_step "the fresh-verdict label clear" "$bead"
 
 # A `bugfix` bead has no agreed experience to revise: its route never went through UX, and
 # `plan:revise` would send it to a stage that excludes it. `--fault plan` on one is read as build,
 # and said so (cb-0elv.5).
 is_bugfix="$(printf '%s' "$status_json" \
-  | jq -r '(if type=="array" then .[0] else . end) | (((.labels // []) | index("bugfix")) != null)')"
+  | jq -r --arg bugfix "$bugfix_label" \
+      '(if type=="array" then .[0] else . end) | (((.labels // []) | index($bugfix)) != null)')"
 if [[ "$fault" == "plan" && "$is_bugfix" == "true" ]]; then
   echo "reopen-failed: $bead is a bugfix bead, which has no agreed experience to revise; reopened as a build fault for the bugfixer" >&2
 elif [[ "$fault" == "plan" ]]; then
-  bd -C "$root" update "$bead" --remove-label planned --remove-label ux:agreed --remove-label ux:none \
-      --add-label "plan:revise" \
-    || die_step "the plan:revise label flip" "$bead"
+  # Every past-UX label off, so the UX queue takes it and no producer does (cb-b26a).
+  route_flags_for revise_plan
+  bd -C "$root" update "$bead" "${route_flags[@]}" \
+    || die_step "the revise-plan label flip" "$bead"
 fi
 
 # The parent chain: up as far as there is a CLOSED ancestor. An already-open parent ends the walk.

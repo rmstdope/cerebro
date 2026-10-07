@@ -348,10 +348,13 @@ Nowhere else does a command, path or error reach the designer.
 ## When nobody answers
 
 **Never stall on an absent designer**: a question waits until answered, so when nobody present can
-answer it, park it and end the pass, settled material in the notes, **no** agreed label.
+answer it, park it and end the pass, settled material in the notes, **no** agreed label. The label
+change is the named `park_for_ui_decision` hand-off (cb-q6yb), in one `&&` chain so a policy that
+does not load writes nothing:
 
 ```bash
-bd update <id> --add-label needs-ui-decision --add-label human \
+source .cerebro/cerebro/scripts/candidate-label-policy.sh && route_flags_for park_for_ui_decision &&
+bd update <id> "${route_flags[@]}" \
   --assignee "" \
   --append-notes "## Where we got to in the UX stage
 

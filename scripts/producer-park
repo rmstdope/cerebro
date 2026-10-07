@@ -28,6 +28,9 @@ case "$decision" in
 esac
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Every label this script reads or writes is spelled there, beside the queues that read them, so a
+# park cannot leave a label the next queue refuses (cb-q6yb).
+source "$script_dir/candidate-label-policy.sh"
 root="$("$script_dir/consumer-root" --shared)"
 
 if ! shown="$(bd -C "$root" show "$id" --json)"; then
@@ -44,7 +47,8 @@ if [[ "$status" != "in_progress" || "$assignee" != "$name" ]]; then
   exit 1
 fi
 if printf '%s' "$shown" \
-  | jq -e '(if type == "array" then .[0] else . end) | (.labels // [] | index("bugfix")) != null' \
+  | jq -e --arg bugfix "$bugfix_label" \
+      '(if type == "array" then .[0] else . end) | (.labels // [] | index($bugfix)) != null' \
   >/dev/null; then
   # The bugfix route never enters UX (`stage-candidates` excludes it), so neither branch here can
   # take a bug anywhere; a product decision on a bug is a `human` hand-back (cb-0elv.5).
@@ -52,24 +56,22 @@ if printf '%s' "$shown" \
   exit 1
 fi
 if ! printf '%s' "$shown" \
-  | jq -e '(if type == "array" then .[0] else . end)
-           | ((.labels // [] | index("ux:agreed")) != null) or ((.labels // [] | index("ux:none")) != null)' \
+  | jq -e --arg stage "$stage_label" --arg skip "$skip_label" '(if type == "array" then .[0] else . end)
+           | ((.labels // [] | index($stage)) != null) or ((.labels // [] | index($skip)) != null)' \
   >/dev/null; then
   echo "producer-park: $id is not producer work (neither ux:agreed nor ux:none)" >&2
   exit 1
 fi
 
 if [[ "$decision" == "ux" ]]; then
-  # A UX question is the designer's. The agreed label comes off so `stage-candidates ux` offers
+  # A UX question is the designer's. Every past-UX label comes off so `stage-candidates ux` offers
   # the bead again and `assignable-beads` stops offering it; the note's heading is what
   # `agree-experience` reads a returned piece of work by; nothing is parked for a person.
-  # `ux:none` comes off too: a producer may add the UX stop the navigator skipped at filing, never
+  # `ux:none` is one of them: a producer may add the UX stop the navigator skipped at filing, never
   # the other way round (cb-uump).
+  route_flags_for send_to_ux
   bd --actor "$name" -C "$root" update "$id" \
-    --remove-label ux:agreed \
-    --remove-label ux:none \
-    --remove-label planned \
-    --add-label needs-ui-decision \
+    "${route_flags[@]}" \
     --append-notes "## Sent back to the UX stage
 
 $reason" \
@@ -81,9 +83,9 @@ else
   note="Producer parking for a scope decision: $reason"
   # `human` alone: `needs-ui-decision` is a designer's question, and on a scope park it would keep
   # the fleet view from unparking the bead when its blockers close and make Cerebro offer it to UX.
+  route_flags_for park_for_navigator
   bd --actor "$name" -C "$root" update "$id" \
-    --remove-label planned \
-    --add-label human \
+    "${route_flags[@]}" \
     --append-notes "$note" \
     --set-metadata "paused_at=$paused_at" \
     --if-assignee "$name" \

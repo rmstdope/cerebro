@@ -14,6 +14,8 @@
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# The labels a verdict clears are spelled there, beside the queues that read them (cb-q6yb).
+source "$script_dir/candidate-label-policy.sh"
 
 usage() {
   echo "usage: verifier-pass-epic-family <epic-id> --sha <full-sha> [--reason <line>]" >&2
@@ -114,10 +116,9 @@ while IFS= read -r row; do
     || die_step "set-state verification=passed" "$id"
   bd -C "$root" update "$id" --set-metadata "verified_at=$sha" \
     || die_step "setting verified_at metadata" "$id"
-  bd -C "$root" update "$id" --remove-label "verdict:stale" \
-    || die_step "removing verdict:stale" "$id"
-  bd -C "$root" update "$id" --remove-label "second-look" \
-    || die_step "removing second-look" "$id"
+  route_flags_for fresh_verdict
+  bd -C "$root" update "$id" "${route_flags[@]}" \
+    || die_step "the fresh-verdict label clear" "$id"
 done < <(jq -c '.[]' <<<"$family_json")
 
 bd -C "$root" dolt push || die_step "bd dolt push" "$epic_id"

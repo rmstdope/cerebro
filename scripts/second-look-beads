@@ -39,12 +39,14 @@
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$script_dir/candidate-label-policy.sh"
 
-"$script_dir/work-beads" --status open | jq -r '
+"$script_dir/work-beads" --status open | jq -r --arg human "$human_label" \
+    --arg stale "$stale_verdict_label" --arg second_look "$verifier_only_label" '
   .[]
-  | select(([.labels[]?] | index("human")) | not)
+  | select(([.labels[]?] | index($human)) | not)
   | select(
-      ([.labels[]?] | index("verdict:stale"))
-      or ([.labels[]?] | index("second-look"))
+      ([.labels[]?] | index($stale))
+      or ([.labels[]?] | index($second_look))
     )
   | .id'

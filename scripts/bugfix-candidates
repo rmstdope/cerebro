@@ -14,8 +14,9 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$script_dir/candidate-label-policy.sh"
 root="$("$script_dir/consumer-root" --shared)"
 
-if ! raw="$(bd --readonly -C "$root" ready --label bugfix --exclude-label human \
-        --exclude-label verdict:stale --exclude-label "$verifier_only_label" --exclude-type epic --unassigned --json --brief -n 0)"; then
+if ! raw="$(bd --readonly -C "$root" ready --label "$bugfix_label" --exclude-label "$human_label" \
+        --exclude-label "$stale_verdict_label" --exclude-label "$verifier_only_label" \
+        --exclude-type epic --unassigned --json --brief -n 0)"; then
   echo "bugfix-candidates: bd ready failed - cannot list the candidates" >&2
   exit 1
 fi

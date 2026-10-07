@@ -46,11 +46,11 @@ root="$("$script_dir/consumer-root" --shared)"
 #
 # Nor is the stage label asked of `bd`: EITHER `ux:agreed` (a designer agreed the experience) OR
 # `ux:none` (the navigator said at filing that nothing a person sees changes, cb-uump) admits a
-# bead, and `bd ready --label` takes one. `scripts/stage-candidates --print-stage-label` and
-# `--print-skip-label` are where the two words are declared; this script repeats them because it
-# runs on every fleet-view tick and a second process per tick is not affordable.
-if ! raw="$(bd --readonly -C "$root" ready --exclude-label human \
-        --exclude-label verdict:stale --exclude-label "$verifier_only_label" --exclude-label bugfix \
+# bead, and `bd ready --label` takes one. Both words, and every label excluded here, come from
+# `candidate-label-policy.sh`, which the scripts that write a route read too (cb-q6yb).
+if ! raw="$(bd --readonly -C "$root" ready --exclude-label "$human_label" \
+        --exclude-label "$stale_verdict_label" --exclude-label "$verifier_only_label" \
+        --exclude-label "$bugfix_label" \
         --exclude-type epic --unassigned --json --brief -n 0)"; then
   echo "assignable-beads: bd ready failed - cannot list the assignable beads" >&2
   exit 1
@@ -59,12 +59,13 @@ fi
 # P4 is unranked: the navigator has not chosen a priority, and only Cerebro touches such a bead
 # (beads-workflow, *Writing a good bead*). The fleet view hands a producer this list's first entry,
 # so the filter lives here, with a missing priority read the same way (cb-7dun).
-if ! out="$(printf '%s' "$raw" | jq -L "$script_dir" --arg verifier_only_label "$verifier_only_label" '
+if ! out="$(printf '%s' "$raw" | jq -L "$script_dir" --arg verifier_only_label "$verifier_only_label" \
+      --arg stage "$stage_label" --arg skip "$skip_label" '
       include "candidate-label-policy";
       [ .[]
       | select((.priority // 4) < 4)
       | without_verifier_only_label($verifier_only_label)
-      | select(((.labels // []) | index("ux:agreed")) or ((.labels // []) | index("ux:none")))
+      | select(((.labels // []) | index($stage)) or ((.labels // []) | index($skip)))
       | {id, priority} ] | sort_by(.priority, .id)' 2>/dev/null)"; then
   echo "assignable-beads: bd ready did not print JSON this script can read" >&2
   exit 1

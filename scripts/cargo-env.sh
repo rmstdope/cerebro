@@ -164,9 +164,11 @@ cerebro_strip_cargo_env() {
   # An inherited RUSTUP_TOOLCHAIN outranks the rust-toolchain.toml in the agent's own worktree, so a
   # consumer that pins its Rust release would still have every session build and lint on whatever
   # the view was started with. The source `env' is the one exception: a person exported it before
-  # starting the view, and that is their choice to keep. A RUSTUP_TOOLCHAIN with no source never
-  # passed through a proxy at all, and is left alone for the same reason. RUSTUP_HOME is the real
-  # path and stays. Reported in its own array, before the two loops below.
+  # starting the view, and that is their choice to keep. A RUSTUP_TOOLCHAIN with no source is left
+  # alone for the same reason, which holds only on a rustup that sets RUSTUP_TOOLCHAIN_SOURCE (1.28
+  # onwards, as far as is known; 1.29.1 was checked): an older proxy passes RUSTUP_TOOLCHAIN with no
+  # source, and it is then kept as though a person had exported it. RUSTUP_HOME is the real path
+  # and stays. Reported in its own array, before the two loops below.
   if [ -n "${RUSTUP_TOOLCHAIN_SOURCE+set}" ]; then
     if [ "$RUSTUP_TOOLCHAIN_SOURCE" != env ] && [ -n "${RUSTUP_TOOLCHAIN+set}" ]; then
       unset RUSTUP_TOOLCHAIN

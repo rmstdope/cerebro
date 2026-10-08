@@ -64,9 +64,11 @@ So in atlantis-hud every agent's `cargo test` wrote its generated TypeScript bin
 navigator's shared checkout, with no `cd` mistake required, and `export_bindings_stay_inside_this_workspace`
 went red in any session carrying the variable.
 
-Dealt with in `scripts/launch`, via `scripts/cargo-env.sh`, which clears cargo's own injections and
-the consumer's `[env]` keys before the launcher spawns anything — the navigator's `CARGO_HOME` and
-`CARGO_TARGET_DIR` excepted. Two consequences worth knowing:
+Dealt with in `scripts/launch`, via `scripts/cargo-env.sh`, which clears cargo's own injections,
+the consumer's `[env]` keys and the toolchain rustup's proxy chose for the view (`RUSTUP_TOOLCHAIN`
+and `RUSTUP_TOOLCHAIN_SOURCE`, which would otherwise outrank a consumer's `rust-toolchain.toml`)
+before the launcher spawns anything — the navigator's `CARGO_HOME` and `CARGO_TARGET_DIR`, and a
+`RUSTUP_TOOLCHAIN` they exported themselves, excepted. Two consequences worth knowing:
 
 - **A suite that asserts on the environment or on `scripts/launch`'s stderr runs inside a polluted
   session.** `tests/launchers.sh` and `tests/cargo-env.sh` clear the variables in their own preambles
@@ -75,5 +77,5 @@ the consumer's `[env]` keys before the launcher spawns anything — the navigato
   through `$(...)` or `< <(...)` runs the whole thing in a subshell, clears nothing, and prints a
   perfectly convincing list of what it did not do.
 
-Sightings: cb-6fu, and ah-79ca / ah-16pb in atlantis-hud.
+Sightings: cb-6fu, and ah-79ca / ah-16pb / ah-3kge in atlantis-hud.
 

@@ -58,7 +58,7 @@ suite_cleanup() {
 for _n in $(compgen -e || true); do
   case "$_n" in
     CARGO_HOME|CARGO_TARGET_DIR) ;;
-    CARGO|CARGO_*|TS_RS_EXPORT_DIR) unset "$_n" ;;
+    CARGO|CARGO_*|TS_RS_EXPORT_DIR|RUSTUP_TOOLCHAIN|RUSTUP_TOOLCHAIN_SOURCE) unset "$_n" ;;
   esac
 done
 unset _n
@@ -86,6 +86,7 @@ printf 'CEREBRO_CONSUMER_MOUNT=%s\n' "${CEREBRO_CONSUMER_MOUNT:-<unset>}"
 printf 'TS_RS_EXPORT_DIR=%s\n' "${TS_RS_EXPORT_DIR:-<unset>}"
 printf 'CARGO_MANIFEST_DIR=%s\n' "${CARGO_MANIFEST_DIR:-<unset>}"
 printf 'CARGO_HOME=%s\n' "${CARGO_HOME:-<unset>}"
+printf 'RUSTUP_TOOLCHAIN=%s\n' "${RUSTUP_TOOLCHAIN:-<unset>}"
 for a in "$@"; do
   printf 'ARG:%s\n' "$a"
 done
@@ -1545,6 +1546,18 @@ grep -q '^TS_RS_EXPORT_DIR=<unset>$' <<<"$out" \
 grep -q 'cleared 1 CARGO_\* variable and TS_RS_EXPORT_DIR from the environment cargo left behind' <<<"$out" \
   || fail "launch Forge: expected the cleared-variables line on stderr, got: $out"
 pass "launch clears a consumer's [env] keys too, and says on stderr what it removed"
+
+# rustup's half (ah-3kge): the view's `cargo run' went through rustup's proxy, whose toolchain
+# choice would outrank the rust-toolchain.toml in the agent's own worktree.
+out="$(RUSTUP_TOOLCHAIN=stable RUSTUP_TOOLCHAIN_SOURCE=toolchain-file run_launcher launch Forge 2>&1)"
+grep -q '^RUSTUP_TOOLCHAIN=<unset>$' <<<"$out" \
+  || fail "launch Forge: rustup's toolchain choice should not reach the session, got: $out"
+grep -q 'cleared RUSTUP_TOOLCHAIN, RUSTUP_TOOLCHAIN_SOURCE from the environment cargo left behind' <<<"$out" \
+  || fail "launch Forge: expected the rustup names on the cleared line, got: $out"
+out="$(RUSTUP_TOOLCHAIN=1.98.1 run_launcher launch Forge 2>&1)"
+grep -q '^RUSTUP_TOOLCHAIN=1.98.1$' <<<"$out" \
+  || fail "launch Forge: a RUSTUP_TOOLCHAIN a person exported must survive, got: $out"
+pass "launch clears the toolchain rustup chose for the fleet view, and keeps one a person exported"
 
 out="$(run_launcher launch Forge 2>&1)"
 grep -q 'cleared' <<<"$out" \

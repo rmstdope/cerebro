@@ -26,7 +26,7 @@ source "$repo_root/tests/lib/consumer.sh"
 for _n in $(compgen -e || true); do
   case "$_n" in
     CARGO_HOME|CARGO_TARGET_DIR) ;;
-    CARGO|CARGO_*|TS_RS_EXPORT_DIR) unset "$_n" ;;
+    CARGO|CARGO_*|TS_RS_EXPORT_DIR|RUSTUP_TOOLCHAIN|RUSTUP_TOOLCHAIN_SOURCE) unset "$_n" ;;
   esac
 done
 unset _n
@@ -179,5 +179,42 @@ pass "cargo_env: the library needs nothing on PATH but bash"
   [ -z "${CARGO_MANIFEST_DIR:-}" ] && [ -z "${TS_RS_EXPORT_DIR:-}" ] || exit 1
 ) || fail "cargo_env: the strip must report through its arrays and unset in the caller's own shell"
 pass "cargo_env: what was removed is readable without a subshell, and the removal is the caller's"
+
+# --- rustup's toolchain choice is cleared, unless a person exported it (ah-3kge) ----------------
+#
+# `cargo run' goes through rustup's proxy, which hands its child the toolchain it resolved for the
+# FLEET VIEW's build: RUSTUP_TOOLCHAIN, and RUSTUP_TOOLCHAIN_SOURCE saying where it came from. An
+# inherited RUSTUP_TOOLCHAIN outranks the rust-toolchain.toml in the agent's own worktree, so a
+# consumer pinning its release would still build every session on the view's toolchain. Only the
+# source `env' means a person exported it, and only that one survives.
+
+for source_word in default cli toolchain-file path-override; do
+  ( export RUSTUP_TOOLCHAIN=stable-aarch64-apple-darwin RUSTUP_TOOLCHAIN_SOURCE="$source_word" \
+           RUSTUP_HOME=/rustup-home
+    cerebro_strip_cargo_env "$empty_dir" >/dev/null
+    [ -z "${RUSTUP_TOOLCHAIN+set}" ] || exit 1
+    [ -z "${RUSTUP_TOOLCHAIN_SOURCE+set}" ] || exit 2
+    [ "$RUSTUP_HOME" = /rustup-home ] || exit 3
+    [ "${#cerebro_cargo_stripped_rustup[@]}" = 2 ] || exit 4
+    [ "${cerebro_cargo_stripped_rustup[0]}" = RUSTUP_TOOLCHAIN ] || exit 5
+    [ "${cerebro_cargo_stripped_rustup[1]}" = RUSTUP_TOOLCHAIN_SOURCE ] || exit 6
+  ) || fail "cargo_env: a toolchain rustup resolved from '$source_word' must be cleared and reported (step $?)"
+done
+pass "cargo_env: a toolchain rustup resolved for the fleet view's own build is cleared"
+
+( export RUSTUP_TOOLCHAIN=1.98.1 RUSTUP_TOOLCHAIN_SOURCE=env
+  cerebro_strip_cargo_env "$empty_dir" >/dev/null
+  [ "$RUSTUP_TOOLCHAIN" = 1.98.1 ] || exit 1
+  [ -z "${RUSTUP_TOOLCHAIN_SOURCE+set}" ] || exit 2
+  [ "${cerebro_cargo_stripped_rustup[*]}" = RUSTUP_TOOLCHAIN_SOURCE ] || exit 3
+) || fail "cargo_env: a RUSTUP_TOOLCHAIN a person exported must survive (step $?)"
+( export RUSTUP_TOOLCHAIN=1.98.1
+  unset RUSTUP_TOOLCHAIN_SOURCE
+  out="$(cerebro_strip_cargo_env "$empty_dir")"
+  [ -z "$out" ] || exit 1
+  cerebro_strip_cargo_env "$empty_dir" >/dev/null
+  [ "$RUSTUP_TOOLCHAIN" = 1.98.1 ] || exit 2
+) || fail "cargo_env: a RUSTUP_TOOLCHAIN with no source never went through rustup and must survive (step $?)"
+pass "cargo_env: a RUSTUP_TOOLCHAIN a person exported is kept"
 
 suite_passed

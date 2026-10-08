@@ -132,10 +132,12 @@ cerebro_cargo_protected_name_p() {
   esac
 }
 
-# Unset every exported variable that either predicate above claims, except the protected names.
-# Prints the names it removed, one per line: the cargo-injected ones first (whatever order
-# `compgen -e' gave), then the config `[env]' ones in declaration order. It also leaves them in two
-# arrays, `cerebro_cargo_stripped_injected' and `cerebro_cargo_stripped_config', reset on entry.
+# Unset every exported variable that either predicate above claims, except the protected names,
+# and the toolchain rustup's proxy chose (see the block at its top). Prints the names it removed,
+# one per line: rustup's first, then the cargo-injected ones (whatever order `compgen -e' gave),
+# then the config `[env]' ones in declaration order. It also leaves them in three arrays,
+# `cerebro_cargo_stripped_rustup', `cerebro_cargo_stripped_injected' and
+# `cerebro_cargo_stripped_config', reset on entry.
 #   $1 = directory to walk up from, for the [env] half
 #
 # THE ARRAYS ARE NOT DECORATION, and a caller wanting to report what went must read them rather than
@@ -154,6 +156,29 @@ cerebro_strip_cargo_env() {
   local name
   cerebro_cargo_stripped_injected=()
   cerebro_cargo_stripped_config=()
+  cerebro_cargo_stripped_rustup=()
+
+  # RUSTUP'S HALF (ah-3kge). `cargo run' is rustup's proxy before it is cargo, and the proxy hands
+  # its child the toolchain it resolved for the FLEET VIEW's build - RUSTUP_TOOLCHAIN, and
+  # RUSTUP_TOOLCHAIN_SOURCE naming where that came from (`default', `cli', `toolchain-file', ...).
+  # An inherited RUSTUP_TOOLCHAIN outranks the rust-toolchain.toml in the agent's own worktree, so a
+  # consumer that pins its Rust release would still have every session build and lint on whatever
+  # the view was started with. The source `env' is the one exception: a person exported it before
+  # starting the view, and that is their choice to keep. A RUSTUP_TOOLCHAIN with no source is left
+  # alone for the same reason, which holds only on a rustup that sets RUSTUP_TOOLCHAIN_SOURCE (1.28
+  # onwards, as far as is known; 1.29.1 was checked): an older proxy passes RUSTUP_TOOLCHAIN with no
+  # source, and it is then kept as though a person had exported it. RUSTUP_HOME is the real path
+  # and stays. Reported in its own array, before the two loops below.
+  if [ -n "${RUSTUP_TOOLCHAIN_SOURCE+set}" ]; then
+    if [ "$RUSTUP_TOOLCHAIN_SOURCE" != env ] && [ -n "${RUSTUP_TOOLCHAIN+set}" ]; then
+      unset RUSTUP_TOOLCHAIN
+      cerebro_cargo_stripped_rustup[${#cerebro_cargo_stripped_rustup[@]}]=RUSTUP_TOOLCHAIN
+      printf '%s\n' RUSTUP_TOOLCHAIN
+    fi
+    unset RUSTUP_TOOLCHAIN_SOURCE
+    cerebro_cargo_stripped_rustup[${#cerebro_cargo_stripped_rustup[@]}]=RUSTUP_TOOLCHAIN_SOURCE
+    printf '%s\n' RUSTUP_TOOLCHAIN_SOURCE
+  fi
 
   while IFS= read -r name; do
     [ -n "$name" ] || continue

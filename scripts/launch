@@ -83,11 +83,12 @@ unset _provider_name
 
 # One line on stderr, only when something went - this file's own habit, for the reason it gives
 # about agents.conf: a session behaving oddly three days later is otherwise a mystery. The CARGO_*
-# family is counted rather than spelled out (eighteen lines of noise on every launch); the config
-# names are listed, because that is the half a navigator cannot guess.
+# family is counted rather than spelled out (eighteen lines of noise on every launch); rustup's
+# names and the config names are listed, because those are the ones a navigator cannot guess.
 _cleared_cargo=${#cerebro_cargo_stripped_injected[@]}
 _cleared_names=""
-for _name in ${cerebro_cargo_stripped_config+"${cerebro_cargo_stripped_config[@]}"}; do
+for _name in ${cerebro_cargo_stripped_rustup+"${cerebro_cargo_stripped_rustup[@]}"} \
+             ${cerebro_cargo_stripped_config+"${cerebro_cargo_stripped_config[@]}"}; do
   _cleared_names="${_cleared_names:+$_cleared_names, }$_name"
 done
 unset _name

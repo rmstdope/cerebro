@@ -240,7 +240,7 @@ Each of these answers one question in one place. Add a caller, never a second co
 - `scripts/session-marker.sh` — the marker sentence; `scripts/marker-readers` checks every
   reader subscribes to `tests/lib/session-args.cases`.
 - `scripts/jsonl-log.sh` — appending to a JSONL log, and refusing under the protected dir.
-- `scripts/cargo-env.sh` — which cargo variables `launch` strips before spawning a session.
+- `scripts/cargo-env.sh` — which cargo and rustup variables `launch` strips before spawning a session.
 - `scripts/block-sync.sh` — marker-block parsing for `state-contract-sync`.
 - `scripts/tracked-links`, `scripts/state-contract-sync`,
   `scripts/marker-readers`, `scripts/portable-snippets` — gate predicates. None of them may join
@@ -259,7 +259,8 @@ Each of these answers one question in one place. Add a caller, never a second co
   `agent-hooks-env` *and* pass the flag, or the hooks silently do nothing. `hooks/copilot/` is the
   same behaviour in Copilot's schema.
 - **The fleet view is a child of cargo** (`scripts/cerebro-tui` execs `cargo run`), so every
-  session inherits cargo's environment plus the consumer's `[env]` table unless `launch` strips it.
+  session inherits cargo's environment plus the consumer's `[env]` table unless `launch` strips it
+  — and rustup's `RUSTUP_TOOLCHAIN`, which would outrank a consumer's `rust-toolchain.toml`.
 - **Scripts only work from a consumer root.** Run here they refuse, since there is no `.cerebro/`
   above the tree. Sync links are consumer-only too, and the links tracked here are checked by
   `scripts/tracked-links`.

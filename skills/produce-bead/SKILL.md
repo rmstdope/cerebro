@@ -1,6 +1,6 @@
 ---
 name: produce-bead
-description: Produce one UX-agreed bead end to end: decide the build and tests, implement it with TDD, review it, validate it, and deliver it.
+description: Produce one UX-agreed bead end to end - decide the build and tests, implement it with TDD, review it, validate it, and deliver it.
 ---
 
 # Producing a bead

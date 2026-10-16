@@ -25,20 +25,6 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # fail, pass, git_q, $work_dir and its cleanup trap - see tests/lib/consumer.sh.
 source "$repo_root/tests/lib/consumer.sh"
 
-# THE SUITE RUNS INSIDE A POLLUTED SESSION (cb-6fu). An implementer running this is itself a session
-# the fleet view - a `cargo run' child - started, so its environment carries cargo's injections. The
-# cases below assert stderr is EMPTY on every non-usage path, so a stray advisory from anything the
-# script forks would be red here and green in CI, which is the shape ah-dy4x cost.
-for _n in $(compgen -e || true); do
-  case "$_n" in
-    CARGO_HOME|CARGO_TARGET_DIR) ;;
-    CARGO|CARGO_*|TS_RS_EXPORT_DIR) unset "$_n" ;;
-  esac
-done
-unset _n
-export CARGO_HOME="$work_dir/empty-cargo-home"
-mkdir -p "$CARGO_HOME"
-
 script="$repo_root/scripts/agents-conf"
 [[ -f "$script" ]] || fail "scripts/agents-conf does not exist"
 [[ -x "$script" ]] || fail "scripts/agents-conf is not executable"

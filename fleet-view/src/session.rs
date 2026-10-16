@@ -671,11 +671,9 @@ impl Session {
     /// Spawn `<scripts_dir>/launch <name>` in a fresh pty, with the consumer root as its working
     /// directory and this process's environment.
     ///
-    /// That environment is cleaned by the launcher rather than here: this view is a `cargo run`
-    /// child, so it carries cargo's own injections and the consumer's `.cargo/config.toml` `[env]`
-    /// table, and `scripts/launch` clears both before it execs the agent CLI (cb-6fu). No
-    /// `env_remove` in this file - the strip belongs in the one thing BOTH views spawn, or it
-    /// exists twice and the two copies drift.
+    /// That environment is the navigator's own: `scripts/cerebro-tui` builds this binary and execs
+    /// it itself rather than through `cargo run`, so nothing cargo or rustup's proxy injects is
+    /// here to pass on (ah-4n2r). No `env_remove` in this file, and none in `scripts/launch`.
     ///
     /// The command is the launcher and the agent's name, and `--bead <id>` when the view handed
     /// the agent a bead (cb-10d.1) - nothing else. No model flag, no provider flag, no prompt:

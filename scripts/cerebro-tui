@@ -11,22 +11,25 @@
 # scripts/fleet-supervisor, which is the one place the lease's address is computed.
 #
 # It resolves the consumer's three roots ONCE (`consumer-root --hints', cb-ue0), exports them with
-# the scripts directory, cd's to the enclosing consumer and exec's Cargo, so nothing sits between
-# the terminal and the binary. The binary resolves NO root of its own: `scripts/consumer-root' is
-# the one place that question is answered, and it refuses to start when any of the four is missing
-# - which is what a `cargo run' typed by hand gets, by design.
+# the scripts directory, cd's to the enclosing consumer, has Cargo build the view and exec's the
+# binary it built, so nothing - Cargo least of all - sits between the terminal and the binary. The
+# binary resolves NO root of its own: `scripts/consumer-root' is the one place that question is
+# answered, and it refuses to start when any of the four is missing - which is what a `cargo run'
+# typed by hand gets, by design.
 #
 # Cargo's own build output is deliberately left visible: the first run in a fresh checkout compiles
 # the workspace, and a silent minute looks like a hang.
 #
-#   exit 0   never returns - Cargo replaces this process.
-#   exit 2   a usage error (any argument at all), not inside a consumer, no cargo on PATH, or this
-#            checkout of cerebro has no Rust workspace. One line on stderr each, the same shape
-#            `cerebro', `launch' and `launch-preflight' use.
+#   exit 0   never returns - the built binary replaces this process.
+#   exit 2   a usage error (any argument at all), not inside a consumer, no cargo on PATH, this
+#            checkout of cerebro has no Rust workspace, or cargo reported no binary to run. One line
+#            on stderr each, the same shape `cerebro', `launch' and `launch-preflight' use.
+#   other    the build failed: cargo's own status, after cargo's own diagnostics.
 
 set -euo pipefail
 
-# Nothing is passed through: an argument would reach `cargo run' and be read as one of its flags.
+# Nothing is passed through: the binary takes no arguments, and forwarding them would make a second,
+# undocumented interface to it.
 if [[ $# -gt 0 ]]; then
   echo "usage: cerebro-tui (no arguments; run it from anywhere inside the consumer)" >&2
   exit 2
@@ -64,7 +67,7 @@ if ! command -v cargo >/dev/null 2>&1; then
 fi
 
 # A vendored partial copy, or a submodule pinned before the Rust workspace landed: refuse here
-# rather than letting `cargo run --manifest-path' fail with a path error the navigator has to read
+# rather than letting `cargo build --manifest-path' fail with a path error the navigator has to read
 # Cargo's manual to understand.
 if [[ ! -f "$SOURCE_ROOT/Cargo.toml" ]]; then
   echo "cerebro-tui: $SOURCE_ROOT/Cargo.toml is missing - this checkout of cerebro has no Ratatui fleet view" >&2
@@ -75,7 +78,37 @@ fi
 # path is absolute, so the command is correct from a subdirectory and for a submodule mounted
 # elsewhere. `--locked' is this project's rule wherever Cargo runs: a launcher that re-resolved a
 # dependency would run something no gate has ever seen.
+#
+# BUILD, THEN EXEC THE BINARY OURSELVES (ah-4n2r). Under `cargo run' the view was a child of cargo
+# and of rustup's proxy, and handed every session it spawned what they inject: CARGO_PKG_* and
+# friends, every key of the consumer's `.cargo/config.toml' `[env]' table, and RUSTUP_TOOLCHAIN,
+# which outranks the rust-toolchain.toml in an agent's own worktree. `scripts/launch' used to
+# subtract those through a hand-kept denylist that needed a bead every time a new one leaked
+# (cb-6fu, ah-3kge). Exec'd from here, the view runs in exactly this shell's environment - the
+# navigator's - and there is nothing to subtract.
+#
+# The binary's path is cargo's answer, not ours: under --message-format=json-render-diagnostics
+# cargo prints one JSON line per artifact on stdout - fresh ones included, so an up-to-date build
+# still names it - and the binary's carries its "executable". That follows CARGO_TARGET_DIR and any
+# `build.target-dir' without this script computing either. Diagnostics and the "Compiling" lines
+# still go to stderr, so the first minute in a fresh checkout is visible rather than a silent hang.
+# A failed build exits here with cargo's own status. Builtins only from here on: the path is read
+# with `[[ =~ ]]', not jq, which this launcher does not otherwise need.
 cd "$CEREBRO_CONSUMER_ROOT"
-exec cargo run --release --locked \
+artifacts="$(cargo build --release --locked --message-format=json-render-diagnostics \
   --manifest-path "$SOURCE_ROOT/Cargo.toml" \
-  --package cerebro-tui --bin cerebro-tui
+  --package cerebro-tui --bin cerebro-tui)"
+
+binary=""
+while IFS= read -r line; do
+  if [[ $line == *'"reason":"compiler-artifact"'* && $line =~ \"executable\":\"([^\"]+)\" ]]; then
+    binary="${BASH_REMATCH[1]}"
+  fi
+done <<<"$artifacts"
+
+if [[ -z "$binary" ]]; then
+  echo "cerebro-tui: cargo built nothing to run - expected the cerebro-tui binary" >&2
+  exit 2
+fi
+
+exec "$binary"

@@ -53,29 +53,22 @@ cb-3da (the fix).
 
 ## A process started under `cargo run` hands cargo's environment to everything it starts
 
-`scripts/cerebro-tui` execs `cargo run`, so the Ratatui fleet view is a child of cargo, and cargo
-gives its child eighteen variables — `CARGO`, `CARGO_MANIFEST_DIR`, the whole `CARGO_PKG_*` family —
-**plus every key of the `[env]` table in whatever `.cargo/config.toml` cargo discovered from its
-working directory**, which is the consumer's. The view then spawns sessions with its own
-environment, so every agent inherits the lot.
+Cargo gives its child eighteen variables — `CARGO`, `CARGO_MANIFEST_DIR`, the whole `CARGO_PKG_*`
+family — **plus every key of the `[env]` table in whatever `.cargo/config.toml` cargo discovered
+from its working directory**, and rustup's proxy adds `RUSTUP_TOOLCHAIN`, which outranks the
+`rust-toolchain.toml` in any worktree. The fleet view spawns sessions with its own environment, so
+a view running under `cargo run` gives every agent the lot.
 
 A `[env]` entry written without `force = true` **loses to an inherited value**, in every worktree.
-So in atlantis-hud every agent's `cargo test` wrote its generated TypeScript bindings into the
+So in atlantis-hud every agent's `cargo test` once wrote its generated TypeScript bindings into the
 navigator's shared checkout, with no `cd` mistake required, and `export_bindings_stay_inside_this_workspace`
 went red in any session carrying the variable.
 
-Dealt with in `scripts/launch`, via `scripts/cargo-env.sh`, which clears cargo's own injections,
-the consumer's `[env]` keys and the toolchain rustup's proxy chose for the view (`RUSTUP_TOOLCHAIN`
-and `RUSTUP_TOOLCHAIN_SOURCE`, which would otherwise outrank a consumer's `rust-toolchain.toml`)
-before the launcher spawns anything — the navigator's `CARGO_HOME` and `CARGO_TARGET_DIR`, and a
-`RUSTUP_TOOLCHAIN` they exported themselves, excepted. Two consequences worth knowing:
+Dealt with by never running the view as cargo's child: `scripts/cerebro-tui` runs `cargo build`
+and execs the binary itself (ah-4n2r). That replaced a denylist in `scripts/launch` which had to be
+fixed each time another variable leaked (cb-6fu, then ah-3kge). **Nothing strips the environment
+any more**, so anything that starts the view, or a session, from inside `cargo run` brings the
+leak straight back.
 
-- **A suite that asserts on the environment or on `scripts/launch`'s stderr runs inside a polluted
-  session.** `tests/launchers.sh` and `tests/cargo-env.sh` clear the variables in their own preambles
-  for that reason; without it a suite is green in CI and red on the navigator's machine.
-- **`unset` takes effect in the shell that runs it.** A caller reading the strip's printed names
-  through `$(...)` or `< <(...)` runs the whole thing in a subshell, clears nothing, and prints a
-  perfectly convincing list of what it did not do.
-
-Sightings: cb-6fu, and ah-79ca / ah-16pb / ah-3kge in atlantis-hud.
+Sightings: cb-6fu, and ah-79ca / ah-16pb / ah-3kge / ah-4n2r in atlantis-hud.
 

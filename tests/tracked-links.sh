@@ -42,6 +42,12 @@ new_fixture() {
   ln -s ".." "$fix/.cerebro/cerebro"
   "$fix/.cerebro/cerebro/scripts/sync-symlinks.sh" >/dev/null
   git init -q "$fix"
+  # No automatic gc: this fixture commits a whole copy of cerebro several times, enough for
+  # `git gc --auto' to detach and pack objects while the EXIT trap's `rm -rf' is removing the
+  # directory - "cannot remove .../.git/objects/pack: Directory not empty", red in CI on a suite
+  # whose every assertion passed (main, and ah-4n2r twice).
+  git_q -C "$fix" config gc.auto 0
+  git_q -C "$fix" config maintenance.auto false
   git_q -C "$fix" add -A
   git_q -C "$fix" commit -q -m init
   echo "$fix"

@@ -65,6 +65,7 @@ printf 'TS_RS_EXPORT_DIR=%s\n' "${TS_RS_EXPORT_DIR:-<unset>}"
 printf 'CARGO_MANIFEST_DIR=%s\n' "${CARGO_MANIFEST_DIR:-<unset>}"
 printf 'CARGO_HOME=%s\n' "${CARGO_HOME:-<unset>}"
 printf 'RUSTUP_TOOLCHAIN=%s\n' "${RUSTUP_TOOLCHAIN:-<unset>}"
+printf 'RUSTUP_TOOLCHAIN_SOURCE=%s\n' "${RUSTUP_TOOLCHAIN_SOURCE:-<unset>}"
 for a in "$@"; do
   printf 'ARG:%s\n' "$a"
 done
@@ -1502,7 +1503,7 @@ pass "a suite that dies names the last launcher it ran"
 
 out="$(CARGO_MANIFEST_DIR=/x TS_RS_EXPORT_DIR=/y RUSTUP_TOOLCHAIN=stable RUSTUP_TOOLCHAIN_SOURCE=toolchain-file \
        run_launcher launch Forge 2>&1)"
-for _want in CARGO_MANIFEST_DIR=/x TS_RS_EXPORT_DIR=/y RUSTUP_TOOLCHAIN=stable; do
+for _want in CARGO_MANIFEST_DIR=/x TS_RS_EXPORT_DIR=/y RUSTUP_TOOLCHAIN=stable RUSTUP_TOOLCHAIN_SOURCE=toolchain-file; do
   grep -qx "$_want" <<<"$out" \
     || fail "launch Forge: expected $_want to reach the session unchanged, got: $out"
 done

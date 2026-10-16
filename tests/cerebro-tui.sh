@@ -61,8 +61,8 @@ cat > "$stub_dir/cargo" <<'STUB'
   printf 'CARGO_PWD:%s\n' "$(pwd -P)"
   for a in "$@"; do printf 'CARGO_ARG:%s\n' "$a"; done
 } >> "$CEREBRO_TEST_RECORD"
-export CARGO_PKG_NAME=cerebro-tui CARGO_MANIFEST_DIR=/somewhere RUSTUP_TOOLCHAIN=stable \
-       RUSTUP_TOOLCHAIN_SOURCE=default
+export CARGO_PKG_NAME=injected-by-stub-cargo CARGO_MANIFEST_DIR=injected-by-stub-cargo \
+       RUSTUP_TOOLCHAIN=injected-by-stub-cargo RUSTUP_TOOLCHAIN_SOURCE=injected-by-stub-cargo
 case "${1:-}" in
   run)
     exec "$CEREBRO_TEST_BIN" ;;
@@ -146,9 +146,11 @@ pass "cargo and the binary both start in the enclosing consumer root, the binary
 
 # THE POINT OF ah-4n2r: the binary is exec'd by the launcher, not by cargo, so nothing cargo or
 # rustup's proxy injects reaches the fleet view - or, through it, any session it spawns.
+# Asserted against the stub's SENTINEL, never against `<unset>': the suite passes its own environment
+# through, and a navigator who exported RUSTUP_TOOLCHAIN is entitled to have the view see it.
 for n in CARGO_PKG_NAME CARGO_MANIFEST_DIR RUSTUP_TOOLCHAIN RUSTUP_TOOLCHAIN_SOURCE; do
-  [[ "$(env_value "$record" "$n")" == "<unset>" ]] \
-    || fail "the fleet view inherited $n=$(env_value "$record" "$n") from cargo"
+  [[ "$(env_value "$record" "$n")" != "injected-by-stub-cargo" ]] \
+    || fail "the fleet view inherited $n from cargo"
 done
 pass "the fleet view is not cargo's child: no cargo or rustup injection reaches it"
 

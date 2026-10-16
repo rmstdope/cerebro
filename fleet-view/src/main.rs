@@ -65,8 +65,7 @@ const POLL_INTERVAL: Duration = Duration::from_millis(200);
 
 /// The variables the launcher exports, in the order a missing one is reported. Fixed on purpose:
 /// a navigator who started the binary by hand, rather than through `scripts/cerebro-tui`, gets
-/// the same first line every time,
-/// naming the launcher that would have set them all.
+/// the same first line every time, naming the launcher that would have set them all.
 const REQUIRED: [&str; 4] = [
     "CEREBRO_CONSUMER_ROOT",
     "CEREBRO_CONSUMER_SHARED_ROOT",

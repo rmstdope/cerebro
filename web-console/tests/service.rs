@@ -652,8 +652,9 @@ async fn a_slow_read_does_not_hold_up_other_requests() {
 }
 
 /// However many pages are open, their event streams read the fleet about once an interval between
-/// them, not once an interval each.
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+/// them, not once an interval each. On paused time, so three ticks cost no wall clock: a read's
+/// `spawn_blocking` holds the clock still while it runs, so the ticks stay at 0 s, 2 s and 4 s.
+#[tokio::test(start_paused = true)]
 async fn event_streams_share_their_reads() {
     let commands = Arc::new(SlowCommands { rosters: Default::default(), delay: Duration::from_millis(50) });
     let router = service_with_commands(PathBuf::from("/assets"), commands.clone()).router();

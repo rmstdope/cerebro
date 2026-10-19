@@ -5,7 +5,7 @@ use std::{
     net::SocketAddr,
     path::PathBuf,
     sync::Arc,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use axum::{
@@ -21,6 +21,9 @@ use cerebro_tui::{
     PublishedSession, ReaderPaths, SupervisionMode, WorkBuckets,
 };
 use chrono::{DateTime, Utc};
+// The snapshot cache keeps the interval's clock, so its freshness window holds on paused time too;
+// unpaused, this is the std clock.
+use tokio::time::Instant;
 use futures_util::stream;
 use serde::Serialize;
 use tower_http::services::{ServeDir, ServeFile};

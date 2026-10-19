@@ -48,7 +48,10 @@ once is not guarded against.
 
 The chosen agent's header has the terminal console's `s`, `f` and `k` as buttons: **Start** an
 agent that is not running, **Finish after this pass** (or **Keep going** once its stop flag is set)
-and **Kill**, which is **Disarm** on a standby agent and **Stop starting** on one being started. The
+and **Kill**, which is **Disarm** on a standby agent and **Stop starting** on one being started.
+An agent whose session the fleet view already hosts is offered **Finish after this pass** and
+**Kill** whatever its row reads, as the terminal's keys treat it: for the seconds after a start,
+before a fleet read sees the session, its row still reads standby. The
 same keys work on the chosen agent while nothing is being typed, and `⌘K` lists every action on
 every agent. A kill, disarm or stop asks first, in a dialog `y` confirms. The page posts
 `POST /api/agents/<name>/<start|finish|resume|kill|disarm|stop>`, with the same header and host checks as
@@ -59,7 +62,8 @@ only if the row still calls for that one, so a disarm confirmed on an agent star
 nothing. With no fleet view supervising, the
 buttons are disabled and the header says **Read-only** rather than **Supervised**.
 `GET /api/control` says which, and `/api/events` sends `control` when it changes. An agent whose
-stop flag is set is reported with `finishing: true`.
+stop flag is set is reported with `finishing: true`, and one whose session the fleet view
+publishes as live under `.cerebro/state/sessions/` with `hosted: true`.
 The output comes from the fleet view (`cerebro-tui`) that hosts the session. It appends each hosted
 session's pty output to a log under `.cerebro/state/sessions/`, with the pty's resizes recorded in
 the log, and publishes `<name>.json` naming that log. `GET /api/sessions/<name>?log=&from=` serves

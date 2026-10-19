@@ -17,16 +17,19 @@ export const unsupervised = "No fleet view is supervising this checkout, so noth
 /// last word: a refusal comes back as its own sentence.
 export function offersFor(agent: Agent): Offer[] {
   const { name } = agent;
-  const state = stateOf(agent);
+  // A session the fleet view hosts is running whatever its row reads: for the seconds after a
+  // start, a standby row's k kills it, and s is refused as already up (cb-gyw0).
+  const state = agent.hosted && stateOf(agent) === "standby" ? "up" : stateOf(agent);
+  const live = running(agent) || agent.hosted === true;
   const offers: Offer[] = [];
-  if (!running(agent)) offers.push({ action: "start", verb: "Start", label: "Start", title: `Start ${name}`, key: "s" });
+  if (!live) offers.push({ action: "start", verb: "Start", label: "Start", title: `Start ${name}`, key: "s" });
   if (agent.finishing) offers.push({ action: "resume", verb: "Keep", label: "Keep going", title: `Keep ${name} going`, key: "f" });
-  else if (running(agent) && state !== "starting") offers.push({ action: "finish", verb: "Finish", label: "Finish after this pass", title: `Finish ${name} after this pass`, key: "f" });
+  else if (live && state !== "starting") offers.push({ action: "finish", verb: "Finish", label: "Finish after this pass", title: `Finish ${name} after this pass`, key: "f" });
   if (state === "standby") offers.push({ action: "disarm", verb: "Disarm", label: "Disarm", title: `Disarm ${name}`, key: "k", danger: true, ask: {
     title: `Disarm ${name}?`, body: `The fleet view won’t start ${name} when there is work for it, until you start it again.` } });
   else if (state === "starting") offers.push({ action: "stop", verb: "Stop", label: "Stop starting", title: `Stop ${name}’s start`, key: "k", danger: true, ask: {
     title: `Stop ${name}’s start?`, body: `The session being started is stopped, ${name} is disarmed, and the bead it was handed goes back to the board.` } });
-  else if (running(agent)) offers.push({ action: "kill", verb: "Kill", label: "Kill", title: `Kill ${name}`, key: "k", danger: true, ask: {
+  else if (live) offers.push({ action: "kill", verb: "Kill", label: "Kill", title: `Kill ${name}`, key: "k", danger: true, ask: {
     title: `Kill ${name}?`, body: `The session ends now, mid-pass, and ${name} is disarmed: the fleet view won’t start it again until you do.${agent.bead ? ` Its bead ${agent.bead} stays claimed.` : ""}` } });
   return offers;
 }

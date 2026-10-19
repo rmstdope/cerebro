@@ -809,6 +809,70 @@ async fn a_bead_the_fleet_view_handed_is_shown_until_the_state_file_names_one() 
     );
 }
 
+/// `s` on a standby row starts a session seconds before any fleet read can see it, and the row
+/// reads standby meanwhile (cb-gyw0). The session's publication is the fleet view saying it hosts
+/// one, so the console can offer what the terminal's `k` does there: kill it, not disarm the name.
+/// A publication the view stopped refreshing is a file a gone view left behind, and says nothing.
+#[tokio::test]
+async fn a_standby_agent_whose_session_the_fleet_view_publishes_is_reported_hosted() {
+    let root = tempfile::tempdir().unwrap();
+    publish_standby(root.path(), &["Moira", "Storm"], chrono::Duration::zero());
+    publish(root.path(), "Moira", chrono::Duration::zero(), b"");
+    publish(root.path(), "Storm", chrono::Duration::seconds(60), b"");
+
+    let response = service_with_two_dead(root.path()).router().oneshot(get("/api/fleet")).await.unwrap();
+    let body: serde_json::Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+    let hosted: Vec<(String, String, bool)> = body["value"]
+        .as_array()
+        .unwrap_or_else(|| panic!("not a fresh fleet: {body}"))
+        .iter()
+        .map(|row| {
+            (row["name"].as_str().unwrap().into(), row["state"].as_str().unwrap().into(), row["hosted"].as_bool().unwrap_or(false))
+        })
+        .collect();
+    assert_eq!(
+        hosted,
+        vec![("Storm".into(), "Standby".into(), false), ("Moira".into(), "Standby".into(), true)]
+    );
+}
+
+/// A publication that cannot be read says nothing about that row, and nothing about the others:
+/// the fleet is still read (the panes fail apart).
+#[tokio::test]
+async fn a_session_publication_that_cannot_be_read_is_not_hosted_and_the_fleet_is_still_read() {
+    let root = tempfile::tempdir().unwrap();
+    publish_standby(root.path(), &["Moira", "Storm"], chrono::Duration::zero());
+    publish(root.path(), "Moira", chrono::Duration::zero(), b"");
+    std::fs::write(root.path().join(".cerebro/state/sessions/Storm.json"), "{ not json").unwrap();
+
+    let response = service_with_two_dead(root.path()).router().oneshot(get("/api/fleet")).await.unwrap();
+    let body: serde_json::Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+    assert_eq!(body["state"], "fresh", "{body}");
+    let hosted: Vec<(String, bool)> = body["value"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| (row["name"].as_str().unwrap().into(), row["hosted"].as_bool().unwrap_or(false)))
+        .collect();
+    assert_eq!(hosted, vec![("Storm".into(), false), ("Moira".into(), true)]);
+}
+
+fn service_with_two_dead(root: &std::path::Path) -> ReadOnlyService {
+    ReadOnlyService::new(
+        ReaderPaths {
+            consumer_root: root.to_path_buf(),
+            shared_root: root.to_path_buf(),
+            scripts_dir: root.join("scripts"),
+        },
+        Programs::default(),
+        Arc::new(TwoDeadCommands),
+        SupervisionMode::Supervising,
+        PathBuf::from("/assets"),
+    )
+}
+
 /// A launch or a reap can hold the fleet view's loop for longer than the publication stays fresh.
 /// Its control socket is served on a thread of its own and closed the moment the view stops
 /// supervising, so a socket that still answers is a view that is alive and only held up.

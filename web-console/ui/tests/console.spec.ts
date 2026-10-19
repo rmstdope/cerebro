@@ -822,6 +822,30 @@ test("⌘K finds any action on any agent", async ({ page }) => {
   await expect(page.getByRole("heading", { level: 2, name: "Moira" })).toBeVisible();
 });
 
+test("a standby agent the fleet view already hosts is killed, not disarmed", async ({ page }) => {
+  // cb-gyw0: in the seconds after s, the row still reads standby while the fleet view hosts its
+  // session, and the fleet view's k kills it; a disarm sent then is refused.
+  const asked = await controlled(page, [{ ...moira, hosted: true }]);
+  const toolbar = page.getByRole("toolbar", { name: "Moira actions" });
+  await expect(toolbar.getByRole("button", { name: /Kill/ })).toBeVisible();
+  await expect(toolbar.getByRole("button", { name: /Finish after this pass/ })).toBeVisible();
+  await expect(toolbar.getByRole("button", { name: /Disarm|Start/ })).toHaveCount(0);
+
+  await page.keyboard.press("k");
+  await expect(page.getByRole("dialog")).toContainText("Kill Moira?");
+  await page.keyboard.press("y");
+
+  await expect.poll(() => asked.map(item => item.path)).toEqual(["/api/agents/Moira/kill"]);
+});
+
+test("an agent the fleet view hosts is not offered a start, whatever its row reads", async ({ page }) => {
+  // The fleet view refuses s on a session it hosts as already up, and its k kills it.
+  await controlled(page, [{ name: "Rogue", role: "producer", state: "Dead", hosted: true }]);
+  const toolbar = page.getByRole("toolbar", { name: "Rogue actions" });
+  await expect(toolbar.getByRole("button", { name: /Kill/ })).toBeVisible();
+  await expect(toolbar.getByRole("button", { name: /Start/ })).toHaveCount(0);
+});
+
 test("with no fleet view supervising, nothing can be done and the page says why", async ({ page }) => {
   const asked = await controlled(page, [storm], false);
   const toolbar = page.getByRole("toolbar", { name: "Storm actions" });

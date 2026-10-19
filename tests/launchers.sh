@@ -1312,25 +1312,19 @@ copilot_launch() {
 }
 
 out="$(copilot_launch Xavier 2>/dev/null)"
-expected="ARG:--agent
-ARG:ux
-ARG:--name
-ARG:Xavier
-ARG:--allow-all
+# Which tokens the copilot arm spells is tests/agent-cli.sh's to assert (cb-mrdg); this case only
+# proves launch hands that argv to the copilot binary unchanged, then the prompt behind -i.
+# The arguments are launch's own for this declaration minus `--settings', whose hook-settings path
+# this case does not have; the copilot arm ignores it today. If that arm ever reads it, pass the
+# same path here rather than spelling the arm's tokens again.
+expected="$("$copilot_consumer/.cerebro/cerebro/scripts/agent-cli" --argv --tool copilot --role ux --name Xavier |
+  tr '\0' '\n' | sed 's/^/ARG:/')
 ARG:-i"
-[[ "$(awk '/^ARG:/ { print; if (++n == 6) exit }' <<<"$out")" == "$expected" ]] \
-  || fail "copilot launch: expected the copilot arm's tokens in order, got: $out"
-for flag in --remote-control --settings --permission-mode --append-system-prompt; do
-  grep -q "^ARG:${flag}\$" <<<"$out" \
-    && fail "copilot launch: $flag reached copilot, which spells none of them"
-done
-pass "launch on copilot reaches the copilot binary with the copilot arm's tokens"
-
-grep -qx 'ARG:--allow-all' <<<"$out" \
-  || fail "copilot launch: --allow-all did not reach copilot, so paths and URLs still prompt: $out"
-grep -qx 'ARG:--allow-all-tools' <<<"$out" \
-  && fail "copilot launch: the narrower --allow-all-tools reached copilot: $out"
-pass "a copilot launch allows paths and URLs, not tools alone"
+[[ "$expected" == ARG:* ]] || fail "copilot launch: agent-cli --argv emitted nothing to compare with"
+n_expected="$(wc -l <<<"$expected" | tr -d ' ')"
+[[ "$(awk -v n="$n_expected" '/^ARG:/ { print; if (++k == n) exit }' <<<"$out")" == "$expected" ]] \
+  || fail "copilot launch: expected exactly agent-cli's argv then -i, got: $out (agent-cli: $expected)"
+pass "launch on copilot passes exactly the argv agent-cli emits, then -i"
 
 marker_line="$(line_of "$out" '^ARG:-i$')"
 [[ -n "$marker_line" ]] || fail "copilot launch: no -i in the argv, got: $out"

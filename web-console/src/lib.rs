@@ -210,7 +210,10 @@ impl SnapshotState {
             let rows = read_fleet(&reader.reader_paths, &reader.programs, reader.commands.as_ref())?;
             let published = read_publication(&standby_path(&reader.reader_paths))?.unwrap_or_default();
             let rows = cerebro_tui::model::apply_starting(rows, &published.handed);
-            Ok(cerebro_tui::model::apply_standby(rows, &published.names, &Default::default())
+            let sessions = reader.reader_paths.shared_root.join(".cerebro/state/sessions");
+            let rows = cerebro_tui::model::apply_standby(rows, &published.names, &Default::default());
+            let hosted = rows.iter().map(|row| hosts(&sessions, &row.name)).collect::<Result<Vec<_>, _>>()?;
+            Ok(rows
                 .into_iter()
                 .map(|mut row| {
                     // The TUI draws a starting or `up` row's bead from what it handed, until the
@@ -220,8 +223,10 @@ impl SnapshotState {
                     }
                     row
                 })
-                .map(|row| Agent {
+                .zip(hosted)
+                .map(|(row, hosted)| Agent {
                     finishing: cerebro_tui::lifecycle::stop_flag_set(&reader.reader_paths, &row.name),
+                    hosted,
                     row,
                 })
                 .collect())
@@ -454,6 +459,28 @@ pub struct Agent {
     row: FleetRow,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     finishing: bool,
+    /// The supervising fleet view hosts its session, whatever the row reads: for seconds after `s`
+    /// on a standby row, the row still reads standby and the view's `k` kills (cb-gyw0).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    hosted: bool,
+}
+
+/// Whether the fleet view publishes a live session for NAME in DIR: a publication it still
+/// refreshes. One it stopped refreshing is a file a gone view left behind; one that cannot be read
+/// is a fault, since the view renames a whole file into place.
+fn hosts(dir: &std::path::Path, name: &str) -> Result<bool, cerebro_tui::ReadError> {
+    let path = dir.join(format!("{name}.json"));
+    let invalid = |message: String| cerebro_tui::ReadError::Invalid {
+        source: cerebro_tui::Invocation::new(&path, &[]),
+        message,
+    };
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(invalid(error.to_string())),
+    };
+    let publication = serde_json::from_str::<PublishedSession>(&text).map_err(|error| invalid(error.to_string()))?;
+    Ok(Utc::now().signed_duration_since(publication.updated_at).num_seconds() < SCREEN_STALE_SECONDS)
 }
 
 fn standby_path(paths: &ReaderPaths) -> std::path::PathBuf {

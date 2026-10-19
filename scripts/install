@@ -211,7 +211,7 @@ step_declare() {
 # `.cerebro/roster.conf', from a second interview: how many ux and producer agents,
 # whether the three optional roles run, and per role present how the fleet view starts it -
 # `autostart' as the view opens, `standby' armed for its trigger, or `manual' for `s'. The
-# orchestrator and the architect are always there. Names come from the built-in fleet's pool, in
+# orchestrator, the architect and the QA architect are always there. Names come from the built-in fleet's pool, in
 # the order `scripts/roster' wants: the interactive roles first, then the producers.
 
 # ask_count <var> <prompt> <default> <min>
@@ -245,6 +245,7 @@ names_for() {
     reviewer)      pool="Cypher" ;;
     user-feedback) pool="Moira" ;;
     architect)     pool="Forge" ;;
+    qa)            pool="Sage" ;;
     producer)      pool="Cyclops Storm Wolverine Rogue Nightcrawler Colossus Jubilee Phoenix Mystique Magneto" ;;
   esac
   for name in $pool; do
@@ -279,7 +280,7 @@ step_fleet() {
   [[ "$verifier" == y ]] && roles+=("verifier	1")
   [[ "$reviewer" == y ]] && roles+=("reviewer	1")
   [[ "$feedback" == y ]] && roles+=("user-feedback	1")
-  roles+=("architect	1" "producer	$n_producer")
+  roles+=("architect	1" "qa	1" "producer	$n_producer")
 
   echo "  How the fleet view starts each role: autostart as it opens, standby to arm it for its"
   echo "  own trigger, or manual to start it yourself with 's'."
@@ -388,7 +389,7 @@ step_settings() {
     echo
     echo "# Every other role runs on the default line. Uncomment one to give that role its own settings."
     local r
-    for r in ux orchestrator verifier reviewer user-feedback architect; do
+    for r in ux orchestrator verifier reviewer user-feedback architect qa; do
       printf '#'; setting_line "$r" "$tool" "$model" "$effort"
     done
   } > "$conf"

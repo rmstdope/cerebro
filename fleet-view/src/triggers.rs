@@ -2650,12 +2650,15 @@ mod tests {
     fn start_decision_never_starts_a_flagged_row() {
         let starts: BTreeMap<String, DateTime<Utc>> = [("Rogue".to_string(), at(0))].into();
         let facts = bug_queue(&["cb-a"]);
-        let inputs = StartInputs {
+        // And a failed start still inside its wait: neither spacing nor backoff is asked.
+        let mut inputs = StartInputs {
             flagged: true,
             peers: &["Rogue"],
             spacing: Some(60),
+            failures: 2,
             ..plain_inputs(agent_of("bugfixer"), &starts)
         };
+        inputs.agent.started_at = Some(at(5));
         let decision = start_decision(&facts, inputs, at(10));
         assert_eq!(decision.action, StartAction::Hold);
         assert!(decision.guards.flagged);
@@ -2667,14 +2670,18 @@ mod tests {
     fn start_decision_spaces_out_a_peer_started_too_recently() {
         let starts: BTreeMap<String, DateTime<Utc>> = [("Rogue".to_string(), at(0))].into();
         let facts = bug_queue(&["cb-a"]);
-        let inputs = StartInputs {
+        // A failed start still inside its wait too: a spaced-out row's backoff is not asked.
+        let mut inputs = StartInputs {
             peers: &["Rogue"],
             spacing: Some(60),
+            failures: 2,
             ..plain_inputs(agent_of("bugfixer"), &starts)
         };
+        inputs.agent.started_at = Some(at(50));
         let decision = start_decision(&facts, inputs, at(59));
         assert_eq!(decision.action, StartAction::Hold);
         assert!(decision.guards.spaced_out);
+        assert!(!decision.guards.backed_off, "a spaced-out row's backoff is not asked");
 
         let inputs = StartInputs {
             peers: &["Rogue"],

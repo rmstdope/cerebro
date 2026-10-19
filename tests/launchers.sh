@@ -1314,6 +1314,9 @@ copilot_launch() {
 out="$(copilot_launch Xavier 2>/dev/null)"
 # Which tokens the copilot arm spells is tests/agent-cli.sh's to assert (cb-mrdg); this case only
 # proves launch hands that argv to the copilot binary unchanged, then the prompt behind -i.
+# The arguments are launch's own for this declaration minus `--settings', whose hook-settings path
+# this case does not have; the copilot arm ignores it today. If that arm ever reads it, pass the
+# same path here rather than spelling the arm's tokens again.
 expected="$("$copilot_consumer/.cerebro/cerebro/scripts/agent-cli" --argv --tool copilot --role ux --name Xavier |
   tr '\0' '\n' | sed 's/^/ARG:/')
 ARG:-i"

@@ -747,12 +747,15 @@ pub fn kill_outcome(situation: Situation<'_>) -> KillOutcome {
     if !situation.mode.may_supervise() {
         return KillOutcome::Refuse(refusal_for(situation.mode));
     }
-    // Ahead of the two rules that refuse a name that is not running: a standby row hosts no
-    // session by construction, and `k` on one means disarm rather than kill.
+    // Ahead of the two rules that refuse a name that is not running: a standby row is a name
+    // with no session, and `k` on one means disarm rather than kill.
     if row.state == RowState::Starting {
         return KillOutcome::ConfirmStop { prompt: disarm_prompt(&row.name) };
     }
-    if row.state == RowState::Standby {
+    // Unless this view already hosts one: `s` on a standby row starts a session several seconds
+    // before any fleet read can see it, and the row reads standby meanwhile. The host is the
+    // authority on what is running here, so that session is killed, not left behind (cb-o274).
+    if row.state == RowState::Standby && !situation.hosted {
         return KillOutcome::Confirm { prompt: disarm_prompt(&row.name), disarm: true };
     }
     if !situation.hosted {
@@ -2612,6 +2615,17 @@ mod tests {
         assert_eq!(
             finish_outcome(situation(&mode, Some(&row), false, true)),
             FinishOutcome::Clear
+        );
+    }
+
+    #[test]
+    fn k_on_a_standby_row_this_view_hosts_kills_rather_than_disarms() {
+        // cb-o274: the row reads standby for seconds after `s` started its session.
+        let mode = SupervisionMode::Supervising;
+        let row = row("Forge", AgentKind::Interactive, RowState::Standby);
+        assert_eq!(
+            kill_outcome(situation(&mode, Some(&row), true, false)),
+            KillOutcome::Confirm { prompt: "Kill Forge?  y / n".to_string(), disarm: false }
         );
     }
     // --- the first board write (cb-kcs.5.1) --------------------------------------------------

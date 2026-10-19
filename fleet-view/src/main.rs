@@ -6831,6 +6831,41 @@ mod main_tests {
     }
 
     #[test]
+    fn k_straight_after_s_on_a_standby_row_kills_the_session_it_started() {
+        // cb-o274: `s` returns a RefreshFleet that reads before `scripts/launch` has exec'd the
+        // agent, so the row still reads standby while this view already hosts the session. `k`
+        // then asked the disarm question, and `y` disarmed the name and left the session running.
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let architect = || cerebro_tui::model::FleetRow {
+            role: "architect".into(),
+            ..fleet_row("Forge", AgentKind::Interactive, RowState::Dead)
+        };
+        let mut app = standby_app(supervising(), vec![architect()], None, Utc::now());
+        app.selected = Some("Forge".to_string());
+        assert_eq!(app.fleet_rows()[0].state, RowState::Standby);
+        let mut host = SessionHost::default();
+
+        drive(&mut app, &mut host, &paths, vec![ch('s')]);
+        assert!(host.is_live("Forge"), "s started the session");
+        // The fleet read the start asked for, too early to see the agent process.
+        app.finish_refresh(Ok(vec![architect()]), Utc::now());
+        assert_eq!(app.fleet_rows()[0].state, RowState::Standby, "the row still reads standby");
+
+        drive(&mut app, &mut host, &paths, vec![ch('k')]);
+        assert!(
+            matches!(&app.confirm, Some(cerebro_tui::app::Prompt::Kill { name, .. }) if name == "Forge"),
+            "a name this view hosts is asked the kill question: {:?}",
+            app.confirm
+        );
+        drive(&mut app, &mut host, &paths, vec![ch('y')]);
+
+        assert!(!app.armed.contains("Forge"), "the kill disarms the name");
+        settle_gone(&mut host, "Forge");
+        assert!(!host.is_live("Forge"), "and no live session is left in the pane");
+    }
+
+    #[test]
     fn a_cancelled_disarm_leaves_the_name_armed() {
         let dir = tempfile::tempdir().unwrap();
         let paths = scratch(dir.path(), "sleep 5");

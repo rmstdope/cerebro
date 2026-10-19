@@ -148,6 +148,10 @@ pub struct Supervised<'a> {
     /// Was this name resumed while stuck, with nothing recorded in its state file since? The
     /// caller's memory (`App::resumed`), not a fact on the row - the pure rule takes the answer.
     pub resume_stale: bool,
+    /// Seconds after which this row's role withdraws an unanswered question, or `None` for a
+    /// question that waits until it is answered (cb-0q1). `triggers::question_expiry` answers it
+    /// from the role; only `qa` declares one (cb-0n1n).
+    pub question_expiry: Option<i64>,
 }
 
 /// What the poll should do about one agent, or `None` for nothing at all.
@@ -232,10 +236,18 @@ pub fn supervise_action(agent: Supervised<'_>) -> Option<Supervision> {
             // finished cleanly and has nothing to say about a row that stopped mid-work.
             Some(_) => Some(Supervision::Resume),
         },
+        // A question waits until it is answered (cb-0q1) - unless the row's role declares that
+        // its question expires (cb-0n1n), and then only for an interactive role: one that holds
+        // no claim, no worktree and no pull request, and whose pass's work is already durable
+        // before it asks. `stood` counts from the state file's `since`, which `agent-state`
+        // resets on the change to `asking`; `None` is not zero, so a torn file never expires.
+        RowState::Asking => match (agent.kind, agent.question_expiry, agent.stood) {
+            (AgentKind::Interactive, Some(bound), Some(stood)) if stood >= bound => {
+                Some(if agent.stop_flag { Supervision::Retire } else { Supervision::End })
+            }
+            _ => None,
+        },
         RowState::Up
-        // A question waits until it is answered (cb-0q1): no elapsed time acts on an `asking`
-        // row, for either kind and whatever the flag, so it answers nothing exactly as these do.
-        | RowState::Asking
         // Answered above, ahead of the `ours` guard.
         | RowState::Standby
         | RowState::Dead
@@ -331,6 +343,19 @@ pub fn supervision_notice(action: Supervision, name: &str, stuck: bool) -> Strin
             format!("{name} was stuck and did not answer; its session was ended.")
         }
         (Supervision::Resume, _) => format!("{name}'s turn had ended; it was asked to carry on."),
+    }
+}
+
+/// The gold header notice for a pass the view ended because its question expired (cb-0n1n):
+/// `Sage's question went unanswered for 60m; its pass was ended.` SECONDS is the role's bound,
+/// named as the cadence figures are.
+pub fn unanswered_notice(action: Supervision, name: &str, seconds: i64) -> String {
+    let wait = crate::triggers::cadence_figure(seconds);
+    match action {
+        Supervision::Retire => format!(
+            "{name}'s question went unanswered for {wait}; it was retired and its stop flag is cleared."
+        ),
+        _ => format!("{name}'s question went unanswered for {wait}; its pass was ended."),
     }
 }
 
@@ -1957,6 +1982,7 @@ mod tests {
                 stood,
                 stuck: stuck_for(&state, turn_ended, now),
                 resume_stale: table_flag(fields[7]),
+                question_expiry: None,
             };
             assert_eq!(supervise_action(agent), table_action(fields[8]), "row: {line}");
             rows += 1;
@@ -1983,6 +2009,7 @@ mod tests {
             stood: Some(5_000),
             stuck,
             resume_stale,
+            question_expiry: None,
         }
     }
 
@@ -2119,6 +2146,115 @@ mod tests {
         assert_ne!(implementer, interactive);
     }
 
+    // --- the expiring question (cb-0n1n) ------------------------------------------------------
+
+    /// An `asking` row of a role whose question expires, with everything else ordinary.
+    fn asking_row<'a>(
+        kind: AgentKind,
+        state: &'a RowState,
+        stop_flag: bool,
+        stood: Option<i64>,
+        question_expiry: Option<i64>,
+    ) -> Supervised<'a> {
+        Supervised {
+            kind,
+            state,
+            ours: true,
+            stop_flag,
+            idle_ends_pass: false,
+            stood,
+            stuck: None,
+            resume_stale: false,
+            question_expiry,
+        }
+    }
+
+    #[test]
+    fn an_expiring_question_ends_the_pass_at_its_bound() {
+        let state = RowState::Asking;
+        for stood in [3_600, 90_000] {
+            assert_eq!(
+                supervise_action(asking_row(AgentKind::Interactive, &state, false, Some(stood), Some(3_600))),
+                Some(Supervision::End),
+                "stood {stood}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_expiring_question_is_held_until_its_bound() {
+        let state = RowState::Asking;
+        assert_eq!(
+            supervise_action(asking_row(AgentKind::Interactive, &state, false, Some(3_599), Some(3_600))),
+            None
+        );
+    }
+
+    #[test]
+    fn an_expiring_question_under_a_stop_flag_retires() {
+        let state = RowState::Asking;
+        assert_eq!(
+            supervise_action(asking_row(AgentKind::Interactive, &state, true, Some(3_600), Some(3_600))),
+            Some(Supervision::Retire)
+        );
+    }
+
+    /// A builder holds a claim, a worktree and possibly a pull request: no clock ends it.
+    #[test]
+    fn an_implementers_question_never_expires() {
+        let state = RowState::Asking;
+        for stop_flag in [false, true] {
+            assert_eq!(
+                supervise_action(asking_row(AgentKind::Implementer, &state, stop_flag, Some(90_000), Some(3_600))),
+                None
+            );
+        }
+    }
+
+    #[test]
+    fn a_question_with_no_expiry_waits_for_ever() {
+        let state = RowState::Asking;
+        for stop_flag in [false, true] {
+            assert_eq!(
+                supervise_action(asking_row(AgentKind::Interactive, &state, stop_flag, Some(900_000), None)),
+                None
+            );
+        }
+    }
+
+    /// `None` is not zero: a torn state file must never read as an expired question.
+    #[test]
+    fn a_torn_since_never_expires_a_question() {
+        let state = RowState::Asking;
+        assert_eq!(
+            supervise_action(asking_row(AgentKind::Interactive, &state, false, None, Some(3_600))),
+            None
+        );
+    }
+
+    /// A session this view does not host is somebody else's to end, question or not.
+    #[test]
+    fn an_expiring_question_in_a_session_not_ours_is_left_alone() {
+        let state = RowState::Asking;
+        let agent = Supervised {
+            ours: false,
+            ..asking_row(AgentKind::Interactive, &state, false, Some(90_000), Some(3_600))
+        };
+        assert_eq!(supervise_action(agent), None);
+    }
+
+    #[test]
+    fn unanswered_notice_names_the_wait() {
+        assert_eq!(
+            unanswered_notice(Supervision::End, "Sage", 3_600),
+            "Sage's question went unanswered for 60m; its pass was ended."
+        );
+        assert_eq!(
+            unanswered_notice(Supervision::Retire, "Sage", 3_600),
+            "Sage's question went unanswered for 60m; it was retired and its stop flag is cleared."
+        );
+    }
+
     /// The two things the table cannot carry, both of which end a session that should be left
     /// alone if they are got wrong.
     #[test]
@@ -2137,6 +2273,7 @@ mod tests {
                 stood: None,
                 stuck: None,
                 resume_stale: false,
+                question_expiry: None,
             };
             assert_eq!(supervise_action(agent), None, "for {state:?}");
         }
@@ -2155,6 +2292,7 @@ mod tests {
                 stood: Some(5_000),
                 stuck: None,
                 resume_stale: false,
+                question_expiry: None,
             };
             assert_eq!(supervise_action(agent), None);
         }

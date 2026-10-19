@@ -576,8 +576,14 @@ fn supervise(
             stood,
             stuck,
             resume_stale,
+            question_expiry: triggers::question_expiry(&role),
         };
         let Some(action) = lifecycle::supervise_action(agent) else { continue };
+        // A pass ended because its question expired says so, not "finished its pass" (cb-0n1n).
+        let ended_notice = |action| match (state == RowState::Asking, agent.question_expiry) {
+            (true, Some(bound)) => lifecycle::unanswered_notice(action, &name, bound),
+            _ => lifecycle::supervision_notice(action, &name, stuck.is_some()),
+        };
         // A resume the view will not carry out is not a decision, and must not be recorded as
         // one: `decisions.jsonl` keeps months because it holds what was DONE (cb-xhu.2), and a row
         // already told within this stretch would otherwise write a line every five seconds while
@@ -631,7 +637,7 @@ fn supervise(
                 ledger.note_ended(&name, now);
                 app.resumed.remove(&name);
                 app.resumed_this_stretch.remove(&name);
-                app.set_notice(lifecycle::supervision_notice(action, &name, stuck.is_some()));
+                app.set_notice(ended_notice(action));
             }
             lifecycle::Supervision::End => {
                 host.end(paths, &name);
@@ -640,7 +646,7 @@ fn supervise(
                 ledger.note_ended(&name, now);
                 app.resumed.remove(&name);
                 app.resumed_this_stretch.remove(&name);
-                app.set_notice(lifecycle::supervision_notice(action, &name, stuck.is_some()));
+                app.set_notice(ended_notice(action));
             }
             // Gated by `supervise`'s own top-level return, together with the once-per-stretch
             // guard decided above, so that neither writes a line saying it happened.
@@ -4202,6 +4208,35 @@ mod main_tests {
         assert!(!flag.exists(), "an end writes no flag");
         assert_eq!(app.notice.as_deref(), Some("Cyclops finished its pass and was ended."));
         settle_gone(&mut host, "Cyclops");
+    }
+
+    /// cb-0n1n: Sage's unanswered question ends its pass after an hour, and says why; any other
+    /// interactive role asking for as long is left alone (cb-0q1).
+    #[test]
+    fn an_unanswered_qa_question_ends_the_pass_and_only_qa() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+        hosted(&mut host, &paths, "Sage");
+        hosted(&mut host, &paths, "Forge");
+        let asking = |name: &str, role: &str| cerebro_tui::model::FleetRow {
+            role: role.into(),
+            ..stood_row(name, cerebro_tui::model::AgentKind::Interactive,
+                cerebro_tui::model::RowState::Asking, 3_600, now)
+        };
+        let mut app = lifecycle_app(supervising(), vec![asking("Sage", "qa"), asking("Forge", "architect")]);
+        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &paths, now, Instant::now());
+
+        assert!(!host.supervisable("Sage"), "Sage's pass was ended");
+        assert!(host.supervisable("Forge"), "Forge's question waits until it is answered");
+        assert_eq!(
+            app.notice.as_deref(),
+            Some("Sage's question went unanswered for 60m; its pass was ended.")
+        );
+        settle_gone(&mut host, "Sage");
+        host.kill(&paths, "Forge");
+        settle_gone(&mut host, "Forge");
     }
 
     #[test]

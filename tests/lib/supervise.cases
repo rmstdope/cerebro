@@ -21,7 +21,9 @@
 # WHAT BOTH READERS MUST BIND. The rows assume `cerebro-end-grace' 30, so a reader binds or passes
 # exactly that number rather than whatever the running fleet is customised to. There is no answer
 # timeout to bind: a question waits until it is answered (cb-0q1), so the `asking' rows carry
-# elapsed times well past the two clocks that used to act on them and still answer `none'.
+# elapsed times well past the two clocks that used to act on them and still answer `none'. A
+# reader passes NO question expiry for every row: the one role that declares one (`qa', cb-0n1n,
+# `triggers::question_expiry') is held to its own tests in `lifecycle.rs', not to this table.
 #
 # THE COLUMNS, tab- or space-separated, in order:
 #

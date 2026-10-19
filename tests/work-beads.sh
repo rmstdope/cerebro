@@ -173,6 +173,23 @@ ids="$(run --status open | jq -r '.[].id' | tr '\n' ' ')"
 [ "$ids" = "tt-ord " ] || fail "a parented epic survived: got '$ids'"
 pass "keeps a childless epic and drops a parented one, asking bd children per epic"
 
+# --- an epic's event beads are not its children (cb-cng9) ---------------------------------------
+#
+# `bd set-state` files an `event` bead under the bead it changed, and `bd children` returns it. An
+# epic nobody split but whose state changed once (cb-dr8, event child cb-dr8.6) counted one child
+# and left the board. Only the fallback is exposed: the list the prefilter reads excludes events.
+set_stub '[{"id":"tt-lone","issue_type":"epic"},{"id":"tt-ord","issue_type":"task"}]'
+set_stub_for children '[{"id":"tt-lone.1","issue_type":"event","status":"closed"}]'
+ids="$(run --status open | jq -r '.[].id' | tr '\n' ' ')"
+[ "$ids" = "tt-lone tt-ord " ] || fail "an epic whose only children are events was classed parented: got '$ids'"
+pass "keeps an epic whose only children are event beads"
+
+set_stub '[{"id":"tt-lone","issue_type":"epic"},{"id":"tt-ord","issue_type":"task"}]'
+set_stub_for children '[{"id":"tt-lone.1","issue_type":"event"},{"id":"tt-lone.2","issue_type":"task"}]'
+ids="$(run --status open | jq -r '.[].id' | tr '\n' ' ')"
+[ "$ids" = "tt-ord " ] || fail "an epic with a real child beside an event survived: got '$ids'"
+pass "drops an epic with a real child beside an event bead"
+
 # --- the prefilter: a child in the list settles its parent with no bd call (cb-hzl) -------------
 #
 # the fleet view runs this on every tick, so the epic loop may not cost one `bd`

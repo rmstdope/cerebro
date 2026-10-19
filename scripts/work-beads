@@ -36,7 +36,9 @@
 #   3. `bd set-state <id> <k>=<v>` writes an **event bead** as its audit record: `issue_type:
 #      "event"`, closed, carrying the very labels these queries key on. Left in, each pass finds
 #      the previous pass's event beads, acts on them, and writes more - a chain that grows one link
-#      per pass, forever (ah-9gm). Never label an event bead.
+#      per pass, forever (ah-9gm). Never label an event bead. `bd children` returns them too, filed
+#      under the bead whose state changed, so the epic rule below filters them out of its count
+#      as well (cb-cng9).
 #   4. `bd` answers about the repository it is run in. Every query here passes `-C` with the root
 #      from `consumer-root --shared`, because a caller in an agent worktree is not in the checkout
 #      the fleet reasons about - and a wrong-root answer is an empty list that reads as a quiet day
@@ -161,7 +163,12 @@ while IFS= read -r epic_id; do
         echo "work-beads: bd children failed for $epic_id" >&2
         exit 1
       fi
-      if ! count="$(printf '%s' "$children" | jq 'length' 2>/dev/null)"; then
+      # Events are not children: `bd set-state` files one under the bead it changed, and `bd
+      # children` returns it, so an unsplit epic with one state change would count a child and
+      # leave the board (cb-cng9). The same list the `bd list` call and the jq guard use.
+      if ! count="$(printf '%s' "$children" | jq --arg excluded "$excluded_csv" \
+            '($excluded | split(",")) as $types
+             | [.[] | select(.issue_type as $t | ($types | index($t)) == null)] | length' 2>/dev/null)"; then
         echo "work-beads: bd children printed something that is not JSON for $epic_id" >&2
         exit 1
       fi

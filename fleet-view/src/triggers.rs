@@ -933,6 +933,114 @@ pub fn parse_spacing(raw: &str) -> Result<Option<u64>, String> {
         .map_err(|_| trimmed.to_string())
 }
 
+/// Everything one standby row's start decision reads that is not the fleet's facts. The edge
+/// gathers it - the stop flag is a file, the rest is the ledger, the roster and the spacing map -
+/// and `start_decision` composes it.
+#[derive(Clone, Copy, Debug)]
+pub struct StartInputs<'a> {
+    pub agent: AgentFacts<'a>,
+    /// The name's stop flag is set: `f` means never start it, whatever its trigger says.
+    pub flagged: bool,
+    /// Consecutive failed starts, counted BEFORE the start being decided (`StartLedger::failures`).
+    pub failures: u32,
+    /// The other holders of the role (`role_peers`), whom a start could race.
+    pub peers: &'a [&'a str],
+    /// When this view last started each name (`StartLedger::started_at_map`), as it stands NOW:
+    /// a start earlier in this very pass is already in it.
+    pub started_at: &'a BTreeMap<String, DateTime<Utc>>,
+    /// The spacing in force for the role (`spacing_for`).
+    pub spacing: Option<u64>,
+}
+
+/// What each guard said about one row - the evaluation line's fields. Every guard is consulted
+/// before anything is decided, because a row that started nothing has to say which guard was the
+/// reason. Each is asked only when the ones before it let the row through: `role_start_too_soon`
+/// reads a map a start writes into, so asking it of a row that was never going to start would be
+/// a different question.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct StartGuards {
+    /// The trigger's reason, `None` when it is false.
+    pub reason: Option<String>,
+    /// The condition was true and the unchanged-work guard dropped it.
+    pub held_by_guard: bool,
+    pub spaced_out: bool,
+    pub backed_off: bool,
+    pub flagged: bool,
+}
+
+/// What the edge is to do about one standby row.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum StartAction {
+    /// Nothing: no trigger, a guard held it, or a bead role with nothing to hand.
+    Hold,
+    /// Stop retrying: this would be failed start number TOTAL (`failures + 1`).
+    GiveUp { total: u32 },
+    /// Launch it. FAILURES is what the ledger is set to before the launch - `failures + 1` after
+    /// a start that produced no pass, else 0. FINGERPRINT is what the next start is measured
+    /// against: the queue as this pass FOUND it, the handed bead included (cb-r9ac), so it is
+    /// computed here, from the facts before the edge's `take`, and recorded by `note_started` as
+    /// it stands.
+    Start {
+        reason: String,
+        bead: Option<String>,
+        failures: u32,
+        fingerprint: Option<Fingerprint>,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StartDecision {
+    pub guards: StartGuards,
+    pub action: StartAction,
+}
+
+/// Whether, and how, one standby row starts at NOW: the guard composition and the start's
+/// bookkeeping that `start_due` used to decide inline, as a value the edge carries out.
+pub fn start_decision(
+    facts: &TriggerFacts,
+    inputs: StartInputs<'_>,
+    now: DateTime<Utc>,
+) -> StartDecision {
+    let StartInputs { agent, flagged, failures, peers, started_at, spacing } = inputs;
+    let reason = trigger(facts, agent, now);
+    let held_by_guard = reason.is_none() && held_by_unchanged_work(facts, agent);
+    let due = !flagged && reason.is_some();
+    let spaced_out = due && role_start_too_soon(peers, started_at, spacing, now);
+    let started = agent.started_at;
+    let failed = start_failed(started, agent.ended_at);
+    // Backed off BEFORE the give-up, so a name at four failures counts its ten minutes down and
+    // gives up when the wait expires rather than when the fourth failure lands.
+    let backed_off = due && !spaced_out && failed && retry_wait(failures, started, now) > 0;
+    let guards = StartGuards { reason: reason.clone(), held_by_guard, spaced_out, backed_off, flagged };
+
+    let action = match reason {
+        Some(reason) if due && !spaced_out && !backed_off => {
+            if give_up(failed, failures) {
+                StartAction::GiveUp { total: failures + 1 }
+            } else {
+                let bead = if hands_a_bead(agent.role) {
+                    bead_for(facts, agent.role).map(str::to_string)
+                } else {
+                    None
+                };
+                if hands_a_bead(agent.role) && bead.is_none() {
+                    // Unreachable while each such condition requires a bead; harmless if not.
+                    StartAction::Hold
+                } else {
+                    StartAction::Start {
+                        reason,
+                        bead,
+                        failures: if failed { failures + 1 } else { 0 },
+                        fingerprint: fingerprint(agent.role, facts),
+                    }
+                }
+            }
+        }
+        _ => StartAction::Hold,
+    };
+    StartDecision { guards, action }
+}
+
 /// What this view has started and ended, per name. The port of `cerebro--started-at`,
 /// `cerebro--start-fingerprints`, and the `ended-at` half of `cerebro--parked`/`cerebro--seen-up`.
 /// Wall-clock throughout, because everything it is compared against already is.
@@ -2459,5 +2567,218 @@ mod tests {
         ledger.clear_failures("Rogue");
         assert_eq!(ledger.started_at("Rogue"), Some(at(10)));
         assert_eq!(ledger.ended_at("Rogue"), Some(at(20)));
+    }
+
+    // --- the start decision (cb-tnrx) ------------------------------------------------------
+
+    /// Facts with BUGS as the bugfix queue and nothing else on the board.
+    fn bug_queue(bugs: &[&str]) -> TriggerFacts {
+        let mut facts = facts_for(Vec::new(), &[]);
+        facts.bugfixable_ids = bugs.iter().map(|id| id.to_string()).collect();
+        facts
+    }
+
+    /// A bugfixer with no history, nobody to race and no stop flag: the start every guard lets
+    /// through. Each case changes the one field its guard reads.
+    fn plain_inputs<'a>(
+        agent: AgentFacts<'a>,
+        started_at: &'a BTreeMap<String, DateTime<Utc>>,
+    ) -> StartInputs<'a> {
+        StartInputs { agent, flagged: false, failures: 0, peers: &[], started_at, spacing: None }
+    }
+
+    fn no_starts() -> BTreeMap<String, DateTime<Utc>> {
+        BTreeMap::new()
+    }
+
+    #[test]
+    fn start_decision_holds_a_row_whose_trigger_is_false() {
+        let starts = no_starts();
+        let decision =
+            start_decision(&bug_queue(&[]), plain_inputs(agent_of("bugfixer"), &starts), at(0));
+        assert_eq!(decision.action, StartAction::Hold);
+        assert_eq!(decision.guards, StartGuards::default());
+    }
+
+    #[test]
+    fn start_decision_starts_a_due_row_with_the_first_bead() {
+        let starts = no_starts();
+        let facts = bug_queue(&["cb-a", "cb-b"]);
+        let decision = start_decision(&facts, plain_inputs(agent_of("bugfixer"), &starts), at(0));
+        assert_eq!(
+            decision.action,
+            StartAction::Start {
+                reason: "2 bugfix candidates".into(),
+                bead: Some("cb-a".into()),
+                failures: 0,
+                fingerprint: fingerprint("bugfixer", &facts),
+            }
+        );
+        assert_eq!(decision.guards.reason.as_deref(), Some("2 bugfix candidates"));
+    }
+
+    #[test]
+    fn start_decision_starts_a_cadence_role_with_no_bead() {
+        let starts = no_starts();
+        let agent = AgentFacts { ended_at: Some(at(0)), ..agent_of("architect") };
+        let decision = start_decision(&bug_queue(&[]), plain_inputs(agent, &starts), at(3600));
+        let StartAction::Start { bead, fingerprint, .. } = decision.action else {
+            panic!("the floor is due: {:?}", decision.action)
+        };
+        assert_eq!(bead, None);
+        assert_eq!(fingerprint, None, "a clock role is never compared against the board");
+    }
+
+    #[test]
+    fn start_decision_reports_a_trigger_held_by_unchanged_work() {
+        let starts = no_starts();
+        let facts = bug_queue(&["cb-a"]);
+        let last = fingerprint("bugfixer", &facts).unwrap();
+        let agent = AgentFacts {
+            started_at: Some(at(0)),
+            ended_at: Some(at(700)),
+            last_fingerprint: Some(&last),
+            ..agent_of("bugfixer")
+        };
+        let decision = start_decision(&facts, plain_inputs(agent, &starts), at(800));
+        assert_eq!(decision.action, StartAction::Hold);
+        assert!(decision.guards.held_by_guard);
+        assert_eq!(decision.guards.reason, None);
+    }
+
+    #[test]
+    fn start_decision_never_starts_a_flagged_row() {
+        let starts: BTreeMap<String, DateTime<Utc>> = [("Rogue".to_string(), at(0))].into();
+        let facts = bug_queue(&["cb-a"]);
+        let inputs = StartInputs {
+            flagged: true,
+            peers: &["Rogue"],
+            spacing: Some(60),
+            ..plain_inputs(agent_of("bugfixer"), &starts)
+        };
+        let decision = start_decision(&facts, inputs, at(10));
+        assert_eq!(decision.action, StartAction::Hold);
+        assert!(decision.guards.flagged);
+        assert!(!decision.guards.spaced_out, "a flagged row's spacing is not asked");
+        assert!(!decision.guards.backed_off);
+    }
+
+    #[test]
+    fn start_decision_spaces_out_a_peer_started_too_recently() {
+        let starts: BTreeMap<String, DateTime<Utc>> = [("Rogue".to_string(), at(0))].into();
+        let facts = bug_queue(&["cb-a"]);
+        let inputs = StartInputs {
+            peers: &["Rogue"],
+            spacing: Some(60),
+            ..plain_inputs(agent_of("bugfixer"), &starts)
+        };
+        let decision = start_decision(&facts, inputs, at(59));
+        assert_eq!(decision.action, StartAction::Hold);
+        assert!(decision.guards.spaced_out);
+
+        let inputs = StartInputs {
+            peers: &["Rogue"],
+            spacing: Some(60),
+            ..plain_inputs(agent_of("bugfixer"), &starts)
+        };
+        let decision = start_decision(&facts, inputs, at(60));
+        assert!(!decision.guards.spaced_out, "exactly the spacing is not too soon");
+        assert!(matches!(decision.action, StartAction::Start { .. }));
+    }
+
+    #[test]
+    fn start_decision_backs_off_after_a_failed_start() {
+        let starts = no_starts();
+        // Started ten seconds ago and never ended: a launch that produced no pass, with two
+        // failures behind it, so thirty seconds are owed. A bugfixer's wake interval is 0, so the
+        // trigger itself is true and the backoff is what holds it.
+        let mut inputs = plain_inputs(agent_of("bugfixer"), &starts);
+        inputs.agent.started_at = Some(at(690));
+        inputs.failures = 2;
+        let decision = start_decision(&bug_queue(&["cb-a"]), inputs, at(700));
+        assert!(decision.guards.reason.is_some());
+        assert!(decision.guards.backed_off);
+        assert_eq!(decision.action, StartAction::Hold);
+    }
+
+    #[test]
+    fn start_decision_counts_a_failed_start_into_the_next_one() {
+        let starts = no_starts();
+        let mut inputs = plain_inputs(agent_of("bugfixer"), &starts);
+        inputs.agent.started_at = Some(at(0));
+        inputs.failures = 2;
+        let decision = start_decision(&bug_queue(&["cb-a"]), inputs, at(31));
+        let StartAction::Start { failures, .. } = decision.action else {
+            panic!("the thirty seconds are spent: {:?}", decision.action)
+        };
+        assert_eq!(failures, 3, "counted before the launch, from what the last start did");
+    }
+
+    #[test]
+    fn start_decision_resets_the_count_after_a_pass_ran() {
+        let starts = no_starts();
+        let mut inputs = plain_inputs(agent_of("bugfixer"), &starts);
+        inputs.agent.started_at = Some(at(0));
+        inputs.agent.ended_at = Some(at(50));
+        inputs.failures = 3;
+        let decision = start_decision(&bug_queue(&["cb-a"]), inputs, at(60));
+        let StartAction::Start { failures, .. } = decision.action else {
+            panic!("nothing is owed after a pass that ran: {:?}", decision.action)
+        };
+        assert_eq!(failures, 0);
+    }
+
+    #[test]
+    fn start_decision_gives_up_on_the_fifth_failed_start() {
+        let starts = no_starts();
+        let mut inputs = plain_inputs(agent_of("bugfixer"), &starts);
+        inputs.agent.started_at = Some(at(0));
+        inputs.failures = 4;
+        let decision = start_decision(&bug_queue(&["cb-a"]), inputs, at(599));
+        assert_eq!(decision.action, StartAction::Hold, "the tenth minute is still owed");
+        assert!(decision.guards.backed_off);
+
+        let mut inputs = plain_inputs(agent_of("bugfixer"), &starts);
+        inputs.agent.started_at = Some(at(0));
+        inputs.failures = 4;
+        let decision = start_decision(&bug_queue(&["cb-a"]), inputs, at(600));
+        assert_eq!(decision.action, StartAction::GiveUp { total: 5 });
+    }
+
+    /// cb-r9ac, without a pty: the fingerprint a start records is the queue as the pass FOUND it,
+    /// handed bead included, so a pass that did exactly its one bead reads as changed and the
+    /// only bugfixer is not held while candidates wait.
+    #[test]
+    fn start_decision_fingerprints_the_queue_as_found() {
+        let starts = no_starts();
+        let mut facts = bug_queue(&["cb-a", "cb-b"]);
+        let decision = start_decision(&facts, plain_inputs(agent_of("bugfixer"), &starts), at(0));
+        let StartAction::Start { bead: Some(bead), fingerprint: print, .. } = decision.action else {
+            panic!("the bugfixer is due: {:?}", decision.action)
+        };
+        assert_eq!(
+            print,
+            Some(Fingerprint::Bugfixer { bugfixable_ids: vec!["cb-a".into(), "cb-b".into()] })
+        );
+        // What the edge does with a launch that succeeded, in its order.
+        facts.take(&bead);
+        let mut ledger = StartLedger::default();
+        ledger.note_started("Rogue", at(0), print);
+        ledger.note_ended("Rogue", at(600));
+
+        // The pass closed cb-a; the board still lists cb-b.
+        let live = bug_queue(&["cb-b"]);
+        let agent = AgentFacts {
+            role: "bugfixer",
+            ended_at: ledger.ended_at("Rogue"),
+            started_at: ledger.started_at("Rogue"),
+            last_fingerprint: ledger.fingerprint("Rogue"),
+        };
+        assert!(!held_by_unchanged_work(&live, agent), "the pass changed what the role reads");
+        assert!(trigger(&live, agent, at(605)).is_some(), "the remaining bug starts the next pass");
+
+        // The pass gave its bead back untouched: the queue is as it was found, and the guard holds.
+        let untouched = bug_queue(&["cb-a", "cb-b"]);
+        assert!(held_by_unchanged_work(&untouched, agent));
     }
 }

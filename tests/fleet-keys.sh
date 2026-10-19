@@ -22,8 +22,11 @@
 # which would hand every session cargo's environment (.cerebro/traps.md). The four roots are
 # exported as `scripts/cerebro-tui' exports them; tests/cerebro-tui.sh proves that launcher.
 #
-# Every wait is a bounded poll that fails with the screen and the view's stderr. The one deliberate
-# sleep is the window in which a name that should stay gone must not come back.
+# Every wait is a bounded poll that fails with the screen and the view's stderr; there is no sleep.
+#
+# "Stays gone" is asserted through the armed set and the decisions log, never by waiting for a
+# restart that does not come: an architect's trigger is held by its hourly wake floor whether or not
+# the name is armed, so a window watching for a new session could not fail.
 #
 #     bash tests/fleet-keys.sh
 
@@ -159,11 +162,11 @@ press s
 wait_until "the stub agent to start" started
 first="$(stub_pid)"
 alive "$first" || fail "s: the stub agent is not running"
-grep -qx 'architect' "$stub_state/Forge.args" \
+[ "$(grep -A1 -x -- '--agent' "$stub_state/Forge.args" | sed -n 2p)" = architect ] \
   || fail "s: the session was not started as the architect agent: $(cat "$stub_state/Forge.args")"
 wait_until "the session publication" published
 wait_until "the start line" decided '.event == "start" and .agent == "Forge" and .by == "navigator"'
-armed Forge || fail "s: Forge is not in the armed set$(evidence)"
+wait_until "Forge in the armed set" armed Forge
 pass "s starts Forge in a hosted session, logs the start and arms the name"
 
 # --- k: killed, unpublished, disarmed, and it stays gone (cb-op0) -----------------------------------
@@ -179,15 +182,9 @@ wait_until "the session publication to go" unpublished
 wait_until "Forge to leave the armed set" disarmed Forge
 decided '.event == "disarm" and .agent == "Forge" and .by == "kill"' \
   || fail "k: no disarm line by kill$(evidence)"
+wait_until "Forge's row to read dead" on_screen 'Forge +architect +dead'
 pass "k asks, then kills Forge's session, unpublishes it and disarms the name"
-
-# A name still armed is started again by its own trigger within one fleet tick. Six seconds is
-# that tick and the read behind it; a new pid in that time is the row coming back by itself.
 rm -f "$stub_state/Forge.pid"
-sleep 6
-started && fail "k: Forge was started again by itself, pid $(stub_pid)$(evidence)"
-disarmed Forge || fail "k: Forge is armed again$(evidence)"
-pass "a killed name stays gone"
 
 # --- f: finish after this pass, and not start again ---------------------------------------------------
 #
@@ -202,7 +199,7 @@ pass "s on a disarmed name starts it and arms it again"
 
 press f
 wait_until "Forge's stop flag" test -e "$state/Forge.stop"
-on_screen 'Forge will finish after this pass\.' || fail "f: the header does not say Forge will finish$(evidence)"
+wait_until "the finish notice" on_screen 'Forge will finish after this pass\.'
 alive "$second" || fail "f: the session ended before its pass did"
 armed Forge || fail "f: the name was disarmed before its pass ended$(evidence)"
 pass "f sets Forge's stop flag and leaves the session to finish its pass"
@@ -217,10 +214,6 @@ wait_until "the stop flag to be cleared" test ! -e "$state/Forge.stop"
 decided '.event == "retire" and .agent == "Forge" and .stop_flag == "set"' \
   || fail "f: no retire line with the stop flag set$(evidence)"
 pass "when its pass ends, the view retires Forge: session ended, flag cleared, name disarmed"
-
-sleep 6
-started && fail "f: Forge was started again after retiring, pid $(stub_pid)$(evidence)"
-pass "a finished name does not start again"
 
 # --- the view leaves cleanly --------------------------------------------------------------------------
 

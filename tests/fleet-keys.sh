@@ -166,4 +166,75 @@ wait_until "the start line" decided '.event == "start" and .agent == "Forge" and
 armed Forge || fail "s: Forge is not in the armed set$(evidence)"
 pass "s starts Forge in a hosted session, logs the start and arms the name"
 
+# --- k: killed, unpublished, disarmed, and it stays gone (cb-op0) -----------------------------------
+#
+# Only once the row reads `working': until a fleet read has seen the new session the row still says
+# `standby', and `k' there asks the standby question instead (cb-o274).
+wait_until "Forge's row to read working" on_screen 'Forge +architect +working'
+press k
+wait_until "the kill question" on_screen 'Kill Forge\?  y / n'
+press y
+wait_until "the stub agent to be killed" gone "$first"
+wait_until "the session publication to go" unpublished
+wait_until "Forge to leave the armed set" disarmed Forge
+decided '.event == "disarm" and .agent == "Forge" and .by == "kill"' \
+  || fail "k: no disarm line by kill$(evidence)"
+pass "k asks, then kills Forge's session, unpublishes it and disarms the name"
+
+# A name still armed is started again by its own trigger within one fleet tick. Six seconds is
+# that tick and the read behind it; a new pid in that time is the row coming back by itself.
+rm -f "$stub_state/Forge.pid"
+sleep 6
+started && fail "k: Forge was started again by itself, pid $(stub_pid)$(evidence)"
+disarmed Forge || fail "k: Forge is armed again$(evidence)"
+pass "a killed name stays gone"
+
+# --- f: finish after this pass, and not start again ---------------------------------------------------
+#
+# `s' on the name `k' disarmed arms it again: starting is what arms, whoever asks (cb-op0's other
+# half - a disarmed name came back for one pass and then went grey for good).
+press s
+wait_until "the stub agent to start again" started
+second="$(stub_pid)"
+wait_until "Forge to rejoin the armed set" armed Forge
+wait_until "Forge's row to read working again" on_screen 'Forge +architect +working'
+pass "s on a disarmed name starts it and arms it again"
+
+press f
+wait_until "Forge's stop flag" test -e "$state/Forge.stop"
+on_screen 'Forge will finish after this pass\.' || fail "f: the header does not say Forge will finish$(evidence)"
+alive "$second" || fail "f: the session ended before its pass did"
+armed Forge || fail "f: the name was disarmed before its pass ended$(evidence)"
+pass "f sets Forge's stop flag and leaves the session to finish its pass"
+
+# The pass ends the way every agent ends one: `end-pass', which writes `waiting'.
+rm -f "$stub_state/Forge.pid"
+touch "$stub_state/Forge.end"
+wait_until "the finished session to be ended" gone "$second"
+wait_until "the session publication to go" unpublished
+wait_until "Forge to leave the armed set" disarmed Forge
+wait_until "the stop flag to be cleared" test ! -e "$state/Forge.stop"
+decided '.event == "retire" and .agent == "Forge" and .stop_flag == "set"' \
+  || fail "f: no retire line with the stop flag set$(evidence)"
+pass "when its pass ends, the view retires Forge: session ended, flag cleared, name disarmed"
+
+sleep 6
+started && fail "f: Forge was started again after retiring, pid $(stub_pid)$(evidence)"
+pass "a finished name does not start again"
+
+# --- the view leaves cleanly --------------------------------------------------------------------------
+
+press q
+for ((i = 0; i < 100; i++)); do
+  kill -0 "$view_pid" 2>/dev/null || break
+  sleep 0.2
+done
+kill -0 "$view_pid" 2>/dev/null && fail "q: the view did not exit with nothing hosted$(evidence)"
+set +e
+wait "$view_pid"
+view_status=$?
+set -e
+[ "$view_status" -eq 0 ] || fail "q: the view exited $view_status$(evidence)"
+pass "q with nothing hosted closes the view, status 0"
+
 suite_passed

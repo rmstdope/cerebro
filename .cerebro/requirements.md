@@ -56,7 +56,7 @@ R14 Each interactive role starts on its own trigger (UX, Psylocke, Cerebro, Moir
     Proven by: nothing yet
 R15 A role is not started again while its trigger names exactly the work its last pass
     was started for.
-    Proven by: nothing yet
+    Proven by: tests/fleet-view-restart.sh
 R16 A producer whose session died mid-bead is retried on a backoff, and its row says when
     and how many starts failed.
     Proven by: nothing yet

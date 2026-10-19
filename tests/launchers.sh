@@ -49,28 +49,6 @@ suite_cleanup() {
   for p in ${strays+"${strays[@]}"}; do kill "$p" 2>/dev/null || true; done
 }
 
-# THE SUITE RUNS INSIDE A POLLUTED SESSION (cb-6fu). An implementer running this is itself a session
-# the fleet view - a `cargo run' child - started, so its environment already carries cargo's eighteen
-# variables. Every existing case would then see the launcher's new "cleared ..." line on stderr, and
-# the cases below would assert against the suite's environment rather than their own. Clear them
-# here; each case sets what it needs on the command itself. Without this the suite is green in CI
-# and red on the navigator's machine, which is the exact shape ah-dy4x cost.
-for _n in $(compgen -e || true); do
-  case "$_n" in
-    CARGO_HOME|CARGO_TARGET_DIR) ;;
-    CARGO|CARGO_*|TS_RS_EXPORT_DIR) unset "$_n" ;;
-  esac
-done
-unset _n
-
-# The environment is only half of it: `cerebro_cargo_config_env_names' also reads
-# ${CARGO_HOME:-$HOME/.cargo}/config.toml, so a navigator whose own cargo config declares an [env]
-# table - with that key exported, which is exactly what a session under `cargo run' has - would see
-# the launcher clear it and the "says nothing" case below fail. Point CARGO_HOME at an empty
-# directory, as tests/cargo-env.sh does, so every case here is about its own fixture.
-export CARGO_HOME="$work_dir/empty-cargo-home"
-mkdir -p "$CARGO_HOME"
-
 # A stub `claude` on PATH ahead of the real one, so a launcher's `exec claude ...` runs this instead
 # of starting a real session. It prints the environment and args it was handed, which is exactly what
 # these assertions need and nothing a real session would do.
@@ -86,6 +64,8 @@ printf 'CEREBRO_CONSUMER_MOUNT=%s\n' "${CEREBRO_CONSUMER_MOUNT:-<unset>}"
 printf 'TS_RS_EXPORT_DIR=%s\n' "${TS_RS_EXPORT_DIR:-<unset>}"
 printf 'CARGO_MANIFEST_DIR=%s\n' "${CARGO_MANIFEST_DIR:-<unset>}"
 printf 'CARGO_HOME=%s\n' "${CARGO_HOME:-<unset>}"
+printf 'RUSTUP_TOOLCHAIN=%s\n' "${RUSTUP_TOOLCHAIN:-<unset>}"
+printf 'RUSTUP_TOOLCHAIN_SOURCE=%s\n' "${RUSTUP_TOOLCHAIN_SOURCE:-<unset>}"
 for a in "$@"; do
   printf 'ARG:%s\n' "$a"
 done
@@ -1514,42 +1494,23 @@ grep -q "the last launcher run before this suite died was: launch Nobody (at /no
   || fail "a dying suite should name its last launcher, got: $death_out"
 pass "a suite that dies names the last launcher it ran"
 
-# --- a session never inherits the cargo environment the fleet view ran in (cb-6fu) --------------
+# --- launch hands a session the environment it was given (ah-4n2r) -----------------------------
 #
-# `scripts/cerebro-tui' execs `cargo run', so the Ratatui view is a child of cargo and hands its own
-# environment to every session it spawns. Without the strip in `scripts/launch' every agent inherits
-# cargo's injections AND the consumer's .cargo/config.toml `[env]' table - which in atlantis-hud
-# meant TS_RS_EXPORT_DIR pointing at the navigator's shared checkout (ah-79ca, ah-16pb).
+# The fleet view used to run under `cargo run', and `launch' subtracted what cargo and rustup's
+# proxy had injected through a hand-kept denylist (cb-6fu, ah-3kge). `scripts/cerebro-tui' now execs
+# the built binary itself, so the view runs in the navigator's own environment and there is nothing
+# to subtract. A variable that looks cargo-ish is the navigator's to have, and passes through.
 
-out="$(CARGO_MANIFEST_DIR=/x CARGO_PKG_NAME=y run_launcher launch Forge)"
-grep -q '^CARGO_MANIFEST_DIR=<unset>$' <<<"$out" \
-  || fail "launch Forge: CARGO_MANIFEST_DIR should not reach the session, got: $out"
-pass "launch clears the variables cargo injected before exec'ing the agent CLI"
-
-out="$(CARGO_HOME=/x run_launcher launch Forge)"
-grep -q '^CARGO_HOME=/x$' <<<"$out" \
-  || fail "launch Forge: CARGO_HOME is the navigator's own setting and must survive, got: $out"
-pass "launch keeps CARGO_HOME, which cargo merely passes through"
-
-# The [env] half, against a consumer whose root carries a cargo config - the shape that produced the
-# leak. `--copy' because the strip runs on the launch path, which these cases run for real.
-cargo_consumer="$(consumer_new cargo-consumer --copy)"
-printf 'gate_fast make check\ngate_full make check-all\n' > "$cargo_consumer/.cerebro/project.conf"
-mkdir -p "$cargo_consumer/.cargo"
-printf '[env]\nTS_RS_EXPORT_DIR = { value = "generated", relative = true }\n' \
-  > "$cargo_consumer/.cargo/config.toml"
-out="$(TS_RS_EXPORT_DIR=/leak CARGO_MANIFEST_DIR=/x \
-       run_launcher_at "$cargo_consumer/.cerebro/cerebro/scripts" launch Forge 2>&1)"
-grep -q '^TS_RS_EXPORT_DIR=<unset>$' <<<"$out" \
-  || fail "launch Forge: the consumer's [env] key should not reach the session, got: $out"
-grep -q 'cleared 1 CARGO_\* variable and TS_RS_EXPORT_DIR from the environment cargo left behind' <<<"$out" \
-  || fail "launch Forge: expected the cleared-variables line on stderr, got: $out"
-pass "launch clears a consumer's [env] keys too, and says on stderr what it removed"
-
-out="$(run_launcher launch Forge 2>&1)"
+out="$(CARGO_MANIFEST_DIR=/x TS_RS_EXPORT_DIR=/y RUSTUP_TOOLCHAIN=stable RUSTUP_TOOLCHAIN_SOURCE=toolchain-file \
+       run_launcher launch Forge 2>&1)"
+for _want in CARGO_MANIFEST_DIR=/x TS_RS_EXPORT_DIR=/y RUSTUP_TOOLCHAIN=stable RUSTUP_TOOLCHAIN_SOURCE=toolchain-file; do
+  grep -qx "$_want" <<<"$out" \
+    || fail "launch Forge: expected $_want to reach the session unchanged, got: $out"
+done
+unset _want
 grep -q 'cleared' <<<"$out" \
-  && fail "launch Forge: with nothing cargo-ish set, no cleared line should be printed, got: $out"
-pass "launch says nothing when there was nothing cargo left behind"
+  && fail "launch Forge: launch strips nothing any more, so it should report nothing, got: $out"
+pass "launch hands the session the environment it was given, with no denylist"
 
 # --- launch --bead (cb-10d.1) -------------------------------------------------------------------
 #

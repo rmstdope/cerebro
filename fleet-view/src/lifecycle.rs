@@ -747,8 +747,8 @@ pub fn kill_outcome(situation: Situation<'_>) -> KillOutcome {
     if !situation.mode.may_supervise() {
         return KillOutcome::Refuse(refusal_for(situation.mode));
     }
-    // Ahead of the two rules that refuse a name that is not running: a standby row hosts no
-    // session by construction, and `k` on one means disarm rather than kill.
+    // Ahead of the two rules that refuse a name that is not running: a standby row is a name
+    // with no session, and `k` on one means disarm rather than kill.
     if row.state == RowState::Starting {
         return KillOutcome::ConfirmStop { prompt: disarm_prompt(&row.name) };
     }

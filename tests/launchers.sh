@@ -66,6 +66,9 @@ printf 'CARGO_MANIFEST_DIR=%s\n' "${CARGO_MANIFEST_DIR:-<unset>}"
 printf 'CARGO_HOME=%s\n' "${CARGO_HOME:-<unset>}"
 printf 'RUSTUP_TOOLCHAIN=%s\n' "${RUSTUP_TOOLCHAIN:-<unset>}"
 printf 'RUSTUP_TOOLCHAIN_SOURCE=%s\n' "${RUSTUP_TOOLCHAIN_SOURCE:-<unset>}"
+printf 'CEREBRO_AGENT_NAME=%s\n' "${CEREBRO_AGENT_NAME:-<unset>}"
+printf 'CEREBRO_SCRIPTS=%s\n' "${CEREBRO_SCRIPTS:-<unset>}"
+printf 'CEREBRO_HOOK_SETTINGS=%s\n' "${CEREBRO_HOOK_SETTINGS:-<unset>}"
 for a in "$@"; do
   printf 'ARG:%s\n' "$a"
 done
@@ -656,7 +659,9 @@ rm -rf "$bare_path_dir"
 # --- launch, generically over every roster row ---
 
 while IFS=$'\t' read -r name role kind; do
-  out="$(run_launcher launch "$name")"
+  # Without the hook variables, so the assertions below see what `launch' exported and not what a
+  # fleet session running this suite inherited.
+  out="$(unset CEREBRO_AGENT_NAME CEREBRO_SCRIPTS CEREBRO_HOOK_SETTINGS; run_launcher launch "$name")"
   grep -q "^BEADS_ACTOR=${name}\$" <<<"$out" || fail "launch $name: expected BEADS_ACTOR=$name, got: $out"
   arg_follows "$out" '^ARG:--agent$' "^ARG:${role}\$" || fail "launch $name: expected --agent $role, got: $out"
   arg_follows "$out" '^ARG:--name$' "^ARG:${name}\$" || fail "launch $name: expected --name $name, got: $out"
@@ -690,8 +695,31 @@ while IFS=$'\t' read -r name role kind; do
   grep -q "$name" <<<"$prompt" || fail "launch $name: prompt does not name $name"
   grep -q "$role" <<<"$prompt" || fail "launch $name: prompt does not name $role"
   grep -q "fill the buffer" <<<"$prompt" && fail "launch $name: prompt still has the old per-role drift"
+
+  # The state hooks (cb-3vkn): `launch' sources agent-hooks-env and passes its settings file, or the
+  # hooks silently do nothing and no row ever reads `asking' during a question. The settings file's
+  # commands run "$CEREBRO_SCRIPTS/agent-asking" and "$CEREBRO_SCRIPTS/agent-turn" for the state
+  # file named by CEREBRO_AGENT_NAME, so all three halves are held here: the flag, the file it
+  # names, and the two variables the hook subprocess inherits. Paths compare physically: a macOS
+  # temp directory resolves through /private.
+  arg_follows "$out" '^ARG:--settings$' '^ARG:/' \
+    || fail "launch $name: expected --settings <absolute path>, got: $out"
+  settings_arg="$(awk '/^ARG:--settings$/ { getline; sub(/^ARG:/, ""); print; exit }' <<<"$out")"
+  [[ -f "$settings_arg" ]] || fail "launch $name: --settings names no file: $settings_arg"
+  [[ "$(cd -P "$(dirname "$settings_arg")" && pwd)/$(basename "$settings_arg")" \
+      == "$(cd -P "$fixture_dir/.cerebro/cerebro/hooks" && pwd)/session-state.settings.json" ]] \
+    || fail "launch $name: --settings should name the consumer's hooks/session-state.settings.json, got: $settings_arg"
+  grep -qxF "CEREBRO_HOOK_SETTINGS=$settings_arg" <<<"$out" \
+    || fail "launch $name: CEREBRO_HOOK_SETTINGS should be exported as the --settings file, got: $out"
+  grep -qx "CEREBRO_AGENT_NAME=${name}" <<<"$out" \
+    || fail "launch $name: the hooks need CEREBRO_AGENT_NAME=$name, got: $out"
+  hook_scripts="$(sed -n 's/^CEREBRO_SCRIPTS=//p' <<<"$out")"
+  [[ -d "$hook_scripts" && "$(cd -P "$hook_scripts" && pwd)" == "$(cd -P "$fixture_scripts" && pwd)" ]] \
+    || fail "launch $name: the hooks need CEREBRO_SCRIPTS=<the consumer's scripts>, got: $hook_scripts"
+  [[ -x "$hook_scripts/agent-asking" && -x "$hook_scripts/agent-turn" ]] \
+    || fail "launch $name: CEREBRO_SCRIPTS holds no runnable agent-asking/agent-turn: $hook_scripts"
 done <<<"$roster_out"
-pass "launch: every roster row reaches the stub with the right actor, agent, name, remote-control name, model, effort"
+pass "launch: every roster row reaches the stub with the right actor, agent, name, remote-control name, model, effort, and the state hooks wired"
 
 # --- launch overrides ---
 

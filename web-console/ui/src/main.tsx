@@ -174,4 +174,3 @@ function App() {
 }
 
 createRoot(document.getElementById("root")!).render(<StrictMode><App /></StrictMode>);
-const brokenOnPurpose: number = "x"; // cb-yq4c: CI red proof, reverted

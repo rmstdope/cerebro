@@ -380,6 +380,13 @@ set -e
 [[ -z "$out" ]] || fail "built-in roster --standby: expected nothing, got: $out"
 pass "roster --standby is silent, and exits 0, when no row declares it"
 
+# The QA architect (cb-0n1n) is in the built-in fleet: one name, an interactive role.
+[[ "$("$builtin_dir/roster" --role qa)" == "Sage" ]] \
+  || fail "built-in roster --role qa: expected Sage, got: $("$builtin_dir/roster" --role qa 2>&1)"
+[[ "$("$builtin_dir/roster" --entry Sage)" == "$(printf 'Sage\tqa\tinteractive')" ]] \
+  || fail "built-in roster --entry Sage: got: $("$builtin_dir/roster" --entry Sage 2>&1)"
+pass "the built-in fleet carries Sage, the qa role, as an interactive row"
+
 # A third word that is not `autostart` refuses - and the refusal is the parser's, so every mode
 # refuses, not only the one that reads the column. `exit` inside a `$( )` ends the subshell alone,
 # which is what this asserts is propagated.

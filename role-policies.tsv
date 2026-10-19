@@ -8,6 +8,7 @@ architect	none
 bugfixer	bugfixer
 orchestrator	none
 producer	producer
+qa	none
 reviewer	none
 user-feedback	none
 ux	ux

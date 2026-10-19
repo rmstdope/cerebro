@@ -39,6 +39,7 @@ There are four state words and no others: `idle`, `working`, `asking`, `waiting`
 CARRIERS=(
   agents/architect.md
   agents/orchestrator.md
+  agents/qa.md
   agents/reviewer.md
   agents/user-feedback.md
   agents/verifier.md

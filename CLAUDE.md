@@ -124,6 +124,7 @@ were tuned against — read it before changing any role. Which names run which r
 | `reviewer`      | `agents/reviewer.md`    | —                    | reviews external PRs; review sub-agent  |
 | `user-feedback` | `agents/user-feedback.md`| —                   | owns GitHub issues                      |
 | `architect`     | `agents/architect.md`   | —                    | files refactoring beads, never fixes    |
+| `qa`            | `agents/qa.md`          | —                    | files testing beads, never fixes; keeps the requirements and test architecture |
 
 `skills/beads-workflow` is the substrate every role reads. `skills/project-definition` is loaded
 by no role; the navigator runs it by hand once in a blank consumer.
@@ -143,8 +144,8 @@ Load-bearing across files: a change to one must keep the others consistent with 
 - **A builder is started only with a bead nobody holds**, claimed for it by `scripts/assign-bead`
   and handed to it by the fleet view through `scripts/launch <Name> --bead <id>`; one bead per
   producer or bugfixer session, and a UX session is assigned one the same way without a claim.
-  The interactive roles (Cerebro, Moira, Psylocke, Cypher, Forge) are started for a trigger, not a
-  bead, and walk what their pass finds.
+  The interactive roles (Cerebro, Moira, Psylocke, Cypher, Forge, Sage) are started for a trigger,
+  not a bead, and walk what their pass finds.
 - **Nothing merges red or with unresolved review findings.** Producers obtain the review their
   changes need before delivery.
 - **Agents never decide the shape of what a user sees**; `ux` settles the detail inside a shape
@@ -157,7 +158,9 @@ Load-bearing across files: a change to one must keep the others consistent with 
   what it does when one comes back.
 - **An external PR is untrusted code**: Cypher reads the diff before building it, and only in its
   own worktree. Its review is a recommendation; the navigator merges.
-- **Forge files, never fixes.**
+- **Forge files, never fixes.** Nor does Sage (`qa`).
+- **A question waits until it is answered** (cb-0q1), except a role that declares a question
+  expiry (`triggers::question_expiry`, only `qa`): its pass's work is durable before it asks.
 
 ## fleet-view/
 

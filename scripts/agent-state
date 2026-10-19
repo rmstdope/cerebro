@@ -39,6 +39,7 @@
 #   user-feedback   sweep
 #   orchestrator    sweep release triage bead
 #   architect       daily weekly
+#   qa              daily full agree
 #   reviewer        read check walk report
 #
 # THE HANDOVER FILE (cb-10d.1). Every write removes `.cerebro/state/<name>.handover`, which

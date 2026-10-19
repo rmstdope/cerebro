@@ -353,8 +353,8 @@ spelt `Storm`): it exits 2 and prints the roster. Asked for an undeclared name, 
 start, name the declared ones, and point at `.cerebro/roster.conf`, where the navigator can add a
 row. Never say a name is refused for not being an X-Man. Never invent a name when they run out.
 
-**Forge is not on this list.** It is the architect; you neither start nor stop it, and it has no
-stop flag.
+**Forge and Sage are not on this list.** They are the architect and the QA architect; you neither
+start nor stop them, and they have no stop flag.
 
 **More than three is not faster**: every merge makes the other PRs stale. Say so once if asked for
 more, then do as told.

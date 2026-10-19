@@ -102,6 +102,7 @@ Moira         user-feedback
 Psylocke      verifier
 Cypher        reviewer
 Forge         architect
+Sage          qa
 Bishop        bugfixer
 Cyclops       producer
 Storm         producer

@@ -20,7 +20,7 @@
 # Step 4, the fleet: `.cerebro/roster.conf' from a second interview - how many ux, build-design and
 # producer agents, whether a verifier, a reviewer and a user-feedback agent run, and per role
 # whether the fleet view autostarts it, arms it (standby) or leaves it to be started by hand. The
-# orchestrator and the architect are always there. Names come from the built-in fleet's pool.
+# orchestrator, the architect and the QA architect are always there. Names come from the built-in fleet's pool.
 #
 # Step 5, the agent settings: `.cerebro/agents.conf' from a third interview - the tool, the default
 # model and effort, the producers' own - and, on copilot, an external OpenAI-compatible model
@@ -308,7 +308,7 @@ pass "a second run leaves .gitignore as it was"
 own="$(new_consumer own)"
 printf 'node_modules/\n.cerebro/state' > "$own/.gitignore"       # no trailing newline, on purpose
 answers="$work_dir/own-answers"
-{ printf '\n\n\n\n\n\n\n'; printf '\n\n\n\n\n\n\n\n\n\n'; printf '\n\n\n\n\n'; printf 'personal\n'; } > "$answers"
+{ printf '\n\n\n\n\n\n\n'; printf '\n\n\n\n\n\n\n\n\n\n\n'; printf '\n\n\n\n\n'; printf 'personal\n'; } > "$answers"
 run_install "$all" "$own"
 answers=/dev/null
 [[ $status -eq 0 ]] || fail "own: expected exit 0, got $status; stderr: $err"
@@ -380,7 +380,7 @@ pass "an existing board is kept, and bd is not run"
 noorigin="$(new_consumer noorigin)"
 export BD_LOG="$work_dir/noorigin.log"
 answers="$work_dir/noorigin-answers"
-{ printf '\n\n\n\n\n\n\n'; printf '\n\n\n\n\n\n\n\n\n\n'; printf '\n\n\n\n\n'; printf '\n'; printf 'nx\nhttps://example.com/x.git\n'; } > "$answers"
+{ printf '\n\n\n\n\n\n\n'; printf '\n\n\n\n\n\n\n\n\n\n\n'; printf '\n\n\n\n\n'; printf '\n'; printf 'nx\nhttps://example.com/x.git\n'; } > "$answers"
 run_install "$logging_bd" "$noorigin"
 answers=/dev/null
 [[ $status -eq 0 ]] || fail "noorigin: expected exit 0, got $status; stderr: $err"
@@ -407,14 +407,14 @@ roster_at() { "$1/.cerebro/cerebro/scripts/roster" "${@:2}"; }
 # The defaults alone (the `linked' run above answered everything by EOF): one ux,
 # two producers, a verifier, no reviewer and no user-feedback; the orchestrator autostarts, the
 # planners and producers stand by, the rest wait for `s'.
-expected="$(printf 'Cerebro\torchestrator\tinteractive\nXavier\tux\tinteractive\nPsylocke\tverifier\tinteractive\nForge\tarchitect\tinteractive\nCyclops\tproducer\timplementer\nStorm\tproducer\timplementer')"
+expected="$(printf 'Cerebro\torchestrator\tinteractive\nXavier\tux\tinteractive\nPsylocke\tverifier\tinteractive\nForge\tarchitect\tinteractive\nSage\tqa\tinteractive\nCyclops\tproducer\timplementer\nStorm\tproducer\timplementer')"
 [[ "$(roster_at "$linked")" == "$expected" ]] \
   || fail "fleet defaults: expected the default fleet, got: $(roster_at "$linked")"
 [[ "$(roster_at "$linked" --autostart)" == "Cerebro" ]] \
   || fail "fleet defaults: expected only Cerebro to autostart, got: $(roster_at "$linked" --autostart)"
 [[ "$(roster_at "$linked" --standby)" == "$(printf 'Xavier\nCyclops\nStorm')" ]] \
   || fail "fleet defaults: expected the planners and producers on standby, got: $(roster_at "$linked" --standby)"
-pass "the default fleet: the seven rows, the orchestrator autostarted, builders on standby"
+pass "the default fleet: the eight rows, the orchestrator autostarted, builders on standby"
 
 # Every answer given: two ux, three producers, a verifier, no reviewer, a
 # user-feedback agent; then how each present role starts, in the order the roles are listed.
@@ -423,12 +423,12 @@ answers="$work_dir/fleet-answers"
 {
   printf '\n\n\n\n\n\n\n'                    # project.conf: every default
   printf '2\n3\ny\nn\ny\n'                    # the counts and the optional roles
-  printf '\nmanual\nstandby\n\n\nautostart\n'   # orchestrator ux verifier user-feedback architect producer
+  printf '\nmanual\nstandby\n\n\n\nautostart\n' # orchestrator ux verifier user-feedback architect qa producer
 } > "$answers"
 run_install "$all" "$fleet"
 answers=/dev/null
 [[ $status -eq 0 ]] || fail "fleet: expected exit 0, got $status; stderr: $err"
-expected="$(printf 'Cerebro\torchestrator\tinteractive\nXavier\tux\tinteractive\nBeast\tux\tinteractive\nPsylocke\tverifier\tinteractive\nMoira\tuser-feedback\tinteractive\nForge\tarchitect\tinteractive\nCyclops\tproducer\timplementer\nStorm\tproducer\timplementer\nWolverine\tproducer\timplementer')"
+expected="$(printf 'Cerebro\torchestrator\tinteractive\nXavier\tux\tinteractive\nBeast\tux\tinteractive\nPsylocke\tverifier\tinteractive\nMoira\tuser-feedback\tinteractive\nForge\tarchitect\tinteractive\nSage\tqa\tinteractive\nCyclops\tproducer\timplementer\nStorm\tproducer\timplementer\nWolverine\tproducer\timplementer')"
 [[ "$(roster_at "$fleet")" == "$expected" ]] || fail "fleet: got: $(roster_at "$fleet")"
 [[ "$(roster_at "$fleet" --autostart)" == "$(printf 'Cerebro\nCyclops\nStorm\nWolverine')" ]] \
   || fail "fleet: autostart: got: $(roster_at "$fleet" --autostart)"
@@ -483,7 +483,7 @@ ext="$(new_consumer ext)"
 answers="$work_dir/ext-answers"
 {
   printf '\n\n\n\n\n\n\n'                        # project.conf
-  printf '\n\n\n\n\n\n\n\n\n\n'                  # the fleet, every default: five choices, five roles
+  printf '\n\n\n\n\n\n\n\n\n\n\n'                  # the fleet, every default: five choices, six roles
   printf 'copilot\ny\n\n\n\ngpt-5.4\n'            # tool; external: yes, name, url, key variable, model id
   printf '\nhigh\n\nlow\n'                        # default model (the source), effort; producer model, effort
 } > "$answers"
@@ -504,7 +504,7 @@ pass "copilot with an external OpenAI-compatible source: defined once, named by 
 # On claude there is no external question at all.
 cl="$(new_consumer cl)"
 answers="$work_dir/cl-answers"
-{ printf '\n\n\n\n\n\n\n'; printf '\n\n\n\n\n\n\n\n\n\n'; printf 'claude\nsonnet\n\nhaiku\n\n'; } > "$answers"
+{ printf '\n\n\n\n\n\n\n'; printf '\n\n\n\n\n\n\n\n\n\n\n'; printf 'claude\nsonnet\n\nhaiku\n\n'; } > "$answers"
 run_install "$all" "$cl"
 answers=/dev/null
 [[ $status -eq 0 ]] || fail "cl: expected exit 0, got $status; stderr: $err"
@@ -518,7 +518,7 @@ pass "on claude the external source is not asked about, and the models are the a
 # A tool this cerebro cannot run is refused, naming the ones it can.
 badtool="$(new_consumer badtool)"
 answers="$work_dir/badtool-answers"
-{ printf '\n\n\n\n\n\n\n'; printf '\n\n\n\n\n\n\n\n\n\n'; printf 'gemini\n'; } > "$answers"
+{ printf '\n\n\n\n\n\n\n'; printf '\n\n\n\n\n\n\n\n\n\n\n'; printf 'gemini\n'; } > "$answers"
 run_install "$all" "$badtool"
 answers=/dev/null
 [[ $status -eq 1 ]] || fail "badtool: expected exit 1, got $status"

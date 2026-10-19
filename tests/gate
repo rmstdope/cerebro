@@ -6,7 +6,8 @@
 # a separate fast gate would only be worth having if the full one were slow.
 #
 # It runs exactly what .github/workflows/ci.yml runs - every tests/*.sh through
-# scripts/suite-runner, which both this file and CI call, and the locked Cargo tests. A gate that
+# scripts/suite-runner, which both this file and CI call, the locked Cargo tests, and the web
+# console UI's type-check and browser suite through tests/web-console-ui, which both call too. A gate that
 # has drifted from CI is worse than no gate: the fleet merges on green that nobody else sees.
 # Nothing checks that the two still agree - the lint that used to is gone, and keeping them in step
 # is a matter of editing both, which is why they are named next to each other here.
@@ -45,6 +46,14 @@ echo "== cargo test =="
 # metadata and rejects a doc-comment or attribute reparenting.
 if ! cargo test --workspace --all-targets --locked; then
   echo "FAILED: cargo test" >&2
+  status=1
+fi
+
+echo "== web console UI =="
+# The UI's type-check and its Playwright suite (cb-yq4c), on ports smoke-port reserves for the run.
+# Needs pnpm on PATH; without it this leg is red and says so, never a silent skip.
+if ! bash tests/web-console-ui; then
+  echo "FAILED: web console UI" >&2
   status=1
 fi
 

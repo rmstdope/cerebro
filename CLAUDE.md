@@ -72,11 +72,12 @@ Tracked files under `.cerebro/`, one per fact, so every clone has them:
 
 ## Commands
 
-The whole gate — every `tests/*.sh` plus the locked Cargo tests — is what a producer runs
-before opening a pull request and exactly what CI runs:
+The whole gate — every `tests/*.sh`, the locked Cargo tests and the web console UI's type-check
+and browser suite — is what a producer runs before opening a pull request and exactly what CI runs:
 
 ```bash
 bash tests/gate
+bash tests/web-console-ui                   # the UI: tsc -b and Playwright; needs pnpm
 bash scripts/suite-runner tests             # the bash half; suites run in parallel
 bash tests/launchers.sh                     # one suite
 cargo test --workspace --all-targets --locked

@@ -744,6 +744,9 @@ async function controlled(page: import("@playwright/test").Page, agents: object[
     return route.fulfill({ json: reply(path) });
   });
   await page.goto("/");
+  // The page reads /api/control after it draws, and until then treats the fleet as read-only: a key
+  // pressed before the pill turns is refused as unsupervised, a race this suite lost (cb-yq4c).
+  await expect(page.getByText(supervised ? "Supervised" : "Read-only", { exact: true })).toBeVisible();
   return asked;
 }
 

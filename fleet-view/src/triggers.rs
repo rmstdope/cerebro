@@ -66,9 +66,29 @@ pub const STALE_VERDICT_LABEL: &str = "verdict:stale";
 /// there is work, so a floor would only start them with nothing to do.
 pub fn cadence(role: &str) -> Option<i64> {
     match role {
-        "user-feedback" | "reviewer" | "architect" => Some(3600),
+        "user-feedback" | "reviewer" | "architect" | "qa" => Some(3600),
         _ => None,
     }
+}
+
+/// Seconds after which ROLE's unanswered question ends its pass, or `None` for a question that
+/// waits until it is answered (cb-0q1, every role but one).
+///
+/// `qa` alone (cb-0n1n): the navigator agreed that Sage asks about the requirements and the test
+/// architecture at the end of a pass whose findings are already filed, and that "no answer ends
+/// the pass; the next pass asks again" - a row stalled on an unanswered question was the rejected
+/// alternative. The bound is the role's own cadence, so the countdown that follows is the hour the
+/// next pass would have waited anyway. `lifecycle::supervise_action` is what acts on it.
+pub fn question_expiry(role: &str) -> Option<i64> {
+    match role {
+        "qa" => cadence(role),
+        _ => None,
+    }
+}
+
+/// Does ROLE's trigger read `gh`? The two GitHub-backed roles; the ` gh?` suffix is theirs alone.
+fn reads_gh(role: &str) -> bool {
+    matches!(role, "user-feedback" | "reviewer")
 }
 
 /// SECONDS as the figure a cadence reason names: `"60m"`, `"24h"`.
@@ -88,7 +108,7 @@ pub fn cadence_figure(seconds: i64) -> String {
 /// What ROLE calls the thing it does once per cadence: `"sweep"` for `architect`, `"pass"` for
 /// everything else (`cerebro--cadence-noun`, `emacs/cerebro.el:1750`).
 pub fn cadence_noun(role: &str) -> &'static str {
-    if role == "architect" { "sweep" } else { "pass" }
+    if matches!(role, "architect" | "qa") { "sweep" } else { "pass" }
 }
 
 /// LEFT seconds as the BEAD cell of a row counting down, verbatim from
@@ -756,7 +776,7 @@ pub fn give_up_notice(name: &str, total: u32) -> String {
 /// piling up must not look like one with nothing to do. A full pile still gets a note here -
 /// `condition` is what answers `None`.
 ///
-///     user-feedback | reviewer | architect
+///     user-feedback | reviewer | architect | qa
 ///         -> `countdown(ended_at + cadence - now)`, or `→ hourly` when there is no `ended_at`
 ///            to count from, plus ` gh?` for the two GitHub-backed roles when `facts.gh` is
 ///            `GhAnswer::Failed`.
@@ -768,8 +788,8 @@ pub fn give_up_notice(name: &str, total: u32) -> String {
 /// ` gh?` in the cell's own blue, not red: nothing is broken - both roles still run hourly - so it
 /// is part of what the row is waiting for rather than a fault, and red is already this view's
 /// colour for a refused launch's verdict. It is absent for `GhAnswer::Unanswered`: a reader that
-/// has not answered YET is not a reader that failed. `architect` never carries it - its trigger
-/// reads no `gh` at all.
+/// has not answered YET is not a reader that failed. `architect` and `qa` never carry it - their triggers
+/// read no `gh` at all.
 pub fn standby_label(
     role: &str,
     facts: &TriggerFacts,
@@ -788,7 +808,7 @@ pub fn standby_label(
                 Some(ended) => countdown(cadence - (now - ended).num_seconds()),
                 None => "→ hourly".to_string(),
             };
-            let blind = role != "architect" && facts.gh == GhAnswer::Failed;
+            let blind = reads_gh(role) && facts.gh == GhAnswer::Failed;
             Some(if blind { format!("{cell} gh?") } else { cell })
         }
     }
@@ -2082,6 +2102,55 @@ mod tests {
         assert_eq!(cadence("ux"), None);
         assert_eq!(cadence_noun("architect"), "sweep");
         assert_eq!(cadence_noun("user-feedback"), "pass");
+    }
+
+    /// cb-0n1n: Sage, the QA architect, is a cadence row exactly like Forge's - hourly, a
+    /// "sweep", no condition of its own, and no ` gh?` suffix, since it reads no GitHub.
+    #[test]
+    fn qa_is_an_hourly_sweep_role() {
+        assert_eq!(cadence("qa"), Some(3600));
+        assert_eq!(cadence_noun("qa"), "sweep");
+        let now = at_iso("2026-09-01T12:00:00Z");
+        let facts = cadence_facts(GhAnswer::Answered(snapshot()));
+        let agent = |ended| AgentFacts {
+            role: "qa",
+            ended_at: Some(at_iso(ended)),
+            started_at: None,
+            last_fingerprint: None,
+        };
+        assert_eq!(trigger(&facts, agent("2026-09-01T11:30:00Z"), now), None, "not due yet");
+        assert_eq!(
+            trigger(&facts, agent("2026-09-01T11:00:00Z"), now).as_deref(),
+            Some("60m since its last sweep")
+        );
+    }
+
+    #[test]
+    fn qa_never_carries_the_gh_suffix() {
+        let now = at_iso("2026-09-01T12:00:00Z");
+        let facts = cadence_facts(GhAnswer::Failed);
+        let agent = AgentFacts {
+            role: "qa",
+            ended_at: Some(at_iso("2026-09-01T11:43:00Z")),
+            started_at: None,
+            last_fingerprint: None,
+        };
+        assert_eq!(standby_label("qa", &facts, agent, now).as_deref(), Some("→ 43m"));
+        let unknown = AgentFacts { ended_at: None, ..agent };
+        assert_eq!(standby_label("qa", &facts, unknown, now).as_deref(), Some("→ hourly"));
+    }
+
+    /// cb-0n1n: only Sage's question expires; every other role keeps cb-0q1, a question that
+    /// waits until it is answered.
+    #[test]
+    fn only_qa_declares_a_question_expiry() {
+        assert_eq!(question_expiry("qa"), Some(3600));
+        for role in [
+            "architect", "user-feedback", "reviewer", "verifier", "orchestrator", "ux",
+            "producer", "bugfixer",
+        ] {
+            assert_eq!(question_expiry(role), None, "{role}");
+        }
     }
 
     #[test]

@@ -52,6 +52,7 @@ project's roster declares as many producers as it wants.
 | **Psylocke** | `verifier` | Sonnet | Puts merged work in front of you and records your verdict |
 | **Cypher** | `reviewer` | Opus / high | Reviews pull requests that came from outside the fleet |
 | **Forge** | `architect` | Opus / xhigh | Reads the shape of the codebase and files what it is costing |
+| **Sage** | `qa` | the default line | Reads the tests and CI as a whole, keeps the requirements and test architecture agreed with you, and files what they are costing |
 | **Bishop** | `bugfixer` | Sonnet | Takes `bugfix` beads, reproduces with a failing test, fixes, and merges |
 | your producers | `producer` | Sonnet | One UX-agreed bead each: plan it, design its tests, build it test-first, and merge it |
 
@@ -97,7 +98,7 @@ a P0 is waiting — a board of nothing but unranked beads starts Cerebro to rank
 (cb-zgg);
 Psylocke when a merged bead is unverified or a verdict is stale; Moira when an issue moved on GitHub
 or a bead linked to one (`gh-<n>` in its `external_ref`) changed since her last pass, Cypher when an
-outside PR moved, both hourly regardless; Forge hourly too; a producer when a UX-agreed,
+outside PR moved, both hourly regardless; Forge and Sage hourly too; a producer when a UX-agreed,
 unclaimed bead exists; Cerebro when an unranked bead appears — an idle, running Cerebro is typed a
 line naming the beads instead, and again every ten minutes while they stay unranked; an idle
 Cerebro is also typed a line every two hours asking it to run the two sweeps that are its own, queued
@@ -145,7 +146,7 @@ The State column names the
 **phase**: `design`, `build`, `gate`, `review`, `ci`, `rebase`, `merge` for a producer and the bugfixer, and
 `plan-gate`, `review-gate`, `merge-gate` when one is waiting on you at a gate you declared (*How involved you are*); `ux` for
 `ux`; `prepare`/`verify` for Psylocke; `read`/`check`/`walk`/`report` for Cypher; `sweep` for
-Moira and Cerebro (`release` and `triage` too); `daily`/`weekly` for Forge. The Bead/Phase column shows both
+Moira and Cerebro (`release` and `triage` too); `daily`/`weekly` for Forge; `daily`/`full`/`agree` for Sage. The Bead/Phase column shows both
 timers — time on the bead, time in this phase — so one in `ci` for an hour says something is
 stuck. `review` is the producer waiting on a sub-agent it spawned itself — a full read can take the
 better part of ten minutes — so a row sitting in it much past that says the
@@ -243,7 +244,7 @@ however long that takes. **A question waits until it is answered** (cb-0q1): no 
 into a waiting session, hands its bead to your queue, ends its pass or retires it, and Health and
 History say nothing about it either, so a waiting session never reads as a fleet running slowly.
 
-**The same is true of every other role** — Xavier, Beast, Cerebro, Moira, Psylocke, Cypher, Forge and
+**The same is true of every other role** — Xavier, Beast, Cerebro, Moira, Psylocke, Cypher, Forge, Sage and
 Bishop. Come back to a half-finished interview and you resume the conversation rather than restart
 from a written summary.
 
@@ -538,6 +539,30 @@ rather than in the checkout, so it survives a lost or replaced machine:
 bd recall forge-watermark
 bd recall forge-weekly
 ```
+
+## The QA architect
+
+Forge reads the shape of the code; nobody reads the *tests and CI* as a whole — whether each level
+is tested enough and no more, whether every requirement has a system test proving it, whether CI is
+as fast as a full regression run allows. **Sage** (role `qa`) is that reader. It runs like Forge:
+the fleet view starts it hourly, it sweeps what merged since its watermark, a full sweep every seven
+days, and every finding is a `Testing:`-titled bead at P4, unranked and `ux:none` — at most ten a
+pass, the costliest first, the rest named in its report and filed on later passes. It never fixes.
+
+It holds the project to two lists it agrees with you, tracked in the project:
+`.cerebro/requirements.md` (numbered R1, R2… under area headings, each with a `Proven by:` line) and
+`.cerebro/test-architecture.md` (one section per level: where the tests live, `Belongs here:`,
+`Not here:`, `Enough is:`). Both are plain files you may edit by hand; the next pass reads them as
+written. Until they exist it files only what needs neither (CI speed, too much or too little at a
+level), then asks *Shall we agree them now?* — a walk of one tick-list question per area, then one
+per level. Later, something merged that a person can now do and the list does not name is asked
+about at the end of a pass (*Add these to the requirements?*).
+
+**Its questions expire.** Every other role's question waits until you answer it; Sage's ends its
+pass after an hour unanswered (`triggers::question_expiry`), the header says *Sage's question went
+unanswered for 60m; its pass was ended.*, and the next pass asks again. Nothing it found is lost:
+it files and moves its watermark before it asks. Its watermarks live in bd memory: `qa-watermark`,
+`qa-full`, `qa-requirements-watermark`, and `qa-unfiled` for the findings past the ten.
 
 ## What the fleet wrote down
 

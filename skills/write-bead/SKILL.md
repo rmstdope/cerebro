@@ -45,7 +45,7 @@ line `A person sees this: yes` under `## Scope`, so that Cerebro's understand st
 and asks nothing; a *no* is the label `ux:none` at filing (below), the navigator's word that there
 is no experience to agree and the one thing that lets a bead reach a producer without a UX
 session. The rule of who may add it is one row of the routing table in `beads-workflow`,
-*invisible by declaration*: the filing interview, wherever it happens, and Forge; never a
+*invisible by declaration*: the filing interview, wherever it happens, Forge and Sage; never a
 `bugfix` bead; and a producer that finds otherwise sends the bead to UX, removing it.
 
 When you have all three, file the bead without asking for approval.

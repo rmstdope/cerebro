@@ -24,6 +24,12 @@ table asserts that promise rather than merely not contradicting it. `scripts/fle
 self-report counts a waiting session as the fleet running slowly. A stop flag on an idle session
 still retires it — that is the flag's arm, and the navigator's hand is what still ends a waiting
 one.
+**One exception, by declaration** (cb-0n1n): a role whose `triggers::question_expiry` is `Some`
+(only `qa`, at its hourly cadence) has an interactive, hosted `asking` row ended once `since` is that
+old — retired instead under a stop flag — with the notice *Sage's question went unanswered for 60m;
+its pass was ended.* (`lifecycle::unanswered_notice`). Its agent files and moves its watermark before
+it asks, so the end loses nothing, and the standby countdown that follows is the next pass asking
+again. An implementer's question never expires, and the `supervise.cases` rows pass no expiry.
 Since cb-kcs.4.1 it also **starts** sessions on its own: the roster's `autostart`/`standby`
 declaration is honoured as the view comes up, and the board-backed triggers for the planner,
 implementer, verifier and orchestrator roles bring a blue `standby` row back — held back by a

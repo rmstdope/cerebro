@@ -168,7 +168,9 @@ question loses nothing but itself. The next pass asks again.
    - Otherwise **daily**. Say: "Daily sweep, since <sha> (<n> commits over <h> hours)."
    - **Daily with nothing in the range** (`git rev-list --count <watermark-sha>..origin/main` is 0):
      say "Nothing has merged since my last pass; nothing to sweep." and go straight to step 9 —
-     except that a missing list is still offered (step 7), since a quiet hour is a good one to ask.
+     except that a missing list is still offered (step 7), and new requirements still asked about
+     (step 8) while `qa-requirements-watermark` is behind `origin/main`: a quiet hour is a good one
+     to ask, and an unanswered question is owed again.
 
    **Daily reads:** what merged in the range — `git log --first-parent`, `git diff --stat`, and
    each commit that touches a test, a CI workflow, a build declaration or the application — plus
@@ -324,10 +326,13 @@ question loses nothing but itself. The next pass asks again.
    a normal reviewed pull request under the consumer's root `CLAUDE.md`. Remove the worktree from
    the shared checkout once merged (`git -C <repo> worktree remove --force …`, then `git worktree
    prune`). Once the requirements list is merged, record that the merges it was drafted from are
-   already asked about, so step 8 does not re-propose what the navigator just unticked:
+   already asked about, so step 8 does not re-propose what the navigator just unticked. Record the
+   sha the draft was read at — the one step 5b wrote to `qa-watermark` — not `origin/main` now,
+   which `prepare-worktree` fetched past it: a merge that landed during the walk is still step 8's
+   to offer.
 
    ```bash
-   bd remember "$(git rev-parse origin/main)" --key qa-requirements-watermark
+   bd remember "$(bd recall qa-watermark | cut -d' ' -f1)" --key qa-requirements-watermark
    bd dolt push
    ```
 

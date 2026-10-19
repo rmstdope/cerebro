@@ -36,7 +36,7 @@ R8  When bd or the fleet cannot be read, the last snapshot stays on screen marke
 
 R9  s starts an agent in a session the view hosts, k kills it, f tells it to finish its
     bead or pass and not start again.
-    Proven by: nothing yet
+    Proven by: tests/fleet-keys.sh
 R10 RET focuses a hosted session so the navigator can type to the agent in it.
     Proven by: nothing yet
 R11 Only the first window on a checkout operates the fleet; a second draws and acts on

@@ -84,8 +84,13 @@ its armed set moves with every kill, give-up and manual start. It publishes thos
 `.cerebro/state/standby.json`, refreshed every 5 seconds. With no fleet view supervising, or one
 that has stopped refreshing it for 15 seconds, every offline agent shows as dead.
 
-Run the browser smoke test with:
+The type-check and the browser suite are one check, run by `tests/gate` and by CI's *Web console
+UI* job, and a pull request that breaks either is red:
 
 ```bash
-pnpm --dir web-console/ui test:e2e
+bash tests/web-console-ui
 ```
+
+It runs the suite on a block of ports `scripts/smoke-port` reserves for the run, so it never
+answers from another checkout's servers. `pnpm --dir web-console/ui test:e2e` runs the same suite
+by hand on 7171 and 5199, reusing a service or Vite already listening there.

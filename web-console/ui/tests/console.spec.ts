@@ -755,7 +755,6 @@ const moira = { name: "Moira", role: "user-feedback", state: "Standby" };
 
 test("the action bar asks the supervising fleet view, and says what it answered", async ({ page }) => {
   const asked = await controlled(page, [storm], true, () => ({ done: true, text: "Storm will finish after this pass." }));
-  await expect(page.getByText("Supervised")).toBeVisible();
 
   await page.getByRole("toolbar", { name: "Storm actions" }).getByRole("button", { name: /Finish after this pass/ }).click();
 

@@ -171,8 +171,8 @@ pass "s starts Forge in a hosted session, logs the start and arms the name"
 
 # --- k: killed, unpublished, disarmed, and it stays gone (cb-op0) -----------------------------------
 #
-# Only once the row reads `working': until a fleet read has seen the new session the row still says
-# `standby', and `k' there asks the standby question instead (cb-o274).
+# Once the row reads `working', so this is `k' on a session that has reported in, the case R9 names.
+# `k' in the seconds before that, on a row still reading `standby', is cb-o274's, unit-tested there.
 wait_until "Forge's row to read working" on_screen 'Forge +architect +working'
 press k
 wait_until "the kill question" on_screen 'Kill Forge\?  y / n'

@@ -266,7 +266,9 @@ explain() {
     tail -n 8 "$consumer/.cerebro/state/evaluations.jsonl" 2>/dev/null || true
     echo "--- decisions (tail)"
     tail -n 8 "$consumer/.cerebro/state/decisions.jsonl" 2>/dev/null || true
-    echo "--- errors (tail)"
+    # Every run logs fleet-history, fleet-health and sweep-verdicts.sh failing here: the fixture has
+    # no transition log and the stub bd answers `[]'. Expected, and no part of what is asserted.
+    echo "--- errors (tail; fleet-history, fleet-health and sweep errors are expected)"
     tail -n 8 "$consumer/.cerebro/state/errors.jsonl" 2>/dev/null || true
     echo "--- view exited: $(kill -0 "$view_pid" 2>/dev/null && echo no || echo yes)"
   } >&2

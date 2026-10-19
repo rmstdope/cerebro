@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 #
-# Proves a consumer declares HOW TO START ITS APPLICATION, and that no role file has to know
-# (ah-qled.8, cerebro#58 §2).
+# Proves a consumer can declare HOW TO START ITS APPLICATION (ah-qled.8, cerebro#58 §2).
 #
 # agents/verifier.md used to carry the single most project-specific passage in all seven role
 # files - pnpm, Vite, Tauri v2, wasm, two @atlantis/* package names and a cargo feature flag, in
 # the one place a role has to actually launch the thing. A consumer's verifier read that, could run
 # none of it, and INVENTED A COMMAND. That is the worst possible outcome for the one role whose
 # whole job is to put the real application in front of the navigator, so the replacement behaviour
-# is not a better guess: WITH NOTHING DECLARED, THE ROLE ASKS.
+# is not a better guess: WITH NOTHING DECLARED, THE ROLE ASKS. That rule, and that no role file
+# names one consumer's tooling, are kept by reading agents/verifier.md and agents/reviewer.md, not
+# by this suite: prose gets no test (cb-s5hk).
 #
 # The shape is flat keys plus an index, NOT a list of records:
 #
@@ -139,67 +140,5 @@ for f in "$repo_root"/scripts/launch-targets "$repo_root"/scripts/launch-conf; d
 done
 pass "no new parser and no third config file"
 
-# ---------------------------------------------------------------------------
-# 6. NO ROLE NAMES ANOTHER PROJECT'S TOOL OR PORT
-# ---------------------------------------------------------------------------
-sites="agents/verifier.md agents/reviewer.md skills/produce-bead/SKILL.md docs/agent-workflow.md"
-
-for f in $sites; do
-  if grep -nE 'pnpm --filter|tauri|@atlantis|\b5173\b|\b4174\b|\b4183\b|\b4173\b|\b4193\b' \
-       "$repo_root/$f" >/dev/null 2>&1; then
-    grep -nE 'pnpm --filter|tauri|@atlantis|\b5173\b|\b4174\b|\b4183\b|\b4173\b|\b4193\b' \
-      "$repo_root/$f" >&2
-    fail "$f still names one consumer's tooling or ports"
-  fi
-done
-pass "no launch site names pnpm --filter, tauri, @atlantis or a hardcoded port"
-
-# --- THE ASK. With nothing declared, the verifier must ask - not guess, not skip ---
-verifier="$(tr '\n' ' ' < "$repo_root/agents/verifier.md" | tr -s ' ')"
-case "$verifier" in
-  *"ask the navigator how to run the application"*) ;;
-  *) fail "verifier.md must say, in those words, that with nothing declared it ASKS the navigator" ;;
-esac
-grep -q 'improvise\|invent\|guess' "$repo_root/agents/verifier.md" \
-  || fail "verifier.md must forbid improvising a command, not merely omit it"
-pass "with nothing declared the verifier asks the navigator, and is forbidden to improvise"
-
-reviewer="$(tr '\n' ' ' < "$repo_root/agents/reviewer.md" | tr -s ' ')"
-case "$reviewer" in
-  *"ask the navigator how to run the application"*) ;;
-  *) fail "reviewer.md must ask too - it launches the application for the same reason" ;;
-esac
-pass "the reviewer asks on the same terms"
-
-# ---------------------------------------------------------------------------
-# 7. THE FOUR RULES SURVIVE. The commands were the illustration; these are the content.
-# ---------------------------------------------------------------------------
-for f in agents/verifier.md agents/reviewer.md; do
-  body="$(tr '\n' ' ' < "$repo_root/$f" | tr -s ' ' | tr 'A-Z' 'a-z')"
-  case "$body" in *"before starting a server"*) ;; *) fail "$f: the check-the-port rule is gone" ;; esac
-  case "$body" in
-    *"refuse to start and refuse to reuse"*|*"refusal, not something to reuse"*) ;;
-    *) fail "$f: the refuse-rather-than-reuse rule is gone" ;;
-  esac
-done
-pass "check the port before starting, and refuse rather than reuse, both survive"
-
-case "$verifier" in
-  *"Build after the reset, never before"*) ;;
-  *) fail "verifier.md: the build-after-the-reset rule is gone" ;;
-esac
-case "$verifier" in
-  *"exercises what the bead changed"*) ;;
-  *) fail "verifier.md: the pick-the-right-fixture rule is gone" ;;
-esac
-pass "build after the reset, and pick the fixture that exercises what changed, both survive"
-
 echo "all launch-targets tests passed"
-
-# --- the warm build has ONE spelling across the whole harness ---
-if grep -rn 'warm_build_cmd' "$repo_root/agents" "$repo_root/skills" "$repo_root/scripts" \
-     "$repo_root/docs" >/dev/null 2>&1; then
-  fail "warm_build_cmd is a third spelling of ah-qled.2's prewarm - there must be only one"
-fi
-pass "the warm build is spelled prewarm everywhere, and nowhere else"
 suite_passed

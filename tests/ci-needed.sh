@@ -103,17 +103,17 @@ grep -q 'none of 1 paths' <<<"$err" || fail "a path with a space: counted as mor
 $err"
 pass "a path with a space in it is one path"
 
-# --- the gated side ---
 run $'docs/agent-workflow.md\n'
 [[ $status -eq 0 ]] || fail "docs/agent-workflow.md: expected exit 0, got $status
 $err"
-[[ "$out" == "run=true" ]] || fail "docs/agent-workflow.md: stdout is not exactly run=true
+[[ "$out" == "run=false" ]] || fail "docs/agent-workflow.md: stdout is not exactly run=false
 $out"
-grep -q 'ci-needed: docs/agent-workflow.md' <<<"$err" \
-  || fail "docs/agent-workflow.md: does not name the path that reached the gate
+grep -q 'none of 1 paths' <<<"$err" \
+  || fail "docs/agent-workflow.md: should reach no gate
 $err"
-pass "the one docs file a suite reads still runs the gate"
+pass "docs/agent-workflow.md is skippable like any other docs file"
 
+# --- the gated side ---
 run $'docs/x.md\nemacs/cerebro.el\n'
 [[ $status -eq 0 ]] || fail "mixed paths: expected exit 0, got $status
 $err"

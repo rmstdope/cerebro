@@ -1,0 +1,227 @@
+#!/usr/bin/env python3
+"""tests/lib/pty-drive - run one full-screen program on a pseudo-terminal a suite can type into.
+
+    python3 -I tests/lib/pty-drive <keys-fifo> <screen-file> <rows> <cols> -- <program> [args...]
+
+A full-screen program needs a terminal of a known size, and bash has no portable way to give it
+one: `script' takes different flags on BSD and GNU and hands the child whatever size its own stdin
+has, which under a suite runner is none. This gives PROGRAM a pty of ROWS x COLS and writes into it
+every byte that arrives on KEYS-FIFO, so a suite presses a key with one `printf' into the fifo.
+
+What the program draws is kept as a screen, not as a byte stream: a ratatui program writes only
+the cells that changed since its last frame, so the raw stream holds no whole words to grep. The
+model understands what a terminal backend actually sends - printable text, CR/LF/BS, cursor
+positioning (CSI H/f, A-D, G, d), erases (CSI J, K) - and ignores everything else (colours, modes,
+OSC titles). After every read it rewrites SCREEN-FILE atomically: ROWS lines of plain text, so a
+suite greps a row the way a person reads it.
+
+It exits with PROGRAM's status once PROGRAM exits; SIGTERM or SIGINT kills PROGRAM.
+
+Test support, proven by the suites that drive a program through it (tests/fleet-keys.sh). Python
+because `pty' and `termios' are in its standard library on every platform the gate runs on; run it
+with `-I' so nothing beside it is imported.
+"""
+
+import codecs
+import errno
+import fcntl
+import os
+import select
+import signal
+import struct
+import sys
+import termios
+
+
+class Screen:
+    """Just enough of a VT100 to know which character is in which cell."""
+
+    def __init__(self, rows, cols):
+        self.rows, self.cols = rows, cols
+        self.grid = [[" "] * cols for _ in range(rows)]
+        self.row = self.col = 0
+        self.state = "text"
+        self.params = ""
+        self.decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+
+    def feed(self, data):
+        for ch in self.decoder.decode(data):
+            self.step(ch)
+
+    def step(self, ch):
+        if self.state == "esc":
+            if ch == "[":
+                self.state, self.params = "csi", ""
+            elif ch == "]":
+                self.state = "osc"
+            elif ch in "()*+":
+                self.state = "charset"
+            else:
+                self.state = "text"
+            return
+        if self.state == "charset":
+            self.state = "text"
+            return
+        if self.state == "osc":
+            # Ends at BEL or ST (ESC \); the ESC of ST lands in "esc", which then ignores the "\".
+            if ch == "\x07":
+                self.state = "text"
+            elif ch == "\x1b":
+                self.state = "esc"
+            return
+        if self.state == "csi":
+            if "\x40" <= ch <= "\x7e":
+                self.state = "text"
+                self.csi(ch, self.params)
+            else:
+                self.params += ch
+            return
+        if ch == "\x1b":
+            self.state = "esc"
+        elif ch == "\r":
+            self.col = 0
+        elif ch == "\n":
+            self.row = min(self.row + 1, self.rows - 1)
+        elif ch == "\b":
+            self.col = max(self.col - 1, 0)
+        elif ch >= " ":
+            if self.col >= self.cols:
+                self.col = 0
+                self.row = min(self.row + 1, self.rows - 1)
+            self.grid[self.row][self.col] = ch
+            self.col += 1
+
+    def csi(self, final, params):
+        private = params.startswith("?")
+        numbers = [int(p) if p.isdigit() else 0 for p in params.lstrip("?").split(";")]
+        first = numbers[0] if numbers else 0
+        if private:
+            return
+        if final in "Hf":
+            row = first or 1
+            col = numbers[1] if len(numbers) > 1 and numbers[1] else 1
+            self.row = min(max(row - 1, 0), self.rows - 1)
+            self.col = min(max(col - 1, 0), self.cols - 1)
+        elif final == "A":
+            self.row = max(self.row - (first or 1), 0)
+        elif final == "B":
+            self.row = min(self.row + (first or 1), self.rows - 1)
+        elif final == "C":
+            self.col = min(self.col + (first or 1), self.cols - 1)
+        elif final == "D":
+            self.col = max(self.col - (first or 1), 0)
+        elif final == "G":
+            self.col = min(max((first or 1) - 1, 0), self.cols - 1)
+        elif final == "d":
+            self.row = min(max((first or 1) - 1, 0), self.rows - 1)
+        elif final == "J":
+            if first == 0:
+                self.erase_line(self.row, self.col, self.cols)
+                for r in range(self.row + 1, self.rows):
+                    self.erase_line(r, 0, self.cols)
+            elif first == 1:
+                for r in range(0, self.row):
+                    self.erase_line(r, 0, self.cols)
+                self.erase_line(self.row, 0, self.col + 1)
+            else:
+                for r in range(self.rows):
+                    self.erase_line(r, 0, self.cols)
+        elif final == "K":
+            if first == 0:
+                self.erase_line(self.row, self.col, self.cols)
+            elif first == 1:
+                self.erase_line(self.row, 0, self.col + 1)
+            else:
+                self.erase_line(self.row, 0, self.cols)
+
+    def erase_line(self, row, start, end):
+        for c in range(start, min(end, self.cols)):
+            self.grid[row][c] = " "
+
+    def text(self):
+        return "".join("".join(line).rstrip() + "\n" for line in self.grid)
+
+
+def write_atomically(path, text):
+    partial = path + ".partial"
+    with open(partial, "w", encoding="utf-8") as out:
+        out.write(text)
+    os.replace(partial, path)
+
+
+def main(argv):
+    if len(argv) < 6 or argv[4] != "--":
+        sys.stderr.write("usage: pty-drive <keys-fifo> <screen-file> <rows> <cols> -- <program> [args...]\n")
+        return 2
+    fifo, screen_path, rows, cols, program = argv[0], argv[1], int(argv[2]), int(argv[3]), argv[5:]
+
+    # The size is set on the slave BEFORE the program exists, so its first read of the terminal
+    # size is already ROWS x COLS rather than a new pty's 0 x 0.
+    master, slave = os.openpty()
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+    pid = os.fork()
+    if pid == 0:
+        try:
+            os.close(master)
+            os.setsid()
+            fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
+            for fd in (0, 1, 2):
+                os.dup2(slave, fd)
+            if slave > 2:
+                os.close(slave)
+            os.execvp(program[0], program)
+        except OSError as error:
+            os.write(2, ("pty-drive: cannot run %s: %s\n" % (program[0], error)).encode())
+        os._exit(127)
+    os.close(slave)
+
+    def stop(_signum, _frame):
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
+
+    # Read-write, so the open never waits for a writer and the fifo never reads EOF while the suite
+    # is between two keys.
+    keys = os.open(fifo, os.O_RDWR | os.O_NONBLOCK)
+    screen = Screen(rows, cols)
+    status = None
+    while status is None:
+        try:
+            ready, _, _ = select.select([master, keys], [], [], 0.2)
+        except InterruptedError:
+            ready = []
+        if master in ready:
+            try:
+                data = os.read(master, 65536)
+            except OSError as error:
+                # EIO is how a pty master says its child has gone, on Linux.
+                if error.errno != errno.EIO:
+                    raise
+                data = b""
+            if data:
+                screen.feed(data)
+                write_atomically(screen_path, screen.text())
+            else:
+                _, status = os.waitpid(pid, 0)
+                break
+        if keys in ready:
+            try:
+                data = os.read(keys, 4096)
+            except BlockingIOError:
+                data = b""
+            if data:
+                os.write(master, data)
+        done, raw = os.waitpid(pid, os.WNOHANG)
+        if done:
+            status = raw
+    if os.WIFEXITED(status):
+        return os.WEXITSTATUS(status)
+    return 128 + os.WTERMSIG(status)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

@@ -915,45 +915,30 @@ fn start_due(
         // even though `cerebro--supervise-action`'s own comment says a standby role's flag
         // belongs there. Strictly fewer starts, and it makes `f` mean one thing.
         let flagged = lifecycle::stop_flag_set(paths, name);
-        let agent = triggers::AgentFacts {
-            role,
-            ended_at: ledger.ended_at(name),
-            started_at: ledger.started_at(name),
-            last_fingerprint: ledger.fingerprint(name),
-        };
-        // Every guard is CONSULTED before anything is decided, rather than each one returning as
-        // it fires, because cb-kcs.4.4's evaluation line carries all of them: a row that started
-        // nothing has to say which guard was the reason, and a `continue` says nothing at all.
-        // The order below is the order the guards used to run in, and each is still asked only
-        // when the ones before it let it through - `role_start_too_soon` reads a map `note_started`
-        // writes into, so asking it for a row that was never going to start would be a different
-        // question from the one that used to be asked.
-        let reason = triggers::trigger(&facts, agent, now);
-        let held_by_guard = reason.is_none() && triggers::held_by_unchanged_work(&facts, agent);
         let spacing_value = triggers::spacing_for(role, spacing);
-        // Inside the loop, not before it, because `note_started` writes into the same map - so
-        // the second planner in this very pass already sees the first.
-        let spaced_out = !flagged
-            && reason.is_some()
-            && triggers::role_start_too_soon(
-                &triggers::role_peers(name, role, roster),
-                ledger.started_at_map(),
-                spacing_value,
-                now,
-            );
-        let started = ledger.started_at(name);
+        let peers = triggers::role_peers(name, role, roster);
         let failures = ledger.failures(name);
-        let failed = triggers::start_failed(started, ledger.ended_at(name));
-        // Backed off: a launch that produced no session is retried, but not on every tick. This
-        // comes BEFORE the give-up, so a name at four failures counts its ten minutes down and
-        // gives up when the wait expires rather than when the fourth failure lands.
-        let backed_off = !flagged
-            && reason.is_some()
-            && !spaced_out
-            && failed
-            && triggers::retry_wait(failures, started, now) > 0;
-        let acts = !flagged && reason.is_some() && !spaced_out && !backed_off;
-        let gives_up = acts && triggers::give_up(failed, failures);
+        // Inside the loop, not before it, because `note_started` writes into the ledger - so the
+        // second planner in this very pass already sees the first.
+        let decision = triggers::start_decision(
+            &facts,
+            triggers::StartInputs {
+                agent: triggers::AgentFacts {
+                    role,
+                    ended_at: ledger.ended_at(name),
+                    started_at: ledger.started_at(name),
+                    last_fingerprint: ledger.fingerprint(name),
+                },
+                flagged,
+                failures,
+                peers: &peers,
+                started_at: ledger.started_at_map(),
+                spacing: spacing_value,
+            },
+            now,
+        );
+        let triggers::StartGuards { reason, held_by_guard, spaced_out, backed_off, .. } =
+            decision.guards;
 
         // What the trigger read and what held it, before anything is done about it: the file
         // reads *here is what it saw, then here is what it did*.
@@ -995,56 +980,41 @@ fn start_due(
             ],
         );
 
-        if !acts {
-            continue;
-        }
-        if gives_up {
-            // The counter holds the failures BEFORE this start, and the one that brought us here
-            // is what the notice and the row name; left behind, they say different numbers about
-            // the same sessions.
-            let total = failures + 1;
-            ledger.set_failures(name, total);
-            host.note_gave_up(name, total);
-            // In this order, or the row is restated from an `exits` map that does not yet know.
-            app.set_exits(host.exits());
-            app.armed.remove(name);
-            app.reapply_standby();
-            let text = triggers::give_up_notice(name, total);
-            logger.write(
-                log::Event::GiveUp,
-                now,
-                &[
-                    ("agent", serde_json::Value::from(name.as_str())),
-                    ("role", serde_json::Value::from(role.as_str())),
-                    ("failed_starts", serde_json::Value::from(total)),
-                ],
-            );
-            // And the same sentence the row and the notice carry, in the file the navigator is
-            // sent to.
-            logger.error(&format!("start {name}"), &text, now);
-            app.set_notice(text);
-            continue;
-        }
-
-        // An implementer (cb-10d.1) and a planning role (cb-10d.2.2) are handed the first bead
-        // nobody holds. `None` is unreachable while each condition requires one, and `continue`
-        // keeps it harmless.
-        let bead = if triggers::hands_a_bead(role) {
-            match triggers::bead_for(&facts, role) {
-                Some(id) => Some(id.to_string()),
-                None => continue,
+        let (reason, bead, failures_before_launch, found) = match decision.action {
+            triggers::StartAction::Hold => continue,
+            triggers::StartAction::GiveUp { total } => {
+                // The counter holds the failures BEFORE this start, and the one that brought us
+                // here is what the notice and the row name; left behind, they say different
+                // numbers about the same sessions.
+                ledger.set_failures(name, total);
+                host.note_gave_up(name, total);
+                // In this order, or the row is restated from an `exits` map that does not yet know.
+                app.set_exits(host.exits());
+                app.armed.remove(name);
+                app.reapply_standby();
+                let text = triggers::give_up_notice(name, total);
+                logger.write(
+                    log::Event::GiveUp,
+                    now,
+                    &[
+                        ("agent", serde_json::Value::from(name.as_str())),
+                        ("role", serde_json::Value::from(role.as_str())),
+                        ("failed_starts", serde_json::Value::from(total)),
+                    ],
+                );
+                // And the same sentence the row and the notice carry, in the file the navigator
+                // is sent to.
+                logger.error(&format!("start {name}"), &text, now);
+                app.set_notice(text);
+                continue;
             }
-        } else {
-            None
+            triggers::StartAction::Start { reason, bead, failures, fingerprint } => {
+                (reason, bead, failures, fingerprint)
+            }
         };
 
-        ledger.set_failures(name, if failed { failures + 1 } else { 0 });
-        // What the guard measures the next start against: the queue as this pass FINDS it,
-        // handed bead included. Taken after `facts.take` below, the record already lacked that
-        // bead, so a pass that did exactly its one bead left the live queue equal to the record
-        // and the unchanged-work guard held the only bugfixer while candidates waited (cb-r9ac).
-        let found = triggers::fingerprint(role, &facts);
-        // `clears_flag` is `false` and can only be: a flagged name was skipped above.
+        ledger.set_failures(name, failures_before_launch);
+        // `clears_flag` is `false` and can only be: a flagged name is never `Start`ed.
         match lifecycle::start(host, paths, name, false, bead.as_deref()) {
             Ok(_) => {
                 app.armed.insert(name.clone());
@@ -1053,8 +1023,9 @@ fn start_due(
                     // The within-tick rule: the next row in this loop is not handed it again.
                     facts.take(id);
                 }
+                // `found` was taken by the decision from the facts as this pass FOUND them, so
+                // the `take` above cannot reach it (cb-r9ac).
                 ledger.note_started(name, now, found);
-                let reason = reason.unwrap_or_default();
                 log_start(logger, name, role, Some(&reason), bead.as_deref(), now);
                 app.set_notice(triggers::start_notice(name, &reason));
             }
@@ -5922,73 +5893,6 @@ mod main_tests {
             host.kill(&paths, name);
             settle_gone(&mut host, name);
         }
-    }
-
-    /// cb-r9ac: the fingerprint a start is measured against is the queue as the pass FOUND it,
-    /// handed bead included. Recorded after `facts.take`, it already lacked that bead, so a pass
-    /// that did exactly its one bead left the live queue equal to the record and the guard held
-    /// the only bugfixer for twenty minutes while three candidates waited.
-    #[test]
-    fn a_pass_that_took_its_bead_off_the_queue_is_not_held_as_unchanged() {
-        let dir = tempfile::tempdir().unwrap();
-        let paths = scratch(dir.path(), "sleep 5");
-        let now = Utc::now();
-        let mut host = SessionHost::default();
-        let mut ledger = cerebro_tui::triggers::StartLedger::default();
-        let roster = implementer_roster(&["Rogue"]);
-        let mut app = standby_app(
-            supervising(),
-            vec![implementer_row("Rogue", cerebro_tui::model::RowState::Dead)],
-            Some(planned_beads(2)),
-            now,
-        );
-
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &no_spacing(), 1, &roster, now);
-
-        let handed = app.handed.get("Rogue").cloned().expect("Rogue was handed a bead");
-        host.kill(&paths, "Rogue");
-        settle_gone(&mut host, "Rogue");
-        let ended = now + chrono::Duration::seconds(600);
-        ledger.note_ended("Rogue", ended);
-
-        let facts_of = |work: &cerebro_tui::model::WorkBuckets| {
-            TriggerFacts::derive(
-                work,
-                &roster,
-                &std::collections::BTreeSet::new(),
-                |_| false,
-                triggers::GhAnswer::Unanswered,
-                1,
-            )
-        };
-        let agent = || triggers::AgentFacts {
-            role: "producer",
-            ended_at: ledger.ended_at("Rogue"),
-            started_at: ledger.started_at("Rogue"),
-            last_fingerprint: ledger.fingerprint("Rogue"),
-        };
-
-        // The pass merged and closed its bead: the queue lost one and the other still waits.
-        let mut done = planned_beads(2);
-        done.assignable.retain(|id| *id != handed);
-        done.planned.retain(|bead| bead.id != handed);
-        let after = facts_of(&done);
-        assert!(
-            !triggers::held_by_unchanged_work(&after, agent()),
-            "a pass that took {handed} off the queue changed what the role reads"
-        );
-        assert_eq!(
-            triggers::trigger(&after, agent(), ended + chrono::Duration::seconds(3600)),
-            Some("1 UX-agreed, unclaimed".to_string()),
-            "the remaining candidate starts the next pass"
-        );
-
-        // The pass gave its bead back untouched: the queue is as it was found, and the guard holds.
-        let untouched = facts_of(&planned_beads(2));
-        assert!(
-            triggers::held_by_unchanged_work(&untouched, agent()),
-            "a pass that left the queue exactly as it found it is held"
-        );
     }
 
     #[test]

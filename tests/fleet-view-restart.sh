@@ -27,8 +27,10 @@
 # The view ends a pass `END_GRACE_SECONDS' (30) after its state file's `since' says `waiting'. The
 # grace is the supervise table's to prove (tests/lib/supervise.cases), not R15's, so the pretend
 # pass dates its `waiting' file back past it and the view ends the pass on its next tick: the
-# grace's real half minute is not paid twice (cb-n53p). Every wait below is bounded, and a failure
-# prints what the view logged and ran.
+# grace's real half minute is not paid twice (cb-n53p). What the suite still costs, about forty
+# seconds, is mostly the work pane's own refresh (`app::WORK_REFRESH_INTERVAL', 30s) between the
+# closing pass and the start on cb-b2. Every wait below is bounded, and a failure prints what the
+# view logged and ran.
 #
 #     bash tests/fleet-view-restart.sh
 
@@ -198,7 +200,7 @@ printf 'PASSED %s %s\n' "$name" "$bead" >> "$FIXTURE/launches"
 # The pass has ended; standing out the view's real end grace would add nothing R15 asks about. So
 # the `waiting' file is dated ten minutes back, and the view ends the pass on its next tick. Written
 # beside the file and moved over it, so the view never reads half of one.
-state="$CEREBRO_CONSUMER_SHARED_ROOT/.cerebro/state/$name.state.json"
+state="$("$here/consumer-root" --shared)/.cerebro/state/$name.state.json"
 jq '.since = (now - 600 | floor | todate)' "$state" > "$state.tmp"
 mv "$state.tmp" "$state"
 exec bash -c 'while :; do sleep 1; done' "$(cerebro_marker_sentence "$name" "$CEREBRO_CONSUMER_SHARED_ROOT")"

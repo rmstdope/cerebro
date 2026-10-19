@@ -1,0 +1,136 @@
+<meta charset="utf-8"><style>
+body{font-family:Menlo,Monaco,monospace;font-size:13px;margin:24px;background:#8a8a8a;color:#111}
+h1{font-size:16px;color:#fff;margin:0 0 6px}h2{font-size:14px;margin:22px 0 8px;color:#fff}
+pre{margin:0;line-height:1.45;white-space:pre-wrap}
+.screen{background:#1e1e1e;color:#d4d4d4;padding:10px 12px;border:1px solid #333;max-width:100ch;margin:0 0 10px}
+.note{color:#eee;max-width:100ch;background:#333;padding:9px 13px;margin-top:10px;line-height:1.5}
+.lede{color:#fff;max-width:100ch;margin:0 0 12px;line-height:1.5}
+.g{color:#6a9955}.d{color:#777}.b{color:#569cd6}.y{color:gold}.e{color:#f14c4c}.hd{font-weight:bold;color:#fff}.q{color:#c586c0}
+</style><title>Option A — whole draft</title>
+<title>QA architect — agreed</title><h1>cb-0n1n — the QA architect, as agreed with the navigator 2026-10-19</h1>
+<p class="lede">Two rounds; every recommended option was chosen. QA stands for the roster name, which is the builder's to choose. The fleet-view row is an ordinary cadence row, like Forge's (docs/ui/cb-kcs.4.3-cadence-rows.html).</p>
+<hr>
+<h1>Option B — it does the part that needs no agreement, then asks</h1>
+<p class="lede">CI speed and too-much/too-little testing at a level need no agreed list. It sweeps and files those first, then asks about the lists; if you aren't there, the pass ends and the next one asks again.</p>
+<div class="screen"><pre><span class="hd">QA</span>  First pass in this project. Filed 2 findings that don't depend on the lists:
+      cb-ab12  CI speed: the Rust tests build twice ...
+      cb-ab13  Too much testing at one level: ...
+    I still need the requirements and a test architecture before I can check the rest.
+
+<span class="q">? Shall we agree them now?</span>
+  <span class="g">❯ Yes, now</span>
+    Not now — ask me next pass</pre></div>
+<div class="screen"><pre> AGENT       STATE       BEAD
+<span class="d">◌</span> QA          <span class="d">standby</span>     <span class="d">→ 43m</span>     <span class="d">← "not now", or nobody answered</span></pre></div>
+<p class="note"><b>Cost:</b> the useful half starts at once, and you're asked again every pass until you say yes — a repeated question, but never a stalled row.</p>
+<hr>
+<h1>Option B — one area at a time, each a question</h1>
+<p class="lede">Same draft, but walked area by area: each area is one question listing its requirements, and you tick the ones that stand.</p>
+<div class="screen"><pre><span class="hd">QA</span>  This project has no requirements list yet. I've drafted <span class="y">31 in 6 areas</span>; I'll
+    take you through them one area at a time. <span class="d">(area 1 of 6)</span>
+
+<span class="q">? Fleet view — which of these hold? (untick any that are wrong)</span>
+  <span class="g">[x]</span> R1  The navigator sees every roster agent as a row, with its state.
+  <span class="g">[x]</span> R2  A session that ends is restarted on its role's own trigger.
+  <span class="g">[x]</span> R3  A standby row counts down to its next start.
+  <span class="g">[x]</span> R4  A failed read never draws an empty fleet.
+  <span class="g">[x]</span> R5  ...
+      Other — something missing or worded wrong
+</pre></div>
+<div class="screen"><pre><span class="d">— six questions later —</span>
+<span class="hd">QA</span>  29 agreed, 2 dropped, 1 added. Now the test architecture: ...</pre></div>
+<p class="note"><b>Cost:</b> six questions instead of one, so a long sitting; but each one is short enough to actually read, and a wrong line stands out within its area.</p>
+<hr>
+<h1>Option A — numbered requirements, each naming the test that proves it</h1>
+<p class="lede">What the agreed list looks like in the project, in a file of its own (<b>.cerebro/requirements.md</b>), beside a second file for the test architecture (<b>.cerebro/test-architecture.md</b>). You can edit either by hand; the next pass reads whatever is there.</p>
+<div class="screen"><pre><span class="hd"># Requirements</span>
+<span class="d">Agreed with the navigator 2026-10-19. Each requirement keeps its number for ever;
+a dropped one is struck, never renumbered.</span>
+
+<span class="hd">## Fleet view</span>
+
+R1  The navigator sees every roster agent as a row, with its state.
+    <span class="g">Proven by:</span> tests/fleet-rows.sh
+R2  A session that ends is restarted on its role's own trigger.
+    <span class="g">Proven by:</span> tests/standby-restart.sh
+R3  A standby row counts down to its next start.
+    <span class="e">Proven by: nothing yet</span>
+<s class="d">R4  ...</s> <span class="d">dropped 2026-11-02</span></pre></div>
+<div class="screen"><pre><span class="d">and a finding filed against it reads:</span>
+  Requirement R3 has no system test: a standby row's countdown ...</pre></div>
+<p class="note"><b>Cost:</b> the numbers and "Proven by" lines are upkeep, but a finding can name exactly which requirement it is about, and you can see the gaps by reading the file.</p>
+<hr>
+<h1>Option A — the test architecture is a table of levels</h1>
+<p class="lede">What the agent drafts with you, in <b>.cerebro/test-architecture.md</b>. Proposed the same way as the requirements: one question per level.</p>
+<div class="screen"><pre><span class="hd"># Test architecture</span>
+<span class="d">Agreed with the navigator 2026-10-19.</span>
+
+<span class="hd">## Unit</span>             fleet-view/src/*.rs, #[cfg(test)]
+  Belongs here:    pure decisions — parsing, sweeps, what to draw
+  Not here:        files, processes, the clock
+  Enough is:       every branch of a decision once
+
+<span class="hd">## Script</span>           tests/*.sh, in a throwaway project
+  Belongs here:    one script's behaviour, end to end
+  Not here:        anything already proven at unit level
+  Enough is:       each refusal and each success path
+
+<span class="hd">## System</span>           tests/system/*.sh
+  Belongs here:    one requirement each, named by its number
+  Enough is:       every requirement once</pre></div>
+<p class="note"><b>Cost:</b> rigid, but every "too much / too little at a level" finding can point at the line it breaks.</p>
+<hr>
+<h1>Option A — new requirements are asked about at the end of a pass</h1>
+<p class="lede">Something merged that a person can now do, and it isn't in the list. The agent adds it to the same end-of-pass question it already uses for the first agreement.</p>
+<div class="screen"><pre><span class="hd">QA</span>  Since my last pass, two things merged that aren't in the requirements:
+
+<span class="q">? Add these to the requirements?</span>
+  <span class="g">[x]</span> R32  A standby row can be started early with s.
+  <span class="g">[x]</span> R33  The browser console shows the same rows as the fleet view.
+      Other — reword one, or add something else</pre></div>
+<p class="note"><b>Cost:</b> you're asked within the hour, in the same place as everything else; if nobody answers, the next pass asks again and nothing is written meanwhile.</p>
+<hr>
+<h1>Option B — at most ten findings a pass, costliest first</h1>
+<p class="lede">The same sweep files the ten that cost most today and names the rest in its report; later passes file them as earlier ones get ranked away.</p>
+<div class="screen"><pre><span class="hd">QA</span>  Full sweep. Filed 10 findings (the ten costing most today):
+      cb-ab12  Testing: CI builds the Rust tests twice, costing 4 minutes a run
+      ...
+    28 more found and not filed yet — I'll file them over the next passes:
+      Testing: no system test proves R9 ...
+      ... <span class="d">(28 one-line entries)</span></pre></div>
+<p class="note"><b>Cost:</b> the board never floods, but a cheap finding may wait several passes behind costlier ones.</p>
+<hr>
+<h1>Option A — every finding starts with one word</h1>
+<p class="lede">How its findings read on the work board, waiting to be ranked.</p>
+<div class="screen"><pre> P4  cb-ab12  <span class="hd">Testing:</span> CI builds the Rust tests twice, costing 4 minutes a run
+ P4  cb-ab13  <span class="hd">Testing:</span> the fleet view's row logic is tested three times over
+ P4  cb-ab14  <span class="hd">Testing:</span> no system test proves R3, the standby countdown
+ P4  cb-ab15  <span class="hd">Testing:</span> launch tests reach into the live state directory
+ P4  cb-ab16  Refactoring: the sweep labels are spelled in four places</pre></div>
+<p class="note"><b>Cost:</b> one word to recognise, same as Forge's "Refactoring:"; you read the rest of the title to tell a slow CI from a missing test.</p>
+<hr>
+<h1>The words it says, exactly as they would ship</h1>
+<p class="lede">Everything the agent says to you that isn't a requirement or a finding. QA stands for whatever the agent ends up named.</p>
+<h2>1. Opening a pass</h2>
+<div class="screen"><pre>Daily sweep, since 4352406 (12 commits over 9 hours).
+Full sweep — the last one was 8 days ago.
+Nothing has merged since my last pass; nothing to sweep.</pre></div>
+<h2>2. Before the lists are agreed</h2>
+<div class="screen"><pre>This project has no requirements list yet. I've drafted 31 in 6 areas; I'll take
+you through them one area at a time.
+<span class="q">? Fleet view — which of these hold? (untick any that are wrong)</span>     <span class="d">(area 1 of 6)</span>
+
+This project has no test architecture yet. I've drafted one with 3 levels; I'll take
+you through them one level at a time.
+<span class="q">? Unit — is this right?</span>   Yes / Change it — I'll say how
+
+I still need the requirements and a test architecture before I can check the rest.
+<span class="q">? Shall we agree them now?</span>   Yes, now / Not now — ask me next pass</pre></div>
+<h2>3. The report that ends every pass</h2>
+<div class="screen"><pre>Filed 3 findings:
+  cb-ab12  Testing: CI builds the Rust tests twice, costing 4 minutes a run
+  ...
+Seen again, noted on the existing piece of work: cb-xy01.
+Looked at and not filed:
+  the launch tests' duplicate fixture — costs nothing today
+Nothing found.                                 <span class="d">← when nothing was</span></pre></div>

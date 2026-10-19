@@ -71,6 +71,12 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      # Without a cache every run compiled all ~139 dependency crates, about 39s of a 49s step,
+      # and this job set every run's wall time (cb-bkda). The key hashes Cargo.lock, every
+      # Cargo.toml and the rustc version; workspace crates are pruned from what is saved, so only
+      # dependencies are restored. A pull request reads the cache main's runs save.
+      - uses: Swatinem/rust-cache@v2
+
       # Locked, same as tests/gate: never let CI resolve a dependency crates.io was not asked to
       # fix in place, and --all-targets so a test-only compile error cannot hide behind a green
       # `cargo build`. That includes the item-adjacency integration target, which reads the

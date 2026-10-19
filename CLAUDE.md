@@ -245,7 +245,8 @@ Each of these answers one question in one place. Add a caller, never a second co
 - `scripts/jsonl-log.sh` — appending to a JSONL log, and refusing under the protected dir.
 - `scripts/block-sync.sh` — marker-block parsing for `state-contract-sync`.
 - `scripts/tracked-links`, `scripts/state-contract-sync`,
-  `scripts/marker-readers`, `scripts/portable-snippets` — gate predicates. None of them may join
+  `scripts/marker-readers`, `scripts/portable-snippets`, `scripts/pipefail-pipelines` — gate
+  predicates, each scanning the live tree from inside its own suite so CI runs it. None of them may join
   `launch-preflight`: a check that refuses there is a fleet that cannot start.
 - `scripts/ci-needed` — which paths skip CI.
 

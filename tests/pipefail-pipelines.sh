@@ -131,4 +131,14 @@ grep -q 'usage: pipefail-pipelines' "$work_dir/err" \
   || fail "a usage refusal must name itself, got: $(cat "$work_dir/err")"
 pass "an argument is a usage error and prints no findings"
 
+# --- this repository's test sources are drain-safe ---------------------------------------------
+#
+# The live-tree scan lives here, not as a separate step in tests/gate, so CI runs it (cb-ph8r):
+# 8083518 merged green while tests/gate was red on exactly this scan.
+
+run "$repo_root/scripts/pipefail-pipelines"
+[[ $status -eq 0 ]] || fail "this repository's test sources must exit 0, got $status (findings: $out; stderr: $(cat "$work_dir/err"))"
+[[ -z "$out" ]] || fail "this repository's test sources must print no findings, got: $out"
+pass "this repository's test sources are drain-safe"
+
 suite_passed

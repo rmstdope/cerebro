@@ -744,6 +744,9 @@ async function controlled(page: import("@playwright/test").Page, agents: object[
     return route.fulfill({ json: reply(path) });
   });
   await page.goto("/");
+  // The page reads /api/control after it draws, and until then treats the fleet as read-only: a key
+  // pressed before the pill turns is refused as unsupervised, a race this suite lost (cb-yq4c).
+  await expect(page.getByText(supervised ? "Supervised" : "Read-only", { exact: true })).toBeVisible();
   return asked;
 }
 
@@ -752,7 +755,6 @@ const moira = { name: "Moira", role: "user-feedback", state: "Standby" };
 
 test("the action bar asks the supervising fleet view, and says what it answered", async ({ page }) => {
   const asked = await controlled(page, [storm], true, () => ({ done: true, text: "Storm will finish after this pass." }));
-  await expect(page.getByText("Supervised")).toBeVisible();
 
   await page.getByRole("toolbar", { name: "Storm actions" }).getByRole("button", { name: /Finish after this pass/ }).click();
 

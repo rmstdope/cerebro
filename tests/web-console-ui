@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+#
+# The web console UI's check: its type-check and its browser suite (cb-yq4c). The one definition of
+# it - tests/gate runs this file and so does the `web-console' job in .github/workflows/ci.yml, as
+# both run scripts/suite-runner for the bash suites, so the two cannot drift.
+#
+#     bash tests/web-console-ui
+#
+# NOT `tests/web-console-ui.sh': scripts/suite-runner runs `tests/*.sh', and this is not a suite.
+#
+# The browser suite starts two servers (cerebro-web and Vite) on ports scripts/smoke-port reserves
+# for the run (`port_base' in .cerebro/project.conf), so two worktrees gating at once, or another
+# project's dev server, cannot answer for this checkout. A port in use is a red run, never a server
+# reused: the reserved block is checked free before the suite starts.
+#
+# A missing pnpm is RED, not a skip: a gate leg that quietly does nothing is the hole this closes.
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ui="$repo_root/web-console/ui"
+
+if ! command -v pnpm >/dev/null 2>&1; then
+  echo "web-console-ui: pnpm is not on PATH; install it (https://pnpm.io/installation) to run the UI check" >&2
+  exit 1
+fi
+
+cd "$ui"
+
+echo "-- install (frozen lockfile)"
+pnpm install --frozen-lockfile
+
+echo "-- type-check"
+pnpm exec tsc -b
+
+echo "-- browser"
+if [[ -n "${CI:-}" ]]; then
+  # A fresh runner has neither the browser nor the libraries it links against.
+  pnpm exec playwright install --with-deps chromium
+else
+  pnpm exec playwright install chromium
+fi
+
+echo "-- build cerebro-web"
+# Built ahead, so the suite's webServer start is a launch and not a cold compile against its timeout.
+(cd "$repo_root" && cargo build -p cerebro-web --locked)
+
+echo "-- browser suite"
+"$repo_root/.cerebro/cerebro/scripts/smoke-port" -- pnpm exec playwright test --reporter=line

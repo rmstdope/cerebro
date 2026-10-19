@@ -8,7 +8,8 @@ export default defineConfig({
   resolve: { alias: { "@": path.resolve(__dirname, "./src") } },
   server: {
     proxy: {
-      "/api": "http://127.0.0.1:7171",
+      // The service's port; the browser suite sets it to the block it reserved.
+      "/api": `http://127.0.0.1:${process.env.CEREBRO_WEB_PORT || 7171}`,
     },
   },
 });

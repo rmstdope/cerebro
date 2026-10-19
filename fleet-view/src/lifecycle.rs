@@ -231,7 +231,8 @@ pub fn supervise_action(agent: Supervised<'_>) -> Option<Supervision> {
                     Supervision::End
                 }),
             },
-            // The stop flag makes no difference, for the `Asking` arm's reason. Deliberately NOT
+            // The stop flag makes no difference: the session is mid-work, still holding what it
+            // was doing, so it must move or hand back before any flag can retire it. Deliberately NOT
             // `end_decision`: that folds in `END_GRACE_SECONDS`, which is about a pass that
             // finished cleanly and has nothing to say about a row that stopped mid-work.
             Some(_) => Some(Supervision::Resume),
@@ -2013,7 +2014,7 @@ mod tests {
         }
     }
 
-    /// The stop flag makes no difference, for the `Asking` arm's reason: the session is still
+    /// The stop flag makes no difference: the session is still
     /// holding work, so it still needs to move or hand back.
     #[test]
     fn a_stuck_row_is_resumed_whatever_its_stop_flag() {

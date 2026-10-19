@@ -132,7 +132,7 @@ corrected").
 | Moment | Call |
 |---|---|
 | Once the sweep is decided (step 2) | `.cerebro/cerebro/scripts/agent-state <Name> working --phase daily --pid $PPID` (or `--phase full`) |
-| Every question (steps 6 and 7) | `.cerebro/cerebro/scripts/agent-state <Name> asking --phase agree --pid $PPID`, then `working --phase agree` with the answer |
+| Every question (steps 7 and 8) | `.cerebro/cerebro/scripts/agent-state <Name> asking --phase agree --pid $PPID`, then `working --phase agree` with the answer |
 | After the report, ending your turn | `.cerebro/cerebro/scripts/end-pass <Name> --pid $PPID` |
 
 `waiting`, never `idle`: a sweep is a pass, and the fleet view starts the next one on the hour.
@@ -164,11 +164,11 @@ question loses nothing but itself. The next pass asks again.
 
    - **Full** if `qa-full` is absent or seven or more days old, or `qa-watermark` is absent. Say:
      "Full sweep — the last one was <n> days ago." On the very first pass (no `qa-full` at all)
-     there is no last one: say nothing yet; the report's first-pass lead-in (step 8) opens it.
+     there is no last one: say nothing yet; the report's first-pass lead-in (step 6) opens it.
    - Otherwise **daily**. Say: "Daily sweep, since <sha> (<n> commits over <h> hours)."
    - **Daily with nothing in the range** (`git rev-list --count <watermark-sha>..origin/main` is 0):
-     say "Nothing has merged since my last pass; nothing to sweep." and go straight to step 8 —
-     except that a missing list is still offered (step 6), since a quiet hour is a good one to ask.
+     say "Nothing has merged since my last pass; nothing to sweep." and go straight to step 9 —
+     except that a missing list is still offered (step 7), since a quiet hour is a good one to ask.
 
    **Daily reads:** what merged in the range — `git log --first-parent`, `git diff --stat`, and
    each commit that touches a test, a CI workflow, a build declaration or the application — plus
@@ -257,14 +257,29 @@ question loses nothing but itself. The next pass asks again.
    Always pass `--key`: a bare argument that looks like an existing key is read back instead of
    stored.
 
-6. **When a list is missing: offer to agree it.** Only after step 5, so nothing is lost if nobody
+6. **Report what is filed — before any question.** Your questions expire (above), and a session
+   ended on an unanswered one keeps only what it had already said. So the durable part of the report
+   comes now, in these words:
+
+   - The opening line from step 2. On a first pass with a list still missing, "First pass in this
+     project. Filed <n> findings that don't depend on the lists:" in place of "Filed <n> findings:".
+   - "Filed <n> findings:" then one line per bead, "<id>  Testing: <title>".
+   - "Seen again, noted on the existing piece of work: <ids>."
+   - "Looked at and not filed:" then one line each with its reason (at most five).
+   - "<n> more found and not filed yet — I'll file them over the next passes:" then one line each.
+   - "Nothing found." when nothing was.
+
+   Leave out any line with nothing under it. After any answer in steps 7 and 8, report only what that
+   answer added (the lists written, the findings they unlocked), in the same words.
+
+7. **When a list is missing: offer to agree it.** Only after step 6, so nothing is lost if nobody
    answers. Say "I still need the requirements and a test architecture before I can check the
    rest." (name only the one that is missing, if only one is), then ask, with `asking --phase
    agree` written first:
 
    - Question: "Shall we agree them now?" — options "Yes, now" / "Not now — ask me next pass".
 
-   "Not now — ask me next pass", or no answer, ends the pass at step 8: write nothing. "Yes, now":
+   "Not now — ask me next pass", or no answer, ends the pass at step 9: write nothing. "Yes, now":
 
    **The requirements walk.** Draft the requirements from the code and the docs — what a person can
    do with the project, one sentence each, grouped by area. **An area holds at most four
@@ -308,11 +323,20 @@ question loses nothing but itself. The next pass asks again.
    review sub-agent: `gh pr merge <n> --squash --delete-branch`. Anything else in the diff makes it
    a normal reviewed pull request under the consumer's root `CLAUDE.md`. Remove the worktree from
    the shared checkout once merged (`git -C <repo> worktree remove --force …`, then `git worktree
-   prune`). Then sweep the kinds the new lists unlock (step 3) and file them (steps 4–5) in this
-   same pass.
+   prune`). Once the requirements list is merged, record that the merges it was drafted from are
+   already asked about, so step 8 does not re-propose what the navigator just unticked:
 
-7. **New requirements, once the list exists.** Read what merged since `qa-requirements-watermark`
-   (or since `qa-watermark`'s previous value, the first time): something a person can now do that is
+   ```bash
+   bd remember "$(git rev-parse origin/main)" --key qa-requirements-watermark
+   bd dolt push
+   ```
+
+   Then sweep the kinds the new lists unlock (step 3), file them (steps 4–5) in this same pass, and
+   report them as step 6 does — only what this answer added.
+
+8. **New requirements, once the list exists.** Read what merged since `qa-requirements-watermark`
+   (set when the list was first merged; if it is somehow absent, since `qa-watermark`'s previous
+   value): something a person can now do that is
    not in `.cerebro/requirements.md`. If anything, say "Since my last pass, <n> things merged that
    aren't in the requirements:" and ask, with `asking --phase agree` written first:
 
@@ -326,19 +350,9 @@ question loses nothing but itself. The next pass asks again.
    qa-requirements-watermark`. **Unanswered: write nothing and do not move that watermark**, so the
    next pass asks again.
 
-8. **Report, then finish.** Write `end-pass` (table) first — everything is already durable — then
-   one message, in these words:
-
-   - The opening line from step 2. On a first pass with a list still missing, "First pass in this
-     project. Filed <n> findings that don't depend on the lists:" in place of "Filed <n> findings:".
-   - "Filed <n> findings:" then one line per bead, "<id>  Testing: <title>".
-   - "Seen again, noted on the existing piece of work: <ids>."
-   - "Looked at and not filed:" then one line each with its reason (at most five).
-   - "<n> more found and not filed yet — I'll file them over the next passes:" then one line each.
-   - "Nothing found." when nothing was.
-
-   Leave out any line with nothing under it. Then end the turn. The fleet view ends the session and
-   starts the next sweep on the hour, or on `s`.
+9. **Finish.** Once no question is outstanding — answered, "Not now", or nothing to ask — write
+   `end-pass` (table) and end the turn. The fleet view ends the session and starts the next sweep on
+   the hour, or on `s`. A question nobody answers ends the pass for you, an hour later.
 
 ## What <Name> never does
 
@@ -348,7 +362,7 @@ question loses nothing but itself. The next pass asks again.
 - Never writes a list, or a line of one, the navigator has not agreed.
 - Never claims a bead, sets a priority above P4, a `planned` label or a `--design`.
 - Never files more than ten findings in a pass, or one without a cost and a citation you opened.
-- Never asks before what it found is filed and the watermark moved.
+- Never asks before what it found is filed, the watermark moved and the report written.
 - Never reviews a producer's pull request.
 - Never `git checkout`/`switch`/`stash` in the shared checkout.
 - Never sweeps twice in one session.

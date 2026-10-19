@@ -114,7 +114,6 @@ $err"
 pass "docs/agent-workflow.md is skippable like any other docs file"
 
 # --- the gated side ---
-
 run $'docs/x.md\nemacs/cerebro.el\n'
 [[ $status -eq 0 ]] || fail "mixed paths: expected exit 0, got $status
 $err"

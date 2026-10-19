@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 #
-# Proves a consumer declares HOW TO START ITS APPLICATION, and that no role file has to know
-# (ah-qled.8, cerebro#58 §2).
+# Proves a consumer can declare HOW TO START ITS APPLICATION (ah-qled.8, cerebro#58 §2).
 #
 # agents/verifier.md used to carry the single most project-specific passage in all seven role
 # files - pnpm, Vite, Tauri v2, wasm, two @atlantis/* package names and a cargo feature flag, in
 # the one place a role has to actually launch the thing. A consumer's verifier read that, could run
 # none of it, and INVENTED A COMMAND. That is the worst possible outcome for the one role whose
 # whole job is to put the real application in front of the navigator, so the replacement behaviour
-# is not a better guess: WITH NOTHING DECLARED, THE ROLE ASKS.
+# is not a better guess: WITH NOTHING DECLARED, THE ROLE ASKS. That rule, and that no role file
+# names one consumer's tooling, are kept by reading agents/verifier.md and agents/reviewer.md, not
+# by this suite: prose gets no test (cb-s5hk).
 #
 # The shape is flat keys plus an index, NOT a list of records:
 #

@@ -16,4 +16,6 @@ tower-http = { version = "0.6", features = ["fs"] }
 [dev-dependencies]
 http-body-util = "0.1"
 tempfile = "3"
+# Paused time, so a test of the event interval does not wait it out.
+tokio = { version = "1", features = ["test-util"] }
 tower = { version = "0.5", features = ["util"] }

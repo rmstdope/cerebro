@@ -212,7 +212,6 @@ impl SnapshotState {
             let rows = cerebro_tui::model::apply_starting(rows, &published.handed);
             let sessions = reader.reader_paths.shared_root.join(".cerebro/state/sessions");
             let rows = cerebro_tui::model::apply_standby(rows, &published.names, &Default::default());
-            let hosted = rows.iter().map(|row| hosts(&sessions, &row.name)).collect::<Result<Vec<_>, _>>()?;
             Ok(rows
                 .into_iter()
                 .map(|mut row| {
@@ -223,10 +222,9 @@ impl SnapshotState {
                     }
                     row
                 })
-                .zip(hosted)
-                .map(|(row, hosted)| Agent {
+                .map(|row| Agent {
                     finishing: cerebro_tui::lifecycle::stop_flag_set(&reader.reader_paths, &row.name),
-                    hosted,
+                    hosted: hosts(&sessions, &row.name),
                     row,
                 })
                 .collect())
@@ -466,21 +464,20 @@ pub struct Agent {
 }
 
 /// Whether the fleet view publishes a live session for NAME in DIR: a publication it still
-/// refreshes. One it stopped refreshing is a file a gone view left behind; one that cannot be read
-/// is a fault, since the view renames a whole file into place.
-fn hosts(dir: &std::path::Path, name: &str) -> Result<bool, cerebro_tui::ReadError> {
-    let path = dir.join(format!("{name}.json"));
-    let invalid = |message: String| cerebro_tui::ReadError::Invalid {
-        source: cerebro_tui::Invocation::new(&path, &[]),
-        message,
-    };
-    let text = match std::fs::read_to_string(&path) {
-        Ok(text) => text,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-        Err(error) => return Err(invalid(error.to_string())),
-    };
-    let publication = serde_json::from_str::<PublishedSession>(&text).map_err(|error| invalid(error.to_string()))?;
-    Ok(Utc::now().signed_duration_since(publication.updated_at).num_seconds() < SCREEN_STALE_SECONDS)
+/// refreshes. One it stopped refreshing is a file a gone view left behind. One that cannot be read
+/// is not hosted, for that row alone: the panes fail apart, and this bit only chooses an offer the
+/// fleet view still has the last word on.
+///
+/// It approximates the view's own `is_live`: a loop held past `SCREEN_STALE_SECONDS`, or a session
+/// whose log could not be opened, is hosted and not published, and the page offers what a standby
+/// row's does - which the view then refuses in words.
+fn hosts(dir: &std::path::Path, name: &str) -> bool {
+    std::fs::read_to_string(dir.join(format!("{name}.json")))
+        .ok()
+        .and_then(|text| serde_json::from_str::<PublishedSession>(&text).ok())
+        .is_some_and(|publication| {
+            Utc::now().signed_duration_since(publication.updated_at).num_seconds() < SCREEN_STALE_SECONDS
+        })
 }
 
 fn standby_path(paths: &ReaderPaths) -> std::path::PathBuf {

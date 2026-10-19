@@ -837,6 +837,28 @@ async fn a_standby_agent_whose_session_the_fleet_view_publishes_is_reported_host
     );
 }
 
+/// A publication that cannot be read says nothing about that row, and nothing about the others:
+/// the fleet is still read (the panes fail apart).
+#[tokio::test]
+async fn a_session_publication_that_cannot_be_read_is_not_hosted_and_the_fleet_is_still_read() {
+    let root = tempfile::tempdir().unwrap();
+    publish_standby(root.path(), &["Moira", "Storm"], chrono::Duration::zero());
+    publish(root.path(), "Moira", chrono::Duration::zero(), b"");
+    std::fs::write(root.path().join(".cerebro/state/sessions/Storm.json"), "{ not json").unwrap();
+
+    let response = service_with_two_dead(root.path()).router().oneshot(get("/api/fleet")).await.unwrap();
+    let body: serde_json::Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+    assert_eq!(body["state"], "fresh", "{body}");
+    let hosted: Vec<(String, bool)> = body["value"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| (row["name"].as_str().unwrap().into(), row["hosted"].as_bool().unwrap_or(false)))
+        .collect();
+    assert_eq!(hosted, vec![("Storm".into(), false), ("Moira".into(), true)]);
+}
+
 fn service_with_two_dead(root: &std::path::Path) -> ReadOnlyService {
     ReadOnlyService::new(
         ReaderPaths {

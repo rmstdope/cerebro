@@ -40,15 +40,8 @@ while IFS= read -r path; do
   [[ -n "$path" ]] || continue
   count=$((count + 1))
   case "$path" in
-    # A specific file before the directory it lives in: the first matching arm wins.
-    docs/agent-workflow.md)
-      # tests/launch-targets.sh greps this one file, so it reaches the gate.
-      echo "ci-needed: $path" >&2
-      echo run=true
-      exit 0
-      ;;
     docs/*)
-      # Nothing in tests/ or tests/gate opens anything else under docs/.
+      # Nothing in tests/ or tests/gate opens anything under docs/.
       ;;
     README.md)
       # Read by nobody: the reason, for whoever edits this list next.

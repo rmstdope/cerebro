@@ -2,7 +2,7 @@
 #
 # The epic families Psylocke should verify now, one epic id per line.
 # A family is due when:
-#   1) the epic has children, and every child is closed; and
+#   1) the epic has children (event beads are not children), and every child is closed; and
 #   2) the epic or at least one child is still unverified
 #      (no `verification:passed` / `verification:not-needed` label).
 #
@@ -42,6 +42,10 @@ while IFS= read -r epic_id; do
     echo "verifier-epic-candidates: bd children printed something that is not JSON for $epic_id" >&2
     exit 1
   fi
+  # `bd children` also returns the event beads `bd set-state` writes under the bead it changed.
+  # They are not members of the family and never carry a verdict, so they are dropped here,
+  # as `bd list --exclude-type event` drops them above.
+  children="$(jq '[.[] | select(.issue_type != "event")]' <<<"$children")"
 
   child_count="$(jq 'length' <<<"$children")"
   [[ "$child_count" -gt 0 ]] || continue

@@ -124,4 +124,33 @@ run >/dev/null
 grep -qxF "ARG:open,closed" "$stub_dir/argv.list" || fail "bd list was not asked for open,closed"
 pass "asks bd list for open and closed beads"
 
+# --- event beads under a family are not members of it (cb-z330) --------------------------------
+# `bd set-state` writes an event bead as a child of the bead it changed; it never carries a verdict.
+set_stdout list '[
+  {"id":"ep-events","issue_type":"epic","status":"closed","labels":["verification:passed"]},
+  {"id":"ep-events-real","issue_type":"epic","status":"closed","labels":["verification:passed"]},
+  {"id":"ep-only-events","issue_type":"epic","status":"closed","labels":[]}
+]'
+set_stdout "children.ep-events" '[
+  {"id":"ep-events.1","issue_type":"task","status":"closed","labels":["verification:passed"]},
+  {"id":"ep-events.2","issue_type":"task","status":"closed","labels":["verification:not-needed"]},
+  {"id":"ep-events.3","issue_type":"event","status":"closed","labels":[]},
+  {"id":"ep-events.4","issue_type":"event","status":"closed","labels":[]}
+]'
+set_stdout "children.ep-events-real" '[
+  {"id":"ep-events-real.1","issue_type":"task","status":"closed","labels":["verification:passed"]},
+  {"id":"ep-events-real.2","issue_type":"task","status":"closed","labels":[]},
+  {"id":"ep-events-real.3","issue_type":"event","status":"open","labels":[]}
+]'
+set_stdout "children.ep-only-events" '[
+  {"id":"ep-only-events.1","issue_type":"event","status":"closed","labels":[]}
+]'
+ids="$(run)"
+bad=""
+if grep -qxF "ep-events" <<<"$ids"; then bad+=" settled family listed for its event children;"; fi
+grep -qxF "ep-events-real" <<<"$ids" || bad+=" family with a real unverified child (and an open event child) not listed;"
+if grep -qxF "ep-only-events" <<<"$ids"; then bad+=" epic whose only children are events listed;"; fi
+[ -z "$bad" ] || fail "event children counted as members:$bad"
+pass "ignores event beads when judging a family"
+
 suite_passed

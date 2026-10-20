@@ -33,8 +33,10 @@
 # ports. The root sits at a DIFFERENT OFFSET in the two strings, `A:<root>' and `<root>:B', and
 # that is load-bearing: `cksum' is a CRC, a CRC is affine over XOR, and two equal-length strings
 # that differ only in a fixed byte XOR to a constant - so `A:<root>' against `B:<root>' cancelled
-# the root out and made the port a function of its length alone (cb-7jmm). A collision is not silently wrong, either: the diagnostic record names the identity, so
-# two checkouts that did collide both report a lock error and neither acts. Fail-closed twice over.
+# the root out and made the port a function of its length alone (cb-7jmm).
+#
+# A collision is not silently wrong, either: the diagnostic record names the identity, so two
+# checkouts that did collide both report a lock error and neither acts. Fail-closed twice over.
 #
 # THE RANGE STOPS BELOW 32768, which is where Linux's default `ip_local_port_range' begins. A port
 # above it can be taken transiently by somebody's outbound connection, and the fleet would read

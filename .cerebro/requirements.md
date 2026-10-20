@@ -1,6 +1,6 @@
 # Requirements
 
-Agreed with the navigator 2026-10-19. Each requirement keeps its number for ever;
+Agreed with the navigator 2026-10-20. Each requirement keeps its number for ever;
 a dropped one is struck, never renumbered.
 
 ## Setting up a project
@@ -60,6 +60,9 @@ R15 A role is not started again while its trigger names exactly the work its las
 R16 A producer whose session died mid-bead is retried on a backoff, and its row says when
     and how many starts failed.
     Proven by: tests/fleet-retry.sh
+R27 The navigator sets how often each clock role (Moira, Cypher, Forge, Sage) runs, with
+    role_cadence_<role> in project.conf.
+    Proven by: nothing yet
 
 ## The board
 

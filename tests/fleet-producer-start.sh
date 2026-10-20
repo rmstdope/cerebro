@@ -16,17 +16,15 @@
 # the board said about its bead at that moment, reports `working' through the real `agent-state',
 # and waits to be killed.
 #
-# The fleet is three standby producers, Rogue, Gambit and Bishop. The board holds two beads a
-# producer may take (cb-b1 at P1, cb-b2 at P2, both `ux:agreed') and three it may not: cb-p4
-# (agreed but unranked), cb-raw (ranked but its experience not agreed) and cb-held (claimed by
-# somebody else). Three things are watched, in the order a person would see them:
+# The fleet is two standby producers, Rogue and Gambit, and the board holds two beads a producer
+# may take (cb-b1 at P1, cb-b2 at P2, both `ux:agreed'). Two things are watched, in the order a
+# person would see them:
 #   1. Rogue is started on cb-b1, which is claimed for Rogue - in progress, Rogue's, with its tree
 #      made - before Rogue's session exists;
 #   2. Gambit is started on cb-b2, claimed the same way, no sooner than 30 seconds after Rogue: in
-#      between, the view logged an evaluation in which Gambit was due and held by the spacing;
-#   3. Bishop is never started: with only cb-p4, cb-raw and cb-held left, an evaluation taken more
-#      than 30 seconds after Gambit's start (so the spacing cannot be what held it) finds no reason
-#      to start Bishop, and none of those three beads was touched.
+#      between, the view logged an evaluation in which Gambit was due and held by the spacing.
+# Which beads a producer may NOT take - unranked, un-agreed, held - is `assignable-beads'' own
+# decision, proven in tests/assignable-beads.sh and not re-proven here (cb-n895).
 #
 # Until cb-gkhx the view exempted producers from the spacing (`triggers::role_peers'), so the first
 # tick started Rogue and Gambit together, their two launch preflights raced over the same symlinks,
@@ -34,7 +32,7 @@
 #
 # The binary is built with `cargo build' and run by this suite itself - never as cargo's child
 # (.cerebro/traps.md). Every wait is a bounded poll that fails with what the view saw and did.
-# The suite costs about a minute and a quarter, most of it the two 30-second windows R13 names.
+# The suite costs about 35 seconds, most of it the 30-second window R13 names.
 #
 #     bash tests/fleet-producer-start.sh
 
@@ -81,30 +79,22 @@ CONF
 cat > "$consumer/.cerebro/roster.conf" <<'ROSTER'
 Rogue           producer        standby
 Gambit          producer        standby
-Bishop          producer        standby
 ROSTER
 
 # The fixture's own files stay out of the consumer's status, so a worktree made from it is clean.
 printf '.cerebro/worktrees/\n.cerebro/state/\n' >> "$consumer/.git/info/exclude"
 
 bead() {
-  # <id> <priority> <labels as a JSON array> [<status> <assignee>]
-  jq -n --arg id "$1" --argjson p "$2" --argjson labels "$3" \
-        --arg status "${4:-open}" --arg assignee "${5:-}" '{
-    id: $id, title: ("fixture " + $id), status: $status, priority: $p, issue_type: "task",
-    labels: $labels, assignee: $assignee, owner: "test",
+  # <id> <priority> <labels as a JSON array>
+  jq -n --arg id "$1" --argjson p "$2" --argjson labels "$3" '{
+    id: $id, title: ("fixture " + $id), status: "open", priority: $p, issue_type: "task",
+    labels: $labels, assignee: "", owner: "test",
     design: "## Validation\ndisk-preflight --workload non-rust\n",
     created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z"
   }' > "$beads/$1.json"
 }
 bead cb-b1   1 '["ux:agreed"]'
 bead cb-b2   2 '["ux:agreed"]'
-bead cb-p4   4 '["ux:agreed"]'
-bead cb-raw  1 '[]'
-bead cb-held 1 '["ux:agreed"]' in_progress Other
-untouched="$fixture/untouched"
-mkdir -p "$untouched"
-cp "$beads/cb-p4.json" "$beads/cb-raw.json" "$beads/cb-held.json" "$untouched/"
 
 # --- stub bd: one JSON file per bead, every call logged -------------------------------------------
 cat > "$stubs/bd" <<'STUB'
@@ -313,29 +303,6 @@ jq -se --arg from "$(start_ts Rogue)" --arg to "$(start_ts Gambit)" \
   || fail "no evaluation between the two starts shows Gambit held by the 30s spacing$(evidence)"
 pass "Gambit is started on cb-b2, claimed the same way, $((gambit_at - rogue_at))s after Rogue and held by the spacing in between"
 
-# --- 3. the third producer, with nothing it may take ----------------------------------------------
-
-# An evaluation of Bishop taken more than 30 s after Gambit's start: no spacing can hold it then,
-# so a start, had there been a bead to give, would have come.
-bishop_free_after="$(python3 -I -c 'import sys, datetime; print(datetime.datetime.fromtimestamp(int(sys.argv[1]) + 31, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))' "$gambit_at")"
-bishop_evaluated_free() {
-  # A start of Bishop takes the row off standby, so no later evaluation would come: fail at once.
-  [ -z "$(start_ts Bishop)" ] \
-    || fail "the view started Bishop with only unranked, un-agreed and held beads left$(evidence)"
-  jq -se --arg after "$bishop_free_after" \
-    'any(.[]; .agent == "Bishop" and .ts >= $after)' "$state/evaluations.jsonl" >/dev/null 2>&1
-}
-wait_until 90 "an evaluation of Bishop more than 30s after Gambit's start" bishop_evaluated_free
-jq -se --arg after "$bishop_free_after" \
-  '[.[] | select(.agent == "Bishop" and .ts >= $after)] | all(.reason == null and .spaced_out == null)' \
-  "$state/evaluations.jsonl" >/dev/null 2>&1 \
-  || fail "the view found a reason to start Bishop with only unranked, un-agreed and held beads left$(evidence)"
-has_session Bishop && fail "Bishop was started with only unranked, un-agreed and held beads left$(evidence)"
 [ "$(session_count)" = 2 ] || fail "expected exactly two sessions, got $(session_count)$(evidence)"
-for b in cb-p4 cb-raw cb-held; do
-  jq -e --slurpfile was "$untouched/$b.json" '. == $was[0]' "$beads/$b.json" >/dev/null \
-    || fail "$b, which no producer may take, was changed$(evidence)"
-done
-pass "Bishop is not started: an unranked, an un-agreed and a held bead are no producer's"
 
 suite_passed

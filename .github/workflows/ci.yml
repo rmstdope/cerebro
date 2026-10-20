@@ -55,6 +55,7 @@ jobs:
       # tests/fleet-rows.sh (R5, cb-ucgu), tests/fleet-board.sh (R7, cb-ha8v), tests/fleet-stale.sh
       # (R8, cb-ccxe), tests/fleet-type.sh (R10, cb-8dha), tests/fleet-refused.sh (R12, cb-8484),
       # tests/fleet-producer-start.sh (R13, cb-gkhx), tests/fleet-role-triggers.sh (R14, cb-kmxs),
+      # tests/fleet-retry.sh (R16, cb-lt16),
       # tests/fleet-priority.sh (R17, cb-t4vx), tests/fleet-sweep-x.sh (R18, cb-x5ld),
       # tests/fleet-launch.sh (R21, cb-hhjk) and tests/web-console.sh (R24, cb-8cdv)
       # build and run the real cerebro-tui (the last with cerebro-web beside it), so this job needs

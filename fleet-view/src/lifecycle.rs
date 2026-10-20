@@ -701,6 +701,21 @@ pub fn row_is_alive(row: &FleetRow) -> bool {
     )
 }
 
+/// Has this row's agent said a word of its own - a state its own state file carries?
+///
+/// The evidence that a session ran a pass, which `row_is_alive` is not: `Up` is a process with
+/// no state file yet, and `Starting` a session this view handed a bead that has not reported.
+/// A launch spends seconds in its preflight and in making the tree, so a fleet read catches it
+/// in one of those two on almost every start; counting that as a pass wiped the failed-start
+/// count every time, and a producer that died on its bead was restarted every ten seconds for
+/// ever (cb-lt16). `give_back` asks the same question: a reported bead is the agent's own.
+pub fn row_reported(row: &FleetRow) -> bool {
+    matches!(
+        row.state,
+        RowState::Working | RowState::Asking | RowState::Waiting | RowState::Idle | RowState::Unknown(_)
+    )
+}
+
 /// What `s` decides, in this order.
 pub fn start_outcome(situation: Situation<'_>) -> StartOutcome {
     // No row means no agent to name, and the Session pane already says `No agent selected.`

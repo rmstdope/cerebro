@@ -54,10 +54,6 @@ web_binary="$(executable cerebro-web)"
 
 # --- the consumer -----------------------------------------------------------------------------------
 
-# Named for its length: `scripts/fleet-supervisor' places the supervision lease by a sum that today
-# turns on the root's length alone (cb-7jmm), and every suite's work dir is the same length. So no
-# two fleet-view system suites run in parallel may share a name's length - `keys' 4, `board' 5,
-# `restart' 7, this one 10 - or one view cannot take charge.
 consumer="$(consumer_new webconsole --copy)"
 state="$consumer/.cerebro/state"
 stub_state="$consumer/.cerebro/stub"

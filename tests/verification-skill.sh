@@ -2,8 +2,9 @@
 #
 # Proves the `verification_skill' key a consumer declares to name ITS OWN verification procedure
 # reaches the end of project-conf's lookup, and that its absence is reported rather than silent
-# (ah-38qc). The verifier reads the key; that the role does so, and stays generic, is kept by
-# reading CLAUDE.md, never by grepping the role's prose (cb-ozf5).
+# (ah-38qc). That the verifier reads the key is written in agents/verifier.md and that it names no
+# consumer is CLAUDE.md's "Nothing in this repository names a consumer"; neither is grepped
+# here, since prose is never a suite's subject (cb-ozf5).
 #
 # No framework: plain bash, exit non-zero on the first failed assertion. Run from the submodule
 # root:

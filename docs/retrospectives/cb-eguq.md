@@ -18,4 +18,4 @@ Both suites passed alone. Six concurrent copies of `fleet-view-restart.sh` faile
 
 **Prevent by.** cb-7jmm, a hash in `scripts/fleet-supervisor` that depends on the root's bytes, with a suite that asserts two equal-length roots get different ports. Until it lands, a producer whose local gate is red in a fleet-view system suite should check `fleet-supervisor --endpoint-for` on two equal-length roots before suspecting their own change.
 
-**Seen before.** cb-eguq's own description: R15 flaking 4 times in ~12 local runs, with "read-only, then supervising" on screen, is this collision seen from the other side. No retrospective file found.
+**Seen before.** cb-eguq's own description: R15 flaking 4 times in ~12 local runs, with "read-only, then supervising" on screen, is this collision seen from the other side. cb-gyw0 (tests/fleet-view-restart.sh red locally on a loaded machine, green in CI) is the same symptom; its cause is the shared port.

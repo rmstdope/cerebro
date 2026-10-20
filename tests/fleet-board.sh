@@ -13,8 +13,10 @@
 #     `stage-candidates'; standby, so nothing is started. A `claude' stub that refuses, in case.
 #   - a `bd' stub that logs every call and answers `list' with the board file and `ready' with an
 #     empty list. The view's own `bd list' and the real scripts it runs (`assignable-beads',
-#     `bugfix-candidates', `second-look-beads' through `work-beads') all go through it; anything
-#     else it is asked is refused, so a read this suite did not foresee fails loudly.
+#     `bugfix-candidates', `second-look-beads' through `work-beads') all go through it. Anything
+#     else is refused: the Sweeps section's reads (`epic status', …) are not R7's, so the pane's
+#     first line reads `Sweeps 0  sweep-verdicts failed' and the suite does not mind. A refused
+#     read on R7's own path still fails it, because the beads are then never drawn.
 #   - a `gh' stub that refuses: the GitHub reads are not part of R7.
 #
 # The view reads the board whether or not it supervises, so this suite never waits on the lease

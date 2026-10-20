@@ -5,8 +5,6 @@
 #     fleet-supervisor --identity         -> the canonical absolute shared root
 #     fleet-supervisor --record           -> <shared root>/.cerebro/state/supervisor.json
 #     fleet-supervisor --endpoint-for <r> -> the endpoint any given root would take
-#     fleet-supervisor --legacy-endpoint  -> the endpoint this checkout took before cb-7jmm
-#     fleet-supervisor --legacy-endpoint-for <r>
 #
 #   exit 0  answered
 #   exit 2  a usage error, an unresolvable root, or a root that cannot be written into the
@@ -37,13 +35,6 @@
 # that differ only in a fixed byte XOR to a constant - so `A:<root>' against `B:<root>' cancelled
 # the root out and made the port a function of its length alone (cb-7jmm).
 #
-# THE LEGACY ENDPOINT (cb-ebqd) is the port the function gave before cb-7jmm, kept for the
-# upgrade window alone. A view started before the change holds - or keeps retrying - that port
-# and knows nothing of the new one, so a view on the new function also holds the old port while
-# it supervises: whichever started first, the other finds its port taken and stays read-only.
-# It is the old formula and nothing more; once no view older than cb-7jmm can still be running,
-# this answer and the fleet view's use of it can go together.
-#
 # A collision is not silently wrong, either: the diagnostic record names the identity, so two
 # checkouts that did collide both report a lock error and neither acts. Fail-closed twice over.
 #
@@ -61,8 +52,7 @@ set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
 usage() {
-  echo "usage: fleet-supervisor (--endpoint | --identity | --record | --endpoint-for <root>" \
-    "| --legacy-endpoint | --legacy-endpoint-for <root>)" >&2
+  echo "usage: fleet-supervisor (--endpoint | --identity | --record | --endpoint-for <root>)" >&2
   exit 2
 }
 
@@ -109,15 +99,6 @@ endpoint_for() {
   printf '127.0.0.1:%s\n' "$(( 20000 + ((a ^ b) % 12768) ))"
 }
 
-# The function before cb-7jmm, verbatim: `A:<root>' against `B:<root>', which depends on the
-# root's length alone. Only ever a second port held beside the real one (see above).
-legacy_endpoint_for() {
-  local root="$1" a b
-  a="$(cksum_of "A:$root")"
-  b="$(cksum_of "B:$root")"
-  printf '127.0.0.1:%s\n' "$(( 20000 + ((a ^ b) % 12768) ))"
-}
-
 # The identity has to survive a round trip through the JSON record and back out to a comparison, so
 # a root carrying a tab or a newline is refused rather than written. An identity that comes back
 # ambiguous is what would turn a port collision into a silent takeover.
@@ -135,15 +116,6 @@ case "${1-}" in
   --endpoint-for)
     [[ $# -eq 2 && -n "$2" ]] || usage
     endpoint_for "$2"
-    ;;
-  --legacy-endpoint-for)
-    [[ $# -eq 2 && -n "$2" ]] || usage
-    legacy_endpoint_for "$2"
-    ;;
-  --legacy-endpoint)
-    [[ $# -eq 1 ]] || usage
-    root="$(shared_root)" || exit 2
-    legacy_endpoint_for "$root"
     ;;
   --endpoint)
     [[ $# -eq 1 ]] || usage

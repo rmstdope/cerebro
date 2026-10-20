@@ -148,19 +148,18 @@ pass "roots of the same length take different ports"
   || fail "--endpoint-for <shared root> disagrees with --endpoint"
 pass "--endpoint is --endpoint-for of the shared root"
 
-# The legacy endpoint (cb-ebqd): the port a view started before cb-7jmm still holds, so a view on
-# the new function can hold it too and the two cannot both supervise. Pinned to what the old
-# function answered, which is what a running old view is bound to: 27902 for every 7-byte root.
-for probe in /x/abcd /y/wxyz; do
-  legacy="$("$supervisor" --legacy-endpoint-for "$probe")"
-  [[ "$legacy" == 127.0.0.1:27902 ]] \
-    || fail "--legacy-endpoint-for $probe: expected the old function's 127.0.0.1:27902, got '$legacy'"
+# The legacy endpoint is gone (cb-6f8f): cb-ebqd held the pre-cb-7jmm port beside the real one
+# for an upgrade window that has closed, and a lease holds only its own port again. Asking for
+# the old port is a usage error, never an answer somebody might bind.
+for args in "--legacy-endpoint" "--legacy-endpoint-for /x/abcd"; do
+  set +e
+  # shellcheck disable=SC2086
+  out="$("$supervisor" $args 2>/dev/null)"; status=$?
+  set -e
+  [[ $status -eq 2 ]] || fail "$args: expected a usage error (exit 2), got $status"
+  [[ -z "$out" ]] || fail "$args: expected nothing on stdout, got '$out'"
 done
-pass "--legacy-endpoint-for answers the port the function gave before cb-7jmm"
-
-[[ "$("$supervisor" --legacy-endpoint)" == "$("$supervisor" --legacy-endpoint-for "$consumer")" ]] \
-  || fail "--legacy-endpoint disagrees with --legacy-endpoint-for <shared root>"
-pass "--legacy-endpoint is --legacy-endpoint-for of the shared root"
+pass "the legacy-endpoint options are gone: a usage error with nothing on stdout"
 
 # ---------------------------------------------------------------------------
 # 4. The identity and the record: the canonical shared root, and one file beside the state files.
@@ -246,7 +245,7 @@ pass "reading ownership writes nothing at all"
 # ---------------------------------------------------------------------------
 standalone="$work_dir/loose/cerebro/scripts"
 "$repo_root/tests/lib/place-scripts" "$standalone" fleet-supervisor project-conf consumer-root
-for option in --endpoint --legacy-endpoint --identity --record; do
+for option in --endpoint --identity --record; do
   set +e
   out="$("$standalone/fleet-supervisor" "$option" 2>/dev/null)"; status=$?
   set -e

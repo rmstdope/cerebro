@@ -54,7 +54,11 @@ web_binary="$(executable cerebro-web)"
 
 # --- the consumer -----------------------------------------------------------------------------------
 
-consumer="$(consumer_new console --copy)"
+# Named for its length: `scripts/fleet-supervisor' places the supervision lease by a sum that today
+# turns on the root's length alone (cb-7jmm), and every suite's work dir is the same length. So no
+# two fleet-view system suites run in parallel may share a name's length - `keys' 4, `board' 5,
+# `restart' 7, this one 10 - or one view cannot take charge.
+consumer="$(consumer_new webconsole --copy)"
 state="$consumer/.cerebro/state"
 stub_state="$consumer/.cerebro/stub"
 printf 'Forge  architect  standby\n' > "$consumer/.cerebro/roster.conf"
@@ -135,6 +139,8 @@ wait_until() {
     if "$@"; then return 0; fi
     kill -0 "$view_pid" 2>/dev/null || [ -n "${view_may_exit:-}" ] \
       || fail "the view exited while waiting for: $what$(evidence)"
+    [ -z "$web_pid" ] || kill -0 "$web_pid" 2>/dev/null \
+      || fail "cerebro-web exited while waiting for: $what$(evidence)"
     sleep 0.2
   done
   fail "timed out waiting for: $what$(evidence)"
@@ -156,7 +162,9 @@ for ((attempt = 0; attempt < 10; attempt++)); do
   ) </dev/null >/dev/null 2>"$web_err" &
   web_pid=$!
   for ((i = 0; i < 100; i++)); do
-    curl -s -o /dev/null "http://127.0.0.1:$port/api/control" && break
+    # Its own answer, not merely somebody's: another process may have taken the port first.
+    curl -s --max-time 5 "http://127.0.0.1:$port/api/control" 2>/dev/null \
+      | jq -e 'has("supervised")' >/dev/null 2>&1 && break
     kill -0 "$web_pid" 2>/dev/null || break
     sleep 0.2
   done
@@ -219,7 +227,9 @@ pass "the console sees the supervising view and Forge's row on standby"
 status="$(post /api/agents/Forge/start)"
 [ "$status" = 200 ] || fail "start: answered $status$(evidence)"
 jq -e '.done == true' "$last_answer" >/dev/null || fail "start: the view refused it$(evidence)"
-wait_until "the stub agent to start" started
+# `launch' runs its preflight before the agent, which in a loaded parallel gate can take longer than
+# the usual 20 s; a bound only costs time when it fails, so this one is 60 s.
+polls=300 wait_until "the stub agent to start" started
 agent="$(cat "$stub_state/Forge.pid")"
 alive "$agent" || fail "start: the stub agent is not running"
 wait_until "Forge's row to read hosted and working" row '.hosted == true and .state == "Working"'

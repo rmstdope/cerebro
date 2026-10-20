@@ -38,8 +38,8 @@
 #
 # The binary is built with `cargo build' and run by this suite itself - never as cargo's child
 # (.cerebro/traps.md). Every wait is a bounded poll that fails with what the view saw and did.
-# The suite costs about a minute, most of it the condition walk and the half minute the last pass
-# is given before it is ended.
+# Most of the suite's time is the condition walk and the half minute the last pass is given before
+# it is ended; the clock roles' ten seconds run out inside the walk.
 #
 #     bash tests/fleet-role-triggers.sh
 
@@ -322,7 +322,7 @@ has_decision() { [ -n "$(decision "$1" "$2")" ]; }
 session_of() { awk -v n="$1" '$2 == n { print; exit }' "$fixture/sessions" 2>/dev/null || true; }
 has_session() { [ -n "$(session_of "$1")" ]; }
 # The names with sessions, sorted. With `--conditions', only the five roles a condition starts:
-# Forge's and Sage's clock runs while the others are given theirs, and is held to its own minute.
+# Forge's and Sage's clock runs while the others are given theirs, and is held to its own declared cadence.
 started_names() {
   awk -v all="${1:-}" 'all != "--conditions" || ($2 != "Forge" && $2 != "Sage") { print $2 }' \
     "$fixture/sessions" 2>/dev/null | sort | tr '\n' ' '

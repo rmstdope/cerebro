@@ -27,7 +27,7 @@ R6  A row shows an agent alive only while its session's process runs and still n
     Proven by: nothing yet
 R7  The navigator sees the board as work queues (Claimed, Ready to produce, Waiting on
     you, Merged unverified, …) that refresh on their own.
-    Proven by: nothing yet
+    Proven by: tests/fleet-board.sh
 R8  When bd or the fleet cannot be read, the last snapshot stays on screen marked stale,
     and the other pane is unaffected.
     Proven by: nothing yet

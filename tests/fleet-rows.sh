@@ -181,21 +181,24 @@ wait_until() {
 row_start='^(│|┃)[^ ]+ '
 row() { grep -E "$row_start$1 " "$screen" 2>/dev/null || true; }
 row_count() { grep -cE "$row_start$1 " "$screen" 2>/dev/null || true; }
+# row_reads <name> <cell>...: NAME's row holds the CELLs in this order, each straight after a run
+# of spaces, the last ending at a space - so each cell must be the next column's whole content, and
+# `build' in a standby producer's `→ agreed build' cannot pass for a phase in the STATE column. The
+# cells are plain words, digits and spaces, so they are used as written.
 row_reads() {
-  local name="$1" line
+  local name="$1" re cell
   shift
-  line="$(row "$name")"
-  local word
-  for word in "$@"; do
-    [[ "$line" == *"$word"* ]] || return 1
-  done
+  re="$name"
+  for cell in "$@"; do re+=" +$cell"; done
+  re+=" "
+  [[ "$(row "$name")" =~ $re ]]
 }
 all_rows_drawn() {
   local name
   for name in Rogue Gambit Forge Wolverine; do
     [ -n "$(row "$name")" ] || return 1
   done
-  row_reads Rogue cb-r5a
+  [[ "$(row Rogue)" == *cb-r5a* ]]
 }
 
 # --- the rows ---------------------------------------------------------------------------------------------

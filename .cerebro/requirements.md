@@ -44,7 +44,7 @@ R11 Only the first window on a checkout operates the fleet; a second draws and a
     Proven by: tests/fleet-one-window.sh
 R12 A session that dies on a launcher refusal shows the refusal on its row and is not
     started again until the navigator presses s.
-    Proven by: nothing yet
+    Proven by: tests/fleet-refused.sh
 
 ## Fleet view: starting on triggers
 

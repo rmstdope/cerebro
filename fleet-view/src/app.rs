@@ -1909,6 +1909,9 @@ pub struct App {
     /// Give-backs this view has asked for, by agent name: the bead, and whether the write is still
     /// running or failed at a time. Its beads are spoken for until the entry goes.
     pub releasing: std::collections::BTreeMap<String, model::Releasing>,
+    /// Give-backs whose write answered that the bead is back on the board, as (name, bead), not
+    /// yet handed to the start ledger (cb-4yj4). `start_due` drains it.
+    pub returned: Vec<(String, String)>,
     /// Claims `release-bead --ended` kept, as (name, bead): memory only, so `give_back` does not
     /// ask again every minute. Pruned to what the board still shows; a restarted view asks once
     /// more (cb-10d.4).
@@ -2170,6 +2173,7 @@ impl App {
             armed: BTreeSet::new(),
             handed: std::collections::BTreeMap::new(),
             releasing: std::collections::BTreeMap::new(),
+            returned: Vec::new(),
             kept: std::collections::BTreeSet::new(),
             complaints: std::collections::BTreeMap::new(),
             tidying: std::collections::BTreeMap::new(),
@@ -3871,8 +3875,12 @@ impl App {
             }
             WriteAnswer::Release { name, bead, outcome, .. } => {
                 let action = match outcome {
-                    crate::lifecycle::ReleaseOutcome::Returned { .. }
-                    | crate::lifecycle::ReleaseOutcome::Closed => {
+                    crate::lifecycle::ReleaseOutcome::Returned { .. } => {
+                        self.releasing.remove(&name);
+                        self.returned.push((name, bead));
+                        AppAction::RefreshWork
+                    }
+                    crate::lifecycle::ReleaseOutcome::Closed => {
                         self.releasing.remove(&name);
                         AppAction::RefreshWork
                     }

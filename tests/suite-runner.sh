@@ -765,6 +765,105 @@ $both"
   || fail "the guard the caller set was not exported: '$(cat "$work_dir/seen-guard")'"
 pass "a guard the caller set is exported to every suite"
 
+# --- 22. suites a directory declares slow start first, longest first, then the rest by name ---
+#
+# cb-drjb: started in name order, CI's longest suite (fleet-role-triggers.sh, ~110s) began ~50s in,
+# and the Bash job's last ~19s were one suite with three slots empty. `<dir>/slow-suites' names the
+# long ones, longest first, and they start before everything else. `--jobs 1' makes the start
+# order the whole observable: each `-- ' line is printed as its suite starts.
+
+# The `-- ' lines of the last run, as basenames, one per line.
+started() {
+  sed -n 's|^-- .*/||p' <<<"$out"
+}
+
+mkdir -p "$work_dir/ordered"
+for f in a-quick b-quick y-slow z-slow; do
+  printf '#!/usr/bin/env bash\nexit 0\n' >"$work_dir/ordered/$f.sh"
+done
+printf 'z-slow.sh\ny-slow.sh\n' >"$work_dir/ordered/slow-suites"
+
+run --jobs 1 "$work_dir/ordered"
+[[ $status -eq 0 ]] || fail "declared order: expected exit 0, got $status
+$both"
+order="$(started | tr '\n' ' ')"
+[[ "$order" == "z-slow.sh y-slow.sh a-quick.sh b-quick.sh " ]] \
+  || fail "declared order: expected 'z-slow.sh y-slow.sh a-quick.sh b-quick.sh', got '$order'
+$both"
+pass "suites named in slow-suites start first, in the order listed, then the rest by name"
+
+# --- 23. a stale, duplicated or commented line in slow-suites never turns a run red ---
+#
+# The list is a hint about time, not about correctness: a suite renamed or deleted without the
+# list being edited is said once on stderr, and the run is decided by the suites alone.
+
+printf '# longest first\n\ngone.sh\n  z-slow.sh   # padded\nz-slow.sh\nb quick.sh\n' >"$work_dir/ordered/slow-suites"
+run --jobs 1 "$work_dir/ordered"
+[[ $status -eq 0 ]] || fail "stale entry: expected exit 0, got $status
+$both"
+order="$(started | tr '\n' ' ')"
+[[ "$order" == "z-slow.sh a-quick.sh b-quick.sh y-slow.sh " ]] \
+  || fail "stale entry: expected 'z-slow.sh a-quick.sh b-quick.sh y-slow.sh', got '$order'
+$both"
+grep -qF "suite-runner: $work_dir/ordered/slow-suites names gone.sh, which is not a suite here" <<<"$err" \
+  || fail "stale entry: no advisory on stderr naming gone.sh
+$both"
+! grep -q "names *z-slow.sh" <<<"$err" \
+  || fail "stale entry: a padded line was not trimmed to its suite
+$both"
+grep -qF "suite-runner: $work_dir/ordered/slow-suites names b quick.sh, which is not a suite here" <<<"$err" \
+  || fail "stale entry: a name with an inner space was not refused
+$both"
+grep -q '^all suites passed$' <<<"$out" || fail "stale entry: no 'all suites passed'
+$both"
+
+pass "a stale, duplicated or commented slow-suites line is an advisory, never a red run"
+
+# --- 24. with no slow-suites the order is the name order, and a listed failure is still replayed ---
+
+rm "$work_dir/ordered/slow-suites"
+run --jobs 1 "$work_dir/ordered"
+order="$(started | tr '\n' ' ')"
+[[ "$order" == "a-quick.sh b-quick.sh y-slow.sh z-slow.sh " ]] \
+  || fail "no list: expected name order, got '$order'
+$both"
+[[ -z "$err" ]] || fail "no list: expected nothing on stderr, got:
+$err"
+
+printf '#!/usr/bin/env bash\necho "y said this"\nexit 3\n' >"$work_dir/ordered/y-slow.sh"
+printf 'y-slow.sh\n' >"$work_dir/ordered/slow-suites"
+run --jobs 1 "$work_dir/ordered"
+[[ $status -eq 1 ]] || fail "listed failure: expected exit 1, got $status
+$both"
+grep -qF -- "== output of $work_dir/ordered/y-slow.sh ==" <<<"$out" \
+  || fail "listed failure: no replay for y-slow.sh
+$both"
+grep -qx "y said this" <<<"$out" || fail "listed failure: the replay lost the suite's output
+$both"
+[[ "$(grep -c '^== output of ' <<<"$out")" -eq 1 ]] || fail "listed failure: expected exactly one replay
+$both"
+pass "with no slow-suites suites start by name, and a listed suite's failure is replayed once"
+
+# --- 25. a suite that reads stdin cannot swallow the suites after it ---
+#
+# The launch loop walks the start order as a list; a suite that reads stdin (`cat', `read', a hook
+# reading its payload) must get none of it, or the suites after it never start and are reported
+# failed with empty replays.
+
+mkdir -p "$work_dir/stdin"
+printf '#!/usr/bin/env bash\ncat >/dev/null\nexit 0\n' >"$work_dir/stdin/a-reads.sh"
+for f in b c d; do
+  printf '#!/usr/bin/env bash\nexit 0\n' >"$work_dir/stdin/$f.sh"
+done
+run --jobs 1 "$work_dir/stdin" </dev/null
+[[ $status -eq 0 ]] || fail "stdin reader: expected exit 0, got $status
+$both"
+order="$(started | tr '\n' ' ')"
+[[ "$order" == "a-reads.sh b.sh c.sh d.sh " ]] \
+  || fail "stdin reader: expected all four suites to start, got '$order'
+$both"
+pass "a suite that reads stdin cannot swallow the suites after it"
+
 default_runs_after="$(ls "$default_log_root" 2>/dev/null || true)"
 [[ "$default_runs_after" == "$default_runs_before" ]] || fail "a call in this suite wrote to the default log root at $default_log_root.
 Every call must carry --log-dir under \$work_dir; go through \`run', which supplies one.

@@ -396,6 +396,16 @@ quit_view() {
   done
   wait "$driver" 2>/dev/null || true
   exec 7>&-
+  # A session that outlived its view would be in the next view's process tree, and that role would
+  # never start there: name it here instead.
+  local name pid
+  if [ -s "$fixture/sessions" ]; then
+    while read -r _ name _ pid; do
+      if kill -0 "$pid" 2>/dev/null; then
+        fail "$1's $name session (pid $pid) outlived the view$(evidence)"
+      fi
+    done < "$fixture/sessions"
+  fi
   mkdir -p "$work_dir/$1"
   mv "$state"/*.jsonl "$work_dir/$1/" 2>/dev/null || true
   mv "$fixture/sessions" "$work_dir/$1/" 2>/dev/null || true
@@ -477,6 +487,7 @@ pass "Moira, Cypher, Forge and Sage are started on their declared cadence, no so
 for name in Moira Cypher Forge Sage; do
   wait_until 70 "the view to end $name's pass" has_decision end "$name"
 done
+expect_started Moira Cypher Forge Sage
 quit_view run2
 
 # --- run 3: each trigger in turn ------------------------------------------------------------------

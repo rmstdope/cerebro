@@ -30,8 +30,13 @@
 # on the same address and two different checkouts almost never do. TWO checksums are XOR-ed rather
 # than one taken, because a single `cksum' over two roots that share a long prefix - which is
 # exactly what `~/repos/x' and `~/repos/x-hud' are - moves in step and folds onto neighbouring
-# ports. A collision is not silently wrong, either: the diagnostic record names the identity, so
-# two checkouts that did collide both report a lock error and neither acts. Fail-closed twice over.
+# ports. The root sits at a DIFFERENT OFFSET in the two strings, `A:<root>' and `<root>:B', and
+# that is load-bearing: `cksum' is a CRC, a CRC is affine over XOR, and two equal-length strings
+# that differ only in a fixed byte XOR to a constant - so `A:<root>' against `B:<root>' cancelled
+# the root out and made the port a function of its length alone (cb-7jmm).
+#
+# A collision is not silently wrong, either: the diagnostic record names the identity, so two
+# checkouts that did collide both report a lock error and neither acts. Fail-closed twice over.
 #
 # THE RANGE STOPS BELOW 32768, which is where Linux's default `ip_local_port_range' begins. A port
 # above it can be taken transiently by somebody's outbound connection, and the fleet would read
@@ -84,13 +89,13 @@ cksum_of() {
   printf '%s' "$1"
 }
 
-# 20000 + ((cksum("A:<root>") ^ cksum("B:<root>")) % 12768): 20000-32767, two sums so that a
-# shared prefix cannot walk two checkouts onto adjacent ports, and a ceiling below Linux's
-# ephemeral range (see above).
+# 20000 + ((cksum("A:<root>") ^ cksum("<root>:B")) % 12768): 20000-32767, two sums so that a
+# shared prefix cannot walk two checkouts onto adjacent ports, the root at two offsets so the XOR
+# cannot cancel it, and a ceiling below Linux's ephemeral range (see above).
 endpoint_for() {
   local root="$1" a b
   a="$(cksum_of "A:$root")"
-  b="$(cksum_of "B:$root")"
+  b="$(cksum_of "$root:B")"
   printf '127.0.0.1:%s\n' "$(( 20000 + ((a ^ b) % 12768) ))"
 }
 

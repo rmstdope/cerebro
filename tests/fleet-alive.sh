@@ -164,7 +164,11 @@ wait_until() {
 # heads its History line (`Rogue working 0m').
 row_of() { grep -E -m1 "(^|[^[:alnum:]])$1 +producer( |$)" "$screen" 2>/dev/null || true; }
 # row_says <Name> <word>: NAME's row carries WORD as a word of its own.
-row_says() { row_of "$1" | grep -Eq "(^|[[:space:]])$2([[:space:]]|$)"; }
+row_says() {
+  local row
+  row="$(row_of "$1")"
+  grep -Eq "(^|[[:space:]])$2([[:space:]]|$)" <<<"$row"
+}
 on_screen() { grep -Fq -- "$1" "$screen" 2>/dev/null; }
 off_screen() { ! on_screen "$1"; }
 

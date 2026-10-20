@@ -319,6 +319,9 @@ pass "Gambit is started on cb-b2, claimed the same way, $((gambit_at - rogue_at)
 # so a start, had there been a bead to give, would have come.
 bishop_free_after="$(python3 -I -c 'import sys, datetime; print(datetime.datetime.fromtimestamp(int(sys.argv[1]) + 31, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))' "$gambit_at")"
 bishop_evaluated_free() {
+  # A start of Bishop takes the row off standby, so no later evaluation would come: fail at once.
+  [ -z "$(start_ts Bishop)" ] \
+    || fail "the view started Bishop with only unranked, un-agreed and held beads left$(evidence)"
   jq -se --arg after "$bishop_free_after" \
     'any(.[]; .agent == "Bishop" and .ts >= $after)' "$state/evaluations.jsonl" >/dev/null 2>&1
 }

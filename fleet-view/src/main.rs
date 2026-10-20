@@ -5795,7 +5795,7 @@ mod main_tests {
         give_back(&mut app, &host, &mut test_logger(), &paths, &roster, ended);
         let request = app.take_outbox().pop().expect("the ended pass's bead is given back");
         app.begin_write(&request, std::path::Path::new("bd"));
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &roster, ended);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &BTreeMap::new(), &roster, ended);
         assert!(!host.is_live("Xavier"), "nothing to start while the give-back is in flight");
 
         app.finish_write(app::WriteAnswer::Release {
@@ -5806,11 +5806,11 @@ mod main_tests {
         });
         // A board read from before the give-back landed still shows cb-ux held: nothing is
         // settled against it.
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &roster, ended);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &BTreeMap::new(), &roster, ended);
         assert!(!host.is_live("Xavier"), "the old board holds cb-ux still");
         // The board after the give-back: cb-ux is back, unassigned, at the give-back's revision.
         app.finish_work_refresh(Ok(board(ux_bead(given_back_at, None), true)), now);
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &BTreeMap::new(), &roster, now);
 
         assert!(
             !host.is_live("Xavier"),
@@ -5831,6 +5831,7 @@ mod main_tests {
             &paths,
             &BTreeMap::new(),
             1,
+            &BTreeMap::new(),
             &roster,
             now + chrono::Duration::seconds(6),
         );
@@ -5903,7 +5904,7 @@ mod main_tests {
         give_back(&mut app, &host, &mut test_logger(), &paths, &roster, ended);
         let request = app.take_outbox().pop().expect("the stale board's bead is given back");
         app.begin_write(&request, std::path::Path::new("bd"));
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &roster, ended);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &BTreeMap::new(), &roster, ended);
         app.finish_write(app::WriteAnswer::Release {
             name: "Xavier".into(),
             bead: "cb-ux".into(),
@@ -5911,13 +5912,13 @@ mod main_tests {
             outcome: lifecycle::ReleaseOutcome::Elsewhere,
         });
         app.finish_work_refresh(Ok(board(ux_bead(ended, None, &["ux:agreed"]), false)), now);
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &BTreeMap::new(), &roster, now);
         assert!(!host.is_live("Xavier"), "nothing to design");
 
         // A producer parks it back to UX: the same queue the pass was started on, a newer revision.
         let later = now + chrono::Duration::seconds(30);
         app.finish_work_refresh(Ok(board(ux_bead(later, None, &[]), true)), later);
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &roster, later);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &BTreeMap::new(), &roster, later);
         assert!(host.is_live("Xavier"), "a return from a later stage starts the UX row");
         host.kill(&paths, "Xavier");
         settle_gone(&mut host, "Xavier");

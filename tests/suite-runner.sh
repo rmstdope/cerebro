@@ -808,6 +808,9 @@ $both"
 grep -qF "suite-runner: $work_dir/ordered/slow-suites names gone.sh, which is not a suite here" <<<"$err" \
   || fail "stale entry: no advisory on stderr naming gone.sh
 $both"
+! grep -q "names *z-slow.sh" <<<"$err" \
+  || fail "stale entry: a padded line was not trimmed to its suite
+$both"
 grep -qF "suite-runner: $work_dir/ordered/slow-suites names b quick.sh, which is not a suite here" <<<"$err" \
   || fail "stale entry: a name with an inner space was not refused
 $both"

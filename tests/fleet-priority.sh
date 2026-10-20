@@ -159,7 +159,7 @@ writes() { grep -E '^(update|dolt) ' "$bd_log" 2>/dev/null || true; }
 write_count() { writes | wc -l | tr -d ' '; }
 writes_at_least() { [ "$(write_count)" -ge "$1" ]; }
 # board_read_after <line>: the view's own board read (`list --status ...') is logged below LINE.
-board_read_after() { tail -n +$(($1 + 1)) "$bd_log" | grep -q ' list --status '; }
+board_read_after() { awk -v after="$1" 'NR > after && / list --status / { found = 1 } END { exit !found }' "$bd_log"; }
 
 # key <key> <to> <sentence>: press KEY, and expect exactly one write of `--priority TO' and its
 # push - nothing before them, nothing else - then SENTENCE in the header and the row at P<TO>.

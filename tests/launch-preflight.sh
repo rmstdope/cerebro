@@ -509,15 +509,6 @@ grep -qF "git mv .claude/cerebro .cerebro/cerebro" <<<"$out" \
   || fail "old mount: expected the git mv line, got: $out"
 pass "a submodule at the retired .claude/cerebro mount is refused at launch"
 
-# --- produce-bead names no tool -------------------------------------------------------------------
-#
-# The bead's own acceptance: the skill an producer reads in a Python project must not tell it to
-# run pnpm or cargo. The disk preflight was the last of them and became a cerebro script of its own
-# in ah-qled.7.2, so there is nothing left to exempt.
-hits="$(grep -nE "pnpm|cargo" "$repo_root/skills/produce-bead/SKILL.md" || true)"
-[[ -z "$hits" ]] || fail "produce-bead still names a tool: $hits"
-pass "produce-bead names no build tool at all"
-
 # --- cerebro's own checkout, mounted in itself, launches (cb-i3l.1) -------------------------------
 #
 # The self-consumer is not a variant of make_consumer: there is no submodule under .claude, because

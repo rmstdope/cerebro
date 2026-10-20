@@ -78,7 +78,7 @@ R20 Each hand-off between roles puts the bead in exactly the queue of the role m
     Proven by: tests/label-routes.sh
 R28 When the project declares a verification skill, Psylocke opens the merged build in the
     browser herself and brings the navigator the evidence and a recommended verdict.
-    Proven by: nothing yet
+    Proven by: tests/fleet-verification-skill.sh
 
 ## Sessions and spend
 

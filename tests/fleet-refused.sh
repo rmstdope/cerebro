@@ -261,6 +261,9 @@ press s
 wait_until 20 "s to start Rogue again" starts_are 2
 wait_until 20 "the refusal to leave the row once Rogue is up" off_screen '✗ refused'
 wait_until 20 "the Session pane to stop showing the refusal" off_screen 'launch refused'
-pass "s starts the refused row again, and the refusal leaves it"
+# And the row reads alive - the live marker and the started pass's own phase - not a row the view
+# still draws dead or standby.
+wait_until 20 "Rogue's row to read alive, in its build phase" grep -Eq '● Rogue +producer +build' "$screen"
+pass "s starts the refused row again, Rogue reads alive, and the refusal leaves it"
 
 suite_passed

@@ -3695,7 +3695,9 @@ mod main_tests {
             "the setup must actually have an old view holding the legacy port"
         );
         let old = old.unwrap();
-        std::fs::write(record, format!("{{\"identity\":\"{identity}\",\"pid\":1}}\n"))
+        // A live pid: this test process stands in for the old view.
+        let pid = std::process::id();
+        std::fs::write(record, format!("{{\"identity\":\"{identity}\",\"pid\":{pid}}}\n"))
             .expect("the old record");
         let held = old.endpoint().unwrap();
         (old, held)

@@ -26,7 +26,9 @@
 //! root's length alone, so it is shared with every other checkout of that length; a legacy port
 //! held by anybody but an old view of *this* checkout is ignored, and taken up later if it frees.
 //! Telling the two apart is the one thing the record decides here: an old view writes no
-//! `endpoint` field, and every newer one does.
+//! `endpoint` field, and every newer one does. An old view killed without its `Drop` leaves that
+//! record behind, so it counts only while the pid it names is alive; a dead one is a crash's
+//! leftover, harmless as every other stale record is.
 
 use std::fmt;
 use std::fs;
@@ -241,7 +243,9 @@ impl SupervisorLease {
             }
             Err(err) if err.kind() == ErrorKind::AddrInUse => {
                 match read_record(&self.record_path) {
-                    Some(fields) if fields.identity == self.identity && fields.endpoint.is_none() => {
+                    Some(RecordFields { identity, endpoint: None, pid: Some(pid) })
+                        if identity == self.identity && process_is_alive(pid) =>
+                    {
                         Err(AcquireError::OwnedBy)
                     }
                     _ => Ok(()),
@@ -294,7 +298,7 @@ impl Drop for SupervisorLease {
         // Our endpoint too: an old view that took the legacy port from under this lease wrote a
         // record naming the same checkout, and that one is the old view's (cb-ebqd).
         let ours = self.listener.local_addr().ok().map(|a| a.to_string());
-        if let Some(RecordFields { identity, endpoint }) = read_record(&self.record_path) {
+        if let Some(RecordFields { identity, endpoint, .. }) = read_record(&self.record_path) {
             if identity == self.identity && endpoint == ours {
                 let _ = fs::remove_file(&self.record_path);
             }
@@ -307,6 +311,18 @@ struct RecordFields {
     identity: String,
     /// Absent from a record written by a view older than cb-7jmm (cb-ebqd).
     endpoint: Option<String>,
+    pid: Option<i32>,
+}
+
+/// Is a process with this pid alive? `kill(pid, 0)` sends nothing; `EPERM` means it exists and
+/// belongs to somebody else. A pid of zero or below names a process group, never one process.
+fn process_is_alive(pid: i32) -> bool {
+    if pid <= 0 {
+        return false;
+    }
+    // SAFETY: signal 0 performs only the existence and permission checks.
+    let answer = unsafe { libc::kill(pid, 0) };
+    answer == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
 
 /// The record on a bound port, read for diagnosis alone. Whatever this returns, the caller does
@@ -330,7 +346,8 @@ fn read_record(path: &Path) -> Option<RecordFields> {
     let text = fs::read_to_string(path).ok()?;
     let identity = json_field(&text, "identity")?;
     let endpoint = json_field(&text, "endpoint");
-    Some(RecordFields { identity, endpoint })
+    let pid = json_number(&text, "pid");
+    Some(RecordFields { identity, endpoint, pid })
 }
 
 fn json_field(text: &str, key: &str) -> Option<String> {
@@ -353,6 +370,14 @@ fn json_field(text: &str, key: &str) -> Option<String> {
         }
     }
     None
+}
+
+fn json_number(text: &str, key: &str) -> Option<i32> {
+    let needle = format!("\"{key}\"");
+    let start = text.find(&needle)? + needle.len();
+    let rest = text[start..].trim_start().strip_prefix(':')?.trim_start();
+    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    digits.parse().ok()
 }
 
 fn json_string(value: &str) -> String {
@@ -648,6 +673,22 @@ mod tests {
         acquire_beside(legacy, &record, "/repos/x").expect("a stale record is no owner");
     }
 
+    /// An old view killed without its `Drop` leaves its record. With another checkout of the same
+    /// length on the legacy port, that record must not keep this checkout read-only for as long
+    /// as the stranger runs.
+    #[test]
+    fn a_dead_old_views_record_is_not_an_owner() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let record = dir.path().join("supervisor.json");
+        let mut gone = std::process::Command::new("true").spawn().expect("spawn");
+        let pid = gone.id();
+        gone.wait().expect("reap");
+        std::fs::write(&record, format!("{{\"identity\":\"/repos/x\",\"pid\":{pid}}}\n"))
+            .expect("write");
+        let (_stranger, legacy) = foreign_listener();
+        acquire_beside(legacy, &record, "/repos/x").expect("a dead old view owns nothing");
+    }
+
     /// An old view that takes the legacy port from under a kept lease - it was retrying there
     /// while a stranger held it - is the owner: the lease must be let go, and letting it go
     /// leaves the old view's record where it is.
@@ -662,8 +703,9 @@ mod tests {
 
         drop(stranger);
         let old = acquire_once_free(legacy, &record, "/repos/x");
-        let old_record = "{\"identity\":\"/repos/x\",\"pid\":1}\n";
-        std::fs::write(&record, old_record).expect("the old view's record");
+        // A live pid: this test process stands in for the old view.
+        let old_record = format!("{{\"identity\":\"/repos/x\",\"pid\":{}}}\n", std::process::id());
+        std::fs::write(&record, &old_record).expect("the old view's record");
 
         match lease.keep_legacy() {
             Err(AcquireError::OwnedBy) => {}

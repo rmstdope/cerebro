@@ -876,11 +876,9 @@ pub fn spoken_for(
 
 /// The other holders of ROLE, excluding NAME itself - who a start could race with
 /// (`cerebro--role-peers`). A role with one holder has none, which is what makes this answer "no"
-/// for every role but the planners and the implementers without naming any of them.
+/// for every role but the UX agents and the builders without naming any of them. Producers have
+/// no exemption: two started in one tick race each other's launch preflight (R13, cb-gkhx).
 pub fn role_peers<'a>(name: &str, role: &str, roster: &'a [RosterEntry]) -> Vec<&'a str> {
-    if role == "producer" {
-        return Vec::new();
-    }
     roster
         .iter()
         .filter(|entry| entry.role == role && entry.name != name)
@@ -2017,12 +2015,21 @@ mod tests {
 
     #[test]
     fn a_peer_started_inside_the_window_holds_the_second_start() {
-        let fleet = roster(&[("Xavier", "ux"), ("Beast", "ux"), ("Rogue", "producer")]);
+        let fleet = roster(&[
+            ("Xavier", "ux"),
+            ("Beast", "ux"),
+            ("Rogue", "producer"),
+            ("Gambit", "producer"),
+            ("Bishop", "bugfixer"),
+        ]);
         let peers = role_peers("Beast", "ux", &fleet);
         assert_eq!(peers, vec!["Xavier"]);
+        // Producers are spaced like any other role (R13, cb-gkhx): two of them started in one
+        // tick raced each other's launch preflight, and one session died on startup.
+        assert_eq!(role_peers("Rogue", "producer", &fleet), vec!["Gambit"]);
         // A role with one holder has no peers, which is what makes this answer "no" for every
         // role but the UX agents and the builders without naming any of them.
-        assert!(role_peers("Rogue", "producer", &fleet).is_empty());
+        assert!(role_peers("Bishop", "bugfixer", &fleet).is_empty());
 
         let mut started = BTreeMap::new();
         started.insert("Xavier".to_string(), at(0));

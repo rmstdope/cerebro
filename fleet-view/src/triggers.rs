@@ -1075,6 +1075,9 @@ pub struct StartLedger {
     seen_up_at: BTreeMap<String, DateTime<Utc>>,
     fingerprints: BTreeMap<String, Fingerprint>,
     failures: BTreeMap<String, u32>,
+    /// A bead this view gave back from NAME whose give-back is not yet seen on the board
+    /// (cb-4yj4). See `settle_given_back`.
+    given_back: BTreeMap<String, String>,
 }
 
 impl StartLedger {
@@ -1082,6 +1085,7 @@ impl StartLedger {
     /// navigator made by hand, which is never compared against anything).
     pub fn note_started(&mut self, name: &str, at: DateTime<Utc>, fingerprint: Option<Fingerprint>) {
         self.started_at.insert(name.to_string(), at);
+        self.given_back.remove(name);
         match fingerprint {
             Some(print) => {
                 self.fingerprints.insert(name.to_string(), print);
@@ -1139,6 +1143,37 @@ impl StartLedger {
 
     pub fn fingerprint(&self, name: &str) -> Option<&Fingerprint> {
         self.fingerprints.get(name)
+    }
+
+    /// Record that this view is giving BEAD back from NAME (cb-4yj4). Idempotent.
+    pub fn note_given_back(&mut self, name: &str, bead: &str) {
+        self.given_back.insert(name.to_string(), bead.to_string());
+    }
+
+    /// Absorb the revision the view's own give-back gave a bead into the fingerprint of the pass
+    /// it was given back from (cb-4yj4).
+    ///
+    /// Unassigning a bead moves its `updated_at`, and the UX fingerprint carries that revision so
+    /// a bead returned from a later stage breaks the unchanged-work guard. Left alone, the view's
+    /// own give-back would read as such a return and start the row again on the very bead its
+    /// pass left untouched. A held bead is never a candidate, so the first tick that lists a given-
+    /// back bead again is the board after the give-back: its revision there replaces the one the
+    /// pass was started with, and only a later write moves it again.
+    pub fn settle_given_back(&mut self, facts: &TriggerFacts) {
+        let fingerprints = &mut self.fingerprints;
+        self.given_back.retain(|name, bead| {
+            let Some((_, now)) = facts.undesigned_revisions.iter().find(|(id, _)| id == bead) else {
+                return true;
+            };
+            if let Some(Fingerprint::Ux { undesigned_revisions, .. }) = fingerprints.get_mut(name) {
+                for (id, revision) in undesigned_revisions.iter_mut() {
+                    if id == bead {
+                        *revision = *now;
+                    }
+                }
+            }
+            false
+        });
     }
 
     /// Arm a name the roster declared `standby` but did not start: give it an `ended_at` of NOW

@@ -8210,14 +8210,14 @@ mod main_tests {
             let mut host = SessionHost::default();
             let (mut app, mut ledger) = backing_off(1, 100, short_buffer(), now);
 
-            start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &roster, now);
+            start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &BTreeMap::new(), &roster, now);
             assert!(host.is_live("Xavier"), "one failure waits nothing at all");
             assert_eq!(ledger.failures("Xavier"), 2, "counted before the launch");
 
             // A fleet read sees the session up, but it never says a word of its own.
             let seen = now + chrono::Duration::seconds(5);
             app.finish_refresh(Ok(vec![ux_row("Xavier", unreported.clone())]), seen);
-            start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &roster, seen);
+            start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &BTreeMap::new(), &roster, seen);
             assert_eq!(ledger.failures("Xavier"), 2, "{unreported:?} is not a pass that ran");
 
             // Then it dies, and its bead is given back.
@@ -8226,7 +8226,7 @@ mod main_tests {
             app.handed.clear();
             let later = now + chrono::Duration::seconds(10);
             app.finish_refresh(Ok(vec![ux_row("Xavier", cerebro_tui::model::RowState::Dead)]), later);
-            start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &roster, later);
+            start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &BTreeMap::new(), &roster, later);
             assert!(!host.is_live("Xavier"), "after {unreported:?}, the second failure is backed off");
             assert_eq!(
                 app.standby_labels.get("Xavier").map(String::as_str),

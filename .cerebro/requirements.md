@@ -76,6 +76,9 @@ R19 A failed verification reopens the bead at P0, unassigned, in front of a buil
 R20 Each hand-off between roles puts the bead in exactly the queue of the role meant to
     take it, and no other.
     Proven by: tests/label-routes.sh
+R28 When the project declares a verification skill, Psylocke opens the merged build in the
+    browser herself and brings the navigator the evidence and a recommended verdict.
+    Proven by: nothing yet
 
 ## Sessions and spend
 

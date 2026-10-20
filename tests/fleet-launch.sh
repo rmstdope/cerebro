@@ -18,7 +18,9 @@
 #     suite drops `Forge.ask' runs the PreToolUse command the file named by its own `--settings'
 #     declares for the question tool, in the environment it inherited - exactly how a hook runs. On
 #     `Forge.answer' it runs the PostToolUse one. So a lost `--settings', a wrong path, or a launcher
-#     that does not export what the hooks read all leave the row at `working', and the suite red.
+#     that does not export `CEREBRO_AGENT_NAME' all leave the row at `working', and the suite red.
+#     `CEREBRO_SCRIPTS' is not told apart: the view itself requires it, and a session it starts
+#     inherits it whether or not `agent-hooks-env' exports it, so that export is not proven here.
 #   - `bd' and `gh' stubs that refuse: nothing here reads the board.
 #
 # The binary is built with `cargo build' and run by this suite itself - never as cargo's child,
@@ -182,7 +184,6 @@ wait_until "the stub agent to start" started
   || fail "s: the session is not on the model agents.conf names for the architect$(evidence)"
 [ "$(arg_after --effort)" = low ] \
   || fail "s: the session is not at the effort agents.conf names for the architect$(evidence)"
-# A working row's State column shows its phase (ui::state_label), so `daily' on the row is `working'.
 # Compared physically: launch names it through `scripts/..', and a temporary directory may sit
 # behind a symlink.
 settings="$(arg_after --settings)"
@@ -190,6 +191,7 @@ settings="$(arg_after --settings)"
 [ "$(cd "$(dirname "$settings")" && pwd -P)/$(basename "$settings")" = \
   "$(cd "$consumer/.cerebro/cerebro/hooks" && pwd -P)/session-state.settings.json" ] \
   || fail "s: the session was not handed the consumer's hook settings (got '$settings')$(evidence)"
+# A working row's State column shows its phase (ui::state_label), so `daily' on the row is `working'.
 wait_until "Forge's row to read its phase" on_screen 'Forge +architect +daily'
 pass "s starts Forge through launch, on agents.conf's model and effort, with the hook settings"
 

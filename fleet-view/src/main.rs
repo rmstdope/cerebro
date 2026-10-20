@@ -1029,12 +1029,12 @@ fn start_due(
         }
     }
 
+    // Seen REPORTING, not merely seen: a row up without a word of its own has run no pass, and
+    // `note_seen_up` would clear its failed starts (cb-lt16).
     let seen: Vec<String> = app
         .fleet_rows()
         .iter()
-        .filter(|row| {
-            !matches!(row.state, RowState::Dead | RowState::Standby | RowState::Invalid)
-        })
+        .filter(|row| lifecycle::row_reported(row))
         .map(|row| row.name.clone())
         .collect();
     for name in seen {
@@ -1240,13 +1240,9 @@ fn give_back(
         return;
     }
     for (name, bead) in app.handed.clone() {
-        let state = app.fleet_rows().iter().find(|row| row.name == name).map(|row| row.state.clone());
         // Words only the agent's own state file produces: the session reported, and the bead is
         // its own word from here on - nothing to give back.
-        if matches!(
-            state,
-            Some(RowState::Working | RowState::Asking | RowState::Waiting | RowState::Idle | RowState::Unknown(_))
-        ) {
+        if app.fleet_rows().iter().any(|row| row.name == name && lifecycle::row_reported(row)) {
             app.handed.remove(&name);
             continue;
         }
@@ -8197,6 +8193,47 @@ mod main_tests {
             app.standby_labels.get("Xavier").map(String::as_str),
             Some("↻ retry in 25s, 2 failed")
         );
+    }
+
+    /// A session seen up on a fleet read WITHOUT having reported - `Starting` while `launch` runs
+    /// its preflight and makes the tree, or `Up` with no state file - has not run a pass, so it
+    /// neither clears the count nor gives the name an end later than its start (cb-lt16). Before
+    /// the fix a launch slower than one fleet read wiped the count every time, and a producer that
+    /// died on its bead was restarted every ten seconds for ever with `0 failed`.
+    #[test]
+    fn a_session_seen_up_without_reporting_is_still_a_failed_start() {
+        for unreported in [cerebro_tui::model::RowState::Starting, cerebro_tui::model::RowState::Up] {
+            let dir = tempfile::tempdir().unwrap();
+            let paths = scratch(dir.path(), "sleep 5");
+            let now = Utc::now();
+            let roster = ux_roster(&["Xavier"]);
+            let mut host = SessionHost::default();
+            let (mut app, mut ledger) = backing_off(1, 100, short_buffer(), now);
+
+            start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &BTreeMap::new(), &roster, now);
+            assert!(host.is_live("Xavier"), "one failure waits nothing at all");
+            assert_eq!(ledger.failures("Xavier"), 2, "counted before the launch");
+
+            // A fleet read sees the session up, but it never says a word of its own.
+            let seen = now + chrono::Duration::seconds(5);
+            app.finish_refresh(Ok(vec![ux_row("Xavier", unreported.clone())]), seen);
+            start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &BTreeMap::new(), &roster, seen);
+            assert_eq!(ledger.failures("Xavier"), 2, "{unreported:?} is not a pass that ran");
+
+            // Then it dies, and its bead is given back.
+            host.kill(&paths, "Xavier");
+            settle_gone(&mut host, "Xavier");
+            app.handed.clear();
+            let later = now + chrono::Duration::seconds(10);
+            app.finish_refresh(Ok(vec![ux_row("Xavier", cerebro_tui::model::RowState::Dead)]), later);
+            start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &BTreeMap::new(), &roster, later);
+            assert!(!host.is_live("Xavier"), "after {unreported:?}, the second failure is backed off");
+            assert_eq!(
+                app.standby_labels.get("Xavier").map(String::as_str),
+                Some("↻ retry in 20s, 2 failed"),
+                "after {unreported:?}"
+            );
+        }
     }
 
     #[test]

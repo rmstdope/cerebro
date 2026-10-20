@@ -51,10 +51,11 @@ binary="$(jq -r 'select(.reason == "compiler-artifact" and .target.name == "cere
 # --- the consumer -----------------------------------------------------------------------------------
 
 # Named `typing', a length no other suite running the view uses (fleet-keys `keys', 4;
-# fleet-board `board', 5; fleet-view-restart `restart', 7). The lease port `scripts/fleet-supervisor' derives depends on
-# the root's length alone (two cksums XOR-ed cancel to a function of the length; cb-ebqd), and
-# every suite's root is one `mktemp -d' plus its name, so two suites whose names have the same
-# length meet on one port in a parallel gate and both go read-only.
+# fleet-board `board', 5; fleet-view-restart `restart', 7). The lease port that
+# `scripts/fleet-supervisor' derives depends on the root's length alone (two cksums XOR-ed cancel
+# to a function of the length; cb-ebqd), and every suite's root is one `mktemp -d' plus its name,
+# so two suites whose names have the same length meet on one port in a parallel gate and both go
+# read-only.
 consumer="$(consumer_new typing --copy)"
 state="$consumer/.cerebro/state"
 stub_state="$consumer/.cerebro/stub"
@@ -139,6 +140,8 @@ on_screen() { grep -Eq "$1" "$screen" 2>/dev/null; }
 started() { [ -s "$stub_state/Forge.pid" ]; }
 gone() { ! kill -0 "$1" 2>/dev/null; }
 typed() { grep -Fxq -- "$1" "$stub_state/Forge.typed" 2>/dev/null; }
+lines_typed() { [ "$(wc -l < "$stub_state/Forge.typed" 2>/dev/null || echo 0)" -ge "$1" ]; }
+asks_nothing() { ! on_screen 'Kill Forge\?'; }
 
 wait_until "the view to supervise and publish its armed set" test -s "$state/standby.json"
 wait_until "Forge's row" on_screen 'Forge +architect +standby'
@@ -168,15 +171,31 @@ kill -0 "$agent" 2>/dev/null || fail "the agent died while being typed to$(evide
 pass "RET focuses Forge's session, and a line typed there reaches the agent whole"
 
 # --- F1: the keyboard is the view's again ----------------------------------------------------------
+#
+# The agent keeps whole lines, so a byte that leaked to it shows only once a RET follows: `n'
+# cancels the kill question, RET goes back into the session, and a bare RET there must reach the
+# agent as an empty line - F1's escape sequence, `k' or `n' in it would mean one of them was the
+# agent's as well as the view's.
+press $'\eOP'
+press k
+wait_until "the kill question" on_screen 'Kill Forge\?  y / n'
+press n
+wait_until "the kill question to close" asks_nothing
+press $'\r'
+press $'\r'
+wait_until "a second line to reach the agent" lines_typed 2
+second_line="$(sed -n 2p "$stub_state/Forge.typed")"
+[ -z "$second_line" ] \
+  || fail "F1, k or n reached the agent as well: $(od -c <<<"$second_line" | head -3)$(evidence)"
+kill -0 "$agent" 2>/dev/null || fail "n killed the agent$(evidence)"
+pass "F1 gives the keyboard back: k asks the view's question, and nothing of it reaches the agent"
 
 press $'\eOP'
 press k
 wait_until "the kill question" on_screen 'Kill Forge\?  y / n'
 press y
 wait_until "the stub agent to be killed" gone "$agent"
-[ "$(grep -c . "$stub_state/Forge.typed")" -eq 1 ] \
-  || fail "F1, k or y reached the agent as well$(evidence)"
-pass "F1 gives the keyboard back: k asks the view's question, not the agent"
+pass "y on the view's question kills the agent"
 
 # --- the view leaves cleanly --------------------------------------------------------------------------
 

@@ -26,7 +26,7 @@
 #     FAIL <path> (Ns)
 #
 #     == output of <path> ==          after the LAST suite has ended, once per failing suite, in
-#     <its stdout and stderr, verbatim>   glob order
+#     <its stdout and stderr, verbatim>   start order
 #
 # A passing suite's own output is hidden; a failing suite's is replayed in full, so the failure is
 # diagnosable without a re-run. The replay is deferred to the end because several suites are
@@ -54,6 +54,9 @@
 # carries on - logging is a convenience and must never be the reason a green gate is red.
 #
 # <path> is the glob result as-is, so `suite-runner tests' prints `tests/agent-alive.sh'.
+#
+# Start order: the suites `<dir>/slow-suites' names (basenames, longest first, one per line; `#'
+# comments) start first, then the rest in glob order - see the launch loop below (cb-drjb).
 #
 # Under GitHub Actions ($GITHUB_ACTIONS set, which GitHub sets on every job) each failing suite's
 # replay is wrapped in ::group::/::endgroup:: and followed by ::error. The live --/ok/FAIL lines
@@ -209,7 +212,7 @@ i=0
 while [[ $i -lt $jobs ]]; do echo >&3; i=$((i+1)); done
 
 # Runs one suite and reports it, writing its output and result to files the parent reads afterwards.
-# The slot is the suite's glob position, so the parent walks the same order without parsing names.
+# The slot is the suite's start position, so the parent walks the same order without parsing names.
 # It runs in a background subshell, so SECONDS and the locals are its own; every line it prints is
 # one short write, which is what keeps two jobs ending at the same moment from splitting a line.
 run_one() {
@@ -224,17 +227,50 @@ run_one() {
   echo >&3                           # the token back
 }
 
+# The start order (cb-drjb): the suites `<dir>/slow-suites' names, in the order it lists them, then
+# every other suite in glob order. Started in name order alone, CI's longest suite began ~50s into
+# a ~157s run and finished last with three of its four slots empty; a long suite started in the
+# first wave overlaps everything else instead. The list is basenames, longest first, one per line;
+# blank lines and `#' comments are ignored. It is a hint about time and never about correctness: a
+# name that is not a suite here is said once on stderr, a name listed twice runs once, and neither
+# changes the exit status. No list means name order, as before.
+#
 # A string, not an array: "${arr[@]}" on an empty array is an unbound-variable error under `set -u'
-# in bash 3.2, which is what macOS ships and what the gate runs on locally.
+# in bash 3.2, which is what macOS ships and what the gate runs on locally. Newline-delimited, so a
+# membership test is a match against "\n<path>\n".
 paths=""
-n=0
+if [[ -f "$dir/slow-suites" ]]; then
+  while IFS= read -r name || [[ -n "$name" ]]; do
+    name="${name%%#*}"
+    name="${name//[[:space:]]/}"
+    [[ -n "$name" ]] || continue
+    t="$dir/$name"
+    if [[ "$name" != */* && "$name" == *.sh && -f "$t" ]]; then
+      case "$paths"$'\n' in
+        *$'\n'"$t"$'\n'*) ;;          # listed twice: it runs once
+        *) paths="$paths"$'\n'"$t" ;;
+      esac
+    else
+      echo "suite-runner: $dir/slow-suites names $name, which is not a suite here" >&2
+    fi
+  done <"$dir/slow-suites"
+fi
 for t in "$dir"/*.sh; do
   [[ -e "$t" ]] || continue          # no suites at all: the glob stays literal
-  paths="$paths"$'\n'"$t"
+  case "$paths"$'\n' in
+    *$'\n'"$t"$'\n'*) ;;              # already first, from the list
+    *) paths="$paths"$'\n'"$t" ;;
+  esac
+done
+
+# The slot is the suite's position in that order, which is the order the replay below walks.
+n=0
+while IFS= read -r t; do
+  [[ -n "$t" ]] || continue
   read -r -u 3 _                     # blocks until a slot is free
   run_one "$t" "$n" &
   n=$((n+1))
-done
+done <<<"$paths"
 wait
 
 failed=""

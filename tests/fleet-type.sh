@@ -53,7 +53,7 @@ binary="$(jq -r 'select(.reason == "compiler-artifact" and .target.name == "cere
 # Named `typing', a length no other suite running the view uses (fleet-keys `keys', 4;
 # fleet-board `board', 5; fleet-view-restart `restart', 7). The lease port that
 # `scripts/fleet-supervisor' derives depends on the root's length alone (two cksums XOR-ed cancel
-# to a function of the length; cb-ebqd), and every suite's root is one `mktemp -d' plus its name,
+# to a function of the length; cb-7jmm), and every suite's root is one `mktemp -d' plus its name,
 # so two suites whose names have the same length meet on one port in a parallel gate and both go
 # read-only.
 consumer="$(consumer_new typing --copy)"

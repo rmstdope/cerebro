@@ -3,9 +3,17 @@
 # alone with the other slots idle, and the Bash suites job is CI's critical path.
 #
 # Refresh from a main CI run's Bash suites log when a suite grows past ~10s or shrinks below it:
-#   gh run view <id> --log | grep -E 'ok +tests/' | sed -E 's/.*ok +tests\/([^ ]+) \(([0-9]+)s\)/\2 \1/' | sort -rn | head
-# Durations on ubuntu-latest, run 39393149872 (eba21a8):
-fleet-role-triggers.sh   # 111s
-fleet-view-restart.sh    # 48s
-web-console.sh           # 26s
-suite-runner.sh          # 12s
+#   gh run view <id> --log | grep -E 'ok +tests/' | sed -E 's/.*ok +tests\/([^ ]+) \(([0-9]+)s\)/\2 \1/' | sort -rn | awk '$1 >= 10'
+# Durations on ubuntu-latest, run 39406586358 (e3dc30c), every suite of 10s or more (cb-kfd8):
+fleet-role-triggers.sh   # 81s
+fleet-retry.sh           # 67s
+fleet-view-restart.sh    # 57s
+web-console.sh           # 43s
+fleet-refused.sh         # 42s
+fleet-producer-start.sh  # 37s
+fleet-board.sh           # 32s
+fleet-keys.sh            # 19s
+launchers.sh             # 17s
+fleet-launch.sh          # 17s
+suite-runner.sh          # 14s
+fleet-one-window.sh      # 13s

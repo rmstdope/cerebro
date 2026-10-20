@@ -64,7 +64,7 @@ R16 A producer whose session died mid-bead is retried on a backoff, and its row 
 ## The board
 
 R17 The navigator re-prioritises a bead from the Work pane with 0–4, + / - and u.
-    Proven by: nothing yet
+    Proven by: tests/fleet-priority.sh
 R18 x on a Sweeps finding runs the exact bd command it maps to, after the navigator
     confirms.
     Proven by: tests/fleet-sweep-x.sh

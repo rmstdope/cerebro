@@ -487,6 +487,13 @@ launches the app and waits for one of three verdicts:
 If you are not free when she asks, the bead simply waits — nothing is blocked, and she offers it
 again next pass rather than escalating it to your queue.
 
+**A project that declares `verification_skill verify-bead` changes who looks.** Psylocke launches
+the app in her worktree, inspects it in Chrome herself, and brings you a short report per bead:
+what she did, what appeared, and the verdict it points to, with any follow-up she thinks worth a
+bead. You decide the verdict and each follow-up; she files and records nothing before you do. The
+sha rule, the port refusal and the three verdicts are the same, and her report is kept on the bead,
+so if you are away when she asks it waits with the evidence attached rather than being re-run.
+
 **A bead she cannot verify does not block anything.** An unverified bead never stops a release; when
 the orchestrator cuts one, it names whatever has not yet had a person look at it and leaves the
 decision to you. Verification is information, not a gate.

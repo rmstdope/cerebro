@@ -121,7 +121,7 @@ were tuned against — read it before changing any role. Which names run which r
 | `producer`      | `agents/producer.md`    | `produce-bead`       | designs, tests, builds, reviews and merges one agreed bead |
 | `bugfixer`      | `agents/bugfixer.md`    | `fix-bug`            | reproduces one bug bead with a test, fixes and merges |
 | `orchestrator`  | `agents/orchestrator.md`| `write-bead`         | ranks, files beads, stops producers  |
-| `verifier`      | `agents/verifier.md`    | —                    | verifies merged beads with the navigator|
+| `verifier`      | `agents/verifier.md`    | `verify-bead` (when `verification_skill` names it) | verifies merged beads with the navigator|
 | `reviewer`      | `agents/reviewer.md`    | —                    | reviews external PRs; review sub-agent  |
 | `user-feedback` | `agents/user-feedback.md`| —                   | owns GitHub issues                      |
 | `architect`     | `agents/architect.md`   | —                    | files refactoring beads, never fixes    |

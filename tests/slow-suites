@@ -15,5 +15,6 @@ fleet-board.sh           # 32s
 fleet-keys.sh            # 19s
 launchers.sh             # 17s
 fleet-launch.sh          # 17s
+fleet-verification-skill.sh  # 15s locally, not yet measured on CI (cb-c73a)
 suite-runner.sh          # 14s
 fleet-one-window.sh      # 13s

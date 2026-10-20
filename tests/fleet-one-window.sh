@@ -63,6 +63,8 @@ scripts="$CEREBRO_CONSUMER_SHARED_ROOT/.cerebro/cerebro/scripts"
 dir="$CEREBRO_CONSUMER_SHARED_ROOT/.cerebro/stub"
 "$scripts/agent-state" "$BEADS_ACTOR" working --pid $$
 echo $$ > "$dir/$BEADS_ACTOR.pid"
+# One line per session ever started, so a start that lands late is still counted.
+echo $$ >> "$dir/$BEADS_ACTOR.starts"
 echo "stub session for $BEADS_ACTOR"
 while :; do sleep 0.2; done
 STUB
@@ -78,9 +80,9 @@ hints="$("$consumer/.cerebro/cerebro/scripts/consumer-root" --hints)"
 #
 # open_window <A|B>: start one view on the checkout. Its pty-drive pid lands in `driver_<w>', its
 # keys go through fd 7 (A) or 8 (B), its screen is $work_dir/<w>.screen.
-driver_A="" driver_B=""
+driver_A="" driver_B="" must_live=""
 open_window() {
-  local w="$1" fd
+  local w="$1"
   mkfifo "$work_dir/$w.keys"
   (
     cd "$consumer"
@@ -92,8 +94,7 @@ open_window() {
   ) </dev/null >/dev/null 2>"$work_dir/$w.err" &
   printf -v "driver_$w" '%s' "$!"
   # Held open read-write for the whole suite, so the open never blocks: a key is one printf.
-  if [ "$w" = A ]; then fd=7; exec 7<>"$work_dir/A.keys"; else fd=8; exec 8<>"$work_dir/B.keys"; fi
-  : "$fd"
+  if [ "$w" = A ]; then exec 7<>"$work_dir/A.keys"; else exec 8<>"$work_dir/B.keys"; fi
 }
 
 suite_cleanup() {
@@ -119,14 +120,19 @@ evidence() {
   cat "$state/decisions.jsonl" 2>/dev/null || echo "(none)"
 }
 
-# wait_until <what> <command...>: poll for up to 60 s - a ceiling, not a cost: under the whole gate
+# wait_until <what> <command...>: poll for up to 60 s, failing at once if a window that must stay
+# open (named in $must_live) has exited - a ceiling, not a cost: under the whole gate
 # in parallel a start through the real `scripts/launch' has taken more than 20 s. A window that exits early is reported by the
 # predicate that needed it, not here: window A is meant to exit.
 wait_until() {
-  local what="$1" i
+  local what="$1" i w d
   shift
   for ((i = 0; i < 300; i++)); do
     if "$@"; then return 0; fi
+    for w in $must_live; do
+      d="driver_$w"
+      kill -0 "${!d}" 2>/dev/null || fail "window $w exited while waiting for: $what$(evidence)"
+    done
     sleep 0.2
   done
   fail "timed out waiting for: $what$(evidence)"
@@ -148,17 +154,20 @@ refusal='This view is read-only; it starts and stops nothing'
 # --- the first window operates the fleet ----------------------------------------------------------------
 
 open_window A
+must_live="A"
 wait_until "window A to supervise" on_screen A "$supervising"
 has_tui() { [ -n "$(tui_pid "$1")" ]; }
 wait_until "window A's tui process" has_tui "$driver_A"
 tui_A="$(tui_pid "$driver_A")"
 wait_until "the lease record to name window A" holder_is "$tui_A"
 wait_until "Forge's row in window A" on_screen A 'Forge +architect +standby'
+wait_until "window A to publish its armed set" test -s "$state/standby.json"
 pass "the first window on the checkout supervises it and holds the lease"
 
 # --- a second window draws, and acts on nothing ---------------------------------------------------------
 
 open_window B
+must_live="A B"
 wait_until "window B to say it is read-only" on_screen B "$read_only"
 wait_until "Forge's row in window B" on_screen B 'Forge +architect +[a-z]+'
 wait_until "window B's tui process" has_tui "$driver_B"
@@ -168,13 +177,16 @@ pass "a second window draws the fleet and says another window is driving it"
 
 press B s
 wait_until "window B's refusal" on_screen B "$refusal"
+# A start that got past the refusal would land seconds later, through the real `scripts/launch';
+# it is caught by the count of starts before and after the takeover, below. A read-only view's
+# logger is off, so a `start' line here would witness window A, which nobody asked to start.
 started && fail "s in the read-only window started Forge$(evidence)"
-decided '.event == "start"' && fail "s in the read-only window logged a start$(evidence)"
 holder_is "$tui_A" || fail "the lease record no longer names window A$(evidence)"
 pass "s in the second window is refused on its screen, and nothing is started"
 
 # --- the first window closes; the second takes over --------------------------------------------------
 
+must_live="B"
 press A q
 wait_until "window A to exit" gone "$driver_A"
 set +e
@@ -186,6 +198,8 @@ wait_until "window B to take over" on_screen B "$supervising"
 wait_until "the lease record to name window B" holder_is "$tui_B"
 pass "when the first window closes, the second takes over the fleet with no key pressed"
 
+# By now A's exit and B's reconcile have run, well past any late start from step 3's s.
+[ -e "$stub_state/Forge.starts" ] && fail "s in the read-only window started Forge, late$(evidence)"
 press B s
 wait_until "the stub agent to start" started
 wait_until "the session publication" published
@@ -198,6 +212,9 @@ press B k
 wait_until "the kill question" on_screen B 'Kill Forge\?  y / n'
 press B y
 wait_until "the stub agent to be killed" gone "$forge"
+[ "$(wc -l < "$stub_state/Forge.starts" | tr -d ' ')" -eq 1 ] \
+  || fail "Forge was started more than once: $(cat "$stub_state/Forge.starts")$(evidence)"
+must_live=""
 press B q
 wait_until "window B to exit" gone "$driver_B"
 set +e

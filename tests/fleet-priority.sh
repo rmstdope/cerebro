@@ -15,8 +15,11 @@
 #   - a board of one bead, `cb-rank', open, `ux:agreed', at P2: the Work cursor is seated on it by
 #     the first read, and it is the only row a cursor can stand on.
 #   - a `bd' stub that logs every call, answers `list' from the board file and `ready' with an empty
-#     list, applies `update <id> --priority <n>' to the board file (so the read after a write shows
-#     what the board now says, not only what the view asked for), and answers `dolt push' with 0.
+#     list, applies `update <id> --priority <n>' to the board file, and answers `dolt push' with 0.
+#     The row shows the asked-for priority from the keystroke on (`App::begin_write''s overlay), so
+#     each step waits for a board read the view made AFTER the write's push before it reads the row:
+#     that proves the write is followed by a refresh, and that the row drawn once the board answers
+#     still says P<n>. It cannot tell the overlay from the board, which agree by then.
 #     Anything else is refused, as in tests/fleet-board.sh: the Sweeps reads are not R17's.
 #   - a `gh' stub that refuses.
 #
@@ -155,15 +158,18 @@ on_screen() { grep -Eq "$1" "$screen" 2>/dev/null; }
 writes() { grep -E '^(update|dolt) ' "$bd_log" 2>/dev/null || true; }
 write_count() { writes | wc -l | tr -d ' '; }
 writes_at_least() { [ "$(write_count)" -ge "$1" ]; }
+# board_read_after <line>: the view's own board read (`list --status ...') is logged below LINE.
+board_read_after() { tail -n +$(($1 + 1)) "$bd_log" | grep -q ' list --status '; }
 
 # key <key> <to> <sentence>: press KEY, and expect exactly one write of `--priority TO' and its
 # push - nothing before them, nothing else - then SENTENCE in the header and the row at P<TO>.
 key() {
-  local pressed="$1" to="$2" sentence="$3" before added expected
+  local pressed="$1" to="$2" sentence="$3" before added expected pushed_at
   before="$(write_count)"
   press "$pressed"
   wait_until 30 "'$pressed' to write P$to" writes_at_least $((before + 2))
   added="$(writes | tail -n +$((before + 1)))"
+  pushed_at="$(grep -n '^dolt push$' "$bd_log" | tail -1 | cut -d: -f1)"
   expected="$(printf 'update cb-rank --priority %s\ndolt push' "$to")"
   [ "$added" = "$expected" ] ||
     fail "'$pressed': the board writes were
@@ -173,6 +179,7 @@ $expected$(evidence)"
   # Followed by the header's ` | ', so the dim provisional line (`…') does not count: this is the
   # sentence the write's own answer set.
   wait_until 30 "'$pressed': the header to say '$sentence'" on_screen "$sentence \\|"
+  wait_until 60 "'$pressed': a board read after the write's push" board_read_after "$pushed_at"
   wait_until 30 "'$pressed': the row to read P$to" on_screen "cb-rank +P$to "
 }
 

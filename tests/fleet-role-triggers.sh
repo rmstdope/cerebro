@@ -17,7 +17,8 @@
 #
 # The fleet is the seven interactive rows, all standby. Forge and Sage have no trigger but their
 # clock, an hour unless the project declares one (`role_cadence_<role>', cb-kmxs); the second run
-# declares a minute, so their start is watched rather than taken on trust.
+# declares ten seconds, so their start is watched rather than taken on trust, and the clock runs out
+# while the other five are being given their triggers instead of after them (cb-fwt6).
 #
 # Two runs of the view, because `gh' is read on the view's own schedule - at startup, then every ten
 # minutes or after a start - and never on `g', so a trigger that lives on GitHub is given at startup:
@@ -30,14 +31,15 @@
 #      its experience not yet agreed for Xavier (UX, handed that bead), a linked bead that moved
 #      for Moira - and after each, exactly that row has started, on its own trigger's reason; every
 #      row not yet given its trigger was evaluated with none. Forge and Sage start on their clock,
-#      no sooner than a minute after they were armed, whichever step that minute falls in.
+#      no sooner than ten seconds after they were armed, whichever step that falls in. Their
+#      600 s wake interval keeps either from being started a second time before the run ends.
 # Every one of the seven passes then ends itself, and the view ends each session no sooner than 30
 # seconds and no later than 50 after its `waiting', and its process is gone.
 #
 # The binary is built with `cargo build' and run by this suite itself - never as cargo's child
 # (.cerebro/traps.md). Every wait is a bounded poll that fails with what the view saw and did.
-# The suite costs about two minutes, most of it the minute R14's two clock roles wait and the
-# half minute the last of them is given before it is ended.
+# The suite costs about a minute, most of it the condition walk and the half minute the last pass
+# is given before it is ended.
 #
 #     bash tests/fleet-role-triggers.sh
 
@@ -408,8 +410,10 @@ mv "$state"/*.jsonl "$work_dir/run1/" 2>/dev/null || true
 
 # --- run 2: each trigger in turn ------------------------------------------------------------------
 
-# The clock roles' declared minute, read by the view at startup.
-printf 'role_cadence_architect 60\nrole_cadence_qa        60\n' >> "$consumer/.cerebro/project.conf"
+# The clock roles' declared cadence, read by the view at startup: ten seconds, so their clock runs
+# out while the condition roles are being given theirs, rather than after them.
+cadence=10
+printf 'role_cadence_architect %s\nrole_cadence_qa        %s\n' "$cadence" "$cadence" >> "$consumer/.cerebro/project.conf"
 
 # A contributor's pull request, updated after the view arms Cypher, however slowly it starts: two
 # minutes ahead, which a second start of Cypher could only read as moved after his 600 s wake
@@ -453,15 +457,16 @@ wait_until 90 "Forge's session to start" has_session Forge
 wait_until 30 "Sage's session to start" has_session Sage
 wait_until 10 "the view's start line for Forge" has_decision start Forge
 wait_until 10 "the view's start line for Sage" has_decision start Sage
-started_on Forge "1m since its last sweep"
-started_on Sage "1m since its last sweep"
+# Whole minutes are what a cadence reason names (`triggers::cadence_figure'), so ten seconds is `0m'.
+started_on Forge "0m since its last sweep"
+started_on Sage "0m since its last sweep"
 for name in Forge Sage; do
   at="$(epoch "$(decision start "$name" | cut -f1)")"
-  ((at - armed_at >= 60)) \
-    || fail "$name was started $((at - armed_at))s after it was armed; its declared cadence is 60s$(evidence)"
+  ((at - armed_at >= cadence)) \
+    || fail "$name was started $((at - armed_at))s after it was armed; its declared cadence is ${cadence}s$(evidence)"
 done
 expect_started Cypher Cerebro Psylocke Xavier Moira Forge Sage
-pass "Forge and Sage are started on their declared cadence, no sooner than a minute after arming"
+pass "Forge and Sage are started on their declared cadence, no sooner than ${cadence}s after arming"
 
 # --- every pass, ended half a minute after its waiting --------------------------------------------
 

@@ -52,9 +52,10 @@ jobs:
       - uses: actions/checkout@v4
 
       # tests/fleet-view-restart.sh (R15, cb-jj2o), tests/fleet-keys.sh (R9, cb-t8dm),
-      # tests/fleet-board.sh (R7, cb-ha8v) and tests/fleet-type.sh (R10, cb-8dha) build and run the
-      # real cerebro-tui, so this job needs the toolchain too, and the same dependency cache the Rust
-      # job keeps (cb-bkda) - without it every run compiles every dependency crate again.
+      # tests/fleet-board.sh (R7, cb-ha8v), tests/fleet-type.sh (R10, cb-8dha) and
+      # tests/web-console.sh (R24, cb-8cdv) build and run the real cerebro-tui (the last with
+      # cerebro-web beside it), so this job needs the toolchain too, and the same dependency cache
+      # the Rust job keeps (cb-bkda) - without it every run compiles every dependency crate again.
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 

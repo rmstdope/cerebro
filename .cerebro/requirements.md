@@ -85,7 +85,7 @@ R23 The navigator reads the fleet's health and history from its own logs.
     Proven by: tests/fleet-health.sh
 R24 The navigator watches the fleet and its sessions from a browser through the web
     console.
-    Proven by: nothing yet
+    Proven by: tests/web-console.sh
 
 ## Worktrees
 

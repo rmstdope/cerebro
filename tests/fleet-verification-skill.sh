@@ -240,8 +240,9 @@ cwd="$(cat "$session/cwd")"
 consumer_real="$(cd "$consumer" && pwd -P)"
 mount_real="$(cd "$mount" && pwd -P)"
 
-grep -qx -- --agent "$session/argv" && grep -A1 -x -- --agent "$session/argv" | tail -1 | grep -qx verifier \
-  || fail "the session was not started as the verifier$(evidence)"
+agent="$(awk 'prev == "--agent" { print; exit } { prev = $0 }' "$session/argv")"
+[ "$agent" = verifier ] \
+  || fail "the session was started with --agent '$agent', not as the verifier$(evidence)"
 [ "$(cat "$session/agent-file")" = "$mount_real/agents/verifier.md" ] \
   || fail "from $cwd, .claude/agents/verifier.md is '$(cat "$session/agent-file")', not the mount's agents/verifier.md$(evidence)"
 pass "she runs as the verifier, on the mount's own agent file"

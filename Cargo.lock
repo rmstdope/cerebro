@@ -211,6 +211,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "crossterm",
+ "libc",
  "portable-pty",
  "quote",
  "ratatui",

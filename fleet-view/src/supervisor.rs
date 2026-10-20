@@ -17,6 +17,18 @@
 //! missing, malformed or foreign record on a bound port is a visible lock error, never permission
 //! to take over. A stale record left by a crash is harmless, because the successful bind that
 //! overwrites it is what was authoritative all along.
+//!
+//! **The upgrade window (cb-ebqd).** cb-7jmm changed the function that derives the port, so a view
+//! started before it holds - or keeps retrying - a port a newer view never looks at. A lease
+//! therefore also holds that *legacy* port beside the real one, whenever it can: an old view of
+//! this checkout then finds its port taken and stays read-only, and a newer view that finds the
+//! legacy port held by an old view of this checkout steps aside. The old port is a function of the
+//! root's length alone, so it is shared with every other checkout of that length; a legacy port
+//! held by anybody but an old view of *this* checkout is ignored, and taken up later if it frees.
+//! Telling the two apart is the one thing the record decides here: an old view writes no
+//! `endpoint` field, and every newer one does. An old view killed without its `Drop` leaves that
+//! record behind, so it counts only while the pid it names is alive; a dead one is a crash's
+//! leftover, harmless as every other stale record is.
 
 use std::fmt;
 use std::fs;
@@ -146,6 +158,10 @@ impl fmt::Display for AcquireError {
 #[derive(Debug)]
 pub struct SupervisorLease {
     listener: TcpListener,
+    /// The port a view older than cb-7jmm would take for this checkout, and the listener on it
+    /// when this lease holds it too (cb-ebqd).
+    legacy_endpoint: Option<SocketAddr>,
+    legacy: Option<TcpListener>,
     record_path: PathBuf,
     identity: String,
 }
@@ -161,6 +177,21 @@ impl SupervisorLease {
         record_path: &Path,
         identity: &str,
     ) -> Result<Self, AcquireError> {
+        Self::try_acquire_beside(endpoint, None, record_path, identity)
+    }
+
+    /// [`try_acquire`](Self::try_acquire), also holding `legacy` - the port a view older than
+    /// cb-7jmm takes for this checkout - so that the two can never both supervise it (cb-ebqd).
+    ///
+    /// The legacy port held by an old view of this checkout is an honest owner, and nothing is
+    /// held. Held by anybody else - another checkout of the same length - it is no reason not to
+    /// supervise, and [`keep_legacy`](Self::keep_legacy) takes it up once it frees.
+    pub fn try_acquire_beside(
+        endpoint: SocketAddr,
+        legacy: Option<SocketAddr>,
+        record_path: &Path,
+        identity: &str,
+    ) -> Result<Self, AcquireError> {
         let listener = match TcpListener::bind(endpoint) {
             Ok(listener) => listener,
             Err(err) if err.kind() == ErrorKind::AddrInUse => {
@@ -173,17 +204,60 @@ impl SupervisorLease {
             }
         };
 
-        let lease = SupervisorLease {
+        let mut lease = SupervisorLease {
             listener,
+            legacy_endpoint: legacy.filter(|legacy| *legacy != endpoint),
+            legacy: None,
             record_path: record_path.to_path_buf(),
             identity: identity.to_string(),
         };
+        // Before the record: until this lease writes its own, the record on disk is whatever the
+        // holder of the legacy port wrote, and that is what tells an old view of this checkout
+        // from a stranger.
+        lease.keep_legacy()?;
         lease.write_record().map_err(|message| {
             // Drop the listener with the error rather than holding an lease no other process could
             // attribute: an unattributable lease is exactly the `LockError` deadlock we refuse.
             AcquireError::LockError(message)
         })?;
         Ok(lease)
+    }
+
+    /// Hold the legacy port too, if this lease does not yet (cb-ebqd). Called on acquisition and
+    /// on every tick the lease is kept, because a legacy port another checkout held may free, and
+    /// an old view of this checkout is still retrying it.
+    ///
+    /// `Err(OwnedBy)` means an old view of this checkout holds it: whoever holds this lease must
+    /// let it go. Any other failure to bind is left for the next tick.
+    pub fn keep_legacy(&mut self) -> Result<(), AcquireError> {
+        let Some(legacy) = self.legacy_endpoint else {
+            return Ok(());
+        };
+        if self.legacy.is_some() {
+            return Ok(());
+        }
+        match TcpListener::bind(legacy) {
+            Ok(listener) => {
+                self.legacy = Some(listener);
+                Ok(())
+            }
+            Err(err) if err.kind() == ErrorKind::AddrInUse => {
+                match read_record(&self.record_path) {
+                    Some(RecordFields { identity, endpoint: None, pid: Some(pid) })
+                        if identity == self.identity && process_is_alive(pid) =>
+                    {
+                        Err(AcquireError::OwnedBy)
+                    }
+                    _ => Ok(()),
+                }
+            }
+            Err(_) => Ok(()),
+        }
+    }
+
+    /// Does this lease hold the legacy port as well?
+    pub fn holds_legacy(&self) -> bool {
+        self.legacy.is_some()
     }
 
     /// The address actually bound. Useful when a test binds port 0 and needs to know what it got.
@@ -199,9 +273,16 @@ impl SupervisorLease {
         // Written whole and renamed into place: a reader must never see half a record, and a
         // half-written record is a `LockError` that would stall the other implementation.
         let temp = self.record_path.with_extension("json.tmp");
+        // `endpoint` is what tells this record from one a view older than cb-7jmm wrote, which
+        // never carries it (cb-ebqd).
+        let endpoint = self
+            .listener
+            .local_addr()
+            .map_err(|e| format!("cannot read the lease's own address: {e}"))?;
         let body = format!(
-            "{{\"identity\":{},\"pid\":{}}}\n",
+            "{{\"identity\":{},\"endpoint\":{},\"pid\":{}}}\n",
             json_string(&self.identity),
+            json_string(&endpoint.to_string()),
             std::process::id()
         );
         fs::write(&temp, body).map_err(|e| format!("cannot write {}: {e}", temp.display()))?;
@@ -214,8 +295,11 @@ impl Drop for SupervisorLease {
     fn drop(&mut self) {
         // Only our own record, and only while we still hold the port. A record naming somebody
         // else is somebody else's, whatever went wrong here.
-        if let Some(RecordFields { identity, .. }) = read_record(&self.record_path) {
-            if identity == self.identity {
+        // Our endpoint too: an old view that took the legacy port from under this lease wrote a
+        // record naming the same checkout, and that one is the old view's (cb-ebqd).
+        let ours = self.listener.local_addr().ok().map(|a| a.to_string());
+        if let Some(RecordFields { identity, endpoint, .. }) = read_record(&self.record_path) {
+            if identity == self.identity && endpoint == ours {
                 let _ = fs::remove_file(&self.record_path);
             }
         }
@@ -225,6 +309,20 @@ impl Drop for SupervisorLease {
 
 struct RecordFields {
     identity: String,
+    /// Absent from a record written by a view older than cb-7jmm (cb-ebqd).
+    endpoint: Option<String>,
+    pid: Option<i32>,
+}
+
+/// Is a process with this pid alive? `kill(pid, 0)` sends nothing; `EPERM` means it exists and
+/// belongs to somebody else. A pid of zero or below names a process group, never one process.
+fn process_is_alive(pid: i32) -> bool {
+    if pid <= 0 {
+        return false;
+    }
+    // SAFETY: signal 0 performs only the existence and permission checks.
+    let answer = unsafe { libc::kill(pid, 0) };
+    answer == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
 
 /// The record on a bound port, read for diagnosis alone. Whatever this returns, the caller does
@@ -247,7 +345,9 @@ fn diagnose_holder(record_path: &Path, identity: &str) -> AcquireError {
 fn read_record(path: &Path) -> Option<RecordFields> {
     let text = fs::read_to_string(path).ok()?;
     let identity = json_field(&text, "identity")?;
-    Some(RecordFields { identity })
+    let endpoint = json_field(&text, "endpoint");
+    let pid = json_number(&text, "pid");
+    Some(RecordFields { identity, endpoint, pid })
 }
 
 fn json_field(text: &str, key: &str) -> Option<String> {
@@ -270,6 +370,14 @@ fn json_field(text: &str, key: &str) -> Option<String> {
         }
     }
     None
+}
+
+fn json_number(text: &str, key: &str) -> Option<i32> {
+    let needle = format!("\"{key}\"");
+    let start = text.find(&needle)? + needle.len();
+    let rest = text[start..].trim_start().strip_prefix(':')?.trim_start();
+    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    digits.parse().ok()
 }
 
 fn json_string(value: &str) -> String {
@@ -505,5 +613,109 @@ mod tests {
         let (_held, _addr) = acquire_on_a_free_port(&record, weird);
         let fields = read_record(&record).expect("record parses");
         assert_eq!(fields.identity, weird);
+    }
+
+    // --- the upgrade window (cb-ebqd) -----------------------------------------------------------
+
+    /// A lease beside a legacy port, on whatever primary port was actually free.
+    fn acquire_beside(
+        legacy: SocketAddr,
+        record: &Path,
+        identity: &str,
+    ) -> Result<SupervisorLease, AcquireError> {
+        let mut answer = None;
+        probe::wait_until(probe::POLL_BOUND, || {
+            match SupervisorLease::try_acquire_beside(probe::free_endpoint(), Some(legacy), record, identity) {
+                Err(AcquireError::LockError(_)) => false,
+                other => {
+                    answer = Some(other);
+                    true
+                }
+            }
+        });
+        answer.expect("no free loopback port for a test lease")
+    }
+
+    /// The legacy port is a function of the root's length, so another checkout of that length
+    /// may hold it: that is no reason not to supervise, and the lease takes the port up once the
+    /// other lets it go.
+    #[test]
+    fn a_stranger_on_the_legacy_port_does_not_stop_supervision() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let record = dir.path().join("supervisor.json");
+        let (stranger, legacy) = foreign_listener();
+        let mut lease = acquire_beside(legacy, &record, "/repos/x").expect("supervises");
+        assert!(!lease.holds_legacy(), "the stranger still holds the legacy port");
+
+        drop(stranger);
+        assert!(
+            probe::wait_until(probe::POLL_BOUND, || {
+                lease.keep_legacy().expect("no old view here");
+                lease.holds_legacy()
+            }),
+            "a freed legacy port is taken up on a later tick"
+        );
+    }
+
+    /// A record naming this checkout WITH an endpoint was written by a newer view, and a newer
+    /// view of this checkout cannot be live while this one binds the primary port: it is a
+    /// crash's leftover, and the stranger on the legacy port is still a stranger.
+    #[test]
+    fn a_crashed_newer_views_record_is_not_an_old_view() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let record = dir.path().join("supervisor.json");
+        std::fs::write(
+            &record,
+            "{\"identity\":\"/repos/x\",\"endpoint\":\"127.0.0.1:9\",\"pid\":1}\n",
+        )
+        .expect("write");
+        let (_stranger, legacy) = foreign_listener();
+        acquire_beside(legacy, &record, "/repos/x").expect("a stale record is no owner");
+    }
+
+    /// An old view killed without its `Drop` leaves its record. With another checkout of the same
+    /// length on the legacy port, that record must not keep this checkout read-only for as long
+    /// as the stranger runs.
+    #[test]
+    fn a_dead_old_views_record_is_not_an_owner() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let record = dir.path().join("supervisor.json");
+        let mut gone = std::process::Command::new("true").spawn().expect("spawn");
+        let pid = gone.id();
+        gone.wait().expect("reap");
+        std::fs::write(&record, format!("{{\"identity\":\"/repos/x\",\"pid\":{pid}}}\n"))
+            .expect("write");
+        let (_stranger, legacy) = foreign_listener();
+        acquire_beside(legacy, &record, "/repos/x").expect("a dead old view owns nothing");
+    }
+
+    /// An old view that takes the legacy port from under a kept lease - it was retrying there
+    /// while a stranger held it - is the owner: the lease must be let go, and letting it go
+    /// leaves the old view's record where it is.
+    #[test]
+    fn an_old_view_that_took_the_legacy_port_first_is_the_owner() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let record = dir.path().join("supervisor.json");
+        let (stranger, legacy) = foreign_listener();
+        let mut lease = acquire_beside(legacy, &record, "/repos/x").expect("supervises");
+        let body = std::fs::read_to_string(&record).expect("record");
+        assert!(body.contains("\"endpoint\":"), "a newer view's record names its endpoint: {body}");
+
+        drop(stranger);
+        let old = acquire_once_free(legacy, &record, "/repos/x");
+        // A live pid: this test process stands in for the old view.
+        let old_record = format!("{{\"identity\":\"/repos/x\",\"pid\":{}}}\n", std::process::id());
+        std::fs::write(&record, &old_record).expect("the old view's record");
+
+        match lease.keep_legacy() {
+            Err(AcquireError::OwnedBy) => {}
+            other => panic!("an old view of this checkout holds the legacy port, got {other:?}"),
+        }
+        drop(lease);
+        assert_eq!(
+            std::fs::read_to_string(&record).expect("the old view's record survives"),
+            old_record
+        );
+        drop(old);
     }
 }

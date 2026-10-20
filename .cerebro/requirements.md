@@ -30,7 +30,7 @@ R7  The navigator sees the board as work queues (Claimed, Ready to produce, Wait
     Proven by: tests/fleet-board.sh
 R8  When bd or the fleet cannot be read, the last snapshot stays on screen marked stale,
     and the other pane is unaffected.
-    Proven by: nothing yet
+    Proven by: tests/fleet-stale.sh
 
 ## Fleet view: driving sessions
 

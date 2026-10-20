@@ -424,7 +424,7 @@ pub fn read_role_cadence(
     read_role_seconds(paths, "role_cadence_", roles, commands, |role| {
         match crate::triggers::cadence(role) {
             Some(seconds) => format!("{seconds}"),
-            None => "none".to_string(),
+            None => "no cadence".to_string(),
         }
     })
 }

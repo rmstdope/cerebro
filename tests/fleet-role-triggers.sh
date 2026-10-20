@@ -16,7 +16,7 @@
 # carries, and waits to be killed.
 #
 # The fleet is the seven interactive rows, all standby. Forge and Sage have no trigger but their
-# clock, an hour unless the project declares one (`role_cadence_<role>', cb-kmxs); the fixture
+# clock, an hour unless the project declares one (`role_cadence_<role>', cb-kmxs); the second run
 # declares a minute, so their start is watched rather than taken on trust.
 #
 # Two runs of the view, because `gh' is read on the view's own schedule - at startup, then every ten
@@ -78,8 +78,6 @@ default_branch         main
 audience_noun          navigator
 gate_fast              true
 gate_full              true
-role_cadence_architect 60
-role_cadence_qa        60
 CONF
 
 cat > "$consumer/.cerebro/roster.conf" <<'ROSTER'
@@ -384,6 +382,7 @@ jq -n --arg old "$(iso -3600)" --arg soon "$(iso 600)" '[
 ]' > "$fixture/gh-prs.json"
 
 start_view
+# Run 1 declares no cadence, so Forge and Sage keep the built-in hour, which no baseline outlasts.
 # The arm lines are written only by a view that took charge: a read-only one starts nothing, and
 # would pass the baseline for the wrong reason.
 wait_until 60 "the view to take charge and arm the roster" has_decision arm Sage
@@ -409,8 +408,13 @@ mv "$state"/*.jsonl "$work_dir/run1/" 2>/dev/null || true
 
 # --- run 2: each trigger in turn ------------------------------------------------------------------
 
-# A contributor's pull request, updated after the view arms Cypher and before his pass ends.
-jq --arg moved "$(iso 10)" '. + [{number: 14, author: {login: "contributor"}, isDraft: false, updatedAt: $moved}]' \
+# The clock roles' declared minute, read by the view at startup.
+printf 'role_cadence_architect 60\nrole_cadence_qa        60\n' >> "$consumer/.cerebro/project.conf"
+
+# A contributor's pull request, updated after the view arms Cypher, however slowly it starts: two
+# minutes ahead, which a second start of Cypher could only read as moved after his 600 s wake
+# interval, long after this run ends.
+jq --arg moved "$(iso 120)" '. + [{number: 14, author: {login: "contributor"}, isDraft: false, updatedAt: $moved}]' \
   "$fixture/gh-prs.json" > "$fixture/gh-prs.next" && mv "$fixture/gh-prs.next" "$fixture/gh-prs.json"
 
 start_view

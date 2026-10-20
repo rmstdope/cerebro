@@ -35,8 +35,9 @@
 #   role_cadence_<role>
 #                  — seconds between two passes of a role that starts on a clock: user-feedback,
 #                    reviewer, architect, qa, one key per role. ABSENT means the built-in hour;
-#                    declared for any other role it is never read. Read by the fleet view
-#                    (cb-kmxs).
+#                    declared for any other role it is never read. Whole seconds; the fleet
+#                    view names it in minutes, so under a minute reads as `0m'. Read by the
+#                    fleet view (cb-kmxs).
 #   planner_buffer_multiple
 #                  — planned beads wanted per implementer. ABSENT means 1, the rule every consumer
 #                    had before the key existed. Read by the fleet

@@ -1145,7 +1145,9 @@ impl StartLedger {
         self.fingerprints.get(name)
     }
 
-    /// Record that this view is giving BEAD back from NAME (cb-4yj4). Idempotent.
+    /// Record that this view gave BEAD back from NAME and the board took it (cb-4yj4): the
+    /// release answered `released` or `free`. Never for `elsewhere` or `closed`, whose bead is not
+    /// coming back to the queue on the strength of this give-back.
     pub fn note_given_back(&mut self, name: &str, bead: &str) {
         self.given_back.insert(name.to_string(), bead.to_string());
     }
@@ -1156,16 +1158,23 @@ impl StartLedger {
     /// Unassigning a bead moves its `updated_at`, and the UX fingerprint carries that revision so
     /// a bead returned from a later stage breaks the unchanged-work guard. Left alone, the view's
     /// own give-back would read as such a return and start the row again on the very bead its
-    /// pass left untouched. A held bead is never a candidate, so the first tick that lists a given-
-    /// back bead again is the board after the give-back: its revision there replaces the one the
-    /// pass was started with, and only a later write moves it again.
-    pub fn settle_given_back(&mut self, facts: &TriggerFacts) {
+    /// pass left untouched.
+    ///
+    /// Settled against the first board that no longer shows the bead held by NAME
+    /// (`still_held(name, bead)` false), which is the board after the give-back: if it lists the
+    /// bead as a UX candidate, its revision there replaces the one the pass was started with; if
+    /// it does not, there is nothing to absorb and the note goes, so it can never swallow a later
+    /// return. Either way only a later write moves the revision again.
+    pub fn settle_given_back(&mut self, facts: &TriggerFacts, still_held: impl Fn(&str, &str) -> bool) {
         let fingerprints = &mut self.fingerprints;
         self.given_back.retain(|name, bead| {
-            let Some((_, now)) = facts.undesigned_revisions.iter().find(|(id, _)| id == bead) else {
+            if still_held(name, bead) {
                 return true;
-            };
-            if let Some(Fingerprint::Ux { undesigned_revisions, .. }) = fingerprints.get_mut(name) {
+            }
+            let listed = facts.undesigned_revisions.iter().find(|(id, _)| id == bead);
+            if let (Some((_, now)), Some(Fingerprint::Ux { undesigned_revisions, .. })) =
+                (listed, fingerprints.get_mut(name))
+            {
                 for (id, revision) in undesigned_revisions.iter_mut() {
                     if id == bead {
                         *revision = *now;

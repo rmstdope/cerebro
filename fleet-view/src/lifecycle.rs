@@ -1139,6 +1139,17 @@ pub fn ended_holding<'a>(
         .map(|bead| bead.id.as_str())
 }
 
+/// Whether the board still shows BEAD held by NAME - assigned to it in `being_planned` or
+/// `claimed`. A board read before a give-back landed says yes; the first one after it says no
+/// (cb-4yj4). Pure.
+pub fn still_held(buckets: &crate::model::WorkBuckets, name: &str, bead: &str) -> bool {
+    buckets
+        .being_planned
+        .iter()
+        .chain(buckets.claimed.iter())
+        .any(|b| b.id == bead && b.assignee.as_deref() == Some(name))
+}
+
 /// The claim an implementer that is no longer on it still holds, if any: the first bead in
 /// `buckets.claimed` whose `assignee` is NAME, unless -
 ///   RELEASING (something of NAME's is already being given back),

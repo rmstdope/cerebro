@@ -38,7 +38,7 @@ R9  s starts an agent in a session the view hosts, k kills it, f tells it to fin
     bead or pass and not start again.
     Proven by: tests/fleet-keys.sh
 R10 RET focuses a hosted session so the navigator can type to the agent in it.
-    Proven by: nothing yet
+    Proven by: tests/fleet-type.sh
 R11 Only the first window on a checkout operates the fleet; a second draws and acts on
     nothing, and takes over when the first closes.
     Proven by: tests/fleet-one-window.sh

@@ -78,7 +78,7 @@ R20 Each hand-off between roles puts the bead in exactly the queue of the role m
 
 R21 Every session starts through launch, on the CLI and model agents.conf names, with
     hooks wired so its row reads asking while a question is open.
-    Proven by: nothing yet
+    Proven by: tests/fleet-launch.sh
 R22 The navigator asks fleet-cost what each agent spent on each bead.
     Proven by: tests/fleet-cost.sh
 R23 The navigator reads the fleet's health and history from its own logs.

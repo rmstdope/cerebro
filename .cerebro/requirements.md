@@ -62,7 +62,7 @@ R16 A producer whose session died mid-bead is retried on a backoff, and its row 
     Proven by: tests/fleet-retry.sh
 R27 The navigator sets how often each clock role (Moira, Cypher, Forge, Sage) runs, with
     role_cadence_<role> in project.conf.
-    Proven by: nothing yet
+    Proven by: tests/fleet-role-triggers.sh
 
 ## The board
 

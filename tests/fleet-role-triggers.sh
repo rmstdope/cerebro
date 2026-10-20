@@ -387,11 +387,18 @@ give() {
 # quit_view <run>: `q' and the view gone - which it refuses while it hosts a session, so a run
 # that started any waits for the view to end them first. Its logs are kept under $work_dir/<run>,
 # and the fleet is left as a fresh consumer's, so the next run starts from nothing.
+#
+# The view logs `end' when it begins ending a session but counts it live until the child is reaped,
+# so a `q' can land in between and be refused. `q' is pressed again every two seconds: over the
+# refusal pane it is the key that returns, and the next one asks again (cb-8k0i).
 quit_view() {
-  local quit_deadline=$((SECONDS + 20))
-  press q
+  local quit_deadline=$((SECONDS + 60)) next_q=0
   while kill -0 "$driver" 2>/dev/null; do
     ((SECONDS < quit_deadline)) || fail "the view did not quit on q$(evidence)"
+    if ((SECONDS >= next_q)); then
+      press q
+      next_q=$((SECONDS + 2))
+    fi
     sleep 0.2
   done
   wait "$driver" 2>/dev/null || true

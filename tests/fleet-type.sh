@@ -186,7 +186,7 @@ press $'\r'
 wait_until "a second line to reach the agent" lines_typed 2
 second_line="$(sed -n 2p "$stub_state/Forge.typed")"
 [ -z "$second_line" ] \
-  || fail "F1, k or n reached the agent as well: $(od -c <<<"$second_line" | head -3)$(evidence)"
+  || fail "F1, k or n reached the agent as well: $(od -c <<<"$second_line")$(evidence)"
 kill -0 "$agent" 2>/dev/null || fail "n killed the agent$(evidence)"
 pass "F1 gives the keyboard back: k asks the view's question, and nothing of it reaches the agent"
 

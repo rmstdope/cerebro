@@ -140,15 +140,18 @@ if [[ "$mode" == claim ]]; then
 fi
 
 # slug_of TITLE: the title as a branch-name word - lower-cased, every run of anything but [a-z0-9]
-# one `-', no `-' at either end, and at most 40 characters, cut at the last `-' inside that limit
-# (a hard cut when there is none). Empty when the title has nothing to slug.
+# one `-' (a newline included), no `-' at either end, and at most 40 characters, cut at the last `-'
+# inside that limit unless that would keep fewer than 20, when it is a hard cut at 40. Empty when the
+# title has nothing to slug.
 slug_of() {
-  local s
-  s="$(printf '%s' "$1" | LC_ALL=C tr '[:upper:]' '[:lower:]' | LC_ALL=C sed -e 's/[^a-z0-9][^a-z0-9]*/-/g' -e 's/^-//' -e 's/-$//')"
+  local s cut
+  s="$(printf '%s' "$1" | LC_ALL=C tr '[:upper:]' '[:lower:]' | LC_ALL=C tr -cs 'a-z0-9' '-')"
+  s="${s#-}"; s="${s%-}"
   if (( ${#s} > 40 )); then
-    s="${s:0:41}"
-    if [[ "$s" == *-* ]]; then s="${s%-*}"; else s="${s:0:40}"; fi
-    s="${s%-}"
+    cut="${s:0:41}"
+    if [[ "$cut" == *-* ]]; then cut="${cut%-*}"; else cut=""; fi
+    if (( ${#cut} < 20 )); then cut="${s:0:40}"; fi
+    s="${cut%-}"
   fi
   printf '%s' "$s"
 }

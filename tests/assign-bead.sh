@@ -328,6 +328,22 @@ grep -qx -- "prepare-worktree --path $tree --branch cb-x-abcdefghijklmnopqrstuvw
   || fail "a title with no word break is cut hard at 40, got: $(cat "$stub/bd.log")"
 pass "a slug with no word break inside 40 characters is cut at 40"
 
+reset '[{"id":"cb-x","status":"open","assignee":"","title":"Two\nlines"}]' "$ready"
+run Rogue cb-x 2>/dev/null || fail "a two-line title is exit 0"
+grep -qx -- "prepare-worktree --path $tree --branch cb-x-two-lines" "$stub/bd.log" \
+  || fail "a newline in the title is slugged like any other separator, got: $(cat "$stub/bd.log")"
+pass "a newline in the title is slugged like any other separator"
+
+reset '[{"id":"cb-x","status":"open","assignee":"","title":"A bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]' "$ready"
+run Rogue cb-x 2>/dev/null || fail "an early-boundary title is exit 0"
+grep -qx -- "prepare-worktree --path $tree --branch cb-x-a-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "$stub/bd.log" \
+  || fail "a word cut that would keep under 20 characters is a hard cut at 40, got: $(cat "$stub/bd.log")"
+reset '[{"id":"cb-x","status":"open","assignee":"","title":"abcdefghijklmnopqrstuvwxyzabcdefghijklm next"}]' "$ready"
+run Rogue cb-x 2>/dev/null || fail "a 40-character first word is exit 0"
+grep -qx -- "prepare-worktree --path $tree --branch cb-x-abcdefghijklmnopqrstuvwxyzabcdefghijklm" "$stub/bd.log" \
+  || fail "a boundary at character 41 cuts to exactly 40, got: $(cat "$stub/bd.log")"
+pass "a word cut keeps at least 20 characters, and a boundary at 41 cuts to exactly 40"
+
 reset '[{"id":"cb-x","status":"open","assignee":"","title":"!!!"}]' "$ready"
 run Rogue cb-x 2>/dev/null || fail "an unsluggable title is exit 0"
 grep -qx -- "prepare-worktree --path $tree --branch cb-x" "$stub/bd.log" \

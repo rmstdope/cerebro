@@ -1484,9 +1484,11 @@ fn role_of(app: &App, name: &str) -> String {
 /// Perform the roster's declaration if it is still to be performed and this view may act.
 ///
 /// Once per view: the first call that finds the view supervising performs it, and every later
-/// call is a no-op. A view that hands the checkout over and takes it back is NOT re-armed - that
-/// disarm is the navigator's to undo with `s` - but one whose first try at the lease failed for a
-/// reason the next poll cures must not lose the declaration with it (cb-eguq).
+/// call is a no-op. A view whose first try at the lease failed for a reason the next poll cures
+/// must not lose the declaration with it (cb-eguq). A view that has seen somebody else hold the
+/// checkout (`hands_over`, cb-nc8) forfeits it instead: the declaration was that owner's to
+/// perform, and a window that takes over from it comes up with an empty armed set until it is
+/// restarted, as `docs/ui/cb-op0-arming.html` and the disarm in `supervise` already say.
 fn declare_if_in_charge(
     app: &mut App,
     state: &mut LoopState,
@@ -1494,6 +1496,10 @@ fn declare_if_in_charge(
     commands: &dyn CommandRunner,
     now: DateTime<Utc>,
 ) {
+    if app.supervision.hands_over() {
+        state.undeclared = None;
+        return;
+    }
     if !app.supervision.may_supervise() {
         return;
     }
@@ -1514,8 +1520,8 @@ fn declare_if_in_charge(
     }
 }
 
-/// Perform the roster's `autostart` declaration and arm its `standby` one, once, as the view
-/// comes up. The port of `cerebro--autostart`, less its vterm check, which has no counterpart.
+/// Perform the roster's `autostart` declaration and arm its `standby` one, once, the first time
+/// the view takes charge (`declare_if_in_charge`): as it comes up, or on a later retry. The port of `cerebro--autostart`, less its vterm check, which has no counterpart.
 ///
 /// Returns the startup notice, or `None` when the roster declared neither.
 #[allow(clippy::too_many_arguments)]
@@ -1542,9 +1548,9 @@ fn arm_and_autostart(
     };
     let autostart = names("--autostart", readers::read_autostart_names(paths, commands));
     let standby = names("--standby", readers::read_standby_names(paths, commands));
-    // The roles, from the same declaration the names came from. The fleet pane has NOT been read
-    // yet - this runs before the first poll - so `role_of` would answer the empty string for every
-    // name here, and both views write into one file.
+    // The roles, from the same declaration the names came from. The fleet pane may NOT have been
+    // read yet - at startup this runs before the first poll - so `role_of` would answer the empty
+    // string for every name here, and both views write into one file.
     //
     // This is a THIRD read of the roster and fails on its own: the two complaints above are about
     // `--autostart` and `--standby`, so a bare `roster` that refuses or parses badly is silent
@@ -1564,8 +1570,10 @@ fn arm_and_autostart(
         // widening: a name declared `autostart` under a stale flag would otherwise come up and be
         // retired at once.
         let clears_flag = lifecycle::stop_flag_set(paths, name);
-        // Before the first work read, so this is `None` and an autostarted implementer launches
-        // with no bead - deliberately; the trigger brings it back on one (cb-10d.1).
+        // At startup this is before the first work read, so it is `None` and an autostarted
+        // implementer launches with no bead - deliberately; the trigger brings it back on one
+        // (cb-10d.1). On a later take-over (cb-eguq) the work pane may have been read, and the
+        // name is given what `s` would give it: the first bead nobody has spoken for.
         let bead = bead_for_start(app, &role_of_name(name));
         match lifecycle::start(host, paths, name, clears_flag, bead.as_deref()) {
             Ok(_) => {
@@ -3593,6 +3601,74 @@ mod main_tests {
         assert!(
             app.armed.contains("Xavier"),
             "the roster's standby name is armed once the view takes charge on a retry"
+        );
+    }
+
+    /// cb-eguq, the other half: the declaration is performed ONCE, and a view that has seen
+    /// somebody else hold the checkout forfeits it - its later take-over comes up with an empty
+    /// armed set, as cb-op0 and cb-nc8 already say.
+    #[test]
+    fn the_declaration_is_performed_once_and_forfeited_to_another_owner() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let paths = scratch(dir.path(), "exit 0");
+        let roster = dir.path().join("roster");
+        std::fs::write(
+            &roster,
+            "#!/bin/sh\ncase \"$1\" in --standby) echo Xavier ;; esac\nexit 0\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&roster, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let config = LoopConfig { paths: paths.clone(), ..test_config() };
+        let identity = dir.path().display().to_string();
+        let record = dir.path().join(".cerebro/state/supervisor.json");
+        let take = |state: &mut LoopState, app: &mut App| {
+            probe::wait_until(probe::POLL_BOUND, || {
+                state.controller.endpoint = Some(probe::free_endpoint());
+                reconcile_ownership(app, state, &config, Utc::now());
+                app.supervision == SupervisionMode::Supervising
+            })
+        };
+
+        // Once: a view that declared and then lost the name some other way is not re-armed by
+        // its next reconcile.
+        let mut state = test_state();
+        state.controller.identity = Some(identity.clone());
+        state.controller.record = Some(record.clone());
+        state.undeclared = Some(Vec::new());
+        let mut app = App::with_supervision(SupervisionMode::ReadOnly(ReadOnlyReason::LockError(
+            "not yet".to_string(),
+        )));
+        assert!(take(&mut state, &mut app), "the setup must actually take the lease");
+        assert!(app.armed.contains("Xavier"), "the first take-over declares");
+        app.armed.clear();
+        reconcile_ownership(&mut app, &mut state, &config, Utc::now());
+        assert!(app.armed.is_empty(), "the declaration is performed once per view");
+        drop(state);
+
+        // Forfeited: another view of this checkout holds the lease, then lets it go.
+        let mut owner = None;
+        assert!(
+            probe::wait_until(probe::POLL_BOUND, || {
+                owner = SupervisorLease::try_acquire(probe::free_endpoint(), &record, &identity).ok();
+                owner.is_some()
+            }),
+            "the setup must actually have another owner"
+        );
+        let held = owner.as_ref().unwrap().endpoint().unwrap();
+        let mut state = test_state();
+        state.controller.identity = Some(identity.clone());
+        state.controller.record = Some(record.clone());
+        state.controller.endpoint = Some(held);
+        state.undeclared = Some(Vec::new());
+        let mut app = App::with_supervision(state.controller.apply());
+        assert!(app.supervision.hands_over(), "the setup must see an honest owner");
+        declare_if_in_charge(&mut app, &mut state, &paths, &RealCommands, Utc::now());
+        drop(owner);
+        assert!(take(&mut state, &mut app), "the retry must actually take the lease");
+        assert!(
+            app.armed.is_empty(),
+            "a view that took over from another owner comes up with an empty armed set"
         );
     }
 

@@ -797,7 +797,7 @@ pass "suites named in slow-suites start first, in the order listed, then the res
 # The list is a hint about time, not about correctness: a suite renamed or deleted without the
 # list being edited is said once on stderr, and the run is decided by the suites alone.
 
-printf '# longest first\n\ngone.sh\nz-slow.sh\nz-slow.sh\n' >"$work_dir/ordered/slow-suites"
+printf '# longest first\n\ngone.sh\n  z-slow.sh   # padded\nz-slow.sh\nb quick.sh\n' >"$work_dir/ordered/slow-suites"
 run --jobs 1 "$work_dir/ordered"
 [[ $status -eq 0 ]] || fail "stale entry: expected exit 0, got $status
 $both"
@@ -807,6 +807,9 @@ order="$(started | tr '\n' ' ')"
 $both"
 grep -qF "suite-runner: $work_dir/ordered/slow-suites names gone.sh, which is not a suite here" <<<"$err" \
   || fail "stale entry: no advisory on stderr naming gone.sh
+$both"
+grep -qF "suite-runner: $work_dir/ordered/slow-suites names b quick.sh, which is not a suite here" <<<"$err" \
+  || fail "stale entry: a name with an inner space was not refused
 $both"
 grep -q '^all suites passed$' <<<"$out" || fail "stale entry: no 'all suites passed'
 $both"
@@ -837,6 +840,26 @@ $both"
 [[ "$(grep -c '^== output of ' <<<"$out")" -eq 1 ]] || fail "listed failure: expected exactly one replay
 $both"
 pass "with no slow-suites suites start by name, and a listed suite's failure is replayed once"
+
+# --- 25. a suite that reads stdin cannot swallow the suites after it ---
+#
+# The launch loop walks the start order as a list; a suite that reads stdin (`cat', `read', a hook
+# reading its payload) must get none of it, or the suites after it never start and are reported
+# failed with empty replays.
+
+mkdir -p "$work_dir/stdin"
+printf '#!/usr/bin/env bash\ncat >/dev/null\nexit 0\n' >"$work_dir/stdin/a-reads.sh"
+for f in b c d; do
+  printf '#!/usr/bin/env bash\nexit 0\n' >"$work_dir/stdin/$f.sh"
+done
+run --jobs 1 "$work_dir/stdin" </dev/null
+[[ $status -eq 0 ]] || fail "stdin reader: expected exit 0, got $status
+$both"
+order="$(started | tr '\n' ' ')"
+[[ "$order" == "a-reads.sh b.sh c.sh d.sh " ]] \
+  || fail "stdin reader: expected all four suites to start, got '$order'
+$both"
+pass "a suite that reads stdin cannot swallow the suites after it"
 
 default_runs_after="$(ls "$default_log_root" 2>/dev/null || true)"
 [[ "$default_runs_after" == "$default_runs_before" ]] || fail "a call in this suite wrote to the default log root at $default_log_root.

@@ -242,7 +242,8 @@ paths=""
 if [[ -f "$dir/slow-suites" ]]; then
   while IFS= read -r name || [[ -n "$name" ]]; do
     name="${name%%#*}"
-    name="${name//[[:space:]]/}"
+    name="${name#"${name%%[![:space:]]*}"}"     # leading whitespace
+    name="${name%"${name##*[![:space:]]}"}"     # trailing whitespace
     [[ -n "$name" ]] || continue
     t="$dir/$name"
     if [[ "$name" != */* && "$name" == *.sh && -f "$t" ]]; then
@@ -263,14 +264,16 @@ for t in "$dir"/*.sh; do
   esac
 done
 
-# The slot is the suite's position in that order, which is the order the replay below walks.
+# The slot is the suite's position in that order, which is the order the replay below walks. The
+# list is read on fd 4, never stdin: every suite inherits stdin, and one that reads it (`cat', a
+# hook reading its payload) would swallow the rest of the list.
 n=0
-while IFS= read -r t; do
+while IFS= read -r -u 4 t; do
   [[ -n "$t" ]] || continue
   read -r -u 3 _                     # blocks until a slot is free
-  run_one "$t" "$n" &
+  run_one "$t" "$n" 4<&- &
   n=$((n+1))
-done <<<"$paths"
+done 4<<<"$paths"
 wait
 
 failed=""

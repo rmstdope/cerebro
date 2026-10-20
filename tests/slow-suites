@@ -3,7 +3,7 @@
 # alone with the other slots idle, and the Bash suites job is CI's critical path.
 #
 # Refresh from a main CI run's Bash suites log when a suite grows past ~10s or shrinks below it:
-#   gh run view <id> --log | grep -E 'ok +tests/' | sed -E 's/.*ok +tests\/(\S+) \(([0-9]+)s\)/\2 \1/' | sort -rn | head
+#   gh run view <id> --log | grep -E 'ok +tests/' | sed -E 's/.*ok +tests\/([^ ]+) \(([0-9]+)s\)/\2 \1/' | sort -rn | head
 # Durations on ubuntu-latest, run 39393149872 (eba21a8):
 fleet-role-triggers.sh   # 111s
 fleet-view-restart.sh    # 48s

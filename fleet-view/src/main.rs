@@ -131,6 +131,7 @@ fn reader_paths(read: impl Fn(&str) -> Option<String>) -> Result<ReaderPaths, St
 struct SupervisorController {
     lease: Option<SupervisorLease>,
     endpoint: Option<SocketAddr>,
+    legacy_endpoint: Option<SocketAddr>,
     identity: Option<String>,
     record: Option<PathBuf>,
     last_request: Option<Instant>,
@@ -151,6 +152,7 @@ impl SupervisorController {
         Self {
             lease: None,
             endpoint: readers::read_supervisor_endpoint(paths, commands).ok(),
+            legacy_endpoint: readers::read_supervisor_legacy_endpoint(paths, commands).ok(),
             identity: readers::read_supervisor_identity(paths, commands).ok(),
             record: readers::read_supervisor_record(paths, commands).ok(),
             last_request: None,
@@ -197,6 +199,14 @@ impl SupervisorController {
     /// There is nothing to read and nothing to declare, so this cannot fail on its own — only the
     /// bind can, and its reason is what the header then shows.
     fn apply(&mut self) -> SupervisionMode {
+        // A kept lease takes up the legacy port if it has freed, and lets go of everything if an
+        // old view of this checkout took it first (cb-ebqd).
+        if let Some(lease) = self.lease.as_mut() {
+            if let Err(AcquireError::OwnedBy) = lease.keep_legacy() {
+                self.lease = None;
+                return SupervisionMode::ReadOnly(ReadOnlyReason::OwnedBy);
+            }
+        }
         let (mode, action) = reconcile_supervision(self.lease.is_some());
         let mode = match action {
             ReconcileAction::Keep => mode,
@@ -228,7 +238,7 @@ impl SupervisorController {
                 "cannot locate the supervision lease".to_string(),
             ));
         };
-        match SupervisorLease::try_acquire(endpoint, record, identity) {
+        match SupervisorLease::try_acquire_beside(endpoint, self.legacy_endpoint, record, identity) {
             Ok(lease) => {
                 self.lease = Some(lease);
                 SupervisionMode::Supervising
@@ -3670,6 +3680,76 @@ mod main_tests {
             app.armed.is_empty(),
             "a view that took over from another owner comes up with an empty armed set"
         );
+    }
+
+    /// cb-ebqd: a view started before cb-7jmm holds the lease on the port the old function
+    /// gave this checkout. It is the old binary, so it knows nothing of the new port and writes
+    /// the record it always wrote: identity and pid, no endpoint.
+    fn an_old_view_holding(identity: &str, record: &std::path::Path) -> (SupervisorLease, SocketAddr) {
+        let mut old = None;
+        assert!(
+            probe::wait_until(probe::POLL_BOUND, || {
+                old = SupervisorLease::try_acquire(probe::free_endpoint(), record, identity).ok();
+                old.is_some()
+            }),
+            "the setup must actually have an old view holding the legacy port"
+        );
+        let old = old.unwrap();
+        std::fs::write(record, format!("{{\"identity\":\"{identity}\",\"pid\":1}}\n"))
+            .expect("the old record");
+        let held = old.endpoint().unwrap();
+        (old, held)
+    }
+
+    /// cb-ebqd: a view on the new lease-port function, started while a view on the old one
+    /// supervises this checkout, stays read-only rather than supervising beside it.
+    #[test]
+    fn a_new_view_does_not_supervise_beside_an_old_one() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let identity = "/repos/x".to_string();
+        let record = dir.path().join("supervisor.json");
+        let (_old, legacy) = an_old_view_holding(&identity, &record);
+
+        let mut controller = test_state().controller;
+        controller.identity = Some(identity);
+        controller.record = Some(record);
+        controller.legacy_endpoint = Some(legacy);
+        controller.endpoint = Some(probe::free_endpoint());
+        assert_eq!(
+            controller.apply(),
+            SupervisionMode::ReadOnly(ReadOnlyReason::OwnedBy),
+            "an old view holds this checkout on its old port; the new view must not supervise too"
+        );
+        assert!(controller.lease.is_none(), "and it holds nothing, not even the new port");
+    }
+
+    /// cb-ebqd, the other order: a view on the new function that supervises first also holds
+    /// the old port, so a view on the old function, still retrying there, cannot take it.
+    #[test]
+    fn an_old_view_cannot_supervise_beside_a_new_one() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let identity = "/repos/x".to_string();
+        let record = dir.path().join("supervisor.json");
+
+        let mut controller = test_state().controller;
+        controller.identity = Some(identity.clone());
+        controller.record = Some(record.clone());
+        let mut legacy = probe::free_endpoint();
+        assert!(
+            probe::wait_until(probe::POLL_BOUND, || {
+                legacy = probe::free_endpoint();
+                controller.legacy_endpoint = Some(legacy);
+                controller.endpoint = Some(probe::free_endpoint());
+                controller.apply() == SupervisionMode::Supervising
+            }),
+            "the setup must actually have a new view supervising"
+        );
+
+        match SupervisorLease::try_acquire(legacy, &record, &identity) {
+            Err(AcquireError::OwnedBy) => {}
+            Ok(_) => panic!("an old view took the old port while a new view supervises: two supervisors"),
+            Err(other) => panic!("the old view must see an honest owner, got {other:?}"),
+        }
     }
 
     /// A collision that resolved is not the parting line of an hour-long session.

@@ -181,6 +181,7 @@ supervised() { get /api/control | jq -e '.supervised == true' >/dev/null 2>&1; }
 read_only() { get /api/control | jq -e '.supervised == false and (has("error") | not)' >/dev/null 2>&1; }
 # row <jq predicate on Forge's row>
 row() { get /api/fleet | jq -e "[.value[] | select(.name == \"Forge\")] | first | $1" >/dev/null 2>&1; }
+on_screen() { grep -Eq "$1" "$screen" 2>/dev/null; }
 alive() { kill -0 "$1" 2>/dev/null; }
 gone() { ! kill -0 "$1" 2>/dev/null; }
 started() { [ -s "$stub_state/Forge.pid" ]; }
@@ -197,13 +198,20 @@ session_text() {
     from="$(jq -r .offset <<<"$answer")"
   done
 }
-session_says() { session_text 2>/dev/null | grep -q "$1"; }
+session_says() {
+  local text
+  text="$(session_text 2>/dev/null)" || return 1
+  grep -q -- "$1" <<<"$text"
+}
 session_absent() { get /api/sessions/Forge | jq -e '.state == "absent"' >/dev/null 2>&1; }
 
 # --- the fleet, as the console reads it ---------------------------------------------------------------
 
 wait_until "the console to see the view supervising" supervised
 wait_until "Forge's row in the console's fleet, on standby" row '.state == "Standby"'
+# The service reads the fleet itself, so it can show Forge before the view's own first read has
+# landed - and the view refuses a start for a row it has not read. Wait for the view's row too.
+wait_until "Forge's row on the view's screen" on_screen 'Forge +architect +standby'
 pass "the console sees the supervising view and Forge's row on standby"
 
 # --- start, through the view --------------------------------------------------------------------------

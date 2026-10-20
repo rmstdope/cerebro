@@ -67,7 +67,7 @@ R17 The navigator re-prioritises a bead from the Work pane with 0–4, + / - and
     Proven by: nothing yet
 R18 x on a Sweeps finding runs the exact bd command it maps to, after the navigator
     confirms.
-    Proven by: nothing yet
+    Proven by: tests/fleet-sweep-x.sh
 R19 A failed verification reopens the bead at P0, unassigned, in front of a builder.
     Proven by: tests/reopen-failed.sh
 R20 Each hand-off between roles puts the bead in exactly the queue of the role meant to

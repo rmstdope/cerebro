@@ -1,6 +1,6 @@
 # Requirements
 
-Agreed with the navigator 2026-10-19. Each requirement keeps its number for ever;
+Agreed with the navigator 2026-10-20. Each requirement keeps its number for ever;
 a dropped one is struck, never renumbered.
 
 ## Setting up a project
@@ -60,6 +60,9 @@ R15 A role is not started again while its trigger names exactly the work its las
 R16 A producer whose session died mid-bead is retried on a backoff, and its row says when
     and how many starts failed.
     Proven by: tests/fleet-retry.sh
+R27 The navigator sets how often each clock role (Moira, Cypher, Forge, Sage) runs, with
+    role_cadence_<role> in project.conf.
+    Proven by: nothing yet
 
 ## The board
 
@@ -73,6 +76,9 @@ R19 A failed verification reopens the bead at P0, unassigned, in front of a buil
 R20 Each hand-off between roles puts the bead in exactly the queue of the role meant to
     take it, and no other.
     Proven by: tests/label-routes.sh
+R28 When the project declares a verification skill, Psylocke opens the merged build in the
+    browser herself and brings the navigator the evidence and a recommended verdict.
+    Proven by: nothing yet
 
 ## Sessions and spend
 

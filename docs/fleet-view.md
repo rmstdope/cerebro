@@ -31,7 +31,8 @@ its pass was ended.* (`lifecycle::unanswered_notice`). Its agent files and moves
 it asks, so the end loses nothing, and the standby countdown that follows is the next pass asking
 again. An implementer's question never expires, and the `supervise.cases` rows pass no expiry.
 Since cb-kcs.4.1 it also **starts** sessions on its own: the roster's `autostart`/`standby`
-declaration is honoured as the view comes up, and the board-backed triggers for the planner,
+declaration is honoured once, the first time the view takes charge - as it comes up, or on a
+retry after a transient failure (cb-eguq), but never after another view held the checkout - and the board-backed triggers for the planner,
 implementer, verifier and orchestrator roles bring a blue `standby` row back — held back by a
 per-role wake floor, the unchanged-work fingerprint, role-start spacing and, since
 cb-10d.1 for builders and cb-10d.2.2 for the planning roles, a bead: a start is made only with a bead

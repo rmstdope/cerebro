@@ -486,23 +486,6 @@ pub fn read_supervisor_endpoint(
     })
 }
 
-/// The port a view older than cb-7jmm takes for this checkout, held beside the real one for the
-/// upgrade window (cb-ebqd). A script that predates the option fails the read, and no legacy port
-/// is held: nothing older than that script can be running a lease on it.
-pub fn read_supervisor_legacy_endpoint(
-    paths: &ReaderPaths,
-    commands: &dyn CommandRunner,
-) -> Result<SocketAddr, ReadError> {
-    let program = paths.scripts_dir.join("fleet-supervisor");
-    let args = ["--legacy-endpoint"];
-    let stdout = commands.run(&program, &args, Some(&paths.consumer_root), COMMAND_TIMEOUT)?;
-    let text = String::from_utf8_lossy(&stdout).trim().to_string();
-    text.parse().map_err(|e: std::net::AddrParseError| ReadError::Invalid {
-        source: Invocation::new(&program, &args),
-        message: format!("{text:?} is not an address: {e}"),
-    })
-}
-
 /// The canonical shared root this checkout supervises - the identity the record round-trips.
 pub fn read_supervisor_identity(
     paths: &ReaderPaths,

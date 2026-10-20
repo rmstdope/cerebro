@@ -219,15 +219,6 @@ lock error, never permission to take over. The rule it gates is one boolean, ass
 `reconcile_supervision` itself: `tests/lib/supervisor.cases` is gone with the second
 implementation it existed to hold to the same table (cb-abs.2).
 
-**The upgrade window of a port change.** cb-7jmm changed the function that derives the port, so a
-view started before it holds, or keeps retrying, a port newer views never compute. Until no such
-view can still be running, a lease also holds that *legacy* port (`fleet-supervisor
---legacy-endpoint`) beside its own (cb-ebqd): an old view of the checkout finds it taken and stays
-read-only, and a newer view that finds it held by an old view of its own checkout — a record naming
-this checkout with no `endpoint` field, which only an old view writes — stays read-only itself, or
-lets go on its next tick if the old view got there first. The legacy port depends on the root's
-length alone, so a stranger holding it is ignored and the port is taken up once it frees.
-
 A view that does not own the checkout starts, resumes, arms, triages and prunes nothing — the
 **session lifecycle** is what the lease gates. The bead panel's own keys are deliberately outside
 it: `x` on a sweep finding and the priority keys write to the shared board rather than to this

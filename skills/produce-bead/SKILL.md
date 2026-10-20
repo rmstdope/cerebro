@@ -162,7 +162,7 @@ run. Never check out `main`; go to your tree and read what is there before you b
 
 ```bash
 cd <repo>/.cerebro/worktrees/<id>
-git branch --show-current          # <id>, or <id>-2 and onward when that name was taken
+git branch --show-current          # <id>-<slug of the title>, -2 onward when taken; the PR's branch
 git status --porcelain
 git log --oneline "origin/$(.cerebro/cerebro/scripts/default-branch)..HEAD"
 ```
@@ -175,7 +175,9 @@ followed by `git checkout -b` moves that agent off its branch.
 
 **A bead whose diff is inside `.cerebro/cerebro`** is worked in `<tree>/.cerebro/cerebro`, which
 arrives detached at the pinned sha: `git -C <tree>/.cerebro/cerebro fetch origin` and branch from
-`origin/main` there, or the PR is based behind it. Never `git -C .cerebro/cerebro worktree add`,
+`origin/main` there, or the PR is based behind it, under the tree's own name and with no upstream,
+so the push rules below hold for it too: `git -C <tree>/.cerebro/cerebro checkout --no-track -b
+"$(git -C <tree> branch --show-current)" origin/main`. Never `git -C .cerebro/cerebro worktree add`,
 never clone cerebro beside the consumer. Two PRs: cerebro's, then a `chore: bump cerebro` commit
 from the same consumer tree once it merged.
 
@@ -208,9 +210,12 @@ the PR body: the gate proves the tests, the validation proves the acceptance, an
 later runs the same commands. A validation that cannot pass is a plan that was wrong; amend the
 plan and say so, or hand back if the amendment is a decision you may not take.
 
-Then open the pull request under `beads-workflow` *Branch, commit and PR conventions*: the branch
-`<id>-short-description`, the subject `feat(<id>): …`, the body naming the bead, the validation
-result, and any deviation from the plan.
+Then open the pull request under `beads-workflow` *Branch, commit and PR conventions*, from the
+branch your tree is already on, never a renamed one: it was made as `<id>-<slug of the title>`
+with no upstream (a cerebro bead's submodule branch is made the same, under *Workspace*), so the
+first push is `git push -u origin HEAD` and every later push a bare `git push`; after an
+`update-branch` catch-up (*Merging*), `git pull --rebase` first, since the PR's head moved past yours. The subject is `feat(<id>): …`, the body names the bead, the validation result, and any
+deviation from the plan.
 
 **A changed shared-root declaration is gated in a clone.** When the diff touches the consumer's
 `install`, `prewarm`, gate or `.cerebro/project.conf` lines, run the clone, submodule, install and

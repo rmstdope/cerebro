@@ -18,6 +18,9 @@
 #                    two that have cost time here).
 #   --branch <name>  create a fresh worktree on a new branch (an implementer's own tree). <dir>
 #                    must not already exist - reusing another bead's tree is how work gets lost.
+#                    The branch has no upstream (`--no-track'): tracking <ref> would make a bare
+#                    `git push' under push.default=simple refuse the mismatched name (ah-7jk6), so
+#                    the session's first `git push -u origin HEAD' sets one of the branch's own name.
 #   (no --branch)    create, or reuse, the one detached, resettable tree (Psylocke's). Missing:
 #                    created detached. Present and detached: fetched, hard-reset and cleaned to
 #                    <ref>. Present and on a branch: refused, naming the branch, tree untouched -
@@ -126,9 +129,9 @@ if [[ -n "$branch" ]]; then
     exit 2
   fi
   if [[ "$dry_run" -eq 1 ]]; then
-    echo "prepare-worktree: would run: git -C $consumer worktree add -b $branch $abs_path $from_ref" >&2
+    echo "prepare-worktree: would run: git -C $consumer worktree add --no-track -b $branch $abs_path $from_ref" >&2
   else
-    git -C "$consumer" worktree add -b "$branch" "$abs_path" "$from_ref" >&2
+    git -C "$consumer" worktree add --no-track -b "$branch" "$abs_path" "$from_ref" >&2
   fi
 else
   if [[ ! -e "$abs_path" ]]; then

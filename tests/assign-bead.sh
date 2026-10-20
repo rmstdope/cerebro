@@ -314,6 +314,49 @@ run Rogue cb-x 2>/dev/null || fail "two taken branches are exit 0"
 grep -q -- "--branch cb-x-3" "$stub/bd.log" || fail "two taken branches move to cb-x-3"
 pass "a taken branch name moves to the next free suffix"
 
+# --- ah-7jk6: the tree's branch is the PR's branch, <id>-<slug of the title> ------------------------
+titled='[{"id":"cb-x","status":"open","assignee":"","title":"Refactoring: the tree\u0027s branch is <id>, but the PR wants <id>-<slug>!"}]'
+reset "$titled" "$ready"
+run Rogue cb-x 2>/dev/null || fail "a titled bead is exit 0"
+grep -qx -- "prepare-worktree --path $tree --branch cb-x-refactoring-the-tree-s-branch-is-id-but" "$stub/bd.log" \
+  || fail "a titled bead is branched <id>-<slug>, lower-cased and cut at a word within 40, got: $(cat "$stub/bd.log")"
+pass "a tree's branch is <id>-<slug of the title>, the branch its PR is opened from"
+
+reset '[{"id":"cb-x","status":"open","assignee":"","title":"Abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz"}]' "$ready"
+run Rogue cb-x 2>/dev/null || fail "a one-word title is exit 0"
+grep -qx -- "prepare-worktree --path $tree --branch cb-x-abcdefghijklmnopqrstuvwxyzabcdefghijklmn" "$stub/bd.log" \
+  || fail "a title with no word break is cut hard at 40, got: $(cat "$stub/bd.log")"
+pass "a slug with no word break inside 40 characters is cut at 40"
+
+reset '[{"id":"cb-x","status":"open","assignee":"","title":"Two\nlines"}]' "$ready"
+run Rogue cb-x 2>/dev/null || fail "a two-line title is exit 0"
+grep -qx -- "prepare-worktree --path $tree --branch cb-x-two-lines" "$stub/bd.log" \
+  || fail "a newline in the title is slugged like any other separator, got: $(cat "$stub/bd.log")"
+pass "a newline in the title is slugged like any other separator"
+
+reset '[{"id":"cb-x","status":"open","assignee":"","title":"A bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]' "$ready"
+run Rogue cb-x 2>/dev/null || fail "an early-boundary title is exit 0"
+grep -qx -- "prepare-worktree --path $tree --branch cb-x-a-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "$stub/bd.log" \
+  || fail "a word cut that would keep under 20 characters is a hard cut at 40, got: $(cat "$stub/bd.log")"
+reset '[{"id":"cb-x","status":"open","assignee":"","title":"abcdefghijklmnopqrstuvwxyzabcdefghijklm next"}]' "$ready"
+run Rogue cb-x 2>/dev/null || fail "a 40-character first word is exit 0"
+grep -qx -- "prepare-worktree --path $tree --branch cb-x-abcdefghijklmnopqrstuvwxyzabcdefghijklm" "$stub/bd.log" \
+  || fail "a boundary at character 41 cuts to exactly 40, got: $(cat "$stub/bd.log")"
+pass "a word cut keeps at least 20 characters, and a boundary at 41 cuts to exactly 40"
+
+reset '[{"id":"cb-x","status":"open","assignee":"","title":"!!!"}]' "$ready"
+run Rogue cb-x 2>/dev/null || fail "an unsluggable title is exit 0"
+grep -qx -- "prepare-worktree --path $tree --branch cb-x" "$stub/bd.log" \
+  || fail "a title with nothing to slug keeps the bare id, got: $(cat "$stub/bd.log")"
+pass "a title with nothing to slug keeps the bare id"
+
+reset '[{"id":"cb-x","status":"open","assignee":"","title":"Do it"}]' "$ready"
+git -C "$consumer" branch -q cb-x-do-it origin/main
+run Rogue cb-x 2>/dev/null || fail "a taken slugged branch is exit 0"
+grep -qx -- "prepare-worktree --path $tree --branch cb-x-do-it-2" "$stub/bd.log" \
+  || fail "a taken slugged branch moves to cb-x-do-it-2, got: $(cat "$stub/bd.log")"
+pass "a taken slugged branch moves to the next free suffix"
+
 reset "$open" "$ready"
 git -C "$consumer" worktree add -q "$tree" -b cb-x origin/main
 run Rogue cb-x 2>/dev/null || fail "a registered tree is adopted with exit 0"

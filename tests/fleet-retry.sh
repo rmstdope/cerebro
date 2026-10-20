@@ -299,9 +299,14 @@ wait_until 30 "Rogue's second session" has_sessions 2
 wait_until 30 "Rogue's third session" has_sessions 3
 wait_until 10 "the view's third start line for Rogue" has_start 3
 all_claimed_at_start
-first="$(start_at 1)"; third="$(start_at 3)"
-((third - first < 30)) \
-  || fail "the first three starts took $((third - first))s; the first two failures should come straight back$(evidence)"
+third="$(start_at 3)"
+# Straight back means no backoff held any of the first three: read from what the view logged, not
+# from the clock, since each launch's preflight and tree take a loaded machine several seconds.
+third_ts="$(jq -rs '[.[] | select(.event == "start" and .agent == "Rogue" and .by == "trigger")] | .[2].ts' \
+              "$state/decisions.jsonl")"
+jq -se --arg to "$third_ts" '[.[] | select(.agent == "Rogue" and .ts <= $to)] | all(.backed_off == null)' \
+  "$state/evaluations.jsonl" >/dev/null 2>&1 \
+  || fail "a backoff held Rogue before its third start; the first two failures should come straight back$(evidence)"
 pass "Rogue's dead session gives cb-b1 back, and Rogue is started on it again at once, claimed each time"
 
 # --- 2. after two failures, a 30-second backoff the row counts down -------------------------------

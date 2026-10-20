@@ -50,7 +50,12 @@ binary="$(jq -r 'select(.reason == "compiler-artifact" and .target.name == "cere
 
 # --- the consumer -----------------------------------------------------------------------------------
 
-consumer="$(consumer_new type --copy)"
+# Named `typing', a length no other suite running the view uses (fleet-keys `keys', 4;
+# fleet-view-restart `restart', 7). The lease port `scripts/fleet-supervisor' derives depends on
+# the root's length alone (two cksums XOR-ed cancel to a function of the length; cb-ebqd), and
+# every suite's root is one `mktemp -d' plus its name, so two suites whose names have the same
+# length meet on one port in a parallel gate and both go read-only.
+consumer="$(consumer_new typing --copy)"
 state="$consumer/.cerebro/state"
 stub_state="$consumer/.cerebro/stub"
 printf 'Forge  architect  standby\n' > "$consumer/.cerebro/roster.conf"
@@ -111,6 +116,9 @@ evidence() {
   cat "$screen" 2>/dev/null || echo "(no screen yet)"
   printf -- '--- view stderr ---\n'
   cat "$view_err" 2>/dev/null || true
+  printf -- '--- supervision lease ---\n'
+  (cd "$consumer" && "$consumer/.cerebro/cerebro/scripts/fleet-supervisor" --endpoint 2>&1) || true
+  cat "$state/supervisor.json" 2>/dev/null || echo "(no record)"
   printf -- '--- typed to the agent ---\n'
   cat "$stub_state/Forge.typed" 2>/dev/null || echo "(nothing)"
 }

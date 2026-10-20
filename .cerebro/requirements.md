@@ -50,7 +50,7 @@ R12 A session that dies on a launcher refusal shows the refusal on its row and i
 
 R13 A producer is started, with a bead claimed for it, when a ranked UX-agreed unclaimed
     bead exists; at most one every 30 seconds.
-    Proven by: nothing yet
+    Proven by: tests/fleet-producer-start.sh
 R14 Each interactive role starts on its own trigger (UX, Psylocke, Cerebro, Moira, Cypher,
     Forge, Sage) and is ended half a minute after it writes waiting.
     Proven by: nothing yet

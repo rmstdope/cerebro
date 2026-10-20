@@ -53,7 +53,7 @@ R13 A producer is started, with a bead claimed for it, when a ranked UX-agreed u
     Proven by: tests/fleet-producer-start.sh
 R14 Each interactive role starts on its own trigger (UX, Psylocke, Cerebro, Moira, Cypher,
     Forge, Sage) and is ended half a minute after it writes waiting.
-    Proven by: nothing yet
+    Proven by: tests/fleet-role-triggers.sh
 R15 A role is not started again while its trigger names exactly the work its last pass
     was started for.
     Proven by: tests/fleet-view-restart.sh

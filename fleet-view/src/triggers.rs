@@ -79,11 +79,25 @@ pub fn cadence(role: &str) -> Option<i64> {
 /// the pass; the next pass asks again" - a row stalled on an unanswered question was the rejected
 /// alternative. The bound is the role's own cadence, so the countdown that follows is the hour the
 /// next pass would have waited anyway. `lifecycle::supervise_action` is what acts on it.
-pub fn question_expiry(role: &str) -> Option<i64> {
+///
+/// DECLARED is the project's `role_cadence_<role>` map (`cadence_for`): the bound follows a
+/// declared cadence, so it stays the role's own (cb-kmxs).
+pub fn question_expiry(role: &str, declared: &BTreeMap<String, u64>) -> Option<i64> {
     match role {
-        "qa" => cadence(role),
+        "qa" => cadence_for(role, declared),
         _ => None,
     }
+}
+
+/// The cadence in force for ROLE: what the project declared (`role_cadence_<role>`, read once at
+/// startup), else `cadence(role)`.
+///
+/// Only a role that HAS a built-in cadence takes a declaration. The others start on a condition,
+/// and a clock there would start them with nothing to do - the reason they have no floor at all.
+/// A declared `0` is a real answer: the role is due as soon as its wake interval allows.
+pub fn cadence_for(role: &str, declared: &BTreeMap<String, u64>) -> Option<i64> {
+    let built_in = cadence(role)?;
+    Some(declared.get(role).map_or(built_in, |seconds| i64::try_from(*seconds).unwrap_or(i64::MAX)))
 }
 
 /// Does ROLE's trigger read `gh`? The two GitHub-backed roles; the ` gh?` suffix is theirs alone.
@@ -304,6 +318,10 @@ pub struct TriggerFacts {
     /// The linked beads as the work reader last saw them (`WorkBuckets::linked`). Filtered per
     /// role by `linked_moved`, for the same reason.
     pub linked: Vec<LinkedBead>,
+    /// The project's `role_cadence_<role>` declarations, read once at startup like `ux_multiple`
+    /// and set by the edge with `with_cadences`; empty means every cadence role keeps its hour.
+    /// Read through `cadence_for`, never directly.
+    pub cadences: BTreeMap<String, u64>,
 }
 
 fn parked(labels: &[String]) -> bool {
@@ -428,7 +446,14 @@ impl TriggerFacts {
             ux_multiple,
             gh,
             linked: buckets.linked.clone(),
+            cadences: BTreeMap::new(),
         }
+    }
+
+    /// These facts with the project's declared cadences (`cadence_for`).
+    pub fn with_cadences(mut self, cadences: BTreeMap<String, u64>) -> Self {
+        self.cadences = cadences;
+        self
     }
 
     /// How many beads a producer could take the fleet wants ready: `ux_multiple` per producer,
@@ -543,7 +568,7 @@ pub fn trigger(
     // interval than its cadence must obey the longer one. And it needs an `ended_at`: a role this
     // view has no end for never starts on its floor, which `StartLedger::note_armed` makes a
     // corner rather than the normal case.
-    if let (Some(cadence), Some(ended)) = (cadence(agent.role), agent.ended_at) {
+    if let (Some(cadence), Some(ended)) = (cadence_for(agent.role, &facts.cadences), agent.ended_at) {
         if (now - ended).num_seconds() >= cadence {
             return Some(format!(
                 "{} since its last {}",
@@ -803,10 +828,11 @@ pub fn standby_label(
         "verifier" => Some("→ merged".to_string()),
         "orchestrator" => Some("→ unranked".to_string()),
         _ => {
-            let cadence = cadence(role)?;
+            let cadence = cadence_for(role, &facts.cadences)?;
             let cell = match agent.ended_at {
                 Some(ended) => countdown(cadence - (now - ended).num_seconds()),
-                None => "→ hourly".to_string(),
+                None if cadence == 3600 => "→ hourly".to_string(),
+                None => format!("→ every {}", cadence_figure(cadence)),
             };
             let blind = reads_gh(role) && facts.gh == GhAnswer::Failed;
             Some(if blind { format!("{cell} gh?") } else { cell })
@@ -1762,6 +1788,7 @@ mod tests {
             ux_multiple: 1,
             gh: GhAnswer::Unanswered,
             linked: Vec::new(),
+            cadences: BTreeMap::new(),
         }
     }
 
@@ -2259,13 +2286,74 @@ mod tests {
     /// waits until it is answered.
     #[test]
     fn only_qa_declares_a_question_expiry() {
-        assert_eq!(question_expiry("qa"), Some(3600));
+        assert_eq!(question_expiry("qa", &BTreeMap::new()), Some(3600));
         for role in [
             "architect", "user-feedback", "reviewer", "verifier", "orchestrator", "ux",
             "producer", "bugfixer",
         ] {
-            assert_eq!(question_expiry(role), None, "{role}");
+            assert_eq!(question_expiry(role, &BTreeMap::new()), None, "{role}");
         }
+    }
+
+    fn declared(pairs: &[(&str, u64)]) -> BTreeMap<String, u64> {
+        pairs.iter().map(|(role, seconds)| ((*role).to_string(), *seconds)).collect()
+    }
+
+    /// cb-kmxs: a project's `role_cadence_<role>` replaces the built-in hour for that role, and
+    /// only for it.
+    #[test]
+    fn a_declared_cadence_replaces_the_hour() {
+        let now = at_iso("2026-09-01T12:00:00Z");
+        let facts = cadence_facts(GhAnswer::Answered(snapshot()))
+            .with_cadences(declared(&[("architect", 60)]));
+        let agent = |role, ended| AgentFacts {
+            role,
+            ended_at: Some(at_iso(ended)),
+            started_at: None,
+            last_fingerprint: None,
+        };
+        assert_eq!(trigger(&facts, agent("architect", "2026-09-01T11:59:01Z"), now), None, "59s");
+        assert_eq!(
+            trigger(&facts, agent("architect", "2026-09-01T11:59:00Z"), now).as_deref(),
+            Some("1m since its last sweep")
+        );
+        assert_eq!(
+            trigger(&facts, agent("qa", "2026-09-01T11:30:00Z"), now),
+            None,
+            "an undeclared role keeps the hour"
+        );
+    }
+
+    #[test]
+    fn a_cadence_is_declared_only_for_a_cadence_role() {
+        let declared = declared(&[("qa", 60), ("ux", 60), ("verifier", 0)]);
+        assert_eq!(cadence_for("qa", &declared), Some(60));
+        assert_eq!(cadence_for("architect", &declared), Some(3600));
+        assert_eq!(cadence_for("ux", &declared), None, "a condition role gains no clock");
+        assert_eq!(cadence_for("verifier", &declared), None);
+        assert_eq!(cadence_for("reviewer", &self::declared(&[("reviewer", 0)])), Some(0));
+    }
+
+    #[test]
+    fn the_cadence_countdown_counts_the_declared_cadence() {
+        let now = at_iso("2026-09-01T12:00:00Z");
+        let facts = cadence_facts(GhAnswer::Answered(snapshot()))
+            .with_cadences(declared(&[("qa", 1800)]));
+        let agent = AgentFacts {
+            role: "qa",
+            ended_at: Some(at_iso("2026-09-01T11:43:00Z")),
+            started_at: None,
+            last_fingerprint: None,
+        };
+        assert_eq!(standby_label("qa", &facts, agent, now).as_deref(), Some("→ 13m"));
+        let unknown = AgentFacts { ended_at: None, ..agent };
+        assert_eq!(standby_label("qa", &facts, unknown, now).as_deref(), Some("→ every 30m"));
+    }
+
+    #[test]
+    fn the_question_expiry_follows_the_declared_cadence() {
+        assert_eq!(question_expiry("qa", &declared(&[("qa", 90)])), Some(90));
+        assert_eq!(question_expiry("architect", &declared(&[("architect", 90)])), None);
     }
 
     #[test]

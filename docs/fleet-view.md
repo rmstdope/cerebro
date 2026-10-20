@@ -50,7 +50,10 @@ in place of its condition — and is abandoned after five consecutive starts
 that produced no pass, which disarms the name and leaves `s` as the only way back; a launcher
 refusal is parked from the first failure, where a silent crash is retried. Since cb-kcs.4.3 the
 three roles whose work arrives from outside the fleet start too, off a `gh` reader on its own
-cadence and an hourly floor each. Since cb-kcs.4.4 all of it is written down, in the same three
+cadence and an hourly floor each. Since cb-kmxs a project may declare that floor per role in
+`project.conf` (`role_cadence_<role>`, whole seconds, for `user-feedback`, `reviewer`, `architect`
+and `qa`; absent is the hour), read once at startup like the spacing, and Sage's question expiry
+follows it. Since cb-kcs.4.4 all of it is written down, in the same three
 append-only files under `.cerebro/state/`: `decisions.jsonl` — a line per start (with the trigger that
 fired), end, retire, resume, stuck, arm, disarm, exit and give-up, and since cb-xhu.2 nothing else, which is why it
 keeps months; `evaluations.jsonl` — at the verbosity this view compiles in, a

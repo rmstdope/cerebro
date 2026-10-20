@@ -404,6 +404,40 @@ pub fn read_role_spacing(
     roles: &[&str],
     commands: &dyn CommandRunner,
 ) -> (BTreeMap<String, u64>, Vec<String>) {
+    read_role_seconds(paths, "role_start_spacing_", roles, commands, |role| {
+        match crate::triggers::default_spacing(role) {
+            Some(seconds) => format!("{seconds}"),
+            None => "no spacing".to_string(),
+        }
+    })
+}
+
+/// The `role_cadence_<role>` each of ROLES declares (cb-kmxs), by `read_role_spacing`'s three
+/// rules. ROLES are the cadence roles; a declaration's fallback is the built-in hour.
+///
+/// Runs once, at startup, beside `read_role_spacing`.
+pub fn read_role_cadence(
+    paths: &ReaderPaths,
+    roles: &[&str],
+    commands: &dyn CommandRunner,
+) -> (BTreeMap<String, u64>, Vec<String>) {
+    read_role_seconds(paths, "role_cadence_", roles, commands, |role| {
+        match crate::triggers::cadence(role) {
+            Some(seconds) => format!("{seconds}"),
+            None => "no cadence".to_string(),
+        }
+    })
+}
+
+/// `<PREFIX><role>` for each distinct role of ROLES, as whole seconds, and the complaints about
+/// the ones that are not; FALLBACK names what a role uses instead, for the complaint.
+fn read_role_seconds(
+    paths: &ReaderPaths,
+    prefix: &str,
+    roles: &[&str],
+    commands: &dyn CommandRunner,
+    fallback: impl Fn(&str) -> String,
+) -> (BTreeMap<String, u64>, Vec<String>) {
     let program = paths.scripts_dir.join("project-conf");
     let mut declared = BTreeMap::new();
     let mut complaints = Vec::new();
@@ -412,7 +446,7 @@ pub fn read_role_spacing(
         if !seen.insert(role) {
             continue;
         }
-        let key = format!("role_start_spacing_{role}");
+        let key = format!("{prefix}{role}");
         let Ok(stdout) =
             commands.run(&program, &[&key], Some(&paths.consumer_root), COMMAND_TIMEOUT)
         else {
@@ -424,17 +458,10 @@ pub fn read_role_spacing(
                 declared.insert((*role).to_string(), seconds);
             }
             Ok(None) => {}
-            Err(bad) => {
-                let fallback = crate::triggers::default_spacing(role);
-                complaints.push(match fallback {
-                    Some(seconds) => format!(
-                        "project.conf: {key} is not a whole number of seconds (\"{bad}\"); using {seconds}."
-                    ),
-                    None => format!(
-                        "project.conf: {key} is not a whole number of seconds (\"{bad}\"); using no spacing."
-                    ),
-                });
-            }
+            Err(bad) => complaints.push(format!(
+                "project.conf: {key} is not a whole number of seconds (\"{bad}\"); using {}.",
+                fallback(role)
+            )),
         }
     }
     (declared, complaints)
@@ -1840,6 +1867,35 @@ mod tests {
                 "project.conf: role_start_spacing_producer is not a whole number of seconds (\"30s\"); using 30.".to_string()
             ]
         );
+    }
+
+    #[test]
+    fn project_conf_declares_the_role_cadence_and_names_a_bad_one() {
+        let paths = paths_at(Path::new("/consumer"));
+        let fake = FakeCommands::new(|call: &Call| match call.args.first().map(String::as_str) {
+            Some("role_cadence_architect") => Ok(b"60\n".to_vec()),
+            Some("role_cadence_qa") => Ok(b"1h\n".to_vec()),
+            Some("role_cadence_reviewer") => Err(ReadError::Exit {
+                source: "project-conf".into(),
+                status: Some(1),
+                stderr: String::new(),
+            }),
+            _ => Ok(b"\n".to_vec()),
+        });
+
+        let (declared, complaints) =
+            read_role_cadence(&paths, &["architect", "qa", "reviewer", "user-feedback"], &fake);
+        assert_eq!(declared.get("architect"), Some(&60));
+        assert_eq!(declared.get("reviewer"), None, "a non-zero exit is declared nothing");
+        assert_eq!(declared.get("user-feedback"), None);
+        assert_eq!(declared.get("qa"), None);
+        assert_eq!(
+            complaints,
+            vec![
+                "project.conf: role_cadence_qa is not a whole number of seconds (\"1h\"); using 3600.".to_string()
+            ]
+        );
+        assert!(fake.calls().iter().all(|call| call.args.len() == 1), "one key per call");
     }
 
     #[test]

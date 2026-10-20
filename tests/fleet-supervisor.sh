@@ -128,6 +128,22 @@ near="$("$supervisor" --endpoint-for /repos/alpha2)"
 [[ "$near" != "$fixed_a" ]] || fail "/repos/alpha and /repos/alpha2 collided on $fixed_a"
 pass "a root that differs by one character takes a different port"
 
+# Roots of ONE length (cb-7jmm). cksum is a CRC, and a CRC is affine over XOR, so two sums whose
+# strings differ only in a fixed byte cancel the root out: once the port was a function of the
+# root's length alone, and every mktemp consumer of a parallel gate met on one port. A handful of
+# equal-length roots, fixed strings so the assertion is about the function and not about chance.
+seen_ports=" "
+for probe in /repos/abc /repos/xyz /repos/pqr /repos/mno /repos/def /xx /yy /zz; do
+  probe_port="$("$supervisor" --endpoint-for "$probe")"
+  case "$seen_ports" in
+    *" $probe_port="*)
+      other="${seen_ports#*" $probe_port="}"
+      fail "equal-length roots ${other%% *} and $probe collided on $probe_port" ;;
+  esac
+  seen_ports+="$probe_port=$probe "
+done
+pass "roots of the same length take different ports"
+
 [[ "$("$supervisor" --endpoint-for "$consumer")" == "$endpoint" ]] \
   || fail "--endpoint-for <shared root> disagrees with --endpoint"
 pass "--endpoint is --endpoint-for of the shared root"

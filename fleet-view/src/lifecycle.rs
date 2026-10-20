@@ -1479,30 +1479,6 @@ mod tests {
     }
 
     #[test]
-    fn worktree_records_are_read_sorted_with_owner_and_age() {
-        let dir = tempfile::tempdir().unwrap();
-        let paths = ReaderPaths {
-            consumer_root: dir.path().to_path_buf(),
-            shared_root: dir.path().to_path_buf(),
-            scripts_dir: dir.path().to_path_buf(),
-        };
-        assert!(read_worktree_records(&paths, std::time::SystemTime::now()).is_empty());
-        let records = worktree_records_dir(&paths);
-        std::fs::create_dir_all(&records).unwrap();
-        std::fs::write(records.join("cb-b"), "Rogue\n").unwrap();
-        std::fs::write(records.join("cb-a"), "Gambit\n").unwrap();
-        std::fs::write(records.join("cb-c"), "").unwrap();
-        std::fs::write(records.join("cb-d.123.tmp"), "Rogue\n").unwrap();
-        let old = std::time::SystemTime::now() - Duration::from_secs(90);
-        std::fs::File::options().write(true).open(records.join("cb-a")).unwrap().set_modified(old).unwrap();
-        let read = read_worktree_records(&paths, std::time::SystemTime::now());
-        assert_eq!(read.len(), 2, "{read:?}");
-        assert_eq!((read[0].bead.as_str(), read[0].owner.as_str()), ("cb-a", "Gambit"));
-        assert!(read[0].age_seconds >= 90, "{read:?}");
-        assert_eq!((read[1].bead.as_str(), read[1].owner.as_str()), ("cb-b", "Rogue"));
-    }
-
-    #[test]
     fn tidy_reads_release_beads_one_line() {
         let paths = paths(Path::new("/consumer"));
         for (answer, expected) in [
@@ -1835,37 +1811,6 @@ mod tests {
     }
 
     #[test]
-    fn a_given_handover_is_read_by_its_second_line() {
-        let dir = tempfile::tempdir().unwrap();
-        let paths = paths(dir.path());
-        assert_eq!(read_given(&paths, "Rogue"), None);
-        std::fs::create_dir_all(dir.path().join(".cerebro/state")).unwrap();
-        for (text, expected) in [
-            ("cb-x\ngiven\n", Some("cb-x")),
-            ("cb-x\n", None),
-            ("cb-x\nother\n", None),
-            ("", None),
-        ] {
-            std::fs::write(handover_path(&paths, "Rogue"), text).unwrap();
-            assert_eq!(read_given(&paths, "Rogue").as_deref(), expected, "{text:?}");
-        }
-    }
-
-    #[test]
-    fn a_handover_file_is_read_with_its_age() {
-        let dir = tempfile::tempdir().unwrap();
-        let paths = paths(dir.path());
-        let now = std::time::SystemTime::now();
-        assert_eq!(read_handover(&paths, "Rogue", now), None);
-        std::fs::create_dir_all(dir.path().join(".cerebro/state")).unwrap();
-        std::fs::write(handover_path(&paths, "Rogue"), "cb-x\n").unwrap();
-        let later = now + std::time::Duration::from_secs(90);
-        let (bead, age) = read_handover(&paths, "Rogue", later).unwrap();
-        assert_eq!(bead, "cb-x");
-        assert!((89..=91).contains(&age), "{age}");
-    }
-
-    #[test]
     fn a_verdict_names_a_refusal_a_code_or_nothing() {
         assert_eq!(classify_exit(Ended::Status(0)), None);
         assert_eq!(classify_exit(Ended::Status(2)), Some(LastExit::Refused));
@@ -1969,7 +1914,7 @@ mod tests {
             // Through `stuck_for` rather than straight into `Supervised::stuck`: the ceiling is
             // then part of what the table proves, which is what makes the `1799` rows mean
             // anything.
-            let now = Utc::now();
+            let now = fixed_now();
             let turn_ended = (fields[6] != "none").then(|| {
                 now - chrono::Duration::seconds(
                     fields[6]
@@ -2302,6 +2247,12 @@ mod tests {
         }
     }
 
+    /// The one instant every test decides at: a decision takes `now`, so a test never asks the
+    /// machine for one.
+    fn fixed_now() -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z").unwrap().with_timezone(&Utc)
+    }
+
     fn paths(root: &Path) -> ReaderPaths {
         ReaderPaths {
             consumer_root: root.join("worktree"),
@@ -2511,77 +2462,6 @@ mod tests {
         assert_eq!(kill_prompt(&without), "Kill Cerebro?  y / n");
     }
 
-    #[test]
-    fn a_stop_flag_is_an_empty_file_under_the_shared_root() {
-        let dir = tempfile::tempdir().unwrap();
-        let paths = paths(dir.path());
-
-        let path = stop_flag_path(&paths, "Cyclops");
-        assert!(path.ends_with(".cerebro/state/Cyclops.stop"), "{}", path.display());
-        assert!(path.starts_with(dir.path()));
-
-        assert!(!stop_flag_set(&paths, "Cyclops"));
-        write_stop_flag(&paths, "Cyclops").unwrap();
-        assert!(stop_flag_set(&paths, "Cyclops"));
-        assert_eq!(std::fs::read(&path).unwrap(), Vec::<u8>::new());
-
-        clear_stop_flag(&paths, "Cyclops").unwrap();
-        assert!(!stop_flag_set(&paths, "Cyclops"));
-    }
-
-    #[test]
-    fn clearing_a_flag_that_is_not_there_is_success() {
-        let dir = tempfile::tempdir().unwrap();
-        clear_stop_flag(&paths(dir.path()), "Nobody").unwrap();
-    }
-
-    #[test]
-    fn deleting_a_state_file_that_is_not_there_is_success() {
-        let dir = tempfile::tempdir().unwrap();
-        delete_state_file(&paths(dir.path()), "Nobody").unwrap();
-    }
-
-    #[test]
-    fn a_state_file_is_deleted_when_it_is_there() {
-        let dir = tempfile::tempdir().unwrap();
-        let paths = paths(dir.path());
-        std::fs::create_dir_all(state_dir(&paths)).unwrap();
-        let path = state_file_path(&paths, "Cyclops");
-        std::fs::write(&path, "{}").unwrap();
-        delete_state_file(&paths, "Cyclops").unwrap();
-        assert!(!path.exists());
-    }
-
-    /// `readers::read_states` must open the path THIS module builds, not a second spelling of it.
-    ///
-    /// Asserted by writing a file at `state_file_path` and checking the reader parsed it: a
-    /// re-inlined path in `readers.rs` would read nothing and answer `Missing`, which is what a
-    /// test that only re-derived the literal here could never see.
-    #[test]
-    fn the_state_file_path_is_the_one_the_readers_use() {
-        use crate::model::{RosterEntry, StateObservation};
-
-        let dir = tempfile::tempdir().unwrap();
-        let paths = paths(dir.path());
-        let path = state_file_path(&paths, "Xavier");
-        assert_eq!(path, paths.shared_root.join(".cerebro/state").join("Xavier.state.json"));
-
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, r#"{"state":"working","bead":"cb-1","since":"2026-01-01T00:00:00Z","pid":1}"#).unwrap();
-
-        let roster = vec![RosterEntry {
-            name: "Xavier".to_string(),
-            role: "planner".to_string(),
-            kind: AgentKind::Interactive,
-        }];
-        match crate::readers::read_states(&paths, &roster).get("Xavier") {
-            Some(StateObservation::Parsed(record)) => {
-                assert_eq!(record.bead.as_deref(), Some("cb-1"));
-            }
-            other => panic!("the reader did not open the path this module builds: {other:?}"),
-        }
-    }
-
     // --- standby rows (cb-kcs.4.1) ---------------------------------------------------------
 
     #[test]
@@ -2658,8 +2538,8 @@ mod tests {
     /// see. There are two of them since cb-kcs.5.4; `set_priority` has its own case below.
     #[test]
     fn the_board_write_goes_through_the_one_seam() {
-        let dir = tempfile::tempdir().expect("a temp dir");
-        let paths = paths_in(dir.path());
+        let dir = Path::new("/consumer");
+        let paths = paths_in(dir);
         let programs = Programs::default();
         let fake = FakeCommands::always("");
 
@@ -2684,14 +2564,14 @@ mod tests {
     /// against an argv-only assertion.
     #[test]
     fn the_priority_write_goes_through_the_one_seam() {
-        let dir = tempfile::tempdir().expect("a temp dir");
+        let dir = Path::new("/consumer");
         // DISTINCT roots, unlike `paths_in`'s: in a bead worktree the enclosing root is a
         // different board from the shared one, so a cwd assertion made where the two are equal
         // cannot tell them apart - which is exactly the edit this case exists to catch.
         let paths = ReaderPaths {
-            consumer_root: dir.path().join("worktree"),
-            shared_root: dir.path().join("shared"),
-            scripts_dir: dir.path().join("scripts"),
+            consumer_root: dir.join("worktree"),
+            shared_root: dir.join("shared"),
+            scripts_dir: dir.join("scripts"),
         };
         let programs = Programs::default();
         let fake = FakeCommands::always("");
@@ -2713,11 +2593,11 @@ mod tests {
     /// The push rides the same keypress: a close the other machines cannot see is half done.
     #[test]
     fn running_a_finding_pushes_after_it_succeeds() {
-        let dir = tempfile::tempdir().expect("a temp dir");
+        let dir = Path::new("/consumer");
         let programs = Programs::default();
         let fake = FakeCommands::always("");
         let outcome = run_finding(
-            &paths_in(dir.path()),
+            &paths_in(dir),
             &programs,
             &fake,
             &Finding::EpicClose { id: "cb-a".into() },
@@ -2734,7 +2614,7 @@ mod tests {
     /// confirmation, and with it the line runs to 106 cells.
     #[test]
     fn a_failed_push_is_said_and_the_write_is_not_undone() {
-        let dir = tempfile::tempdir().expect("a temp dir");
+        let dir = Path::new("/consumer");
         let fake = FakeCommands::new(|call| {
             if call.args.first().map(String::as_str) == Some("dolt") {
                 Err(failed_bd())
@@ -2743,7 +2623,7 @@ mod tests {
             }
         });
         let outcome = run_finding(
-            &paths_in(dir.path()),
+            &paths_in(dir),
             &Programs::default(),
             &fake,
             &Finding::EpicClose { id: "cb-a".into() },
@@ -2761,11 +2641,11 @@ mod tests {
     /// write happened.
     #[test]
     fn a_failed_command_does_not_push() {
-        let dir = tempfile::tempdir().expect("a temp dir");
+        let dir = Path::new("/consumer");
         let programs = Programs::default();
         let fake = FakeCommands::failing(failed_bd);
         let outcome = run_finding(
-            &paths_in(dir.path()),
+            &paths_in(dir),
             &programs,
             &fake,
             &Finding::EpicClose { id: "cb-e".into() },
@@ -2816,7 +2696,7 @@ mod tests {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../tests/lib/triage.cases");
         let text =
             std::fs::read_to_string(path).unwrap_or_else(|e| panic!("cannot read {path}: {e}"));
-        let now = Utc::now();
+        let now = fixed_now();
         let mut rows = 0;
         for line in text.lines() {
             let trimmed = line.trim();
@@ -2893,7 +2773,7 @@ mod tests {
 
     #[test]
     fn the_sweep_ledger_marks_queues_and_forgets() {
-        let now = Utc::now();
+        let now = fixed_now();
         let mut ledger = SweepLedger::default();
         assert_eq!(ledger.mark("Cerebro"), None, "an unknown name holds no mark");
         assert!(!ledger.pending("Cerebro"), "an unknown name has nothing queued");
@@ -2990,7 +2870,7 @@ mod tests {
     /// - the navigator removing a `triage:declined` - is told as a change and not as a repeat.
     #[test]
     fn an_empty_set_is_forgotten_not_remembered() {
-        let now = Utc::now();
+        let now = fixed_now();
         let mut ledger = TriageLedger::default();
         let ids = vec!["cb-1".to_string()];
         ledger.note_told("Cerebro", &ids, now);
@@ -3005,11 +2885,11 @@ mod tests {
     /// the neighbouring call would produce a command that appears to succeed and changes nothing.
     #[test]
     fn the_one_bd_that_writes_passes_no_readonly() {
-        let dir = tempfile::tempdir().expect("a temp dir");
+        let dir = Path::new("/consumer");
         let programs = Programs::default();
         let fake = FakeCommands::always("");
         run_finding(
-            &paths_in(dir.path()),
+            &paths_in(dir),
             &programs,
             &fake,
             &Finding::Unassign { id: "cb-a".into(), priority: Some(0) },

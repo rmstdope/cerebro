@@ -74,7 +74,10 @@ fn one_owner_at_a_time_and_the_record_names_it() {
     }
 
     drop(held);
-    assert!(!record.exists(), "dropping the lease removes its own record");
+    assert!(
+        !record.exists(),
+        "dropping the lease removes its own record"
+    );
     acquire_once_free(addr, &record, "/repos/x");
 }
 
@@ -101,7 +104,10 @@ fn a_bound_port_with_no_record_is_a_lock_error_never_permission() {
 
     match SupervisorLease::try_acquire(addr, &record, "/repos/x") {
         Err(AcquireError::LockError(message)) => {
-            assert!(message.contains("missing or malformed"), "message: {message}");
+            assert!(
+                message.contains("missing or malformed"),
+                "message: {message}"
+            );
         }
         other => panic!("a bound port with no record must be a lock error, got {other:?}"),
     }

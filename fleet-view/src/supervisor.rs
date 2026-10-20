@@ -385,7 +385,11 @@ mod tests {
             "",
         ] {
             let record = format!("{{\"identity\":{},\"pid\":1}}\n", json_string(identity));
-            assert_eq!(json_field(&record, "identity").as_deref(), Some(identity), "{record}");
+            assert_eq!(
+                json_field(&record, "identity").as_deref(),
+                Some(identity),
+                "{record}"
+            );
         }
     }
 

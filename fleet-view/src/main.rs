@@ -371,6 +371,9 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
     // much as one that took it on the first (cb-eguq).
     let (spacing, mut complaints) =
         readers::read_role_spacing(&paths, &SPACED_ROLES, commands.as_ref());
+    let (cadences, cadence_complaints) =
+        readers::read_role_cadence(&paths, &CADENCE_ROLES, commands.as_ref());
+    complaints.extend(cadence_complaints);
     let (ux_multiple, multiple_complaint) = readers::read_ux_multiple(&paths, commands.as_ref());
     // Onto the same vector, so a bad declaration reaches the header by the path the spacing
     // complaint already uses.
@@ -379,7 +382,7 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
     declare_if_in_charge(&mut app, &mut state, &paths, commands.as_ref(), Utc::now());
 
     let config =
-        LoopConfig { paths, programs: Programs::default(), commands, spacing, ux_multiple };
+        LoopConfig { paths, programs: Programs::default(), commands, spacing, ux_multiple, cadences };
 
     let mut guard = TerminalGuard::enter(CrosstermTerminal)?;
     let backend = CrosstermBackend::new(io::stdout());
@@ -437,6 +440,7 @@ fn supervise(
     ledger: &mut StartLedger,
     logger: &mut Logger,
     paths: &ReaderPaths,
+    cadences: &BTreeMap<String, u64>,
     now: DateTime<Utc>,
     at: Instant,
 ) {
@@ -572,7 +576,7 @@ fn supervise(
             stood,
             stuck,
             resume_stale,
-            question_expiry: triggers::question_expiry(&role),
+            question_expiry: triggers::question_expiry(&role, cadences),
         };
         let Some(action) = lifecycle::supervise_action(agent) else { continue };
         // A pass ended because its question expired says so, not "finished its pass" (cb-0n1n).
@@ -849,6 +853,7 @@ fn start_due(
     paths: &ReaderPaths,
     spacing: &BTreeMap<String, u64>,
     ux_multiple: usize,
+    cadences: &BTreeMap<String, u64>,
     roster: &[RosterEntry],
     now: DateTime<Utc>,
 ) {
@@ -867,7 +872,8 @@ fn start_due(
         |name| lifecycle::stop_flag_set(paths, name),
         app.gh_answer(),
         ux_multiple,
-    );
+    )
+    .with_cadences(cadences.clone());
 
     let standby: Vec<(String, String)> = app
         .fleet_rows()
@@ -1625,6 +1631,10 @@ fn arm_and_autostart(
     startup_notice(&started, &standby, &complaints)
 }
 
+/// The roles a cadence is asked about, once, at startup: the four with a built-in one
+/// (`triggers::cadence`), since a declaration for any other is never used (cb-kmxs).
+const CADENCE_ROLES: [&str; 4] = ["user-feedback", "reviewer", "architect", "qa"];
+
 /// The roles a spacing is asked about, once, at startup.
 const SPACED_ROLES: [&str; 5] =
     ["producer", "bugfixer", "verifier", "orchestrator", "ux"];
@@ -1694,6 +1704,8 @@ struct LoopConfig {
     spacing: BTreeMap<String, u64>,
     /// The project's declared planner buffer multiple, read once at startup (cb-3in).
     ux_multiple: usize,
+    /// The project's `role_cadence_<role>` declarations, read once at startup (cb-kmxs).
+    cadences: BTreeMap<String, u64>,
 }
 
 /// Every worker the loop polls or asks. One value, so a tenth is a field rather than a
@@ -1836,7 +1848,7 @@ where
             // evidence five seconds stale.
             if succeeded {
                 let now = clock();
-                supervise(app, &mut state.host, &mut state.ledger, &mut state.logger, &config.paths, now, Instant::now());
+                supervise(app, &mut state.host, &mut state.ledger, &mut state.logger, &config.paths, &config.cadences, now, Instant::now());
                 // After `supervise` and not before: a session ended on this tick must not also be
                 // started on it, and a row restated by the next read is what makes that true.
                 let roster: Vec<RosterEntry> = app
@@ -1854,7 +1866,7 @@ where
                 // Between the two: a given handover is not an orphan, and a name it starts must
                 // not also be started by a trigger this tick (cb-10d.5).
                 start_given(app, &mut state.host, &mut state.logger, &config.paths, &roster, now);
-                start_due(app, &mut state.host, &mut state.ledger, &mut state.logger, &config.paths, &config.spacing, config.ux_multiple, &roster, now);
+                start_due(app, &mut state.host, &mut state.ledger, &mut state.logger, &config.paths, &config.spacing, config.ux_multiple, &config.cadences, &roster, now);
                 // And a line into an idle Cerebro, on the same freshly derived rows (cb-kcs.5.2).
                 // After `start_due` for its own reason: a Cerebro started on this very tick has
                 // no session to type into until the next read restates its row.
@@ -3487,6 +3499,7 @@ mod main_tests {
             commands: Arc::new(RealCommands),
             spacing: BTreeMap::new(),
             ux_multiple: 1,
+            cadences: BTreeMap::new(),
         }
     }
 
@@ -4408,7 +4421,7 @@ mod main_tests {
             vec![stood_row("Cyclops", cerebro_tui::model::AgentKind::Implementer,
                 cerebro_tui::model::RowState::Waiting, 31, now)],
         );
-        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &paths, now, Instant::now());
+        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &paths, &BTreeMap::new(), now, Instant::now());
 
         assert!(!host.supervisable("Cyclops"), "the session was ended");
         assert!(
@@ -4436,7 +4449,7 @@ mod main_tests {
                 cerebro_tui::model::RowState::Asking, 3_600, now)
         };
         let mut app = lifecycle_app(supervising(), vec![asking("Sage", "qa"), asking("Forge", "architect")]);
-        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &paths, now, Instant::now());
+        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &paths, &BTreeMap::new(), now, Instant::now());
 
         assert!(!host.supervisable("Sage"), "Sage's pass was ended");
         assert!(host.supervisable("Forge"), "Forge's question waits until it is answered");
@@ -4500,7 +4513,7 @@ mod main_tests {
             vec![stood_row("Storm", cerebro_tui::model::AgentKind::Implementer,
                 cerebro_tui::model::RowState::Waiting, 10, now)],
         );
-        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &paths, now, Instant::now());
+        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &paths, &BTreeMap::new(), now, Instant::now());
 
         assert!(!host.supervisable("Storm"));
         assert!(!flag.exists(), "the next session under that name must not inherit the flag");
@@ -4522,7 +4535,7 @@ mod main_tests {
             vec![stood_row("Rogue", cerebro_tui::model::AgentKind::Implementer,
                 cerebro_tui::model::RowState::Waiting, 5_000, now)],
         );
-        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &paths, now, Instant::now());
+        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &paths, &BTreeMap::new(), now, Instant::now());
 
         assert!(state.exists(), "somebody else's session is theirs to end");
         assert_eq!(app.notice, None);
@@ -4543,7 +4556,7 @@ mod main_tests {
             vec![stood_row("Cyclops", cerebro_tui::model::AgentKind::Implementer,
                 cerebro_tui::model::RowState::Waiting, 5_000, now)],
         );
-        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &paths, now, Instant::now());
+        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &paths, &BTreeMap::new(), now, Instant::now());
 
         assert!(host.supervisable("Cyclops"), "a read-only view ends nothing");
         assert!(cerebro_tui::lifecycle::state_file_path(&paths, "Cyclops").exists());
@@ -4572,7 +4585,7 @@ mod main_tests {
             let asking = vec![stood_row(name, kind, cerebro_tui::model::RowState::Asking, 5 * 3600, now)];
             let mut app = lifecycle_app(supervising(), asking);
             let at = Instant::now();
-            supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &paths, now, at);
+            supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &paths, &BTreeMap::new(), now, at);
             assert_eq!(app.notice, None, "{name} was acted on while waiting for an answer");
             // The positive control first: a line typed by hand reaches the echoing shell and is
             // drawn. Without it the absence below would pass just as well against a session that
@@ -4626,6 +4639,7 @@ mod main_tests {
             &mut cerebro_tui::triggers::StartLedger::default(),
             logger,
             paths,
+            &BTreeMap::new(),
             now,
             at,
         );
@@ -5497,7 +5511,7 @@ mod main_tests {
             Some(buffer_of_three()),
             now,
         );
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &std::collections::BTreeMap::new(), 1, &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &std::collections::BTreeMap::new(), 1, &std::collections::BTreeMap::new(), &roster, now);
         assert!(!host.is_live("Xavier"), "a satisfied buffer starts nobody");
         assert_eq!(
             app.standby_labels.get("Xavier").map(String::as_str),
@@ -5513,7 +5527,7 @@ mod main_tests {
             Some(buffer_of_three()),
             now,
         );
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &std::collections::BTreeMap::new(), 2, &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &std::collections::BTreeMap::new(), 2, &std::collections::BTreeMap::new(), &roster, now);
         assert!(host.is_live("Xavier"), "a multiple of 2 makes the same buffer short");
         assert_eq!(app.notice.as_deref(), Some("Started Xavier — UX 3 of 6."));
         assert_eq!(
@@ -5582,6 +5596,7 @@ mod main_tests {
             &mut cerebro_tui::triggers::StartLedger::default(),
             &mut test_logger(),
             &paths,
+            &BTreeMap::new(),
             now,
             Instant::now(),
         );
@@ -5643,6 +5658,7 @@ mod main_tests {
                 &mut cerebro_tui::triggers::StartLedger::default(),
                 &mut logger,
                 &paths,
+                &BTreeMap::new(),
                 now,
                 Instant::now(),
             );
@@ -5684,7 +5700,7 @@ mod main_tests {
         );
         assert_eq!(app.fleet_rows()[0].state, cerebro_tui::model::RowState::Standby);
 
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &std::collections::BTreeMap::new(), 1, &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &std::collections::BTreeMap::new(), 1, &std::collections::BTreeMap::new(), &roster, now);
 
         assert!(host.is_live("Xavier"), "the standby planner was started");
         assert!(app.armed.contains("Xavier"), "and stays armed");
@@ -5772,6 +5788,7 @@ mod main_tests {
             &paths,
             &BTreeMap::new(),
             1,
+            &std::collections::BTreeMap::new(),
             &roster,
             now,
         );
@@ -5855,7 +5872,7 @@ mod main_tests {
             now,
         );
 
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &no_spacing(), 1, &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &no_spacing(), 1, &std::collections::BTreeMap::new(), &roster, now);
 
         let live: Vec<&str> = names.iter().copied().filter(|n| host.is_live(n)).collect();
         for name in &live {
@@ -5910,7 +5927,7 @@ mod main_tests {
             now,
         );
 
-        start_due(&mut app, &mut host, &mut ledger, &mut logger, &paths, &no_spacing(), 1, &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut logger, &paths, &no_spacing(), 1, &std::collections::BTreeMap::new(), &roster, now);
 
         let lines = log_lines(dir.path(), "evaluations");
         assert!(!lines.is_empty(), "the tick evaluated something");
@@ -5959,7 +5976,7 @@ mod main_tests {
         );
         let spacing: BTreeMap<String, u64> = [("ux".to_string(), 0u64)].into_iter().collect();
 
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &spacing, 1, &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &spacing, 1, &std::collections::BTreeMap::new(), &roster, now);
 
         assert!(host.is_live("Iceman") && host.is_live("Gambit"), "both were started");
         let handed: std::collections::BTreeSet<&str> = app.handed.values().map(String::as_str).collect();
@@ -5995,7 +6012,7 @@ mod main_tests {
             now,
         );
 
-        start_due(&mut app, &mut host, &mut ledger, &mut logger, &paths, &no_spacing(), 1, &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut logger, &paths, &no_spacing(), 1, &std::collections::BTreeMap::new(), &roster, now);
 
         assert!(!host.is_live("Xavier"), "nothing to hand, nobody started");
         assert!(app.handed.is_empty());
@@ -6030,7 +6047,7 @@ mod main_tests {
             now,
         );
 
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &no_spacing(), 1, &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &no_spacing(), 1, &std::collections::BTreeMap::new(), &roster, now);
 
         assert!(!host.is_live("Rogue"), "the one bead is already spoken for");
     }
@@ -6091,7 +6108,7 @@ mod main_tests {
             now,
         );
 
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &no_spacing(), 1, &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &no_spacing(), 1, &std::collections::BTreeMap::new(), &roster, now);
 
         let distinct: std::collections::BTreeSet<&String> = app.handed.values().collect();
         assert_eq!(distinct.len(), 4, "{:?}", app.handed);
@@ -6122,8 +6139,8 @@ mod main_tests {
             now,
         );
 
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &no_spacing(), 1, &roster, now);
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &no_spacing(), 1, &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &no_spacing(), 1, &std::collections::BTreeMap::new(), &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &no_spacing(), 1, &std::collections::BTreeMap::new(), &roster, now);
 
         let live: Vec<&str> = names.iter().copied().filter(|n| host.is_live(n)).collect();
         assert_eq!(live.len(), 1, "one bead, one builder: {live:?}");
@@ -6801,7 +6818,7 @@ mod main_tests {
             now,
         );
 
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &std::collections::BTreeMap::new(), 1, &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &std::collections::BTreeMap::new(), 1, &std::collections::BTreeMap::new(), &roster, now);
 
         // The spacing is read INSIDE the loop, so the second planner already sees the first.
         assert!(host.is_live("Xavier"));
@@ -6827,7 +6844,7 @@ mod main_tests {
             now,
         );
 
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &std::collections::BTreeMap::new(), 1, &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &std::collections::BTreeMap::new(), 1, &std::collections::BTreeMap::new(), &roster, now);
 
         assert!(!host.is_live("Xavier"), "a flagged name is never started, whatever its trigger");
         assert!(
@@ -6851,7 +6868,7 @@ mod main_tests {
             now,
         );
 
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &std::collections::BTreeMap::new(), 1, &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &std::collections::BTreeMap::new(), 1, &std::collections::BTreeMap::new(), &roster, now);
 
         assert!(!host.is_live("Xavier"), "no board, no starts");
     }
@@ -6882,7 +6899,7 @@ mod main_tests {
             now,
         );
 
-        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &paths, now, Instant::now());
+        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &paths, &BTreeMap::new(), now, Instant::now());
         assert!(app.armed.contains("Xavier") && app.armed.contains("Beast"),
                 "an outage is not a handover: {:?}", app.armed);
         assert!(app.notice.is_none(), "nothing happened, so nothing is said");
@@ -6913,7 +6930,7 @@ mod main_tests {
             now,
         );
 
-        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &paths, now, Instant::now());
+        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &paths, &BTreeMap::new(), now, Instant::now());
         assert!(app.armed.is_empty());
         assert_eq!(
             app.notice.as_deref(),
@@ -6921,7 +6938,7 @@ mod main_tests {
         );
 
         app.clear_notice();
-        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &paths, now, Instant::now());
+        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &paths, &BTreeMap::new(), now, Instant::now());
         assert!(app.notice.is_none(), "an empty armed set says nothing");
     }
 
@@ -7138,7 +7155,7 @@ mod main_tests {
             now,
         );
 
-        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &paths, now, Instant::now());
+        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &paths, &BTreeMap::new(), now, Instant::now());
 
         assert!(!app.armed.contains("Cyclops"), "a retire disarms");
         assert!(!cerebro_tui::lifecycle::stop_flag_path(&paths, "Cyclops").exists());
@@ -7166,7 +7183,7 @@ mod main_tests {
             now,
         );
 
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &std::collections::BTreeMap::new(), &roster, now);
         assert!(!host.is_live("Xavier"));
         assert!(
             host.exits().contains_key("Xavier"),
@@ -7186,7 +7203,7 @@ mod main_tests {
         // no launcher, so what is asserted is that no SECOND attempt was made: a retry would
         // replace the refusal with one stamped `later`.
         let later = now + chrono::Duration::seconds(60);
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &roster, later);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &std::collections::BTreeMap::new(), &roster, later);
         match host.sync(Some("Xavier"), 24, 80, later) {
             cerebro_tui::session::SessionView::Refused { at, .. } => {
                 assert_eq!(at, now, "the row was not started again");
@@ -7240,7 +7257,7 @@ mod main_tests {
             now,
         );
 
-        start_due(&mut app, &mut host, &mut ledger, &mut logger, &paths, &BTreeMap::new(), 1, &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut logger, &paths, &BTreeMap::new(), 1, &std::collections::BTreeMap::new(), &roster, now);
 
         assert!(host.is_live("Xavier"));
         let line = one_line(dir.path(), "decisions", "start");
@@ -7348,7 +7365,7 @@ mod main_tests {
         let mut app = lifecycle_app(supervising(), vec![waiting, flagged]);
 
         supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(),
-            &mut logger, &paths, now, Instant::now());
+            &mut logger, &paths, &BTreeMap::new(), now, Instant::now());
 
         let end = one_line(dir.path(), "decisions", "end");
         assert!(
@@ -7469,7 +7486,7 @@ mod main_tests {
             now,
         );
 
-        start_due(&mut app, &mut host, &mut ledger, &mut logger, &paths, &BTreeMap::new(), 1, &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut logger, &paths, &BTreeMap::new(), 1, &std::collections::BTreeMap::new(), &roster, now);
 
         assert!(!host.is_live("Xavier"), "the fifth start is not attempted");
         let gave_up = one_line(dir.path(), "decisions", "give-up");
@@ -7508,7 +7525,7 @@ mod main_tests {
             now,
         );
 
-        start_due(&mut app, &mut host, &mut ledger, &mut logger, &paths, &spacing, 1, &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut logger, &paths, &spacing, 1, &std::collections::BTreeMap::new(), &roster, now);
 
         let lines = log_lines(dir.path(), "evaluations");
         let evaluations: Vec<&String> = lines
@@ -7900,8 +7917,8 @@ mod main_tests {
         );
 
         supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(),
-            &mut logger, &paths, now, Instant::now());
-        start_due(&mut app, &mut host, &mut ledger, &mut logger, &paths, &BTreeMap::new(), 1, &roster, now);
+            &mut logger, &paths, &BTreeMap::new(), now, Instant::now());
+        start_due(&mut app, &mut host, &mut ledger, &mut logger, &paths, &BTreeMap::new(), 1, &std::collections::BTreeMap::new(), &roster, now);
         logger.error("work", "bd: database is locked", now);
 
         assert!(log_lines(dir.path(), "decisions").is_empty(), "not a decision");
@@ -8100,6 +8117,7 @@ mod main_tests {
         );
 
         start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &std::collections::BTreeMap::new(), 1,
+                  &std::collections::BTreeMap::new(),
                   &outside_roster("Moira", "user-feedback"), now);
 
         assert!(host.is_live("Moira"), "the standby row was started");
@@ -8125,10 +8143,43 @@ mod main_tests {
         ledger.note_ended("Forge", now - chrono::Duration::minutes(60));
 
         start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &std::collections::BTreeMap::new(), 1,
+                  &std::collections::BTreeMap::new(),
                   &outside_roster("Forge", "architect"), now);
 
         assert!(host.is_live("Forge"));
         assert_eq!(app.notice.as_deref(), Some("Started Forge — 60m since its last sweep."));
+        host.kill(&paths, "Forge");
+        settle_gone(&mut host, "Forge");
+    }
+
+    /// cb-kmxs: a declared `role_cadence_architect` is the floor Forge starts on, and the built-in
+    /// hour still holds a row nothing was declared for.
+    #[test]
+    fn forge_starts_on_a_declared_cadence() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+        let mut ledger = cerebro_tui::triggers::StartLedger::default();
+        let mut app = standby_app(
+            supervising(),
+            vec![outside_row("Forge", "architect")],
+            Some(cerebro_tui::model::WorkBuckets::default()),
+            now,
+        );
+        ledger.note_ended("Forge", now - chrono::Duration::seconds(60));
+        let roster = outside_roster("Forge", "architect");
+
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &std::collections::BTreeMap::new(), 1,
+                  &std::collections::BTreeMap::new(), &roster, now);
+        assert!(!host.is_live("Forge"), "the built-in hour is not up after a minute");
+
+        let declared: std::collections::BTreeMap<String, u64> =
+            [("architect".to_string(), 60)].into_iter().collect();
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &std::collections::BTreeMap::new(), 1,
+                  &declared, &roster, now);
+        assert!(host.is_live("Forge"));
+        assert_eq!(app.notice.as_deref(), Some("Started Forge — 1m since its last sweep."));
         host.kill(&paths, "Forge");
         settle_gone(&mut host, "Forge");
     }
@@ -8153,6 +8204,7 @@ mod main_tests {
         let mut roster = outside_roster("Moira", "user-feedback");
         roster.extend(outside_roster("Forge", "architect"));
         start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &std::collections::BTreeMap::new(), 1,
+                  &std::collections::BTreeMap::new(),
                   &roster, now);
 
         assert!(!host.is_live("Moira"), "nothing moved and the floor is not due");
@@ -8205,7 +8257,7 @@ mod main_tests {
         // back.
         let (mut app, mut ledger) = backing_off(1, 100, short_buffer(), now);
 
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &std::collections::BTreeMap::new(), &roster, now);
         assert!(host.is_live("Xavier"), "one failure waits nothing at all");
         assert_eq!(ledger.failures("Xavier"), 2, "counted before the launch");
         host.kill(&paths, "Xavier");
@@ -8220,7 +8272,7 @@ mod main_tests {
             Ok(vec![ux_row("Xavier", cerebro_tui::model::RowState::Dead)]),
             later,
         );
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &roster, later);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &std::collections::BTreeMap::new(), &roster, later);
         assert!(!host.is_live("Xavier"), "the second failure is backed off");
         assert_eq!(ledger.failures("Xavier"), 2, "and the count is not advanced by a skip");
         assert_eq!(
@@ -8261,7 +8313,7 @@ mod main_tests {
         // An empty board: the planner's condition is false, and the countdown wins anyway.
         let (mut app, mut ledger) = backing_off(3, 60, empty_board(), now);
 
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &std::collections::BTreeMap::new(), &roster, now);
 
         assert_eq!(
             app.standby_labels.get("Xavier").map(String::as_str),
@@ -8281,7 +8333,7 @@ mod main_tests {
         // Four failures behind it and the fourth's ten minutes counted out.
         let (mut app, mut ledger) = backing_off(4, 700, short_buffer(), now);
 
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &std::collections::BTreeMap::new(), &roster, now);
 
         assert!(!host.is_live("Xavier"), "no sixth start is attempted");
         assert!(!app.armed.contains("Xavier"), "the name left the armed set");
@@ -8302,7 +8354,7 @@ mod main_tests {
 
         // And it stays given up: a later tick starts nothing, the row being disarmed.
         let later = now + chrono::Duration::seconds(600);
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &roster, later);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &std::collections::BTreeMap::new(), &roster, later);
         assert!(!host.is_live("Xavier"));
     }
 
@@ -8316,7 +8368,7 @@ mod main_tests {
         let (mut app, mut ledger) = backing_off(4, 700, short_buffer(), now);
         assert_eq!(app.fleet_rows()[0].state, cerebro_tui::model::RowState::Standby);
 
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &std::collections::BTreeMap::new(), &roster, now);
 
         // No fleet read in between: a row promising a retry the view has just decided against is
         // the one thing this must never leave on the screen.
@@ -8334,7 +8386,7 @@ mod main_tests {
         // A pass ran and ended: the three before it do not count.
         ledger.note_ended("Xavier", now - chrono::Duration::seconds(50));
 
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &std::collections::BTreeMap::new(), &roster, now);
 
         assert!(host.is_live("Xavier"), "nothing is owed after a pass that ran");
         assert_eq!(ledger.failures("Xavier"), 0);
@@ -9397,7 +9449,7 @@ mod main_tests {
         let mut app = lifecycle_app(supervising(), vec![stuck_fleet_row("Storm", 8 * 3600, now)]);
         for _ in 0..3 {
             supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(),
-                      &mut logger, &paths, now, Instant::now());
+                      &mut logger, &paths, &BTreeMap::new(), now, Instant::now());
         }
 
         let written = std::fs::read_to_string(&decisions).unwrap_or_default();
@@ -9425,7 +9477,7 @@ mod main_tests {
         let mut app = lifecycle_app(supervising(), vec![stuck_fleet_row("Storm", 8 * 3600, now)]);
         let mut tick = |app: &mut App, host: &mut SessionHost, logger: &mut Logger| {
             supervise(app, host, &mut cerebro_tui::triggers::StartLedger::default(),
-                      logger, &paths, now, Instant::now());
+                      logger, &paths, &BTreeMap::new(), now, Instant::now());
         };
         tick(&mut app, &mut host, &mut logger);
 
@@ -9464,7 +9516,7 @@ mod main_tests {
         );
         let mut app = lifecycle_app(read_only, vec![stuck_fleet_row("Storm", 8 * 3600, now)]);
         supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(),
-                  &mut logger, &paths, now, Instant::now());
+                  &mut logger, &paths, &BTreeMap::new(), now, Instant::now());
 
         let written = std::fs::read_to_string(&decisions).unwrap_or_default();
         assert!(!written.contains("\"event\":\"stuck\""), "a view that decides nothing: {written}");
@@ -9660,7 +9712,7 @@ mod main_tests {
         assert_eq!(app.fleet_rows()[0].state, RowState::Standby);
         // Recorded without restating the rows: this tick's rows still read `Standby`.
         app.handed.insert("Rogue".into(), "cb-given".into());
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &no_spacing(), 1, &implementer_roster(&["Rogue"]), now);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &no_spacing(), 1, &std::collections::BTreeMap::new(), &implementer_roster(&["Rogue"]), now);
         std::thread::sleep(std::time::Duration::from_millis(300));
         assert!(!dir.path().join("launch.args").exists(), "nobody was launched");
     }

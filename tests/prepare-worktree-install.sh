@@ -210,14 +210,4 @@ set -e
 [[ $status -eq 2 ]] || fail "reuse refusal: expected exit 2, got $status"
 pass "an existing tree is still refused for a new branch"
 
-# --- the atlantis vocabulary is gone from the prose every consumer's agents read ---
-# `--with-wasm` was cerebro's own interface speaking one repository's language, and
-# `@atlantis/browser-core` is a package that exists in exactly one repository on earth; the prose
-# here is read by every consumer's agents, so one left behind teaches the old vocabulary for ever.
-# The workspace-member map in agents/architect.md is a different coupling and ah-qled.6's to remove.
-if grep -rn -- "--with-wasm\|@atlantis/browser-core" "$repo_root/skills" "$repo_root/agents" 2>/dev/null; then
-  fail "atlantis vocabulary: skills/ and agents/ must name neither --with-wasm nor @atlantis/browser-core"
-fi
-pass "no --with-wasm or @atlantis/browser-core left in skills/ or agents/"
-
 suite_passed

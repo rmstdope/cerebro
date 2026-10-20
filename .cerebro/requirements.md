@@ -41,7 +41,7 @@ R10 RET focuses a hosted session so the navigator can type to the agent in it.
     Proven by: nothing yet
 R11 Only the first window on a checkout operates the fleet; a second draws and acts on
     nothing, and takes over when the first closes.
-    Proven by: nothing yet
+    Proven by: tests/fleet-one-window.sh
 R12 A session that dies on a launcher refusal shows the refusal on its row and is not
     started again until the navigator presses s.
     Proven by: nothing yet

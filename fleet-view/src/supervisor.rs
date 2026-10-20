@@ -18,7 +18,6 @@
 //! to take over. A stale record left by a crash is harmless, because the successful bind that
 //! overwrites it is what was authoritative all along.
 
-
 use std::fmt;
 use std::fs;
 use std::io::ErrorKind;

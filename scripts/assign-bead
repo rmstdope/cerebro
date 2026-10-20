@@ -14,7 +14,9 @@
 #
 # THE WORKTREE (cb-10d.3). For a claim-based role (`producer` or `bugfixer`), this script makes
 # the tree the session works in:
-# `.cerebro/worktrees/<id>` on branch `<id>` (or the first free `<id>-N`), by `prepare-worktree`,
+# `.cerebro/worktrees/<id>` on branch `<id>-<slug of the title>` (bare `<id>` when the title slugs
+# to nothing; the first free `-N` after it when taken), by `prepare-worktree`, which leaves it with no
+# upstream - so the branch the tree is on is the branch the PR is opened from (ah-7jk6),
 # after `disk-preflight` passed with the plan's workload (`non-rust` only when the plan says
 # `disk-preflight --workload non-rust`). A registered tree already at that path - an earlier
 # attempt's, kept because it held work - is adopted. The tree is recorded, owner's name inside, in
@@ -137,6 +139,20 @@ if [[ "$mode" == claim ]]; then
   fi
 fi
 
+# slug_of TITLE: the title as a branch-name word - lower-cased, every run of anything but [a-z0-9]
+# one `-', no `-' at either end, and at most 40 characters, cut at the last `-' inside that limit
+# (a hard cut when there is none). Empty when the title has nothing to slug.
+slug_of() {
+  local s
+  s="$(printf '%s' "$1" | LC_ALL=C tr '[:upper:]' '[:lower:]' | LC_ALL=C sed -e 's/[^a-z0-9][^a-z0-9]*/-/g' -e 's/^-//' -e 's/-$//')"
+  if (( ${#s} > 40 )); then
+    s="${s:0:41}"
+    if [[ "$s" == *-* ]]; then s="${s%-*}"; else s="${s:0:40}"; fi
+    s="${s%-}"
+  fi
+  printf '%s' "$s"
+}
+
 # Make or adopt NAME's tree for ID and record it. Exit 4 on failure, having removed any tree this
 # call created.
 ensure_tree() {
@@ -146,10 +162,15 @@ ensure_tree() {
     # stale-minutes rule hold it while the agent starts.
     touch "$tree"
   else
-    branch="$id"; n=2
+    # The branch is the one the PR is opened from (ah-7jk6): `<id>-<slug of the title>', so the
+    # session's first `git push -u origin HEAD' and every bare push after it land on the PR.
+    local slug base
+    slug="$(slug_of "$(printf '%s' "$shown" | jq -r '(if type=="array" then .[0] else . end) | .title // ""')")"
+    base="$id${slug:+-$slug}"
+    branch="$base"; n=2
     while git -C "$root" show-ref --verify --quiet "refs/heads/$branch" \
        || git -C "$root" show-ref --verify --quiet "refs/remotes/origin/$branch"; do
-      branch="$id-$n"; n=$((n + 1))
+      branch="$base-$n"; n=$((n + 1))
     done
     prep_status=0
     "$script_dir/prepare-worktree" --path "$tree" --branch "$branch" >&2 || prep_status=$?

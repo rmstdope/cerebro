@@ -162,7 +162,7 @@ run. Never check out `main`; go to your tree and read what is there before you b
 
 ```bash
 cd <repo>/.cerebro/worktrees/<id>
-git branch --show-current          # <id>, or <id>-2 and onward when that name was taken
+git branch --show-current          # <id>-<slug of the title>, -2 onward when taken; the PR's branch
 git status --porcelain
 git log --oneline "origin/$(.cerebro/cerebro/scripts/default-branch)..HEAD"
 ```
@@ -208,9 +208,11 @@ the PR body: the gate proves the tests, the validation proves the acceptance, an
 later runs the same commands. A validation that cannot pass is a plan that was wrong; amend the
 plan and say so, or hand back if the amendment is a decision you may not take.
 
-Then open the pull request under `beads-workflow` *Branch, commit and PR conventions*: the branch
-`<id>-short-description`, the subject `feat(<id>): …`, the body naming the bead, the validation
-result, and any deviation from the plan.
+Then open the pull request under `beads-workflow` *Branch, commit and PR conventions*, from the
+branch your tree is already on, never a renamed one: it was made as `<id>-<slug of the title>`
+with no upstream, so the first push is `git push -u origin HEAD` and every later push a bare
+`git push`. The subject is `feat(<id>): …`, the body names the bead, the validation result, and any
+deviation from the plan.
 
 **A changed shared-root declaration is gated in a clone.** When the diff touches the consumer's
 `install`, `prewarm`, gate or `.cerebro/project.conf` lines, run the clone, submodule, install and

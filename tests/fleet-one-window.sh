@@ -120,10 +120,9 @@ evidence() {
   cat "$state/decisions.jsonl" 2>/dev/null || echo "(none)"
 }
 
-# wait_until <what> <command...>: poll for up to 60 s, failing at once if a window that must stay
-# open (named in $must_live) has exited - a ceiling, not a cost: under the whole gate
-# in parallel a start through the real `scripts/launch' has taken more than 20 s. A window that exits early is reported by the
-# predicate that needed it, not here: window A is meant to exit.
+# wait_until <what> <command...>: poll for up to 60 s - a ceiling, not a cost: under the whole gate
+# in parallel a start through the real `scripts/launch' has taken more than 20 s. A window named
+# in $must_live that exits fails the wait at once; window A leaves that list before it is closed.
 wait_until() {
   local what="$1" i w d
   shift
@@ -198,7 +197,9 @@ wait_until "window B to take over" on_screen B "$supervising"
 wait_until "the lease record to name window B" holder_is "$tui_B"
 pass "when the first window closes, the second takes over the fleet with no key pressed"
 
-# By now A's exit and B's reconcile have run, well past any late start from step 3's s.
+# A start that leaked from step 3's s and has landed by now fails here. One that lands later is
+# caught by the count of starts at the end, or, if it made B refuse its own s, by the start line
+# below: a read-only window logs nothing, so only B's own start writes it.
 [ -e "$stub_state/Forge.starts" ] && fail "s in the read-only window started Forge, late$(evidence)"
 press B s
 wait_until "the stub agent to start" started

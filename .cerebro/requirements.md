@@ -24,7 +24,7 @@ R5  The navigator opens the fleet view from anywhere in the repository and sees 
     Proven by: nothing yet
 R6  A row shows an agent alive only while its session's process runs and still names
     that agent.
-    Proven by: nothing yet
+    Proven by: tests/fleet-alive.sh
 R7  The navigator sees the board as work queues (Claimed, Ready to produce, Waiting on
     you, Merged unverified, …) that refresh on their own.
     Proven by: tests/fleet-board.sh

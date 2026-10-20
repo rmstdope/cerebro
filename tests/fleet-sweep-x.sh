@@ -161,7 +161,7 @@ prompt='run bd close cb-epic ?  y / n'
 
 # --- the finding is drawn ------------------------------------------------------------------------------
 
-wait_until 60 "the Sweeps section to draw the epic-close finding" on_screen 'close cb-epic'
+wait_until 60 "the Sweeps section to draw the epic-close finding" on_screen 'close cb-epic —'
 [ -z "$(writes)" ] || fail "the view wrote to bd before any key was pressed$(evidence)"
 pass "the real sweep-epics.sh finding is drawn under Sweeps"
 

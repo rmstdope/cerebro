@@ -155,6 +155,9 @@ work_failed='Work — stale since|Work unavailable'
 wait_until 30 "the work pane to draw the board" on_screen 'cb-held'
 wait_until 10 "the fleet pane to draw Forge" on_screen 'Forge'
 expect_off "$fleet_failed|$work_failed" "a pane reads failed before anything was taken down"
+# The fixture's path is on screen only as the head of a failure, which the fleet half relies on.
+! grep -Fq -- "${consumer:0:40}" "$screen" 2>/dev/null ||
+  fail "the fixture's path is on screen before any read failed$(evidence)"
 pass "both panes draw: Forge in Fleet, cb-held in Work"
 
 # --- bd cannot be read: Work keeps its board, marked stale; Fleet goes on ------------------------------------
@@ -186,12 +189,16 @@ press g
 wait_until 20 "Fleet to read stale" on_screen 'Fleet — stale since'
 expect_on 'Forge' "the stale fleet pane dropped Forge from the last good snapshot"
 expect_on 'Sage' "the stale fleet pane dropped Sage from the last good snapshot"
-# The failure line opens with the roster's full path, wider than the pane; the trailer under the
-# retained rows is what says they are the last good snapshot.
+# The failure line opens with the roster's full path, wider than the pane, so its first 40
+# characters are what a person reads of it; the trailer under the retained rows says they are the
+# last good snapshot.
+roster_head="${consumer:0:40}"
+grep -Fq -- "$roster_head" "$screen" 2>/dev/null ||
+  fail "the stale fleet pane does not show the roster's failure ($roster_head...)$(evidence)"
 expect_on 'The last successful fleet snapshot remains visible' "the stale fleet pane does not say its rows are the last good snapshot"
 wait_until 20 "Work to draw the bead filed while the fleet was down" on_screen 'cb-added'
 expect_off "$work_failed" "the fleet being unreadable marked the work pane failed"
-pass "fleet unreadable: Fleet keeps Forge and Sage marked stale, Work still refreshes"
+pass "fleet unreadable: Fleet keeps Forge and Sage marked stale with the error, Work still refreshes"
 
 printf 'Forge  architect  standby\nSage   qa         standby\n' | write_roster
 press g

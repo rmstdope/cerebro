@@ -21,7 +21,7 @@ R4  The fleet works in a project whose default branch, language and roster are n
 
 R5  The navigator opens the fleet view from anywhere in the repository and sees every
     roster agent as a row with its state, bead, phase and timers.
-    Proven by: nothing yet
+    Proven by: tests/fleet-rows.sh
 R6  A row shows an agent alive only while its session's process runs and still names
     that agent.
     Proven by: tests/fleet-alive.sh

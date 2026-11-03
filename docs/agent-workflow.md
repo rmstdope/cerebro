@@ -146,7 +146,7 @@ The State column names the
 **phase**: `design`, `build`, `gate`, `review`, `ci`, `rebase`, `merge` for a producer and the bugfixer, and
 `plan-gate`, `review-gate`, `merge-gate` when one is waiting on you at a gate you declared (*How involved you are*); `ux` for
 `ux`; `prepare`/`verify` for Psylocke; `read`/`check`/`walk`/`report` for Cypher; `sweep` for
-Moira and Cerebro (`release` and `triage` too); `daily`/`weekly` for Forge; `daily`/`full`/`agree` for Sage. The Bead/Phase column shows both
+Moira and Cerebro (`release` and `triage` too); `daily`/`weekly`/`reading`/`index` for Forge; `daily`/`full`/`agree` for Sage. The Bead/Phase column shows both
 timers — time on the bead, time in this phase — so one in `ci` for an hour says something is
 stuck. `review` is the producer waiting on a sub-agent it spawned itself — a full read can take the
 better part of ten minutes — so a row sitting in it much past that says the
@@ -536,8 +536,16 @@ whether recent work left something worth revisiting. It costs you nothing until 
 becomes an ordinary `Refactoring:`-titled bead at P4, unranked and `ux:none`, for Cerebro to rank
 with you like anything else in the backlog and a producer to take once ranked. Forge never fixes anything itself, and it only files a finding that
 names a cost already being paid today — a defect fixed twice in the same place, a change that had to
-touch several files, a retrospective that names a structural reason something cost time — never a
-bare principle or a "could be cleaner."
+touch several files, a retrospective that names a structural reason something cost time, a rule the
+project writes down and the tree breaks, a shape an already-ranked bead is about to pay for again —
+never a bare principle or a "could be cleaner." Each bead says which ranked bead it pays off for,
+which is what Cerebro ranks it by.
+
+It also keeps its own index. Every pass it re-reads the open `refactoring` beads: one the tree has
+outgrown it closes with the commit cited (only while still P4 and unassigned; a ranked one it asks
+you about), one paid again gets a note and a payment count in the report, one a ranked bead now
+touches is listed under *Proposed for ranking*, and one six months quiet is named as stale. It never
+raises a priority: the payment count is its argument, and the ranking stays yours.
 
 Its watermark (the last commit it read, and the date of its last weekly sweep) lives in bd memory
 rather than in the checkout, so it survives a lost or replaced machine:

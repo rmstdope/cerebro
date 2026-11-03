@@ -1057,8 +1057,9 @@ fn is_assigned(bead: &Bead) -> bool {
 ///
 /// A child's id is `<parent>.<n>`, the convention `bd create --parent` writes and every reader in
 /// this repository already walks. Everything before an id's LAST `.` is that bead's direct parent,
-/// so this is exactly the set of ids with at least one direct child - `cb-1or.1.1` puts
-/// `cb-1or.1` in it and says nothing about `cb-1or`, which `cb-1or.1` puts in it instead.
+/// so this is exactly the set of ids with at least one direct child (an `event` is none) -
+/// `cb-1or.1.1` puts `cb-1or.1` in it and says nothing about `cb-1or`, which `cb-1or.1` puts in it
+/// instead.
 ///
 /// The id is the only route to the question from this read: `bd list --json` carries no `parent`
 /// field, `--brief` or not, and `dependency_count`/`dependent_count` count `blocks` edges alone
@@ -1068,8 +1069,17 @@ fn is_assigned(bead: &Bead) -> bool {
 fn parent_ids(beads: &[Bead]) -> BTreeSet<String> {
     beads
         .iter()
+        .filter(|bead| !is_event(bead))
         .filter_map(|bead| bead.id.rsplit_once('.').map(|(parent, _)| parent.to_string()))
         .collect()
+}
+
+/// Whether BEAD is bd's audit record of a state change rather than a bead of its own.
+///
+/// `bd set-state` files one under the bead it changed with a dotted child id, so an id alone would
+/// make it that bead's child; it never is (cb-cng9 in `scripts/work-beads`, cb-u64g here).
+fn is_event(bead: &Bead) -> bool {
+    bead.issue_type == "event"
 }
 
 /// The ids whose DIRECT children are all `closed`.
@@ -1079,7 +1089,7 @@ fn parent_ids(beads: &[Bead]) -> BTreeSet<String> {
 fn closed_parent_ids(beads: &[Bead]) -> BTreeSet<String> {
     let mut parents = BTreeSet::new();
     let mut open_or_inflight = BTreeSet::new();
-    for bead in beads {
+    for bead in beads.iter().filter(|bead| !is_event(bead)) {
         let Some((parent, _)) = bead.id.rsplit_once('.') else { continue };
         let parent = parent.to_string();
         parents.insert(parent.clone());
@@ -1963,6 +1973,33 @@ mod tests {
         for bucket in [&buckets.claimed, &buckets.being_planned, &buckets.paused] {
             assert!(bucket.is_empty());
         }
+    }
+
+    /// `bd set-state` files its audit `event` under the bead it changed, with a dotted child id
+    /// (`cb-dr8.6` is an event whose parent is `cb-dr8`). It is not a child: an unsplit epic with a
+    /// state change is still childless, partitions like any other bead and is no family in
+    /// `epics`, as `scripts/work-beads` has held since cb-cng9 (cb-u64g).
+    #[test]
+    fn an_event_under_an_epic_is_not_its_child() {
+        let beads = vec![
+            bead("cb-u", "open", "epic", &[]),
+            bead("cb-u.1", "closed", "event", &[]),
+            bead("cb-s", "open", "epic", &[]),
+            bead("cb-s.1", "open", "feature", &[]),
+            bead("cb-s.2", "closed", "event", &[]),
+        ];
+        let buckets = partition_beads(beads);
+        assert_eq!(
+            buckets.unplanned.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(),
+            vec!["cb-u", "cb-s.1"],
+            "an epic whose only dotted bead is an event is childless; a real child still hides one"
+        );
+        assert_eq!(
+            buckets.epics.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(),
+            vec!["cb-s"],
+            "only an epic with a real child is a family"
+        );
+        assert!(buckets.merged.is_empty(), "an event appears in no section");
     }
 
     /// The set is DIRECT parents, not ancestors: everything before an id's LAST dot. A

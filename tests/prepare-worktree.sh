@@ -54,6 +54,12 @@ run_prepare "$c" --path .cerebro/worktrees/ah-1 --branch ah-1-work >/dev/null \
   || fail "trunk: the worktree was not branched from origin/trunk"
 pass "a worktree is created from the consumer's own default branch"
 
+# ah-7jk6: no upstream. Branched from origin/<default>, git would track it, and a bare `git push`
+# under push.default=simple is then refused for the mismatched name - silently, behind -q.
+! git -C "$c/.cerebro/worktrees/ah-1" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' >/dev/null 2>&1 \
+  || fail "a --branch tree tracks $(git -C "$c/.cerebro/worktrees/ah-1" rev-parse --abbrev-ref '@{upstream}'), so its own first push cannot set an upstream of its name"
+pass "a --branch tree has no upstream until its first push sets one of its own name"
+
 # --- a main consumer is unchanged ------------------------------------------------------------------
 #
 # The consumer we actually have. The acceptance for it is that NOTHING moves.

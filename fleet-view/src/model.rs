@@ -2002,6 +2002,29 @@ mod tests {
         assert!(buckets.merged.is_empty(), "an event appears in no section");
     }
 
+    /// The closed side of the same rule: a closed epic whose only dotted bead is an event is no
+    /// family, and an event (even one not closed) never holds a closed family back from Merged.
+    #[test]
+    fn an_event_neither_makes_nor_holds_back_a_closed_family() {
+        let beads = vec![
+            bead("cb-c", "closed", "epic", &[]),
+            bead("cb-c.1", "closed", "event", &[]),
+            bead("cb-e", "closed", "epic", &[]),
+            bead("cb-e.1", "closed", "feature", &[]),
+            bead("cb-e.2", "open", "event", &[]),
+        ];
+        let buckets = partition_beads(beads);
+        assert_eq!(
+            buckets.merged.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(),
+            vec!["cb-c", "cb-e", "cb-e.1"]
+        );
+        assert_eq!(
+            buckets.epics.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(),
+            vec!["cb-e"],
+            "an epic with only an event under it is no family"
+        );
+    }
+
     /// The set is DIRECT parents, not ancestors: everything before an id's LAST dot. A
     /// `starts_with("cb-p.")` spelling would call `cb-p` parented by its grandchild and skip it.
     #[test]

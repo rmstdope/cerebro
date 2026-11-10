@@ -80,24 +80,16 @@ usage() {
 
 # NAME is alive and on bead ID: its state file names ID, or names nothing while its handover is
 # absent or names ID. Reads $name, $id and $state.
+#
+# The bead is read by `cerebro_session_bead` (scripts/session-bead.sh), shared with the pruner. A
+# live session naming no bead at all is given the benefit of the doubt here.
 alive_on_bead() {
-  local current="" handed=""
+  local current
   if ! "$script_dir/agent-alive" "$name" >/dev/null 2>&1; then
     return 1
   fi
-  if [[ -f "$state/$name.state.json" ]]; then
-    current="$(jq -r '.bead // empty' "$state/$name.state.json" 2>/dev/null || true)"
-  fi
-  if [[ -f "$state/$name.handover" ]]; then
-    IFS= read -r handed < "$state/$name.handover" || true
-  fi
-  if [[ "$current" == "$id" ]]; then
-    return 0
-  fi
-  if [[ -z "$current" && ( -z "$handed" || "$handed" == "$id" ) ]]; then
-    return 0
-  fi
-  return 1
+  current="$(cerebro_session_bead "$state" "$name")"
+  [[ -z "$current" || "$current" == "$id" ]]
 }
 
 # Prints "<status>US<assignee>US<labels, comma-joined>" for the bead, or fails. US (0x1f), not a
@@ -135,6 +127,7 @@ clear_assignment() {
 }
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$script_dir/session-bead.sh"
 
 if [[ "${1:-}" == "--worktree" ]]; then
   [[ $# -eq 3 && -n "$2" && -n "$3" ]] || usage

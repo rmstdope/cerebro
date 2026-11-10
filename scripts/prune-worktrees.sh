@@ -53,6 +53,14 @@
 # on it would protect exactly the trees most in need of removing. ah-6xq.8 was one: merged, closed by
 # nobody, claim still standing, worktree still on disk.
 #
+# What IS part of it, ahead of the four checks: **whether the session holding the tree's bead is
+# alive** (cb-15cw). A producer still planning has made no commit and written nothing, so its tree is
+# clean, at main and quiet past STALE_MINUTES — "nothing can be lost" by git's measure, while the
+# session's ignored files and its branch are still in use. The holder is read from the state files
+# (`bead`, or the handover while the state names none) and believed only when `agent-alive` says
+# the session is running, so a crashed agent's tree is still removed, exactly as the claim rule
+# above intends. `release-bead --worktree` asks the same question for the fleet view's tidy.
+#
 # `git worktree prune` runs first regardless. That only clears registrations whose directory is
 # already gone, which can never lose anything.
 #
@@ -131,6 +139,7 @@ done
 # consumer-root's header for the two roots and why a sweep needs the shared one.
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$script_dir/worktree-safety.sh"
+source "$script_dir/session-bead.sh"
 
 repo_root="$("$script_dir/consumer-root" --shared)" || exit 1
 
@@ -175,6 +184,37 @@ is_verifier_tree() {
   # nothing else, so every name that reaches here is at the one path worktrees live at.
   [ -n "$verifier_lc" ] || return 1
   [ "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" = "$verifier_lc" ]
+}
+
+# `<bead> <Name>` for every session that is alive and on a bead: its state file's `bead`, or, while
+# that names none, the bead its handover names. Read once per sweep; see the header (cb-15cw).
+live_holders=""
+read_live_holders() {
+  local state_dir="$repo_root/.cerebro/state" file name bead
+  [ -d "$state_dir" ] || return 0
+  for file in "$state_dir"/*.state.json; do
+    [ -f "$file" ] || continue
+    name="$(basename "$file" .state.json)"
+    bead="$(cerebro_session_bead "$state_dir" "$name")"
+    [ -n "$bead" ] || continue
+    if "$script_dir/agent-alive" "$name" >/dev/null 2>&1; then
+      live_holders+="$bead $name"$'\n'
+    fi
+  done
+}
+
+# Prints the name of the live session holding one of the tree's beads, or nothing.
+live_holder_of() {
+  local bead holder
+  while IFS= read -r bead; do
+    [ -n "$bead" ] || continue
+    holder="$(awk -v b="$bead" '$1 == b { print $2; exit }' <<<"$live_holders")"
+    if [ -n "$holder" ]; then
+      printf '%s\n' "$holder"
+      return 0
+    fi
+  done < <(cerebro_worktree_bead "$1")
+  return 0
 }
 
 # Whether the mount and the consumer are ONE GIT REPOSITORY, so that `git worktree list` asked of
@@ -375,6 +415,8 @@ sweep() {
     fi
   fi
 
+  read_live_holders
+
   # Each line is `<owning repository>|<worktree>`. Every other git call in this loop already
   # passes `$tree` and needs no owner; the four that address the repository do (ah-apw4).
   local owner
@@ -384,12 +426,15 @@ sweep() {
       *) continue ;;
     esac
 
-    local name reason=""
+    local name reason="" holder
     name="$(basename "$tree")"
+    holder="$(live_holder_of "$tree")"
 
     if is_verifier_tree "$name"; then
       reason="it is $verifier_name's verification tree, reset to origin/$default_branch before every use (ah-p31)"
       reclaim_cold_target "$tree" "$name"
+    elif [ -n "$holder" ]; then
+      reason="$holder is alive on it"
     elif [ -n "$(git -C "$tree" status --porcelain 2>/dev/null)" ]; then
       reason="it has uncommitted or untracked changes"
     elif ! cerebro_worktree_landed "$tree" "$(owner_default_branch "$owner")" "$merged_check" "$COLD_TARGET_MINUTES"; then

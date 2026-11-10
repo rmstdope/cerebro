@@ -374,4 +374,68 @@ out="$(cd "$selfmount" && PATH="$sub_stub_dir:$PATH" bash "$selfmount/scripts/pr
   || fail "a self-mounted cerebro enumerated its worktrees twice: $out"
 pass "a self-mounted cerebro is walked once, not twice"
 
+# ================================================================================================
+# A live session's tree is never pruned from under it (cb-15cw).
+#
+# A producer still planning has made no commit and written nothing: its tree is clean, at main and
+# quiet past STALE_MINUTES, so it passed all four checks and was removed mid-pass. The bead's claim
+# is deliberately not the guard (a crashed agent's claim stands for ever); whether the session that
+# holds the bead is ALIVE is. `agent-alive` is stubbed: its own suite proves the marker rule.
+# ================================================================================================
+
+live="$(consumer_new live --origin --link consumer-root project-conf default-branch roster prune-worktrees.sh)"
+alive_names="$work_dir/alive-names"
+: > "$alive_names"
+cat > "$live/.cerebro/cerebro/scripts/agent-alive" <<STUB
+#!/usr/bin/env bash
+grep -qx "\$1" "$alive_names"
+STUB
+chmod +x "$live/.cerebro/cerebro/scripts/agent-alive"
+mkdir -p "$live/.cerebro/state"
+printf '{"state":"working","phase":"design","bead":"cb-live","pid":1}' > "$live/.cerebro/state/Cyclops.state.json"
+
+live_tree() {
+  local tree="$live/.cerebro/worktrees/$1"
+  git_q -C "$live" worktree add -q "$tree" -b "$1-branch"
+  age "$tree"
+}
+live_tree cb-live
+live_tree cb-other
+
+# --- 16. a live session's clean, landed, quiet tree is kept -------------------------------------
+echo Cyclops > "$alive_names"
+out="$(cd "$live" && PATH="$stub_dir:$PATH" bash "$live/.cerebro/cerebro/scripts/prune-worktrees.sh" 2>&1)"
+[ -d "$live/.cerebro/worktrees/cb-live" ] \
+  || fail "a live session's worktree was removed from under it: $out"
+grep -q . <<<"$(git -C "$live" branch --list cb-live-branch)" \
+  || fail "a live session's branch was deleted from under it: $out"
+grep -q "keeping cb-live — Cyclops is alive on it" <<<"$out" \
+  || fail "the keep did not name the live session: $out"
+[ ! -d "$live/.cerebro/worktrees/cb-other" ] \
+  || fail "a tree no live session holds was kept as well: $out"
+pass "a live session's clean, landed, quiet tree is kept, and a tree nobody holds still goes"
+
+# --- 17. once the session is gone, the same tree goes -------------------------------------------
+: > "$alive_names"
+out="$(cd "$live" && PATH="$stub_dir:$PATH" bash "$live/.cerebro/cerebro/scripts/prune-worktrees.sh" 2>&1)"
+[ ! -d "$live/.cerebro/worktrees/cb-live" ] \
+  || fail "a dead session's tree was kept: $out"
+grep -q . <<<"$(git -C "$live" branch --list cb-live-branch)" \
+  && fail "a dead session's branch survived its tree: $out"
+pass "a dead session's tree and branch are removed as before"
+
+# --- 18. a session whose state names no bead yet is held by its handover ------------------------
+# Between `assign-bead` and the session's first state write, the handover is the only record of
+# which bead the session was given.
+live_tree cb-handed
+printf '{"state":"working","pid":1}' > "$live/.cerebro/state/Cyclops.state.json"
+echo cb-handed > "$live/.cerebro/state/Cyclops.handover"
+echo Cyclops > "$alive_names"
+out="$(cd "$live" && PATH="$stub_dir:$PATH" bash "$live/.cerebro/cerebro/scripts/prune-worktrees.sh" 2>&1)"
+[ -d "$live/.cerebro/worktrees/cb-handed" ] \
+  || fail "a live session's handed tree was removed before its first state write: $out"
+grep -q "keeping cb-handed — Cyclops is alive on it" <<<"$out" \
+  || fail "the keep did not name the session its handover names: $out"
+pass "a live session whose state names no bead yet keeps the tree its handover names"
+
 suite_passed

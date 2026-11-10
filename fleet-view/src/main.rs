@@ -5726,6 +5726,11 @@ mod main_tests {
     /// which unassigns it and so moves its `updated_at`. That revision is the view's own write,
     /// not a return from a later stage, and must not break the unchanged-work guard: the row is
     /// not started again on the same bead until something real changes.
+    ///
+    /// The wiring only: a `Returned` release reaches `app.returned`, `start_due` notes and settles
+    /// it against `still_held`. Each branch is pinned where it is decided (cb-pkd4):
+    /// `app::tests::only_a_returned_give_back_is_noted_as_returned`, `triggers::tests::give_back`
+    /// and `lifecycle::tests::still_held_reads_the_holder_from_either_bucket`.
     #[test]
     fn the_views_own_give_back_does_not_restart_the_ux_agent_on_the_same_bead() {
         let dir = tempfile::tempdir().unwrap();
@@ -5832,90 +5837,6 @@ mod main_tests {
             now + chrono::Duration::seconds(6),
         );
         assert!(host.is_live("Xavier"), "a real return still breaks the guard");
-        host.kill(&paths, "Xavier");
-        settle_gone(&mut host, "Xavier");
-    }
-
-    /// cb-4yj4 review finding 1: a give-back that did not put the bead back on the queue (here the
-    /// pass agreed it, and `release-bead` answered `elsewhere`) leaves nothing behind, so the bead's
-    /// later return from a producer still starts the UX row.
-    #[test]
-    fn a_give_back_answered_elsewhere_does_not_swallow_a_later_return() {
-        let dir = tempfile::tempdir().unwrap();
-        let paths = scratch(dir.path(), "sleep 5");
-        let now = Utc::now();
-        let found_at = now - chrono::Duration::seconds(60);
-        let started = now - chrono::Duration::seconds(50);
-        let ended = now - chrono::Duration::seconds(20);
-        let mut host = SessionHost::default();
-        let roster = vec![
-            RosterEntry { name: "Xavier".into(), role: "ux".into(), kind: AgentKind::Interactive },
-            RosterEntry { name: "Cyclops".into(), role: "producer".into(), kind: AgentKind::Implementer },
-        ];
-        let ux_bead = |updated_at, assignee: Option<&str>, labels: &[&str]| cerebro_tui::model::Bead {
-            id: "cb-ux".into(),
-            title: "undesigned work".into(),
-            status: "open".into(),
-            issue_type: "task".into(),
-            labels: labels.iter().map(|l| l.to_string()).collect(),
-            priority: Some(2),
-            updated_at: Some(updated_at),
-            assignee: assignee.map(str::to_string),
-            metadata: serde_json::Value::Null,
-            external_ref: None,
-        };
-        let board = |bead: cerebro_tui::model::Bead, listed: bool| {
-            let mut work = cerebro_tui::model::partition_beads(vec![bead]);
-            work.candidates = [(
-                "ux".to_string(),
-                if listed {
-                    vec![cerebro_tui::model::Candidate { id: "cb-ux".into(), priority: Some(2) }]
-                } else {
-                    Vec::new()
-                },
-            )]
-            .into_iter()
-            .collect();
-            work
-        };
-        let found = TriggerFacts::derive(
-            &board(ux_bead(found_at, None, &[]), true),
-            &roster,
-            &std::collections::BTreeSet::new(),
-            |_| false,
-            triggers::GhAnswer::Unanswered,
-            1,
-        );
-        let mut ledger = StartLedger::default();
-        ledger.note_started("Xavier", started, triggers::fingerprint("ux", &found));
-        ledger.note_ended("Xavier", ended);
-
-        // A stale board still shows cb-ux held, though the pass agreed it before it ended.
-        let mut app = standby_app(
-            supervising(),
-            vec![staged_row("Xavier", "ux", RowState::Dead)],
-            Some(board(ux_bead(started, Some("Xavier"), &[]), false)),
-            ended,
-        );
-        give_back(&mut app, &host, &mut test_logger(), &paths, &roster, ended);
-        let request = app.take_outbox().pop().expect("the stale board's bead is given back");
-        app.begin_write(&request, std::path::Path::new("bd"));
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &BTreeMap::new(), &roster, ended);
-        app.finish_write(app::WriteAnswer::Release {
-            name: "Xavier".into(),
-            bead: "cb-ux".into(),
-            cause: lifecycle::GiveBack::Ended,
-            outcome: lifecycle::ReleaseOutcome::Elsewhere,
-        });
-        app.finish_work_refresh(Ok(board(ux_bead(ended, None, &["ux:agreed"]), false)), now);
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &BTreeMap::new(), &roster, now);
-        assert!(!host.is_live("Xavier"), "nothing to design");
-
-        // A producer parks it back to UX: the same queue the pass was started on, a newer revision.
-        let later = now + chrono::Duration::seconds(30);
-        app.finish_work_refresh(Ok(board(ux_bead(later, None, &[]), true)), later);
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &BTreeMap::new(), &roster, later);
-        assert!(host.is_live("Xavier"), "a return from a later stage starts the UX row");
         host.kill(&paths, "Xavier");
         settle_gone(&mut host, "Xavier");
     }

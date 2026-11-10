@@ -34,11 +34,13 @@ The browser is the navigator's own Chrome on this machine, so the server you sta
 
 ### The navigator's window
 
-The navigator keeps using that Chrome while you drive it, so you never change the window they are
-in. When the look needs a particular screen size (a phone width, a desktop width), simulate it with
-Chrome's device emulation, the developer tools' device mode, and never by resizing their window. If
-device emulation is not possible, open a Chrome window of your own and work there, never a tab in
-theirs. When no particular size is needed, a tab in their window is fine. Every skill or agent that
+The navigator keeps using that Chrome while you drive it, so you never resize, move or take over
+the window they are in. When the look needs a particular screen size (a phone width, a desktop
+width), simulate it with Chrome's device emulation, the developer tools' device mode, and never by
+resizing their window. If device emulation is not possible, open a Chrome window of your own and
+work there, never a tab in theirs. If neither is possible, that is a blocker (*Launch*): ask the
+navigator, and never resize their window to get the size. When no particular size is needed, a tab
+in their window is fine. Every skill or agent that
 drives Chrome follows this rule, and a project's own verification skill follows it by extending
 this one rather than restating it.
 

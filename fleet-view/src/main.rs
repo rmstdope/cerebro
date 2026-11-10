@@ -8335,12 +8335,6 @@ mod main_tests {
 
     // --- the backoff and the give-up (cb-kcs.4.2) ---------------------------------------------
 
-    /// A board with nothing on it: every condition is false, which is what makes the countdown's
-    /// precedence over the condition observable.
-    fn empty_board() -> cerebro_tui::model::WorkBuckets {
-        cerebro_tui::model::partition_beads(Vec::new())
-    }
-
     /// A standby planner primed with FAILURES consecutive failed starts, the last of them AGO
     /// seconds before NOW.
     fn backing_off(
@@ -8363,39 +8357,47 @@ mod main_tests {
         (app, ledger)
     }
 
+    /// The one wiring test of the start guard: `start_due` carries out what `start_decision`
+    /// decides. Which branch is taken when is held by the `start_decision_*` cases in
+    /// triggers.rs; this pins only what the edge does with each answer - a held row's countdown
+    /// is the ledger's own count and wait, and a start writes the decision's count before the
+    /// launch.
     #[test]
-    fn a_failed_start_is_not_retried_on_the_next_tick() {
+    fn start_due_carries_out_the_start_decision() {
         let dir = tempfile::tempdir().unwrap();
         let paths = scratch(dir.path(), "sleep 5");
         let now = Utc::now();
         let roster = ux_roster(&["Xavier"]);
         let mut host = SessionHost::default();
-        // One failed start behind it: the first entry of the schedule is 0, so it comes straight
-        // back.
-        let (mut app, mut ledger) = backing_off(1, 100, short_buffer(), now);
+        // Two failed starts behind it, the last ten seconds ago: the decision holds it.
+        let (mut app, mut ledger) = backing_off(2, 10, short_buffer(), now);
+        let started = ledger.started_at("Xavier");
 
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &std::collections::BTreeMap::new(), &roster, now);
-        assert!(host.is_live("Xavier"), "one failure waits nothing at all");
-        assert_eq!(ledger.failures("Xavier"), 2, "counted before the launch");
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &BTreeMap::new(), &roster, now);
+        assert!(!host.is_live("Xavier"), "a held row is not started");
+        assert_eq!(ledger.failures("Xavier"), 2, "and a hold writes no count");
+        let left = cerebro_tui::triggers::retry_wait(2, started, now);
+        assert!(left > 0, "the fixture is inside its wait");
+        assert_eq!(
+            app.standby_labels.get("Xavier"),
+            Some(&cerebro_tui::triggers::retry_label(2, left)),
+            "the countdown is the ledger's count and wait"
+        );
+
+        // The wait spent, the decision starts it.
+        let later = now + chrono::Duration::seconds(left);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &BTreeMap::new(), &roster, later);
+        assert!(host.is_live("Xavier"), "a start is launched: {:?}", app.notice);
+        assert_eq!(ledger.failures("Xavier"), 3, "the decision's count, written before the launch");
+        assert_eq!(ledger.started_at("Xavier"), Some(later), "and the start is recorded");
+        assert_eq!(app.handed.get("Xavier").map(String::as_str), Some("cb-a"), "with its bead");
+        assert!(
+            app.notice.as_deref().is_some_and(|notice| notice.starts_with("Started Xavier")),
+            "{:?}",
+            app.notice
+        );
         host.kill(&paths, "Xavier");
         settle_gone(&mut host, "Xavier");
-
-        // That start produced no pass either, and `give_back` - not run here - would have taken
-        // the handover back (cb-10d.2.2: a planner is handed a bead too). Five seconds later,
-        // thirty are owed.
-        app.handed.clear();
-        let later = now + chrono::Duration::seconds(5);
-        app.finish_refresh(
-            Ok(vec![ux_row("Xavier", cerebro_tui::model::RowState::Dead)]),
-            later,
-        );
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &std::collections::BTreeMap::new(), &roster, later);
-        assert!(!host.is_live("Xavier"), "the second failure is backed off");
-        assert_eq!(ledger.failures("Xavier"), 2, "and the count is not advanced by a skip");
-        assert_eq!(
-            app.standby_labels.get("Xavier").map(String::as_str),
-            Some("↻ retry in 25s, 2 failed")
-        );
     }
 
     /// A session seen up on a fleet read WITHOUT having reported - `Starting` while `launch` runs
@@ -8456,26 +8458,6 @@ mod main_tests {
     }
 
     #[test]
-    fn a_row_backing_off_shows_its_countdown_and_not_its_condition() {
-        let dir = tempfile::tempdir().unwrap();
-        let paths = scratch(dir.path(), "sleep 5");
-        let now = Utc::now();
-        let roster = ux_roster(&["Xavier"]);
-        let mut host = SessionHost::default();
-        // An empty board: the planner's condition is false, and the countdown wins anyway.
-        let (mut app, mut ledger) = backing_off(3, 60, empty_board(), now);
-
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &std::collections::BTreeMap::new(), &roster, now);
-
-        assert_eq!(
-            app.standby_labels.get("Xavier").map(String::as_str),
-            Some("↻ retry in 1m, 3 failed"),
-            "while a backoff is running the row says so, and a failure is never invisible"
-        );
-        assert!(!host.is_live("Xavier"));
-    }
-
-    #[test]
     fn the_view_stops_after_five_starts_that_produced_no_pass() {
         let dir = tempfile::tempdir().unwrap();
         let paths = scratch(dir.path(), "sleep 5");
@@ -8525,25 +8507,6 @@ mod main_tests {
         // No fleet read in between: a row promising a retry the view has just decided against is
         // the one thing this must never leave on the screen.
         assert_eq!(app.fleet_rows()[0].state, cerebro_tui::model::RowState::Dead);
-    }
-
-    #[test]
-    fn a_pass_that_ran_starts_the_count_over() {
-        let dir = tempfile::tempdir().unwrap();
-        let paths = scratch(dir.path(), "sleep 5");
-        let now = Utc::now();
-        let roster = ux_roster(&["Xavier"]);
-        let mut host = SessionHost::default();
-        let (mut app, mut ledger) = backing_off(3, 100, short_buffer(), now);
-        // A pass ran and ended: the three before it do not count.
-        ledger.note_ended("Xavier", now - chrono::Duration::seconds(50));
-
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &std::collections::BTreeMap::new(), &roster, now);
-
-        assert!(host.is_live("Xavier"), "nothing is owed after a pass that ran");
-        assert_eq!(ledger.failures("Xavier"), 0);
-        host.kill(&paths, "Xavier");
-        settle_gone(&mut host, "Xavier");
     }
 
     #[test]

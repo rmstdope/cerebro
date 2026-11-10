@@ -8457,6 +8457,8 @@ mod main_tests {
         );
     }
 
+    /// What the edge does with `GiveUp`. That the fifth failed start is where it stops is
+    /// `start_decision_gives_up_on_the_fifth_failed_start`'s, in triggers.rs.
     #[test]
     fn the_view_stops_after_five_starts_that_produced_no_pass() {
         let dir = tempfile::tempdir().unwrap();
@@ -8466,11 +8468,15 @@ mod main_tests {
         let mut host = SessionHost::default();
         // Four failures behind it and the fourth's ten minutes counted out.
         let (mut app, mut ledger) = backing_off(4, 700, short_buffer(), now);
+        assert_eq!(app.fleet_rows()[0].state, cerebro_tui::model::RowState::Standby);
 
         start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &std::collections::BTreeMap::new(), &roster, now);
 
         assert!(!host.is_live("Xavier"), "no sixth start is attempted");
         assert!(!app.armed.contains("Xavier"), "the name left the armed set");
+        // No fleet read in between: a row promising a retry the view has just decided against is
+        // the one thing this must never leave on the screen.
+        assert_eq!(app.fleet_rows()[0].state, cerebro_tui::model::RowState::Dead);
         assert_eq!(ledger.failures("Xavier"), 5, "brought up to what the notice says");
         assert_eq!(
             host.last_exit("Xavier"),
@@ -8490,23 +8496,6 @@ mod main_tests {
         let later = now + chrono::Duration::seconds(600);
         start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &std::collections::BTreeMap::new(), &roster, later);
         assert!(!host.is_live("Xavier"));
-    }
-
-    #[test]
-    fn giving_up_takes_the_row_out_of_standby_in_the_same_frame() {
-        let dir = tempfile::tempdir().unwrap();
-        let paths = scratch(dir.path(), "sleep 5");
-        let now = Utc::now();
-        let roster = ux_roster(&["Xavier"]);
-        let mut host = SessionHost::default();
-        let (mut app, mut ledger) = backing_off(4, 700, short_buffer(), now);
-        assert_eq!(app.fleet_rows()[0].state, cerebro_tui::model::RowState::Standby);
-
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &std::collections::BTreeMap::new(), &roster, now);
-
-        // No fleet read in between: a row promising a retry the view has just decided against is
-        // the one thing this must never leave on the screen.
-        assert_eq!(app.fleet_rows()[0].state, cerebro_tui::model::RowState::Dead);
     }
 
     #[test]

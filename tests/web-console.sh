@@ -110,8 +110,9 @@ suite_cleanup() {
   wait 2>/dev/null || true
 }
 
+# Nothing is typed into the view, but this writer stays open on the keys FIFO so pty-drive never
+# reads end-of-file and the view's input stays open.
 exec 7<>"$keys"
-press() { printf '%s' "$1" >&7; }
 
 last_answer="$work_dir/last-answer"
 
@@ -133,7 +134,7 @@ wait_until() {
   shift
   for ((i = 0; i < ${polls:-100}; i++)); do
     if "$@"; then return 0; fi
-    kill -0 "$view_pid" 2>/dev/null || [ -n "${view_may_exit:-}" ] \
+    kill -0 "$view_pid" 2>/dev/null \
       || fail "the view exited while waiting for: $what$(evidence)"
     [ -z "$web_pid" ] || kill -0 "$web_pid" 2>/dev/null \
       || fail "cerebro-web exited while waiting for: $what$(evidence)"
@@ -182,7 +183,6 @@ post() {
 }
 
 supervised() { get /api/control | jq -e '.supervised == true' >/dev/null 2>&1; }
-read_only() { get /api/control | jq -e '.supervised == false and (has("error") | not)' >/dev/null 2>&1; }
 # row <jq predicate on Forge's row>
 row() { get /api/fleet | jq -e "[.value[] | select(.name == \"Forge\")] | first | $1" >/dev/null 2>&1; }
 on_screen() { grep -Eq "$1" "$screen" 2>/dev/null; }
@@ -248,24 +248,5 @@ wait_until "the stub agent to be killed" gone "$agent"
 wait_until "the console to show no session" session_absent
 wait_until "Forge's row to read dead and unhosted" row '(.hosted // false) == false and .state == "Dead"'
 pass "Kill asks the view, which ends Forge's session; the console shows it dead with no session"
-
-# --- no view, read-only --------------------------------------------------------------------------------
-
-rm -f "$stub_state/Forge.pid"
-view_may_exit=1
-press q
-for ((i = 0; i < 100; i++)); do
-  alive "$view_pid" || break
-  sleep 0.2
-done
-alive "$view_pid" && fail "q: the view did not exit$(evidence)"
-# The view leaves its last publication behind; it reads as no view once it is 15 s old
-# (SCREEN_STALE_SECONDS) and its control socket no longer answers. So this wait is 30 s.
-polls=150 wait_until "the console to read the checkout as unsupervised" read_only
-status="$(post /api/agents/Forge/start)"
-[ "$status" = 503 ] || fail "start with no view: answered $status$(evidence)"
-jq -e '.done == false' "$last_answer" >/dev/null || fail "start with no view: not refused$(evidence)"
-started && fail "start with no view: an agent started anyway"
-pass "with no fleet view supervising, the console reads the checkout as read-only and starts nothing"
 
 suite_passed

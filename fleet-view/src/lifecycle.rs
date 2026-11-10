@@ -1776,6 +1776,26 @@ mod tests {
         crate::model::partition_beads(beads)
     }
 
+    /// cb-4yj4: a give-back is settled against the first board that no longer shows the bead
+    /// held by its name - in either bucket a holder lives in.
+    #[test]
+    fn still_held_reads_the_holder_from_either_bucket() {
+        let planning = holding("Xavier");
+        assert_eq!(planning.being_planned.len(), 1, "the fixture is being planned");
+        assert!(still_held(&planning, "Xavier", "cb-x"), "held while being planned");
+        let building = claimed(&[("cb-x", "Xavier")]);
+        assert_eq!(building.claimed.len(), 1, "the fixture is claimed");
+        assert!(still_held(&building, "Xavier", "cb-x"), "held while claimed");
+
+        assert!(!still_held(&planning, "Rogue", "cb-x"), "another name holds it");
+        assert!(!still_held(&building, "Rogue", "cb-x"), "another name claimed it");
+        assert!(!still_held(&building, "Xavier", "cb-y"), "NAME holds a different bead");
+        assert!(
+            !still_held(&crate::model::WorkBuckets::default(), "Xavier", "cb-x"),
+            "the board after the give-back"
+        );
+    }
+
     #[test]
     fn a_gone_implementers_claim_is_found_once_its_owner_has_left_it() {
         let buckets = claimed(&[("cb-x", "Rogue"), ("cb-z", "Storm")]);

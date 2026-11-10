@@ -1836,6 +1836,135 @@ mod tests {
         }
     }
 
+    /// The cb-4yj4 give-back guard, over plain data. Xavier's pass was started on cb-ux (and
+    /// cb-other) at `started`; the view then gave cb-ux back, which moved its revision.
+    mod give_back {
+        use super::*;
+
+        fn at(seconds: i64) -> DateTime<Utc> {
+            DateTime::from_timestamp(1_800_000_000 + seconds, 0).unwrap()
+        }
+
+        fn ux_print(cb_ux: i64) -> Fingerprint {
+            Fingerprint::Ux {
+                ux_agreed: 0,
+                implementers: 1,
+                candidates: vec![("cb-ux".into(), Some(2)), ("cb-other".into(), Some(2))],
+                undesigned_revisions: vec![
+                    ("cb-ux".into(), Some(at(cb_ux))),
+                    ("cb-other".into(), Some(at(0))),
+                ],
+            }
+        }
+
+        /// The board's UX queue: each bead listed with its revision.
+        fn listing(beads: &[(&str, i64)]) -> TriggerFacts {
+            TriggerFacts {
+                undesigned_revisions: beads
+                    .iter()
+                    .map(|(id, revision)| ((*id).to_string(), Some(at(*revision))))
+                    .collect(),
+                ..empty_facts()
+            }
+        }
+
+        fn given_back_from_xavier() -> StartLedger {
+            let mut ledger = StartLedger::default();
+            ledger.note_started("Xavier", at(0), Some(ux_print(0)));
+            ledger.note_given_back("Xavier", "cb-ux");
+            ledger
+        }
+
+        #[test]
+        fn a_give_back_still_held_on_the_board_is_kept_and_absorbs_nothing() {
+            let mut ledger = given_back_from_xavier();
+            // A board read before the give-back landed, though it lists a newer revision.
+            ledger.settle_given_back(&listing(&[("cb-ux", 30)]), |name, bead| {
+                name == "Xavier" && bead == "cb-ux"
+            });
+            assert_eq!(ledger.fingerprint("Xavier"), Some(&ux_print(0)), "nothing absorbed");
+            assert_eq!(ledger.given_back.get("Xavier").map(String::as_str), Some("cb-ux"), "kept");
+
+            // The first board after it settles the note that was kept.
+            ledger.settle_given_back(&listing(&[("cb-ux", 30)]), |_, _| false);
+            assert_eq!(ledger.fingerprint("Xavier"), Some(&ux_print(30)));
+        }
+
+        #[test]
+        fn a_settled_give_back_absorbs_the_listed_revision_into_the_ux_fingerprint() {
+            let mut ledger = given_back_from_xavier();
+            ledger.settle_given_back(&listing(&[("cb-ux", 30), ("cb-other", 40)]), |_, _| false);
+            assert_eq!(
+                ledger.fingerprint("Xavier"),
+                Some(&ux_print(30)),
+                "only the given-back bead takes the board's revision; cb-other keeps its own"
+            );
+            assert!(ledger.given_back.is_empty(), "settled once, then gone");
+
+            // A later write moves the revision again, and nothing absorbs it.
+            ledger.settle_given_back(&listing(&[("cb-ux", 60)]), |_, _| false);
+            assert_eq!(ledger.fingerprint("Xavier"), Some(&ux_print(30)));
+        }
+
+        #[test]
+        fn a_give_back_not_listed_is_dropped_and_cannot_swallow_a_later_return() {
+            let mut ledger = given_back_from_xavier();
+            // The release answered as if returned, but the bead is not on the UX queue.
+            ledger.settle_given_back(&listing(&[("cb-other", 40)]), |_, _| false);
+            assert_eq!(ledger.fingerprint("Xavier"), Some(&ux_print(0)), "nothing to absorb");
+            assert!(ledger.given_back.is_empty(), "the note goes all the same");
+
+            // A producer parks it back to UX later: that return is not absorbed.
+            ledger.settle_given_back(&listing(&[("cb-ux", 90)]), |_, _| false);
+            assert_eq!(ledger.fingerprint("Xavier"), Some(&ux_print(0)));
+        }
+
+        #[test]
+        fn a_give_back_with_no_ux_fingerprint_is_dropped() {
+            let producer = Fingerprint::Producer { assignable_ids: vec!["cb-ux".into()] };
+            let mut ledger = StartLedger::default();
+            ledger.note_started("Cyclops", at(0), Some(producer.clone()));
+            ledger.note_given_back("Cyclops", "cb-ux");
+            ledger.note_given_back("Rogue", "cb-ux"); // never started: no fingerprint at all
+            ledger.settle_given_back(&listing(&[("cb-ux", 30)]), |_, _| false);
+            assert_eq!(ledger.fingerprint("Cyclops"), Some(&producer), "not a UX print: untouched");
+            assert_eq!(ledger.fingerprint("Rogue"), None, "no print is invented");
+            assert!(ledger.given_back.is_empty());
+        }
+
+        #[test]
+        fn a_second_give_back_replaces_the_first() {
+            let mut ledger = given_back_from_xavier();
+            ledger.note_given_back("Xavier", "cb-other");
+            ledger.settle_given_back(&listing(&[("cb-ux", 30), ("cb-other", 40)]), |_, _| false);
+            assert_eq!(
+                ledger.fingerprint("Xavier"),
+                Some(&Fingerprint::Ux {
+                    ux_agreed: 0,
+                    implementers: 1,
+                    candidates: vec![("cb-ux".into(), Some(2)), ("cb-other".into(), Some(2))],
+                    undesigned_revisions: vec![
+                        ("cb-ux".into(), Some(at(0))),
+                        ("cb-other".into(), Some(at(40))),
+                    ],
+                }),
+                "one note per name: the later give-back is the one absorbed"
+            );
+        }
+
+        #[test]
+        fn a_new_start_forgets_the_give_back_note() {
+            let mut ledger = given_back_from_xavier();
+            ledger.note_started("Xavier", at(10), Some(ux_print(10)));
+            ledger.settle_given_back(&listing(&[("cb-ux", 30)]), |_, _| false);
+            assert_eq!(
+                ledger.fingerprint("Xavier"),
+                Some(&ux_print(10)),
+                "the new pass's print is not rewritten by the old pass's give-back"
+            );
+        }
+    }
+
     fn agent(role: &'static str) -> AgentFacts<'static> {
         AgentFacts { role, ended_at: None, started_at: None, last_fingerprint: None }
     }

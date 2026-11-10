@@ -6477,6 +6477,27 @@ mod tests {
         (app, action)
     }
 
+    /// cb-4yj4: only a give-back the board took is handed to the start ledger as the view's own
+    /// write; one answered any other way leaves nothing that could swallow a later return.
+    #[test]
+    fn only_a_returned_give_back_is_noted_as_returned() {
+        use crate::lifecycle::ReleaseOutcome;
+        let (app, _) = ended_release(ReleaseOutcome::Returned { text: String::new() });
+        assert_eq!(app.returned, vec![("Rogue".to_string(), "cb-x".to_string())]);
+        for outcome in [
+            ReleaseOutcome::Elsewhere,
+            ReleaseOutcome::Closed,
+            ReleaseOutcome::Kept { reason: "its work is not on main".into() },
+            ReleaseOutcome::Retry,
+            ReleaseOutcome::Running,
+            ReleaseOutcome::Failed { text: "no".into() },
+        ] {
+            let label = format!("{outcome:?}");
+            let (app, _) = ended_release(outcome);
+            assert!(app.returned.is_empty(), "{label} is not a give-back the board took");
+        }
+    }
+
     #[test]
     fn a_kept_claim_is_remembered_and_says_nothing() {
         let (app, action) = ended_release(crate::lifecycle::ReleaseOutcome::Kept {

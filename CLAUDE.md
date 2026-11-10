@@ -205,7 +205,8 @@ Rules a change must keep:
 - `ui::draw` reads no file, runs no program and asks no clock, so a `TestBackend` case is an
   assertion about the screen and not about the machine.
 - A decision that also has a bash implementation is held to a shared table under `tests/lib/`
-  (`session-args.cases`, `sweep-findings.json`, `triage.cases`, `sweep-tell.cases`).
+  (`session-args.cases`, `sweep-findings.json`, `triage.cases`, `sweep-tell.cases`,
+  `epic-family.json`).
 - Const thresholds in Rust (`END_GRACE_SECONDS`, `STUCK_CEILING_SECONDS`, …) have a literal twin
   in the scripts; change both.
 
@@ -239,7 +240,9 @@ Each of these answers one question in one place. Add a caller, never a second co
   the fleet view's Sweeps section finds, each held to `tests/lib/sweep-findings.json`;
   `scripts/verifier-epic-candidates` — when an epic family is Psylocke's to sweep.
 - `scripts/bead-delivery.sh` — whether a bead's work reached the default branch.
-- `scripts/work-beads` — the board read, and the epic rule.
+- `scripts/work-beads` — the board read, and the epic rule. Which beads under an epic are its
+  family (an `event` never is) is held to `tests/lib/epic-family.json`, which it,
+  `verifier-epic-candidates`, `sweep-epics.sh` and the fleet view's `model.rs` all answer.
 - `scripts/worktree-safety.sh` — whether a worktree can go without losing anything.
 - `scripts/session-marker.sh` — the marker sentence; `scripts/marker-readers` checks every
   reader subscribes to `tests/lib/session-args.cases`.

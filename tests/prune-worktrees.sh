@@ -420,6 +420,22 @@ pass "a live session's clean, landed, quiet tree is kept, and a tree nobody hold
 out="$(cd "$live" && PATH="$stub_dir:$PATH" bash "$live/.cerebro/cerebro/scripts/prune-worktrees.sh" 2>&1)"
 [ ! -d "$live/.cerebro/worktrees/cb-live" ] \
   || fail "a dead session's tree was kept: $out"
-pass "a dead session's tree is removed as before"
+grep -q . <<<"$(git -C "$live" branch --list cb-live-branch)" \
+  && fail "a dead session's branch survived its tree: $out"
+pass "a dead session's tree and branch are removed as before"
+
+# --- 18. a session whose state names no bead yet is held by its handover ------------------------
+# Between `assign-bead` and the session's first state write, the handover is the only record of
+# which bead the session was given.
+live_tree cb-handed
+printf '{"state":"working","pid":1}' > "$live/.cerebro/state/Cyclops.state.json"
+echo cb-handed > "$live/.cerebro/state/Cyclops.handover"
+echo Cyclops > "$alive_names"
+out="$(cd "$live" && PATH="$stub_dir:$PATH" bash "$live/.cerebro/cerebro/scripts/prune-worktrees.sh" 2>&1)"
+[ -d "$live/.cerebro/worktrees/cb-handed" ] \
+  || fail "a live session's handed tree was removed before its first state write: $out"
+grep -q "keeping cb-handed — Cyclops is alive on it" <<<"$out" \
+  || fail "the keep did not name the session its handover names: $out"
+pass "a live session whose state names no bead yet keeps the tree its handover names"
 
 suite_passed

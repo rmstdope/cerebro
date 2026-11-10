@@ -139,6 +139,7 @@ done
 # consumer-root's header for the two roots and why a sweep needs the shared one.
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$script_dir/worktree-safety.sh"
+source "$script_dir/session-bead.sh"
 
 repo_root="$("$script_dir/consumer-root" --shared)" || exit 1
 
@@ -194,10 +195,7 @@ read_live_holders() {
   for file in "$state_dir"/*.state.json; do
     [ -f "$file" ] || continue
     name="$(basename "$file" .state.json)"
-    bead="$(jq -r '.bead // empty' "$file" 2>/dev/null || true)"
-    if [ -z "$bead" ] && [ -f "$state_dir/$name.handover" ]; then
-      IFS= read -r bead < "$state_dir/$name.handover" || true
-    fi
+    bead="$(cerebro_session_bead "$state_dir" "$name")"
     [ -n "$bead" ] || continue
     if "$script_dir/agent-alive" "$name" >/dev/null 2>&1; then
       live_holders+="$bead $name"$'\n'

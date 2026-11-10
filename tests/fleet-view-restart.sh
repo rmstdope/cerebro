@@ -27,10 +27,11 @@
 # The view ends a pass `END_GRACE_SECONDS' (30) after its state file's `since' says `waiting'. The
 # grace is the supervise table's to prove (tests/lib/supervise.cases), not R15's, so the pretend
 # pass dates its `waiting' file back past it and the view ends the pass on its next tick: the
-# grace's real half minute is not paid twice (cb-n53p). What the suite still costs, about forty
-# seconds, is mostly the work pane's own refresh (`app::WORK_REFRESH_INTERVAL', 30s) between the
-# closing pass and the start on cb-b2. Every wait below is bounded, and a failure prints what the
-# view logged and ran.
+# grace's real half minute is not paid twice (cb-n53p). Nor is the work pane's own refresh
+# (`app::WORK_REFRESH_INTERVAL', 30s): the start on cb-b2 needs a board read taken after cb-b1
+# closed, and the guard's hold one taken after cb-b2 was given back, so those two waits press `g',
+# the view's refresh-everything key, rather than wait out the timer (cb-70mv). Every wait below is
+# bounded, and a failure prints what the view logged and ran.
 #
 #     bash tests/fleet-view-restart.sh
 
@@ -207,53 +208,6 @@ exec bash -c 'while :; do sleep 1; done' "$(cerebro_marker_sentence "$name" "$CE
 STUB
 chmod +x "$stubs/bd" "$stubs/gh" "$scripts/launch"
 
-# --- the pty -------------------------------------------------------------------------------------
-#
-# python3's stdlib, because `script(1)' takes different arguments on util-linux and BSD and treats
-# a closed stdin differently on each. The size is set on the slave before the child starts, so the
-# first frame is drawn at 50x200. On SIGTERM it ends the view, which drops its sessions.
-cat > "$fixture/pty.py" <<'PY'
-import fcntl, os, signal, struct, sys, termios, time
-capture, argv = sys.argv[1], sys.argv[2:]
-master, slave = os.openpty()
-fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 200, 0, 0))
-pid = os.fork()
-if pid == 0:
-    os.close(master)
-    os.setsid()
-    fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
-    for fd in (0, 1, 2):
-        os.dup2(slave, fd)
-    if slave > 2:
-        os.close(slave)
-    os.execv(argv[0], argv)
-os.close(slave)
-def stop(*_):
-    try:
-        os.kill(pid, signal.SIGTERM)
-        for _ in range(50):
-            if os.waitpid(pid, os.WNOHANG)[0]:
-                break
-            time.sleep(0.1)
-        else:
-            os.kill(pid, signal.SIGKILL)
-    except (ProcessLookupError, ChildProcessError):
-        pass
-    sys.exit(0)
-signal.signal(signal.SIGTERM, stop)
-with open(capture, "ab", buffering=0) as out:
-    while True:
-        try:
-            data = os.read(master, 65536)
-        except OSError:
-            break
-        if not data:
-            break
-        out.write(data)
-_, status = os.waitpid(pid, 0)
-sys.exit(os.waitstatus_to_exitcode(status) if hasattr(os, "waitstatus_to_exitcode") else 1)
-PY
-
 view_pid=""
 suite_cleanup() {
   if [[ -n "$view_pid" ]] && kill -0 "$view_pid" 2>/dev/null; then
@@ -280,6 +234,7 @@ explain() {
     # no transition log and the stub bd answers `[]'. Expected, and no part of what is asserted.
     echo "--- errors (tail; fleet-history, fleet-health and sweep errors are expected)"
     tail -n 8 "$consumer/.cerebro/state/errors.jsonl" 2>/dev/null || true
+    echo "--- view stderr";    tail -n 8 "$fixture/view.err" 2>/dev/null || true
     echo "--- view exited: $(kill -0 "$view_pid" 2>/dev/null && echo no || echo yes)"
   } >&2
 }
@@ -302,6 +257,22 @@ wait_for() {
   done
 }
 
+press() { printf '%s' "$1" >&7; }
+
+# refreshing <command...>: the command, after a `g' - the view's refresh-everything key - at most
+# once every two seconds. A wait_for over it waits on a board read the suite asked for rather than
+# on the work pane's 30s timer. Pressed again rather than once: a `g' that lands while a board read
+# is in flight is dropped, and a read begun before the pass closed or gave back its bead answers the
+# board as it was. `g' only re-reads; it starts nothing the trigger would not.
+next_g=0
+refreshing() {
+  if ((SECONDS >= next_g)); then
+    press g
+    next_g=$((SECONDS + 2))
+  fi
+  "$@"
+}
+
 starts() { grep -c '^START ' "$fixture/launches" 2>/dev/null || true; }
 started_on() { grep -qx "START Rogue $1" "$fixture/launches" 2>/dev/null; }
 
@@ -320,25 +291,30 @@ held_after_second_end() {
 
 # --- run it --------------------------------------------------------------------------------------
 
+# The view runs on tests/lib/pty-drive's 50x200 pty, which types into it whatever arrives on the
+# keys fifo. The fifo is held open read-write for the whole run, so a key is one printf that never
+# blocks. On SIGTERM the drive kills the view; suite_cleanup ends any session it left behind.
 export FIXTURE="$fixture"
+mkfifo "$fixture/keys"
 (
   cd "$consumer"
   export PATH="$stubs:$PATH" \
     CEREBRO_CONSUMER_ROOT="$consumer" CEREBRO_CONSUMER_SHARED_ROOT="$consumer" \
     CEREBRO_CONSUMER_MOUNT="$mount" CEREBRO_SCRIPTS="$scripts" TERM=xterm-256color
-  exec python3 "$fixture/pty.py" "$fixture/screen" "$tui"
-) &
+  exec python3 -I "$repo_root/tests/lib/pty-drive" "$fixture/keys" "$fixture/screen" 50 200 -- "$tui"
+) </dev/null >/dev/null 2>>"$fixture/view.err" &
 view_pid=$!
+exec 7<>"$fixture/keys"
 
 wait_for 90 "the view starting Rogue on the first ready bead, cb-b1" started_on cb-b1
 pass "the fleet view starts a standby producer on the first ready bead"
 
-wait_for 150 "the view starting Rogue again on cb-b2 after the pass that closed cb-b1 (cb-r9ac)" \
-  started_on cb-b2
+wait_for 60 "the view starting Rogue again on cb-b2 after the pass that closed cb-b1 (cb-r9ac)" \
+  refreshing started_on cb-b2
 pass "a pass that closed its bead changed the work, and the next start follows (cb-r9ac)"
 
-wait_for 150 "an evaluation holding Rogue by the unchanged-work guard after cb-b2 was given back" \
-  held_after_second_end
+wait_for 60 "an evaluation holding Rogue by the unchanged-work guard after cb-b2 was given back" \
+  refreshing held_after_second_end
 [[ "$(starts)" == 2 ]] || { explain; fail "expected two starts and no third, got: $(starts)"; }
 pass "a pass that gave its bead back untouched is held by the unchanged-work guard"
 

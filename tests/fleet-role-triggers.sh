@@ -502,9 +502,10 @@ pass "Moira, Cypher, Forge and Sage are started on their declared cadence, no so
 
 # The view refuses `q' over a live session, so each pass, which ended itself, is left for the view
 # to end before it quits. Its `waiting' was dated back past the grace, so that is the next tick:
-# the half minute itself is run 3's to measure.
+# the half minute itself is run 3's to measure. Twenty seconds, well short of the grace, so a
+# back-dating that stopped working fails here rather than quietly costing the half minute again.
 for name in Moira Cypher Forge Sage; do
-  wait_until 70 "the view to end $name's pass" has_decision end "$name"
+  wait_until 20 "the view to end $name's pass" has_decision end "$name"
 done
 expect_started Moira Cypher Forge Sage
 quit_view run2

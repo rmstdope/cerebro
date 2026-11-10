@@ -16,8 +16,9 @@
 #   - `role_start_spacing_producer 1'. That is what lets the "not started again" window below fail:
 #     a producer has no wake interval, one failed start backs off by 0 seconds, and the
 #     unchanged-work guard needs an end later than the start, which a refused launch never leaves.
-#     So were a refusal NOT parked, the view would start Rogue again on its next supervision tick
-#     (5 s), not after the default 30 s spacing.
+#     So were a refusal NOT parked, the view would give the unstarted bead back on the next
+#     supervision tick (5 s) and start Rogue again on the tick after, not after the default 30 s
+#     spacing.
 #   - a stub `scripts/launch' in the copied consumer, the view's one way to start a session. Each
 #     call is logged. The first refuses as the real launcher does - `cerebro: <sentence>' on stderr,
 #     status 2 - and every later one is a live pass: `working' through the real `agent-state', then a
@@ -244,16 +245,28 @@ pass "the refusal is drawn on Rogue's row, in the launcher's own words"
 
 # --- and it is not started again by itself ------------------------------------------------------------
 #
-# Four supervision ticks: with refusals not parked, spacing 1 and no backoff after one failure, the
-# trigger would have started Rogue again on the first of them.
-for ((tick = 0; tick < 20; tick++)); do
+# The tick after the refusal gives the unstarted bead back (a `give-back' decision, cause
+# `did-not-start'); with refusals not parked, spacing 1 and no backoff after one failure, the
+# trigger would start Rogue again on the tick after that. So the hold is one supervision tick past
+# the give-back, plus margin, polled as `wait_until' polls. The tick is SUPERVISION_INTERVAL in
+# fleet-view/src/main.rs.
+supervision_tick=5
+margin=3
+gave_back() {
+  held_on_screen '✗ refused'
+  jq -e -s 'any(.[]; .event == "give-back" and .agent == "Rogue" and .cause == "did-not-start")' \
+    "$state/decisions.jsonl" >/dev/null 2>&1
+}
+wait_until 30 "the tick after the refusal to give cb-r1 back" gave_back
+hold_until=$(( $(date +%s) + supervision_tick + margin ))
+while [ "$(date +%s)" -lt "$hold_until" ]; do
   starts_are 1 || fail "the view started a refused row again without s$(evidence)"
   kill -0 "$view_pid" 2>/dev/null || fail "the view exited while holding the refused row$(evidence)"
-  sleep 1
+  sleep 0.2
 done
 starts_are 1 || fail "the view started a refused row again without s$(evidence)"
 on_screen '✗ refused' || fail "the refusal left the row by itself$(evidence)"
-pass "a refused row is not started again over four supervision ticks"
+pass "a refused row is not started again in the supervision tick after its bead is given back"
 
 # --- s starts it again ----------------------------------------------------------------------------------
 

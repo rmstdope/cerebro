@@ -32,6 +32,16 @@ tool exists in this session, the browser integration is unavailable, and that is
 The browser is the navigator's own Chrome on this machine, so the server you start is reachable at
 `http://localhost:<port>`, the port being `project-conf launch_<name>_port`.
 
+### The navigator's window
+
+The navigator keeps using that Chrome while you drive it, so you never change the window they are
+in. When the look needs a particular screen size (a phone width, a desktop width), simulate it with
+Chrome's device emulation, the developer tools' device mode, and never by resizing their window. If
+device emulation is not possible, open a Chrome window of your own and work there, never a tab in
+theirs. When no particular size is needed, a tab in their window is fine. Every skill or agent that
+drives Chrome follows this rule, and a project's own verification skill follows it by extending
+this one rather than restating it.
+
 ## Launch
 
 Run the declared launch command exactly as `agents/verifier.md` says, from the fresh worktree, on
@@ -49,8 +59,9 @@ it in one line.
 
 Open the app in Chrome and walk the journey the bead changed, as a person would: the interactions,
 the navigation, and the empty, loading, error and phone-width states where the acceptance names
-them. Along the path, notice whether what the bead did not touch still behaves. For an epic, walk
-every child in scope: a family verdict must not hide a child nobody looked at.
+them, sized as *The navigator's window* says. Along the path, notice whether what the bead did not
+touch still behaves. For an epic, walk every child in scope: a family verdict must not hide a child
+nobody looked at.
 
 The evidence is a log, one entry per criterion: what you did, what appeared, and a screenshot taken
 through the Chrome integration, named in the entry. A test result, a reading of the source, or the

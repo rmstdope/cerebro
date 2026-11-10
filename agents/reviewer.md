@@ -244,6 +244,9 @@ When it is:
    port and the pid, and wait.
 4. **Ask whether they are ready**, then brief: the sha you built, what changed from the audience's
    side, what to try, and what "right" looks like. Then launch.
+   If you open the app in Chrome for them, you are driving the navigator's own browser: follow
+   *The navigator's window* in `.cerebro/cerebro/skills/verify-bead/SKILL.md`, so a screen size is
+   simulated with device emulation and never by resizing the window they are using.
 5. **Take their verdict in their words**: "the panel jumps when you resize it", never "UX approved".
 6. **A yes here is not a merge.** It is one input to the recommendation.
 

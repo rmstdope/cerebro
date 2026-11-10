@@ -15,7 +15,7 @@
 # `end-pass'. Stubbed, because this suite may not touch them: `bd' (one JSON file per bead, every
 # call logged), `gh' (two fixture files and a login), and the agent CLI `claude', a pass that
 # reports `working', ends itself through the real `end-pass', records the `since' its `waiting'
-# carries, and waits to be killed.
+# carries (dated back past the grace in run 2), and waits to be killed.
 #
 # The fleet is the seven interactive rows, all standby. Forge and Sage have no trigger but their
 # clock, and Moira and Cypher a clock as well as their conditions: an hour unless the project
@@ -31,7 +31,8 @@
 #   2. the clock (R27, cb-3qf2). The same quiet board and `gh', and all four clock roles declared
 #      at ten seconds: each starts on its clock, no sooner than ten seconds after it was armed,
 #      and nobody else starts. The view refuses `q' over a live session, so the four passes are
-#      ended by the view before it quits.
+#      ended by the view before it quits; their `waiting' is dated back past the grace, so that
+#      takes a tick rather than the half minute run 3 measures (cb-yf8h).
 #   3. the triggers, one at a time. Only Forge and Sage are declared at ten seconds, so their clock
 #      runs out while the other five are being given their triggers instead of after them
 #      (cb-fwt6), and Moira and Cypher are left to their conditions. `gh' now lists a
@@ -240,6 +241,15 @@ if [ -n "$bead" ]; then
   bd --actor "$name" update "$bead" --add-label ux:agreed
 fi
 "$scripts/end-pass" "$name" --pid $$
+# Run 2 asks only when each clock role starts; the half minute before its end is run 3's to measure.
+# While `backdate' exists the `waiting' is dated ten minutes back, so the view ends the pass on its
+# next tick (as fleet-view-restart.sh does, cb-n53p). Written beside the file and moved over it, so
+# the view never reads half of one.
+if [ -e "$FIXTURE/backdate" ]; then
+  state="$root/.cerebro/state/$name.state.json"
+  jq '.since = (now - 600 | floor | todate)' "$state" > "$state.tmp"
+  mv "$state.tmp" "$state"
+fi
 jq -r .since "$root/.cerebro/state/$name.state.json" > "$FIXTURE/waited/$name"
 while :; do sleep 0.2; done
 STUB
@@ -461,6 +471,7 @@ declare_cadence() {
   done
 }
 declare_cadence user-feedback reviewer architect qa
+touch "$fixture/backdate"
 
 start_view
 for name in Moira Cypher Forge Sage; do
@@ -490,12 +501,14 @@ expect_started Moira Cypher Forge Sage
 pass "Moira, Cypher, Forge and Sage are started on their declared cadence, no sooner than ${cadence}s after arming"
 
 # The view refuses `q' over a live session, so each pass, which ended itself, is left for the view
-# to end before it quits: the half minute run 3 measures, here only waited out.
+# to end before it quits. Its `waiting' was dated back past the grace, so that is the next tick:
+# the half minute itself is run 3's to measure.
 for name in Moira Cypher Forge Sage; do
   wait_until 70 "the view to end $name's pass" has_decision end "$name"
 done
 expect_started Moira Cypher Forge Sage
 quit_view run2
+rm -f "$fixture/backdate"
 
 # --- run 3: each trigger in turn ------------------------------------------------------------------
 

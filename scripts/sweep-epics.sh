@@ -55,8 +55,11 @@ while IFS= read -r epic; do
 
   children_json="$(bd -C "$repo_root" children "$id" --json 2>/dev/null || echo "[]")"
   # The newest `closed_at` among closed children - eligibility already means every child is closed,
-  # so this is "when did the last one land", not "are they all closed".
-  last_closed="$(jq -r '[.[] | select(.status == "closed") | .closed_at // empty] | sort | last // empty' <<<"$children_json")"
+  # so this is "when did the last one land", not "are they all closed". `bd children` also returns
+  # the `event` beads `bd set-state` files under the epic; they are not children, and one closed
+  # after the last real child would make the close look fresh and hold the offer back. The rule
+  # every implementation answers is tests/lib/epic-family.json (cb-cng9, cb-z330, cb-u64g, cb-7iv1).
+  last_closed="$(jq -r '[.[] | select(.issue_type != "event" and .status == "closed") | .closed_at // empty] | sort | last // empty' <<<"$children_json")"
 
   minutes=null
   if [[ -n "$last_closed" ]]; then

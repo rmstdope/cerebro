@@ -249,7 +249,10 @@ pass "the refusal is drawn on Rogue's row, in the launcher's own words"
 # `did-not-start'); with refusals not parked, spacing 1 and no backoff after one failure, the
 # trigger would start Rogue again on the tick after that. So the hold is one supervision tick past
 # the give-back, plus margin, polled as `wait_until' polls. The tick is SUPERVISION_INTERVAL in
-# fleet-view/src/main.rs.
+# fleet-view/src/main.rs. The margin covers the give-back's board write, which that next tick waits
+# on, and scheduling jitter. The hold is counted in polls, so it can only overrun, never fall short.
+# The give-back is the anchor the hold is timed from, not part of R12: should a refused row one day
+# keep its bead, this wait goes red and the anchor wants replacing, not the rule.
 supervision_tick=5
 margin=3
 gave_back() {
@@ -258,8 +261,7 @@ gave_back() {
     "$state/decisions.jsonl" >/dev/null 2>&1
 }
 wait_until 30 "the tick after the refusal to give cb-r1 back" gave_back
-hold_until=$(( $(date +%s) + supervision_tick + margin ))
-while [ "$(date +%s)" -lt "$hold_until" ]; do
+for ((poll = 0; poll < (supervision_tick + margin) * 5; poll++)); do
   starts_are 1 || fail "the view started a refused row again without s$(evidence)"
   kill -0 "$view_pid" 2>/dev/null || fail "the view exited while holding the refused row$(evidence)"
   sleep 0.2

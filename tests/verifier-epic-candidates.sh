@@ -153,4 +153,35 @@ if grep -qxF "ep-only-events" <<<"$ids"; then bad+=" epic whose only children ar
 [ -z "$bad" ] || fail "event children counted as members:$bad"
 pass "ignores event beads when judging a family"
 
+# --- the shared table: which beads under an epic are its family (cb-7iv1) ----------------------
+#
+# tests/lib/epic-family.json is the rule every implementation answers. Its fixtures carry no
+# verification labels, so every family is unverified and an epic is due exactly when it has a
+# family and every member is closed: `family_closed`.
+table="$repo_root/tests/lib/epic-family.json"
+rows="$(jq -c '.[] | select(has("_") | not)' "$table")" || fail "could not read $table"
+[ -n "$rows" ] || fail "$table has no rows"
+bad=""
+while IFS= read -r row; do
+  name="$(jq -r '.name' <<<"$row")"
+  epic_id="$(jq -r '.epic.id' <<<"$row")"
+  want="$(jq -r '.family_closed' <<<"$row")"
+  # `--exclude-type event` on the real `bd list` keeps events out of it, so the list is the epic.
+  set_stdout list "$(jq -c '[.epic + {issue_type: "epic", labels: []}]' <<<"$row")"
+  set_stdout "children.$epic_id" "$(jq -c '[.under[] + {labels: []}]' <<<"$row")"
+  if ! ids="$(run)"; then
+    bad="$bad
+  $name: verifier-epic-candidates failed"
+    continue
+  fi
+  got=false
+  if grep -qxF "$epic_id" <<<"$ids"; then got=true; fi
+  if [ "$got" != "$want" ]; then
+    bad="$bad
+  $name: listed is $got, family_closed is $want"
+  fi
+done <<<"$rows"
+[ -z "$bad" ] || fail "verifier-epic-candidates disagrees with tests/lib/epic-family.json:$bad"
+pass "answers every row of the epic-family table"
+
 suite_passed

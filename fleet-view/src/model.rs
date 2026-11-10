@@ -2025,6 +2025,75 @@ mod tests {
         );
     }
 
+    /// One row of `tests/lib/epic-family.json`: an epic, everything bd files under it, and which
+    /// of those are its family. The bash readers' expectation fields this crate has no use for
+    /// (`last_child_closed_at`) are ignored.
+    #[derive(Deserialize)]
+    struct EpicFamilyRow {
+        name: String,
+        epic: EpicFamilyBead,
+        under: Vec<EpicFamilyBead>,
+        family: Vec<String>,
+        family_closed: bool,
+    }
+
+    #[derive(Deserialize)]
+    struct EpicFamilyBead {
+        id: String,
+        status: String,
+        #[serde(default = "epic_issue_type")]
+        issue_type: String,
+    }
+
+    fn epic_issue_type() -> String {
+        "epic".into()
+    }
+
+    /// The rule the fleet view, `scripts/work-beads`, `scripts/verifier-epic-candidates` and
+    /// `scripts/sweep-epics.sh` all answer, row by row: an `event` under an epic is never its
+    /// child (cb-cng9, cb-z330, cb-u64g - one defect, three fixes, hence the one table, cb-7iv1).
+    /// Here the family decides three things: whether the epic is in `epics`, whether an open epic
+    /// is work of its own (unplanned), and whether a closed one reaches Merged.
+    #[test]
+    fn the_epic_family_table_is_answered() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../tests/lib/epic-family.json");
+        let text =
+            std::fs::read_to_string(path).unwrap_or_else(|e| panic!("epic-family.json: {e}"));
+        let values: Vec<serde_json::Value> =
+            serde_json::from_str(&text).expect("epic-family.json is a JSON array");
+        let rows: Vec<EpicFamilyRow> = values
+            .into_iter()
+            // An element carrying `_` is the file's own comment - JSON has none.
+            .filter(|value| value.get("_").is_none())
+            .map(|value| serde_json::from_value(value).expect("a well-formed row"))
+            .collect();
+        assert!(!rows.is_empty(), "epic-family.json has no rows");
+
+        for row in rows {
+            let epic_id = row.epic.id.clone();
+            let epic_open = row.epic.status == "open";
+            let beads = std::iter::once(&row.epic)
+                .chain(&row.under)
+                .map(|b| bead(&b.id, &b.status, &b.issue_type, &[]))
+                .collect();
+            let buckets = partition_beads(beads);
+            let childless = row.family.is_empty();
+            let has = |list: &[Bead]| list.iter().any(|b| b.id == epic_id);
+
+            assert_eq!(buckets.epics.contains_key(&epic_id), !childless, "{}: in epics", row.name);
+            if epic_open {
+                assert_eq!(has(&buckets.unplanned), childless, "{}: open epic as work", row.name);
+            } else {
+                assert_eq!(
+                    has(&buckets.merged),
+                    childless || row.family_closed,
+                    "{}: closed epic in Merged",
+                    row.name
+                );
+            }
+        }
+    }
+
     /// The set is DIRECT parents, not ancestors: everything before an id's LAST dot. A
     /// `starts_with("cb-p.")` spelling would call `cb-p` parented by its grandchild and skip it.
     #[test]

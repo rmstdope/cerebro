@@ -173,22 +173,43 @@ ids="$(run --status open | jq -r '.[].id' | tr '\n' ' ')"
 [ "$ids" = "tt-ord " ] || fail "a parented epic survived: got '$ids'"
 pass "keeps a childless epic and drops a parented one, asking bd children per epic"
 
-# --- an epic's event beads are not its children (cb-cng9) ---------------------------------------
+# --- an epic's event beads are not its children: the shared table (cb-cng9, cb-7iv1) -----------
 #
 # `bd set-state` files an `event` bead under the bead it changed, and `bd children` returns it. An
 # epic nobody split but whose state changed once (cb-dr8, event child cb-dr8.6) counted one child
-# and left the board. Only the fallback is exposed: the list the prefilter reads excludes events.
-set_stub '[{"id":"tt-lone","issue_type":"epic"},{"id":"tt-ord","issue_type":"task"}]'
-set_stub_for children '[{"id":"tt-lone.1","issue_type":"event","status":"closed"}]'
-ids="$(run --status open | jq -r '.[].id' | tr '\n' ' ')"
-[ "$ids" = "tt-lone tt-ord " ] || fail "an epic whose only children are events was classed parented: got '$ids'"
-pass "keeps an epic whose only children are event beads"
-
-set_stub '[{"id":"tt-lone","issue_type":"epic"},{"id":"tt-ord","issue_type":"task"}]'
-set_stub_for children '[{"id":"tt-lone.1","issue_type":"event"},{"id":"tt-lone.2","issue_type":"task"}]'
-ids="$(run --status open | jq -r '.[].id' | tr '\n' ' ')"
-[ "$ids" = "tt-ord " ] || fail "an epic with a real child beside an event survived: got '$ids'"
-pass "drops an epic with a real child beside an event bead"
+# and left the board. tests/lib/epic-family.json is the rule every implementation answers; here the
+# epic stays on the list exactly while its `family` is empty. Each row runs twice: once with the
+# epic alone in the list (the `bd children` fallback decides) and once with everything under it in
+# the list too (the id-prefix prefilter decides, after the jq guard has dropped the events).
+table="$repo_root/tests/lib/epic-family.json"
+rows="$(jq -c '.[] | select(has("_") | not)' "$table")" || fail "could not read $table"
+[ -n "$rows" ] || fail "$table has no rows"
+bad=""
+while IFS= read -r row; do
+  name="$(jq -r '.name' <<<"$row")"
+  epic_id="$(jq -r '.epic.id' <<<"$row")"
+  childless="$(jq -r '.family | length == 0' <<<"$row")"
+  under="$(jq -c '.under' <<<"$row")"
+  for listing in alone with-under; do
+    if [ "$listing" = alone ]; then
+      set_stub "$(jq -c '[.epic + {issue_type: "epic"}]' <<<"$row")"
+    else
+      set_stub "$(jq -c '[.epic + {issue_type: "epic"}] + .under' <<<"$row")"
+    fi
+    set_stub_for children "$under"
+    if ! listed="$(run --status open,closed | jq --arg id "$epic_id" 'any(.[]; .id == $id)')"; then
+      bad="$bad
+  $name ($listing): work-beads failed"
+      continue
+    fi
+    if [ "$listed" != "$childless" ]; then
+      bad="$bad
+  $name ($listing): epic on the list is $listed, a childless epic is $childless"
+    fi
+  done
+done <<<"$rows"
+[ -z "$bad" ] || fail "work-beads disagrees with tests/lib/epic-family.json:$bad"
+pass "answers every row of the epic-family table, through bd children and through the prefilter"
 
 # --- the prefilter: a child in the list settles its parent with no bd call (cb-hzl) -------------
 #

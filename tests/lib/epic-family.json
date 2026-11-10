@@ -1,0 +1,77 @@
+[
+  {
+    "_": "Which beads under an epic are its family. `bd set-state` files its audit record as an `event` bead under the bead it changed, with a dotted child id, and `bd children` returns it - but an event is never a child. That rule reached main broken three times, each time fixed in one implementation only (cb-z330, cb-cng9, cb-u64g), so every implementation answers this table: tests/work-beads.sh, tests/verifier-epic-candidates.sh, tests/sweep-epics.sh and model::tests::the_epic_family_table_is_answered in fleet-view/src/model.rs. `under` is everything bd files under the epic, as `bd children` returns it. The three expectations are stated, not derived, so no reader re-implements the rule in its own test: `family` the ids that ARE children; `family_closed` true when the epic has a family and every member is closed; `last_child_closed_at` the newest `closed_at` in the family, or null. An element carrying this `_` key is a comment and is skipped by every reader."
+  },
+  {
+    "name": "an unsplit epic with one state change is still childless",
+    "epic": { "id": "ef-a", "status": "open" },
+    "under": [
+      { "id": "ef-a.1", "issue_type": "event", "status": "closed", "closed_at": "2026-01-05T10:00:00Z" }
+    ],
+    "family": [],
+    "family_closed": false,
+    "last_child_closed_at": null
+  },
+  {
+    "name": "a closed epic whose only bead under it is an event is childless",
+    "epic": { "id": "ef-b", "status": "closed" },
+    "under": [
+      { "id": "ef-b.1", "issue_type": "event", "status": "closed", "closed_at": "2026-01-05T10:00:00Z" }
+    ],
+    "family": [],
+    "family_closed": false,
+    "last_child_closed_at": null
+  },
+  {
+    "name": "an event newer than the last real child does not make the last close fresh",
+    "epic": { "id": "ef-c", "status": "open" },
+    "under": [
+      { "id": "ef-c.1", "issue_type": "task", "status": "closed", "closed_at": "2026-01-02T08:00:00Z" },
+      { "id": "ef-c.2", "issue_type": "event", "status": "closed", "closed_at": "2026-01-09T08:00:00Z" }
+    ],
+    "family": ["ef-c.1"],
+    "family_closed": true,
+    "last_child_closed_at": "2026-01-02T08:00:00Z"
+  },
+  {
+    "name": "an open event does not hold back a family whose children are all closed",
+    "epic": { "id": "ef-d", "status": "closed" },
+    "under": [
+      { "id": "ef-d.1", "issue_type": "feature", "status": "closed", "closed_at": "2026-01-03T12:00:00Z" },
+      { "id": "ef-d.2", "issue_type": "event", "status": "open", "closed_at": null }
+    ],
+    "family": ["ef-d.1"],
+    "family_closed": true,
+    "last_child_closed_at": "2026-01-03T12:00:00Z"
+  },
+  {
+    "name": "a closed event does not close a family whose real child is open",
+    "epic": { "id": "ef-e", "status": "open" },
+    "under": [
+      { "id": "ef-e.1", "issue_type": "task", "status": "open", "closed_at": null },
+      { "id": "ef-e.2", "issue_type": "event", "status": "closed", "closed_at": "2026-01-04T09:00:00Z" }
+    ],
+    "family": ["ef-e.1"],
+    "family_closed": false,
+    "last_child_closed_at": null
+  },
+  {
+    "name": "an epic with nothing under it is childless",
+    "epic": { "id": "ef-f", "status": "open" },
+    "under": [],
+    "family": [],
+    "family_closed": false,
+    "last_child_closed_at": null
+  },
+  {
+    "name": "two real children and no event: the newer close is the last",
+    "epic": { "id": "ef-g", "status": "closed" },
+    "under": [
+      { "id": "ef-g.1", "issue_type": "task", "status": "closed", "closed_at": "2026-01-02T08:00:00Z" },
+      { "id": "ef-g.2", "issue_type": "bug", "status": "closed", "closed_at": "2026-01-06T15:30:00Z" }
+    ],
+    "family": ["ef-g.1", "ef-g.2"],
+    "family_closed": true,
+    "last_child_closed_at": "2026-01-06T15:30:00Z"
+  }
+]

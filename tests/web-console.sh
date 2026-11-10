@@ -110,8 +110,9 @@ suite_cleanup() {
   wait 2>/dev/null || true
 }
 
+# Nothing is typed into the view, but this writer stays open on the keys FIFO so pty-drive never
+# reads end-of-file and the view's input stays open.
 exec 7<>"$keys"
-press() { printf '%s' "$1" >&7; }
 
 last_answer="$work_dir/last-answer"
 

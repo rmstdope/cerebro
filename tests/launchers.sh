@@ -123,6 +123,7 @@ run_launcher() {
 # rather than about the harness it ships. The cases below compare a consumer against the shipped
 # table, so they have to hold the shipped table.
 builtin_dir="$(mktemp -d)"
+cleanup_add "$builtin_dir"
 cp "$repo_root/scripts/roster" "$repo_root/scripts/root-hints.sh" "$builtin_dir/"
 roster_out="$("$builtin_dir/roster")"
 row_count="$(printf '%s\n' "$roster_out" | grep -c .)"
@@ -541,6 +542,7 @@ pass "consumer roster: an empty or comments-only consumer file falls back to the
 # `consumer-root`, which shells out to git. tests/launchers.sh already runs a launcher with a PATH
 # of `dirname` and `bash` alone; roster has to survive the same.
 bare_path_dir="$(mktemp -d)"
+cleanup_add "$bare_path_dir"
 ln -s "$(command -v dirname)" "$bare_path_dir/dirname"
 ln -s "$(command -v bash)" "$bare_path_dir/bash"
 out="$(PATH="$bare_path_dir" "$(command -v bash)" "$roster_at")"
@@ -1160,7 +1162,9 @@ pass "agents/architect.md exists"
 #
 # A third candidate, tried after the arithmetic and before git, checks the same round trip through
 # the mount that `consumer-root' does. No external command, so the narrowed-PATH guarantee holds.
-self_cerebro="$(mktemp -d)/cerebro"
+self_cerebro_parent="$(mktemp -d)"
+cleanup_add "$self_cerebro_parent"
+self_cerebro="$self_cerebro_parent/cerebro"
 mkdir -p "$self_cerebro/.claude" "$self_cerebro/.cerebro"
 copy_cerebro_into "$self_cerebro"
 mkdir -p "$self_cerebro/.cerebro"

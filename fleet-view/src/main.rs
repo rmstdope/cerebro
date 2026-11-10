@@ -8457,10 +8457,10 @@ mod main_tests {
         );
     }
 
-    /// What the edge does with `GiveUp`. That the fifth failed start is where it stops is
-    /// `start_decision_gives_up_on_the_fifth_failed_start`'s, in triggers.rs.
     #[test]
     fn the_view_stops_after_five_starts_that_produced_no_pass() {
+        // What the edge does with `GiveUp`. That the fifth failed start is where it stops is
+        // `start_decision_gives_up_on_the_fifth_failed_start`'s, in triggers.rs.
         let dir = tempfile::tempdir().unwrap();
         let paths = scratch(dir.path(), "sleep 5");
         let now = Utc::now();

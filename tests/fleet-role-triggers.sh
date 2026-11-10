@@ -247,8 +247,7 @@ fi
 # the view never reads half of one.
 if [ -e "$FIXTURE/backdate" ]; then
   state="$root/.cerebro/state/$name.state.json"
-  jq '.since = (now - 600 | floor | todate)' "$state" > "$state.tmp"
-  mv "$state.tmp" "$state"
+  jq '.since = (now - 600 | floor | todate)' "$state" > "$state.tmp" && mv "$state.tmp" "$state"
 fi
 jq -r .since "$root/.cerebro/state/$name.state.json" > "$FIXTURE/waited/$name"
 while :; do sleep 0.2; done

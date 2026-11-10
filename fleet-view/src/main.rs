@@ -8403,40 +8403,34 @@ mod main_tests {
     /// neither clears the count nor gives the name an end later than its start (cb-lt16). Before
     /// the fix a launch slower than one fleet read wiped the count every time, and a producer that
     /// died on its bead was restarted every ten seconds for ever with `0 failed`.
+    ///
+    /// The edge's own filter, not a branch of `start_decision`: which rows `start_due` hands to
+    /// `note_seen_up`. No row here is standby, so nothing is launched.
     #[test]
     fn a_session_seen_up_without_reporting_is_still_a_failed_start() {
-        for unreported in [cerebro_tui::model::RowState::Starting, cerebro_tui::model::RowState::Up] {
-            let dir = tempfile::tempdir().unwrap();
-            let paths = scratch(dir.path(), "sleep 5");
-            let now = Utc::now();
-            let roster = ux_roster(&["Xavier"]);
+        use cerebro_tui::model::RowState;
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "true");
+        let roster = ux_roster(&["Xavier"]);
+        let now = Utc::now();
+        for unreported in [RowState::Starting, RowState::Up] {
             let mut host = SessionHost::default();
-            let (mut app, mut ledger) = backing_off(1, 100, short_buffer(), now);
+            let (mut app, mut ledger) = backing_off(2, 5, short_buffer(), now);
+            app.finish_refresh(Ok(vec![ux_row("Xavier", unreported.clone())]), now);
 
             start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &BTreeMap::new(), &roster, now);
-            assert!(host.is_live("Xavier"), "one failure waits nothing at all");
-            assert_eq!(ledger.failures("Xavier"), 2, "counted before the launch");
 
-            // A fleet read sees the session up, but it never says a word of its own.
-            let seen = now + chrono::Duration::seconds(5);
-            app.finish_refresh(Ok(vec![ux_row("Xavier", unreported.clone())]), seen);
-            start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &BTreeMap::new(), &roster, seen);
             assert_eq!(ledger.failures("Xavier"), 2, "{unreported:?} is not a pass that ran");
-
-            // Then it dies, and its bead is given back.
-            host.kill(&paths, "Xavier");
-            settle_gone(&mut host, "Xavier");
-            app.handed.clear();
-            let later = now + chrono::Duration::seconds(10);
-            app.finish_refresh(Ok(vec![ux_row("Xavier", cerebro_tui::model::RowState::Dead)]), later);
-            start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &BTreeMap::new(), &roster, later);
-            assert!(!host.is_live("Xavier"), "after {unreported:?}, the second failure is backed off");
-            assert_eq!(
-                app.standby_labels.get("Xavier").map(String::as_str),
-                Some("↻ retry in 20s, 2 failed"),
-                "after {unreported:?}"
-            );
+            assert_eq!(ledger.ended_at("Xavier"), None, "nor an end after the start, {unreported:?}");
         }
+
+        // A row that has reported has run a pass: the same tick forgets the failures behind it.
+        let mut host = SessionHost::default();
+        let (mut app, mut ledger) = backing_off(2, 5, short_buffer(), now);
+        app.finish_refresh(Ok(vec![ux_row("Xavier", RowState::Working)]), now);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &BTreeMap::new(), &roster, now);
+        assert_eq!(ledger.failures("Xavier"), 0);
+        assert_eq!(ledger.ended_at("Xavier"), Some(now));
     }
 
     #[test]

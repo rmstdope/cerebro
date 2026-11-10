@@ -8391,8 +8391,14 @@ mod main_tests {
         assert_eq!(ledger.failures("Xavier"), 3, "the decision's count, written before the launch");
         assert_eq!(ledger.started_at("Xavier"), Some(later), "and the start is recorded");
         assert_eq!(app.handed.get("Xavier").map(String::as_str), Some("cb-a"), "with its bead");
+        // The reason is the ux trigger's phrase, which triggers.rs holds; the edge's part is that
+        // the notice is `start_notice`'s, so its shape is taken from there rather than spelled.
+        let empty = cerebro_tui::triggers::start_notice("Xavier", "");
+        let (head, tail) = empty.split_at(empty.len() - 1);
         assert!(
-            app.notice.as_deref().is_some_and(|notice| notice.starts_with("Started Xavier")),
+            app.notice
+                .as_deref()
+                .is_some_and(|notice| notice.starts_with(head) && notice.ends_with(tail) && notice.len() > empty.len()),
             "{:?}",
             app.notice
         );

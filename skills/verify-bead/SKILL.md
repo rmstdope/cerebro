@@ -40,9 +40,17 @@ width), simulate it with Chrome's device emulation, the developer tools' device 
 resizing their window. If device emulation is not possible, open a Chrome window of your own and
 work there, never a tab in theirs. If neither is possible, that is a blocker (*Launch*): ask the
 navigator, and never resize their window to get the size. When no particular size is needed, a tab
-in their window is fine. Every skill or agent that
-drives Chrome follows this rule, and a project's own verification skill follows it by extending
-this one rather than restating it.
+in their window is fine.
+
+**Never resize a window that holds a tab you did not open in this look.** A window counts as yours
+only when you opened it as a new window and every tab in it is one you opened since; a tab you
+created inside an existing window does not make that window yours. Before any resize, list the
+tabs of the window you are about to resize (the integration's tab context), and if any of them is
+not yours, do not resize it: open a new window of your own instead, or treat it as the blocker
+above.
+
+Every skill or agent that drives Chrome follows this rule, and a project's own verification skill
+follows it by extending this one rather than restating it.
 
 ## Launch
 

@@ -37,17 +37,18 @@ The browser is the navigator's own Chrome on this machine, so the server you sta
 The navigator keeps using that Chrome while you drive it, so you never resize, move or take over
 the window they are in. When the look needs a particular screen size (a phone width, a desktop
 width), simulate it with Chrome's device emulation, the developer tools' device mode, and never by
-resizing their window. If device emulation is not possible, open a Chrome window of your own and
-work there, never a tab in theirs. If neither is possible, that is a blocker (*Launch*): ask the
+resizing their window. If device emulation is not possible, work in a Chrome window of your own
+(below), never a tab in theirs. If neither is possible, that is a blocker (*Launch*): ask the
 navigator, and never resize their window to get the size. When no particular size is needed, a tab
 in their window is fine.
 
-**Never resize a window that holds a tab you did not open in this look.** A window counts as yours
-only when you opened it as a new window and every tab in it is one you opened since; a tab you
-created inside an existing window does not make that window yours. Before any resize, list the
-tabs of the window you are about to resize (the integration's tab context), and if any of them is
-not yours, do not resize it: open a new window of your own instead, or treat it as the blocker
-above.
+**A window is yours only if `tabs_context_mcp` created it during this look**, by being called with
+`createIfEmpty` when no MCP tab group existed yet. That window, and only that one, you may resize
+when device emulation is not possible. No other tool opens a new window: `tabs_create_mcp` adds a
+tab to the existing group, wherever that group lives, and a tab you created there does not make its
+window yours. `tabs_context_mcp` lists only the group's tabs, never the rest of the window, so it
+cannot tell you whether the navigator's tabs sit beside yours. When the group already existed at the
+start of the look, never resize: use device emulation, or treat it as the blocker above.
 
 Every skill or agent that drives Chrome follows this rule, and a project's own verification skill
 follows it by extending this one rather than restating it.

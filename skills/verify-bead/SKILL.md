@@ -37,12 +37,26 @@ The browser is the navigator's own Chrome on this machine, so the server you sta
 The navigator keeps using that Chrome while you drive it, so you never resize, move or take over
 the window they are in. When the look needs a particular screen size (a phone width, a desktop
 width), simulate it with Chrome's device emulation, the developer tools' device mode, and never by
-resizing their window. If device emulation is not possible, open a Chrome window of your own and
-work there, never a tab in theirs. If neither is possible, that is a blocker (*Launch*): ask the
+resizing their window. If device emulation is not possible, work in a Chrome window of your own
+(below), never a tab in theirs. If neither is possible, that is a blocker (*Launch*): ask the
 navigator, and never resize their window to get the size. When no particular size is needed, a tab
-in their window is fine. Every skill or agent that
-drives Chrome follows this rule, and a project's own verification skill follows it by extending
-this one rather than restating it.
+in their window is fine.
+
+**A window is yours only if `tabs_context_mcp` created it during this look**, and you can know that
+only by asking first. Make your first browser call `tabs_context_mcp` without `createIfEmpty`. Only
+if it reports no MCP tab group, call it again with `createIfEmpty`: the window that call opens is
+yours, and that window, and only that one, you may resize when device emulation is not possible.
+`createIfEmpty` does nothing when a group already exists and returns its tabs just the same, so
+the window of a group you did not first see missing is never yours. A bare `navigate` with no tab id makes that
+same `createIfEmpty` call for you, so never make one before you have checked. No other tool opens a
+new window: `tabs_create_mcp` adds a tab to the existing group, wherever that group lives, and a tab
+you created there does not make its window yours. `tabs_context_mcp` lists only the group's tabs,
+never the rest of the window, so it cannot tell you whether the navigator's tabs sit beside yours.
+When the group already existed at the start of the look, never resize: use device emulation, or
+treat it as the blocker above.
+
+Every skill or agent that drives Chrome follows this rule, and a project's own verification skill
+follows it by extending this one rather than restating it.
 
 ## Launch
 

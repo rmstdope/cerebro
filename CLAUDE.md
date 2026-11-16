@@ -240,6 +240,8 @@ Each of these answers one question in one place. Add a caller, never a second co
   the fleet view's Sweeps section finds, each held to `tests/lib/sweep-findings.json`;
   `scripts/verifier-epic-candidates` — when an epic family is Psylocke's to sweep.
 - `scripts/bead-delivery.sh` — whether a bead's work reached the default branch.
+- `scripts/test-code-ratio` — the production:test code ratio Sage warns on past 1:2, over
+  `production_code_paths` and `test_code_paths`; like `app-paths`, it fails rather than guesses.
 - `scripts/work-beads` — the board read, and the epic rule. Which beads under an epic are its
   family (an `event` never is) is held to `tests/lib/epic-family.json`, which it,
   `verifier-epic-candidates`, `sweep-epics.sh` and the fleet view's `model.rs` all answer.

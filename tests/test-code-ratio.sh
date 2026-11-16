@@ -17,6 +17,12 @@ run() { (cd "$consumer" && "$ratio" "$@"); }
 conf() { printf '%s\n' "$@" > "$consumer/.cerebro/project.conf"; }
 lines() { mkdir -p "$(dirname "$consumer/$1")"; printf '%s\n' "${@:2}" > "$consumer/$1"; }
 track() { git_q -C "$consumer" add -f -- "$@"; git_q -C "$consumer" commit -q -m fixture; }
+expect() { # <what> <want> <got>
+  [[ "$3" == "$2" ]] || fail "$1: want
+$2
+got
+$3"
+}
 
 # --- refuses rather than guesses ------------------------------------------------------------------
 
@@ -37,35 +43,55 @@ conf 'production_code_paths ^src/' 'test_code_paths ^(tests/|src/fixtures/)'
 
 lines src/a.sh 'one' '' 'two' '   ' 'three'             # 3 non-blank
 lines "src/with space.sh" 'one' 'two'                     # 2
+lines "src/a:b.sh" 'one'                                  # 1: a colon is no separator
 lines src/fixtures/f.sh 'f1' 'f2' 'f3' 'f4' 'f5'          # 5, test: test_code_paths wins
-lines src/lib.rs 'fn a() {}' 'fn b() {}' '' \
-  '#[cfg(test)]' 'mod tests {' '    #[test] fn t() {}' '}'   # 2 production, 4 test
+# Only a #[cfg(test)] module is test, wherever it sits; the attribute on anything else is not.
+lines src/lib.rs \
+  '#[cfg(test)] use crate::x;' \
+  'fn a() {}' \
+  '' \
+  '#[cfg(test)]' \
+  'mod mid {' \
+  '    fn t() {}' \
+  '}' \
+  'fn b() {}' \
+  '#[cfg(test)]' \
+  'fn helper() {}' \
+  '#[cfg(test)]' \
+  '#[allow(dead_code)]' \
+  'mod tests {' \
+  '    #[test] fn t() {}' \
+  '}'                                                   # 5 production, 9 test
 lines tests/big.sh 1 2 3 4 5 6 7 8 9 10                   # 10
 lines tests/small.sh 1 2                                  # 2
 lines docs/readme.md 1 2 3 4 5 6 7 8 9                    # in neither: not counted
 lines src/untracked.sh 1 2 3 4 5 6 7 8 9                  # never committed: not counted
 printf 'bin\0ary\0\n\nmore\n' > "$consumer/src/blob.bin" # binary: not counted
 printf '\0\0\0\n' > "$consumer/tests/blob.bin"
-track src/a.sh "src/with space.sh" src/fixtures/f.sh src/lib.rs tests/big.sh tests/small.sh \
-  docs/readme.md src/blob.bin tests/blob.bin
+track src/a.sh "src/with space.sh" "src/a:b.sh" src/fixtures/f.sh src/lib.rs tests/big.sh \
+  tests/small.sh docs/readme.md src/blob.bin tests/blob.bin
 
-out="$(run 2>/dev/null)"
-want=$'production 7\ntest 21\nratio 3.00'
-[[ "$out" == "$want" ]] || fail "the count: want
-$want
-got
-$out"
-pass "non-blank lines of committed text; test paths win; a Rust #[cfg(test)] tail is test"
+counted=$'production 11\ntest 26\nratio 2.36'
+expect "the count" "$counted" "$(run 2>/dev/null)"
+pass "non-blank lines of committed text; test paths win; only a Rust #[cfg(test)] module is test"
+
+# A personal git config must not change the count: line numbers, columns, colour and a pattern
+# dialect all rewrite what `git grep' prints or matches.
+out="$(cd "$consumer" && GIT_CONFIG_COUNT=4 \
+  GIT_CONFIG_KEY_0=grep.lineNumber GIT_CONFIG_VALUE_0=true \
+  GIT_CONFIG_KEY_1=grep.column GIT_CONFIG_VALUE_1=true \
+  GIT_CONFIG_KEY_2=color.ui GIT_CONFIG_VALUE_2=always \
+  GIT_CONFIG_KEY_3=grep.patternType GIT_CONFIG_VALUE_3=fixed \
+  "$ratio" 2>/dev/null)"
+expect "under a personal git config" "$counted" "$out"
+pass "the count is the same under grep.lineNumber, grep.column, color.ui and grep.patternType"
 
 # --- the largest test files -----------------------------------------------------------------------
 
-out="$(run --top 3 2>/dev/null)"
-want=$'production 7\ntest 21\nratio 3.00\ntop 10 tests/big.sh\ntop 5 src/fixtures/f.sh\ntop 4 src/lib.rs'
-[[ "$out" == "$want" ]] || fail "--top 3: want
-$want
-got
-$out"
-pass "--top <n> names the n largest test files, largest first, a Rust tail counted as its file"
+top3="$counted"$'\ntop 10 tests/big.sh\ntop 9 src/lib.rs\ntop 5 src/fixtures/f.sh'
+expect "--top 3" "$top3" "$(run --top 3 2>/dev/null)"
+expect "--top 03" "$top3" "$(run --top 03 2>/dev/null)"
+pass "--top <n> names the n largest test files, largest first; a leading zero is still decimal"
 
 status=0
 run --top x >/dev/null 2>&1 || status=$?
@@ -76,33 +102,30 @@ pass "--top takes a number"
 
 lines tests/later.sh 1 2 3
 track tests/later.sh
-out="$(run --rev HEAD~1 2>/dev/null)"
-[[ "$out" == $'production 7\ntest 21\nratio 3.00' ]] || fail "--rev HEAD~1: got
-$out"
-out="$(run 2>/dev/null)"
-[[ "$out" == $'production 7\ntest 24\nratio 3.43' ]] || fail "HEAD after a commit: got
-$out"
+git_q -C "$consumer" update-ref refs/remotes/origin/main HEAD~1
+expect "--rev HEAD~1" "$counted" "$(run --rev HEAD~1 2>/dev/null)"
+expect "--rev origin/main" "$counted" "$(run --rev origin/main 2>/dev/null)"
+later=$'production 11\ntest 29\nratio 2.64'
+expect "HEAD after a commit" "$later" "$(run 2>/dev/null)"
 pass "it counts HEAD by default and any revision under --rev, never the working tree"
 
-status=0
-run --rev no-such-rev >/dev/null 2>&1 || status=$?
-[[ $status -eq 2 ]] || fail "--rev no-such-rev: want exit 2, got $status"
-pass "an unknown revision is exit 2"
+for bad in no-such-rev HEAD:src; do
+  status=0
+  run --rev "$bad" >/dev/null 2>&1 || status=$?
+  [[ $status -eq 2 ]] || fail "--rev $bad: want exit 2, got $status"
+done
+pass "an unknown revision, or a path inside one, is exit 2"
 
 # --- no production code ---------------------------------------------------------------------------
 
 conf 'production_code_paths ^nothing/' 'test_code_paths ^tests/'
-out="$(run 2>/dev/null)"
-[[ "$out" == $'production 0\ntest 15\nratio -' ]] || fail "no production code: got
-$out"
+expect "no production code" $'production 0\ntest 15\nratio -' "$(run 2>/dev/null)"
 pass "with no production code the ratio is '-', not a division by zero"
 
 # --- the same from a subdirectory -----------------------------------------------------------------
 
 conf 'production_code_paths ^src/' 'test_code_paths ^(tests/|src/fixtures/)'
-out="$(cd "$consumer/src" && "$ratio" 2>/dev/null)"
-[[ "$out" == $'production 7\ntest 24\nratio 3.43' ]] || fail "from src/: got
-$out"
+expect "from src/" "$later" "$(cd "$consumer/src" && "$ratio" 2>/dev/null)"
 pass "it counts the whole consumer from any directory in it"
 
 suite_passed

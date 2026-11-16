@@ -586,7 +586,7 @@ by test-first work that a higher-level test now proves assertion for assertion; 
 removing the unit test, and never proposes removing a test without naming the one that keeps
 proving it. Every report opens with the **production:test ratio** from
 `scripts/test-code-ratio`, counted over `production_code_paths` and `test_code_paths` in
-`.cerebro/project.conf` (a Rust file's `#[cfg(test)]` tail counts as test). Past 1:2 it keeps one
+`.cerebro/project.conf` (a Rust file's `#[cfg(test)]` modules count as test). Past 1:2 it keeps one
 `Testing: test code is …× production code` bead open, outside the ten; `qa-ratio-full` holds the
 figure at the last full sweep for the trend.
 

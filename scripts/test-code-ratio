@@ -25,12 +25,20 @@
 # both keys being extended regular expressions in .cerebro/project.conf over repository-relative
 # paths, the way `app_paths' is. A test path wins over a production one, so `src/fixtures/' can sit
 # inside `src/'. One language rule is built in, because Rust keeps its unit tests inside the file
-# they test: in a production `.rs' file, everything from the first line that starts
-# `#[cfg(test)]' to the end of the file counts as test.
+# they test: in a production `.rs' file, a test module counts as test - a line that is exactly
+# `#[cfg(test)]' at column 0, any further attribute lines, a `mod <name> {' line, and everything
+# through the next line that starts with `}', which rustfmt puts at column 0. The attribute on
+# anything else (`#[cfg(test)] use ...;', a test-only helper fn) is production code: it is not a
+# test, and a module in the middle of a file has production code after it.
+#
+# THE KEYS ARE READ FROM THE SHARED CHECKOUT, through `project-conf', like every other
+# declaration; the tree counted is <rev>'s. Sage runs it from the shared checkout against
+# `origin/main', where the two agree.
 #
 # LIKE `app-paths', THIS FAILS WHEN IT DOES NOT KNOW - exit 3, the missing key named on stderr,
 # nothing on stdout. There is no guess at which paths are tests that is right for every consumer,
-# and a wrong one is a number that looks authoritative. Exit 2 is a usage error or an unknown <rev>.
+# and a wrong one is a number that looks authoritative. Exit 2 is a usage error or an unknown <rev>;
+# any other failure of `project-conf' (its migration refusal) is passed on as it came.
 set -euo pipefail
 export LC_ALL=C
 
@@ -46,13 +54,20 @@ top=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --rev) [[ $# -ge 2 && -n "$2" ]] || usage; rev="$2"; shift 2 ;;
-    --top) [[ $# -ge 2 && "$2" =~ ^[0-9]+$ ]] || usage; top="$2"; shift 2 ;;
+    # 10#: `08' is a number to a person and an octal error to bash.
+    --top) [[ $# -ge 2 && "$2" =~ ^[0-9]+$ ]] || usage; top="$((10#$2))"; shift 2 ;;
     *) usage ;;
   esac
 done
 
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+
 for key in production_code_paths test_code_paths; do
-  value="$("$here/project-conf" "$key" 2>/dev/null)" || value=""
+  # project-conf names the branch it took on stderr; shown only when it fails.
+  status=0
+  value="$("$here/project-conf" "$key" 2>"$tmp/conf-err")" || status=$?
+  [[ $status -eq 0 ]] || { cat "$tmp/conf-err" >&2; exit "$status"; }
   if [[ -z "$value" ]]; then
     echo "test-code-ratio: no $key in .cerebro/project.conf - cannot tell production code from" \
          "test code. Declare production_code_paths and test_code_paths (extended regexes over" \
@@ -63,13 +78,12 @@ for key in production_code_paths test_code_paths; do
 done
 
 root="$("$here/consumer-root")"
-if ! git -C "$root" rev-parse --verify -q "$rev^{tree}" >/dev/null; then
+# A `:' names a path inside a revision (`HEAD:src'), whose tree lists paths `git grep' names
+# differently - a count of nothing that looks like an answer.
+if [[ "$rev" == *:* ]] || ! git -C "$root" rev-parse --verify -q "$rev^{tree}" >/dev/null; then
   echo "test-code-ratio: no such revision: $rev" >&2
   exit 2
 fi
-
-tmp="$(mktemp -d)"
-trap 'rm -rf "$tmp"' EXIT
 
 # The tree's paths, sorted into the two classes. -z so git quotes nothing; a path with a newline in
 # it is not one this count supports.
@@ -79,13 +93,20 @@ git -C "$root" ls-tree -r -z --name-only "$rev" | tr '\0' '\n' > "$tmp/all"
   | { grep -E -- "$production_code_paths" || [[ $? -eq 1 ]]; } > "$tmp/production"
 
 # Every non-blank line of every text file, as `<rev>:<path>NUL<line>'. Exit 1 is "no such line",
-# an empty tree's honest answer; anything above it is a real failure.
+# an empty tree's honest answer; anything above it is a real failure. Every setting that changes
+# what `git grep' prints or how it reads the pattern is pinned, so a personal config - line
+# numbers, columns, colour, a pattern dialect - cannot change the count.
 status=0
-git -C "$root" grep -I -z -v -e '^[[:space:]]*$' "$rev" -- > "$tmp/lines" || status=$?
+git -C "$root" -c grep.lineNumber=false -c grep.column=false -c grep.fullName=false \
+  grep --no-color -G -I -z -v -e '^[[:space:]]*$' "$rev" -- > "$tmp/lines" || status=$?
 [[ $status -le 1 ]] || { echo "test-code-ratio: git grep failed ($status)" >&2; exit 1; }
 
 # NUL becomes \001 for awk, which cannot be trusted with a NUL in its input on every platform.
 tr '\0' '\001' < "$tmp/lines" | awk -v prefix_len="$(( ${#rev} + 1 ))" -v top="$top" -v per_file_out="$tmp/per-file" '
+  # pending: lines of a #[cfg(test)] not yet known to be on a module. The end of a file ends
+  # them, as production. (No apostrophe anywhere in this program: it is shell-quoted.)
+  function file_ends() { prod_lines += pending; pending = 0; in_mod = 0 }
+  function as_test(n) { test_lines += n; per_file[path] += n }
   FILENAME == ARGV[1] { is_test[$0] = 1; next }
   FILENAME == ARGV[2] { is_prod[$0] = 1; next }
   {
@@ -93,12 +114,25 @@ tr '\0' '\001' < "$tmp/lines" | awk -v prefix_len="$(( ${#rev} + 1 ))" -v top="$
     if (sep == 0) next
     path = substr($0, prefix_len + 1, sep - prefix_len - 1)
     line = substr($0, sep + 1)
-    if (path in is_test) { test_lines++; per_file[path]++; next }
+    if (path != current) { file_ends(); current = path }
+    if (path in is_test) { as_test(1); next }
     if (!(path in is_prod)) next
-    if (path ~ /\.rs$/ && !(path in in_tail) && line ~ /^#\[cfg\(test\)\]/) in_tail[path] = 1
-    if (path in in_tail) { test_lines++; per_file[path]++ } else prod_lines++
+    if (path !~ /\.rs$/) { prod_lines++; next }
+    if (in_mod) { as_test(1); if (line ~ /^}/) in_mod = 0; next }
+    if (pending) {
+      if (line ~ /^#\[/) { pending++; next }
+      if (line ~ /^(pub(\([a-z]+\))? )?mod [A-Za-z_][A-Za-z0-9_]*[[:space:]]*\{/) {
+        as_test(pending + 1); pending = 0
+        if (line !~ /}[[:space:]]*$/) in_mod = 1
+        next
+      }
+      prod_lines += pending; pending = 0
+    }
+    if (line ~ /^#\[cfg\(test\)\][[:space:]]*$/) { pending = 1; next }
+    prod_lines++
   }
   END {
+    file_ends()
     printf "production %d\ntest %d\n", prod_lines, test_lines
     if (prod_lines > 0) printf "ratio %.2f\n", test_lines / prod_lines
     else print "ratio -"

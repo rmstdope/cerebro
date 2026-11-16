@@ -579,6 +579,17 @@ unanswered for 60m; its pass was ended.*, and the next pass asks again. Nothing 
 it files and moves its watermark before it asks. Its watermarks live in bd memory: `qa-watermark`,
 `qa-full`, `qa-requirements-watermark`, and `qa-unfiled` for the findings past the ten.
 
+**It leans toward less test code.** Producers add tests one bead at a time and nobody else takes
+one away, so Sage looks for CI time that can go (a test removed or simplified, suites run side by
+side, a real-clock wait), tests that overlap within or across levels, and unit tests left behind
+by test-first work that a higher-level test now proves assertion for assertion; it proposes
+removing the unit test, and never proposes removing a test without naming the one that keeps
+proving it. Every report opens with the **production:test ratio** from
+`scripts/test-code-ratio`, counted over `production_code_paths` and `test_code_paths` in
+`.cerebro/project.conf` (a Rust file's `#[cfg(test)]` tail counts as test). Past 1:2 it keeps one
+`Testing: test code is …× production code` bead open, outside the ten; `qa-ratio-full` holds the
+figure at the last full sweep for the trend.
+
 ## What the fleet wrote down
 
 Three logs, all under `.cerebro/state/`, all git-ignored and local to this machine.

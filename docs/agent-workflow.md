@@ -565,7 +565,8 @@ days, and every finding is a `Testing:`-titled bead at P4, unranked and `ux:none
 pass, the costliest first, the rest named in its report and filed on later passes. It never fixes.
 
 It holds the project to two lists it agrees with you, tracked in the project:
-`.cerebro/requirements.md` (numbered R1, R2… under area headings, each with a `Proven by:` line) and
+`.cerebro/requirements.md` (under area headings that each carry a three-letter prefix, every
+requirement numbered in its area — `FLV-1`, `FLV-2` — each with a `Proven by:` line) and
 `.cerebro/test-architecture.md` (one section per level: where the tests live, `Belongs here:`,
 `Not here:`, `Enough is:`). Both are plain files you may edit by hand; the next pass reads them as
 written. Until they exist it files only what needs neither (CI speed, too much or too little at a

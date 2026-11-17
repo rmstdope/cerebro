@@ -29,23 +29,41 @@ hand; **the next pass reads whatever is there, as written**, and never "corrects
 ```markdown
 # Requirements
 
-Agreed with the navigator 2026-10-19. Each requirement keeps its number for ever;
+Agreed with the navigator 2026-10-19. Each requirement keeps its ID for ever;
 a dropped one is struck, never renumbered.
 
-## Fleet view
+## Fleet view (FLV)
 
-R1  The navigator sees every roster agent as a row, with its state.
-    Proven by: tests/fleet-rows.sh
-R2  A standby row counts down to its next start.
-    Proven by: nothing yet
-~~R3  ...~~ dropped 2026-11-02
+FLV-1  The navigator sees every roster agent as a row, with its state, bead and phase.
+       A row that has not been heard from in a while says how long.
+       Proven by: tests/fleet-rows.sh
+FLV-2  A standby row counts down to its next start.
+       Proven by: nothing yet
+~~FLV-3  ...~~ dropped 2026-11-02
+
+## Worktrees (WKT)
+
+WKT-1  Each builder works in a worktree of its own, cut from the default branch.
+       Proven by: tests/prepare-worktree.sh
 ```
 
-- Numbered `R1`, `R2`, … under `##` area headings. **A number is kept for ever**: a dropped
-  requirement is struck through (`~~…~~`) with ` dropped <date>`, never removed or renumbered, and
-  a new one takes the next number after the highest ever used.
-- Every live requirement has a `Proven by:` line naming the system test, or `Proven by: nothing yet`.
+- **Every area has a three-letter prefix**, upper case, written in its heading: `## Fleet view
+  (FLV)`. Prefixes are unique in the file, and **a prefix is kept for ever**: renaming an area
+  keeps its prefix, and a prefix once used — even by an area whose every requirement is dropped —
+  is never given to another.
+- **Every requirement belongs to one area and is numbered within it**: `FLV-1`, `FLV-2`, …. Its ID
+  is kept for ever: a dropped requirement is struck through (`~~…~~`) with ` dropped <date>`,
+  never removed or renumbered, and a new one takes the next number after the highest ever used
+  **in its area**, and goes under that area's heading, wherever in the file that is.
+- **An area holds as many requirements as belong to it.** Split one only when it has become two
+  subjects, never to keep it short.
+- A requirement is one sentence or a few — as many as it takes to say what a person can do and
+  what they can count on, and no more. Continuation lines are indented under its text.
+- Every live requirement ends with a `Proven by:` line, indented the same way, naming the system
+  test, or `Proven by: nothing yet`.
 - The header line is `Agreed with the navigator <date>.`, the date of the last agreement.
+- Anywhere else — a bead, a report, a test's own comment — a requirement is named by its ID
+  (`FLV-2`), never by its position.
 
 **`.cerebro/test-architecture.md`** — the levels the project tests at, and what belongs where:
 
@@ -60,14 +78,19 @@ Agreed with the navigator 2026-10-19.
   Enough is:       every branch of a decision once
 
 ## System           tests/system/*.sh
-  Belongs here:    one requirement each, named by its number
+  Belongs here:    one requirement each, named by its ID
   Not here:        a script's own refusals
   Enough is:       every requirement once
 ```
 
 - One `##` section per level: its name, then where its tests live, then exactly three lines —
   `Belongs here:`, `Not here:`, `Enough is:`.
-- There is always a **System** level, holding one test per requirement, named by its number.
+- There is always a **System** level, holding one test per requirement, named by its ID.
+
+**A requirements list still numbered `R1`, `R2`, …** is converted once, when step 7 offers it
+(below): every area gets a prefix and every requirement an ID in its area, in the order the file
+has them, the old number kept after the text as `(was R5)` so beads and commits that name it can
+still be followed. Until it is converted, read it as written.
 
 **Nothing half-agreed is ever written or used.** A list is written only when its own walk is
 complete; a walk abandoned midway — "Not now", no answer, the session ended — writes nothing of
@@ -114,7 +137,7 @@ A closed list, each with its citation named — a finding without one is not fil
   work (touches files, processes or the clock where `Not here:` says not); cite the test and the
   line.
 - **A requirement no system test proves** — `Proven by: nothing yet`, or a `Proven by:` test that
-  no longer exists or no longer exercises it; cite the requirement number.
+  no longer exists or no longer exercises it; cite the requirement's ID.
 
 None of these count: a coverage percentage, "could be more thorough", a test style, a cost that
 might arrive later.
@@ -234,7 +257,7 @@ question loses nothing but itself. The next pass asks again.
    - Otherwise **daily**. Say: "Daily sweep, since <sha> (<n> commits over <h> hours)."
    - **Daily with nothing in the range** (`git rev-list --count <watermark-sha>..origin/main` is 0):
      say "Nothing has merged since my last pass; nothing to sweep." and go straight to step 9 —
-     except that a missing list is still offered (step 7), and new requirements still asked about
+     except that a missing list, or an old-numbered one, is still offered (step 7), and new requirements still asked about
      (step 8) while `qa-requirements-watermark` is behind `origin/main`: a quiet hour is a good one
      to ask, and an unanswered question is owed again.
 
@@ -298,7 +321,7 @@ question loses nothing but itself. The next pass asks again.
    <what it costs today, concretely: the four minutes a run, the two places one behaviour is asserted, the requirement nothing proves>
 
    ## Evidence
-   - <workflow file and run id> / <test path> / <commit sha> / R<n> in .cerebro/requirements.md
+   - <workflow file and run id> / <test path> / <commit sha> / <ID, e.g. FLV-2> in .cerebro/requirements.md
    - ...
 
    ## Where
@@ -313,8 +336,8 @@ question loses nothing but itself. The next pass asks again.
    ```
 
    - The title is `Testing: ` and then the cost in plain words, per *Writing a good bead* in
-     `beads-workflow`. A missing system test names its requirement by number: "Testing: no system
-     test proves R3, the standby countdown".
+     `beads-workflow`. A missing system test names its requirement by ID: "Testing: no system
+     test proves FLV-2, the standby countdown".
    - `testing` is the whole index; `ux:none` because a test or a CI change alters nothing a person
      of the project sees — the *invisible by declaration* row of the routing table in
      `beads-workflow`. `-p 4` always, `## Outcome` first, an acceptance line always.
@@ -352,7 +375,9 @@ question loses nothing but itself. The next pass asks again.
    Leave out any line with nothing under it. After any answer in steps 7 and 8, report only what that
    answer added (the lists written, the findings they unlocked), in the same words.
 
-7. **When a list is missing: offer to agree it.** Only after step 6, so nothing is lost if nobody
+7. **When a list is missing: offer to agree it** — or, when the requirements list is still numbered
+   `R1`, `R2`, …, offer its conversion (*The conversion*, below), with `asking --phase agree`
+   written first and nothing else of this step. Only after step 6, so nothing is lost if nobody
    answers. Say "I still need the requirements and a test architecture before I can check the
    rest." (name only the one that is missing, if only one is), then ask, with `asking --phase
    agree` written first:
@@ -362,18 +387,31 @@ question loses nothing but itself. The next pass asks again.
    "Not now — ask me next pass", or no answer, ends the pass at step 9: write nothing. "Yes, now":
 
    **The requirements walk.** Draft the requirements from the code and the docs — what a person can
-   do with the project, one sentence each, grouped by area. **An area holds at most four
-   requirements** (the question tool offers four options): split a bigger area into named parts
-   ("Fleet view: starting sessions"). Then say "This project has no requirements list yet. I've
-   drafted <n> in <m> areas; I'll take you through them one area at a time." and ask **one question
-   per area**, `multiSelect`, every option pre-ticked:
+   do with the project, a sentence or a few each, grouped by area, each area with a three-letter
+   prefix that reads as its name (`FLV` for Fleet view, `WKT` for Worktrees). Then say "This project
+   has no requirements list yet. I've drafted <n> in <m> areas; I'll take you through them one area
+   at a time." and ask **one question per four requirements of an area**, `multiSelect`, every
+   option pre-ticked (the question tool offers four options; a bigger area takes several
+   questions, in order):
 
-   - Question: "<Area> — which of these hold? (untick any that are wrong)" with "(area <i> of
-     <m>)"; one option per requirement, labelled `R<n>` and its sentence; the tool's own Other is
-     "Other — something missing or worded wrong".
+   - Question: "<Area> (<PFX>) — which of these hold? (untick any that are wrong)" with "(area <i>
+     of <m>)", and "part <j> of <k>" when the area takes more than one; one option per requirement,
+     labelled with its ID (`FLV-1`) and its text in the description; the tool's own Other is
+     "Other — something missing, worded wrong, or a better prefix".
 
-   Unticked is dropped; Other rewords or adds (ask a short follow-up if what they wrote is unclear).
-   Close with one line: "<a> agreed, <d> dropped, <n> added."
+   Unticked is dropped; Other rewords, adds or renames the prefix (ask a short follow-up if what
+   they wrote is unclear). Close with one line: "<a> agreed, <d> dropped, <n> added."
+
+   **The conversion**, offered the same way when the list exists but is still numbered `R1`, `R2`,
+   …: say "The requirements still use the old R-numbers. I'd give each area a prefix and each
+   requirement an ID in its area, keeping the old number as `(was R<n>)`." and ask, `multiSelect`,
+   pre-ticked, one option per area — labelled `<PFX>`, described "<Area>: R5, R6, R7, R8 become
+   <PFX>-1 to <PFX>-4" — four areas to a question; Other is "Other — a different prefix, or two
+   areas that are one". Areas the old four-per-area rule split into parts ("Fleet view: seeing
+   the fleet", "Fleet view: driving sessions") are proposed as one area again. An unticked area
+   asks for its prefix in a short follow-up. **The file is converted whole or not at all**: the
+   rewrite keeps every requirement's text, `Proven by:` line and struck state, and changes only
+   headings and IDs.
 
    **The test-architecture walk**, right after, the same way: draft the levels from the tests the
    project already has, say "This project has no test architecture yet. I've drafted one with <n>
@@ -424,9 +462,14 @@ question loses nothing but itself. The next pass asks again.
    aren't in the requirements:" and ask, with `asking --phase agree` written first:
 
    - Question: "Add these to the requirements?" — `multiSelect`, pre-ticked, one option per
-     proposal labelled with its proposed new number (`R32`, the next after the highest ever used);
-     Other is "Other — reword one, or add something else". At most four per question; more is a
-     second question.
+     proposal labelled with its proposed ID in the area it belongs to (`FLV-7`, the next after the
+     highest ever used there) and its text in the description; Other is "Other — reword one, put it
+     in another area, or add something else". At most four per question; more is a second
+     question. A proposal that fits no existing area proposes a new one, prefix and all
+     (`New area: Releases (REL) — REL-1`).
+
+   Each ticked one goes under its area's heading, after the area's last requirement — never in a
+   new section further down for the same subject.
 
    Answered: write the ticked ones (with `Proven by: nothing yet`) and update the header date, by
    the same worktree recipe, then `bd remember "$(git rev-parse origin/main)" --key

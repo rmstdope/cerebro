@@ -77,6 +77,10 @@ BRD-6  When Psylocke checks the app in Chrome, she leaves the navigator's own wi
        and tabs as they are: a screen size comes from device emulation or a window of
        her own.
        Proven by: nothing yet
+BRD-7  A green Dependabot pull request is merged by Cerebro without review; a red one
+       becomes exactly one P4 bug bead, which follows the pull request when Dependabot
+       replaces it.
+       Proven by: nothing yet
 
 ## Sessions and spend (SES)
 

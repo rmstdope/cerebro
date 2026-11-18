@@ -315,6 +315,12 @@ take Storm down
 cut a minor release
 ```
 
+Every turn it takes opens with the Dependabot sweep (`scripts/dependabot-sweep`, cb-hpwc): each
+open Dependabot pull request whose CI passed is merged, majors included and with no review, and
+each whose CI failed becomes one P4 `bugfix` bead naming it, filed without a re-run, for you to rank;
+the bugfixer then fixes that pull request's branch and merges it. When Dependabot replaces a pull
+request, the bead follows the replacement.
+
 It is called Cerebro because it finds the mutants and points them at the work. Since the fleet view
 took over the timed sweeps, what is left for a Cerebro session is triaging the unranked backlog
 with you — one bead at a time: it makes sure the bead is understood (asking what the filing left
@@ -769,7 +775,8 @@ Honest numbers from building this repository's own harness:
   findings, then decides whether the resulting changes need another review and at what scope.
   Small, self-contained answers do not create a mandatory review loop.
 - **Nothing merges red or with unresolved review findings.** The `main` ruleset enforces the
-  former on the server; producers enforce the latter.
+  former on the server; producers enforce the latter. A green Dependabot pull request is the one
+  merge without a review: Cerebro's sweep merges it, by the navigator's choice (cb-hpwc).
 - **Interactive agents cost nothing between passes** — the view ends them, producers included
   since cb-1or.1: one with nothing to build costs nothing — and a fresh start
   re-reads the role's instructions; a role whose trigger is true but whose pass cannot clear it

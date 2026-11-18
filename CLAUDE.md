@@ -148,7 +148,8 @@ Load-bearing across files: a change to one must keep the others consistent with 
   The interactive roles (Cerebro, Moira, Psylocke, Cypher, Forge, Sage) are started for a trigger,
   not a bead, and walk what their pass finds.
 - **Nothing merges red or with unresolved review findings.** Producers obtain the review their
-  changes need before delivery.
+  changes need before delivery. The one merge without a review is a green Dependabot pull request,
+  merged by Cerebro through `scripts/dependabot-sweep` (cb-hpwc); a red one becomes a `bugfix` bead.
 - **Agents never decide the shape of what a user sees**; `ux` settles the detail inside a shape
   the navigator has agreed, and what its record leaves open a producer decides and writes into
   the plan's *Decided by me*, where the navigator can overrule it. The build and its tests are the
@@ -240,6 +241,8 @@ Each of these answers one question in one place. Add a caller, never a second co
   the fleet view's Sweeps section finds, each held to `tests/lib/sweep-findings.json`;
   `scripts/verifier-epic-candidates` — when an epic family is Psylocke's to sweep.
 - `scripts/bead-delivery.sh` — whether a bead's work reached the default branch.
+- `scripts/dependabot-sweep` — what happens to an open Dependabot pull request: merged when green,
+  one `bugfix` bead (metadata `dependabot_pr`) when red, the bead moved when Dependabot replaces it.
 - `scripts/test-code-ratio` — the production:test code ratio Sage warns on past 1:2, over
   `production_code_paths` and `test_code_paths`; like `app-paths`, it fails rather than guesses.
 - `scripts/work-beads` — the board read, and the epic rule. Which beads under an epic are its

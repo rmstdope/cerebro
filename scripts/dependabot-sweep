@@ -16,9 +16,11 @@
 # #N" comment, or a new pull request on the same branch - the bead is moved onto the replacement
 # instead of a second bead being filed.
 #
-# One line per pull request or bead on stdout. Exit 0, or 1 when a read failed: the open pull
-# requests or the board unreadable (nothing is done at all), or a replaced pull request unreadable
-# (everything else is still done). A refused merge is a line, not a failure.
+# One line per pull request or bead on stdout. Exit 0, or 1 when something failed, said on stderr:
+# the open pull requests or the board unreadable (nothing is done at all), or a replaced pull request
+# unreadable or a bead write refused (everything else is still done, and what was written is
+# pushed). A refused merge is a line, not a failure; a merge gh reports failed after the pull
+# request merged (the branch delete, say) is a merge.
 
 set -euo pipefail
 
@@ -93,16 +95,26 @@ while IFS=$'\t' read -r id old; do
          | map(select(. as $n | $numbers | index($n))) | last)
         // first($open[] | select(.headRefName == $view_branch) | .number)
         // empty' <<<"$view")"
-  if [[ -z "$new" || -n "$(bead_for "$new")" ]]; then
+  if [[ -z "$new" ]]; then
     say "orphaned $id: #$old was closed with no replacement"
+    continue
+  fi
+  other="$(bead_for "$new")"
+  if [[ -n "$other" ]]; then
+    say "orphaned $id: #$old was replaced by #$new, which $other already names"
     continue
   fi
   body="$(mktemp)"
   bead_body "$new" > "$body"
-  bd -C "$root" update "$id" --set-metadata "dependabot_pr=$new" --title "$(bead_title "$new")" \
-    --body-file "$body" --append-notes "## Dependabot replaced #$old with #$new
+  if ! bd -C "$root" update "$id" --set-metadata "dependabot_pr=$new" --title "$(bead_title "$new")" \
+      --body-file "$body" --append-notes "## Dependabot replaced #$old with #$new
 
-Dependabot closed #$old and opened #$new for the same update; this bead now names #$new."
+Dependabot closed #$old and opened #$new for the same update; this bead now names #$new." >/dev/null; then
+    rm -f "$body"
+    echo "dependabot-sweep: bd update $id failed - it still names #$old, not #$new" >&2
+    status=1
+    continue
+  fi
   rm -f "$body"
   wrote=true
   beads="$(jq --arg id "$id" --arg n "$new" 'map(if .id == $id then .metadata.dependabot_pr = $n else . end)' <<<"$beads")"
@@ -127,19 +139,25 @@ while IFS=$'\t' read -r n verdict title; do
     green)
       if err="$(gh pr merge "$n" --squash --delete-branch 2>&1 >/dev/null)"; then
         say "merged #$n $title"
+      elif [[ "$(jq -r '.state // ""' 2>/dev/null <<<"$(gh pr view "$n" --json state 2>/dev/null || true)" || true)" == MERGED ]]; then
+        say "merged #$n $title"                     # gh failed after the merge, deleting the branch
       else
         say "merge refused #$n $title: ${err%%$'\n'*}"
       fi ;;
     red)
       body="$(mktemp)"
       bead_body "$n" > "$body"
-      id="$(bd -C "$root" create "$(bead_title "$n")" --type bug --labels "$bugfix_label" -p 4 \
-              --metadata "{\"dependabot_pr\":\"$n\"}" --body-file "$body" \
-              --acceptance "Dependabot's pull request #$n, or the one that replaces it, is merged with its CI green." \
-              --silent)"
-      rm -f "$body"
-      wrote=true
-      say "filed $id for #$n $title" ;;
+      if id="$(bd -C "$root" create "$(bead_title "$n")" --type bug --labels "$bugfix_label" -p 4 \
+                --metadata "{\"dependabot_pr\":\"$n\"}" --body-file "$body" \
+                --acceptance "Dependabot's pull request #$n, or the one that replaces it, is merged with its CI green." \
+                --silent)" && [[ -n "$id" ]]; then
+        wrote=true
+        say "filed $id for #$n $title"
+      else
+        echo "dependabot-sweep: bd create failed - no bead filed for red #$n" >&2
+        status=1
+      fi
+      rm -f "$body" ;;
     *)
       say "waiting #$n $title (CI has not finished)" ;;
   esac

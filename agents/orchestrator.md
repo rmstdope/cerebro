@@ -115,8 +115,10 @@ It does the work itself; you do not judge its pull requests one by one.
 Its lines are `merged`, `merge refused` (with GitHub's reason: a protected branch the pull request
 is behind, say; Dependabot rebases it and the next turn tries again), `filed`, `followed`, `held
 by`, `waiting`, and `orphaned` — a bead whose pull request Dependabot closed with no replacement,
-which is the navigator's to close or keep; say it once. Exit 1 means it could not read something
-and says what on stderr; say that in a line and go on with the turn. **This is the only merge you
+or replaced by one another bead already names, which is the navigator's to close or keep. The
+script prints an orphan on every turn until then; tell the navigator once per session. Exit 1
+means a read or a bead write failed, and stderr says which; everything else was still done. Say it
+in a line and go on with the turn. **This is the only merge you
 ever make**, and you make it only through this script: never `gh pr merge` by hand, never re-run a
 check, never review a Dependabot pull request.
 

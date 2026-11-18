@@ -57,12 +57,21 @@ edit() { local tmp="$board.tmp"; jq "$@" "$board" > "$tmp" && mv "$tmp" "$board"
 case "$sub" in
   list)
     [[ -e "$STUB_DIR/bd-fails" ]] && { echo "bd: database unreachable" >&2; exit 1; }
-    key=""
+    # As bd does: closed beads only with --all, and 50 rows unless -n says otherwise.
+    key=""; all=false; limit=50
     while [[ $# -gt 0 ]]; do
-      case "$1" in --has-metadata-key) key="$2"; shift 2 ;; *) shift ;; esac
+      case "$1" in
+        --has-metadata-key) key="$2"; shift 2 ;;
+        --all) all=true; shift ;;
+        -n|--limit) limit="$2"; shift 2 ;;
+        *) shift ;;
+      esac
     done
-    jq --arg key "$key" '[ .[] | select(.metadata[$key] != null) ]' "$board" ;;
+    jq --arg key "$key" --argjson all "$all" --argjson limit "$limit" '
+      [ .[] | select(.metadata[$key] != null) | select($all or .status != "closed") ]
+      | if $limit > 0 then .[:$limit] else . end' "$board" ;;
   create)
+    [[ -e "$STUB_DIR/create-fails" ]] && { echo "bd: create refused" >&2; exit 1; }
     title="$1"; shift
     type=task; labels=""; priority=2; metadata='{}'; body=""; acceptance=""
     while [[ $# -gt 0 ]]; do
@@ -86,6 +95,7 @@ case "$sub" in
              description: $body, acceptance_criteria: $acceptance, notes: ""}]'
     echo "$id" ;;
   update)
+    [[ -e "$STUB_DIR/update-fails" ]] && { echo "bd: update refused" >&2; exit 1; }
     id="$1"; shift
     while [[ $# -gt 0 ]]; do
       case "$1" in
@@ -109,7 +119,7 @@ chmod +x "$stub/bd"
 
 # A fresh case: an empty board, no logs, no failure switches, the given open pull requests.
 reset_case() {
-  rm -f "$stub"/*.json "$stub"/*.log "$stub/merged" "$stub/pushed" "$stub"/*-fails* "$stub/list-fails"
+  rm -f "$stub"/*.json "$stub"/*.log "$stub/merged" "$stub/pushed" "$stub"/*-fails*
   echo '[]' > "$stub/board.json"
   printf '%s' "${1:-[]}" > "$stub/prs.json"
 }
@@ -248,7 +258,14 @@ out="$(run)" || fail "a sweep over an orphaned bead exited non-zero"
 [[ "$(jq -r '.[0].metadata.dependabot_pr' <<<"$(board)")" == 2 ]] || fail "an orphaned bead was moved"
 grep -q 'orphaned cb-f' <<<"$out" || fail "the sweep did not report the orphaned bead: $out"
 [[ "$(jq length <<<"$(board)")" == 2 ]] || fail "the unrelated red #5 was not filed on its own: $(board)"
-pass "a bead whose pull request merged stays; one closed with no replacement is reported, not moved"
+follow_case dependabot/npm_and_yarn/dep-2 '{"state":"CLOSED","headRefName":"dependabot/npm_and_yarn/dep-2","comments":[]}'
+jq '. + [{"id":"cb-g","status":"open","title":"t","metadata":{"dependabot_pr":"5"},"notes":""}]' "$stub/board.json" > "$stub/b.tmp"
+mv "$stub/b.tmp" "$stub/board.json"
+out="$(run)" || fail "a sweep over a bead whose replacement has its own bead exited non-zero"
+[[ "$(jq -r '.[0].metadata.dependabot_pr' <<<"$(board)")" == 2 ]] || fail "a bead was moved onto a pull request another bead names"
+grep -q 'orphaned cb-f: #2 was replaced by #5, which cb-g already names' <<<"$out" \
+  || fail "the sweep did not say the replacement has its own bead: $out"
+pass "a bead whose pull request merged stays; one closed with no replacement, or replaced by one another bead names, is reported, not moved"
 
 # --- failed reads act on nothing -----------------------------------------------------------------------
 
@@ -281,6 +298,34 @@ grep -q 'merge refused #1' <<<"$out" || fail "the refused merge was not reported
 grep -qF 'base branch policy' <<<"$out" || fail "the refusal does not say why: $out"
 [[ "$(merged)" == "merged 4" ]] || fail "a refused merge stopped the next one: [$(merged)]"
 pass "a refused merge is reported with gh's reason, and the next pull request is still merged"
+
+# --- a failed write is a line and a status, and the sweep goes on ------------------------------------------
+
+reset_case "$(prs "$(pr 2 "[$failure]")" "$(pr 1 "[$success]")")"
+touch "$stub/create-fails"
+set +e; out="$(run 2>"$stub/err")"; status=$?; set -e
+[[ "$status" -eq 1 ]] || fail "a refused bd create exited $status, not 1"
+[[ "$(merged)" == "merged 1" ]] || fail "a refused bd create stopped the green merge: [$(merged)]"
+grep -q 'bd create' "$stub/err" || fail "a refused bd create said nothing on stderr: $(cat "$stub/err")"
+
+follow_case dependabot/npm_and_yarn/other "$superseded"
+jq '. + [{"number": 1, "title": "Bump dep-1", "url": "u", "headRefName": "b1", "statusCheckRollup": ['"$success"']}]' \
+  "$stub/prs.json" > "$stub/p.tmp" && mv "$stub/p.tmp" "$stub/prs.json"
+touch "$stub/update-fails"
+set +e; out="$(run 2>/dev/null)"; status=$?; set -e
+[[ "$status" -eq 1 ]] || fail "a refused bd update exited $status, not 1"
+[[ "$(merged)" == "merged 1" ]] || fail "a refused bd update stopped the green merge: [$(merged)]"
+[[ -e "$stub/pushed" ]] || fail "the bead filed after a refused update was not pushed"
+pass "a refused bd write exits 1 after the rest of the sweep, and what was written is pushed"
+
+# --- a merge that fails after merging is a merge -------------------------------------------------------------
+
+reset_case "$(prs "$(pr 1 "[$success]")")"
+touch "$stub/merge-fails-1"
+echo '{"state":"MERGED"}' > "$stub/pr-1.json"
+out="$(run 2>/dev/null)" || fail "a merge that failed after merging made the sweep exit non-zero"
+grep -q 'merged #1' <<<"$out" || fail "a pull request merged before gh failed was not reported merged: $out"
+pass "a pull request gh merged before failing (the branch delete) is reported merged"
 
 # --- nothing open -----------------------------------------------------------------------------------------
 

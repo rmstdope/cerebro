@@ -53,8 +53,13 @@ request**, not on a new one:
 - **A flaky test is a defect too.** If the failure is a test that fails without the update, fix the
   test on the same branch and say so in the bug log.
 - **Merge that pull request** through `produce-bead` *Merging*, after the review and green checks,
-  and close the bead. If Dependabot replaced it meanwhile, the sweep has moved the bead onto the
+  with a subject that names the bead, since Dependabot's title does not and `bead-delivery.sh` and
+  `git log --grep "(<id>):"` find a delivery only by it:
+  `gh pr merge <n> --squash --delete-branch --subject "fix(<id>): <the pull request's title> (#<n>)"`.
+  Then close the bead. If Dependabot replaced it meanwhile, the sweep has moved the bead onto the
   replacement: read `dependabot_pr` again before you push.
+- **Reopened by a failed verification**, its pull request is already merged: the fix is an ordinary
+  bug fix on your tree's own branch and a new pull request, as for any other bead.
 
 ## Logging the bug
 

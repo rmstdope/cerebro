@@ -1,0 +1,293 @@
+#!/usr/bin/env bash
+#
+# Proves `scripts/dependabot-sweep` (cb-hpwc): Cerebro runs it on every turn, and it merges every
+# open Dependabot pull request whose CI passed, files exactly one P4 bug bead on the bugfixer's route
+# for every one whose CI failed (never re-running CI, never merging it), and moves an existing bead
+# onto the pull request Dependabot replaced its pull request with instead of filing a second.
+#
+# `gh` and `bd` are stubs: `gh` answers from per-case fixtures and logs every call, `bd` keeps the
+# board in one JSON file and applies `create` and `update` to it, so a second sweep reads what the
+# first one wrote.
+#
+#     bash tests/dependabot-sweep.sh
+
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$repo_root/tests/lib/consumer.sh"
+
+consumer="$(consumer_new repo --copy)"
+sweep="$consumer/.cerebro/cerebro/scripts/dependabot-sweep"
+stub="$work_dir/stub"
+mkdir -p "$stub"
+
+cat > "$stub/gh" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "$STUB_DIR/gh.log"
+case "$1 $2" in
+  "pr list")
+    [[ -e "$STUB_DIR/list-fails" ]] && { echo "gh: could not resolve to a repository" >&2; exit 1; }
+    cat "$STUB_DIR/prs.json" ;;
+  "pr view")
+    [[ -e "$STUB_DIR/pr-$3.json" ]] || { echo "gh: no pull requests found" >&2; exit 1; }
+    cat "$STUB_DIR/pr-$3.json" ;;
+  "pr merge")
+    [[ -e "$STUB_DIR/merge-fails-$3" ]] && { echo "X Pull request is not mergeable: the base branch policy prohibits the merge." >&2; exit 1; }
+    echo "merged $3" >> "$STUB_DIR/merged" ;;
+  *) echo "dependabot-sweep stub: unexpected gh $*" >&2; exit 1 ;;
+esac
+STUB
+chmod +x "$stub/gh"
+
+cat > "$stub/bd" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+board="$STUB_DIR/board.json"
+printf '%s\n' "$*" >> "$STUB_DIR/bd.log"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -C|--actor) shift 2 ;;
+    --readonly) shift ;;
+    *) break ;;
+  esac
+done
+sub="$1"; shift
+edit() { local tmp="$board.tmp"; jq "$@" "$board" > "$tmp" && mv "$tmp" "$board"; }
+case "$sub" in
+  list)
+    [[ -e "$STUB_DIR/bd-fails" ]] && { echo "bd: database unreachable" >&2; exit 1; }
+    key=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in --has-metadata-key) key="$2"; shift 2 ;; *) shift ;; esac
+    done
+    jq --arg key "$key" '[ .[] | select(.metadata[$key] != null) ]' "$board" ;;
+  create)
+    title="$1"; shift
+    type=task; labels=""; priority=2; metadata='{}'; body=""; acceptance=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --type|-t) type="$2"; shift 2 ;;
+        --labels|-l) labels="$2"; shift 2 ;;
+        -p|--priority) priority="$2"; shift 2 ;;
+        --metadata) metadata="$2"; shift 2 ;;
+        --body-file) body="$(cat "$2")"; shift 2 ;;
+        --description|-d) body="$2"; shift 2 ;;
+        --acceptance) acceptance="$2"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    id="cb-d$(jq length "$board")"
+    edit --arg id "$id" --arg title "$title" --arg type "$type" --arg labels "$labels" \
+         --argjson priority "$priority" --argjson metadata "$metadata" --arg body "$body" \
+         --arg acceptance "$acceptance" \
+      '. + [{id: $id, title: $title, issue_type: $type, status: "open", priority: $priority,
+             labels: ($labels | split(",") | map(select(. != ""))), metadata: $metadata,
+             description: $body, acceptance_criteria: $acceptance, notes: ""}]'
+    echo "$id" ;;
+  update)
+    id="$1"; shift
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --title) edit --arg id "$id" --arg v "$2" 'map(if .id == $id then .title = $v else . end)'; shift 2 ;;
+        --description|-d) edit --arg id "$id" --arg v "$2" 'map(if .id == $id then .description = $v else . end)'; shift 2 ;;
+        --body-file) edit --arg id "$id" --arg v "$(cat "$2")" 'map(if .id == $id then .description = $v else . end)'; shift 2 ;;
+        --append-notes) edit --arg id "$id" --arg v "$2" 'map(if .id == $id then .notes = (.notes + $v) else . end)'; shift 2 ;;
+        --set-metadata)
+          edit --arg id "$id" --arg k "${2%%=*}" --arg v "${2#*=}" 'map(if .id == $id then .metadata[$k] = $v else . end)'
+          shift 2 ;;
+        *) shift ;;
+      esac
+    done ;;
+  dolt) echo push >> "$STUB_DIR/pushed" ;;
+  *) echo "dependabot-sweep stub: unexpected bd $sub" >&2; exit 1 ;;
+esac
+STUB
+chmod +x "$stub/bd"
+
+# --- fixtures -------------------------------------------------------------------------------------
+
+# A fresh case: an empty board, no logs, no failure switches, the given open pull requests.
+reset_case() {
+  rm -f "$stub"/*.json "$stub"/*.log "$stub/merged" "$stub/pushed" "$stub"/*-fails* "$stub/list-fails"
+  echo '[]' > "$stub/board.json"
+  printf '%s' "${1:-[]}" > "$stub/prs.json"
+}
+
+# pr <number> <rollup JSON> [branch] - one open Dependabot pull request, as `gh pr list` prints it.
+pr() {
+  jq -cn --argjson n "$1" --argjson rollup "$2" --arg branch "${3:-dependabot/npm_and_yarn/dep-$1}" \
+    '{number: $n, title: "Bump dep-\($n) from 1.0.0 to 2.0.0", url: "https://github.com/o/r/pull/\($n)",
+      headRefName: $branch, statusCheckRollup: $rollup}'
+}
+prs() { jq -cs . <<<"$(printf '%s\n' "$@")"; }
+
+run() { STUB_DIR="$stub" PATH="$stub:$PATH" bash "$sweep" "$@"; }
+
+success='{"__typename":"CheckRun","name":"Tests","status":"COMPLETED","conclusion":"SUCCESS"}'
+skipped='{"__typename":"CheckRun","name":"Docs","status":"COMPLETED","conclusion":"SKIPPED"}'
+neutral='{"__typename":"CheckRun","name":"Lint","status":"COMPLETED","conclusion":"NEUTRAL"}'
+failure='{"__typename":"CheckRun","name":"Tests","status":"COMPLETED","conclusion":"FAILURE"}'
+cancelled='{"__typename":"CheckRun","name":"Tests","status":"COMPLETED","conclusion":"CANCELLED"}'
+running='{"__typename":"CheckRun","name":"E2E","status":"IN_PROGRESS","conclusion":""}'
+ctx_pending='{"__typename":"StatusContext","context":"ci/legacy","state":"PENDING"}'
+ctx_error='{"__typename":"StatusContext","context":"ci/legacy","state":"ERROR"}'
+
+board() { cat "$stub/board.json"; }
+merged() { cat "$stub/merged" 2>/dev/null || true; }
+
+# --- a green pull request is merged, majors included, with no review --------------------------------
+
+reset_case "$(prs "$(pr 1 "[$success,$skipped,$neutral]")")"
+out="$(run)" || fail "a sweep over one green pull request exited non-zero"
+[[ "$(merged)" == "merged 1" ]] || fail "the green pull request was not merged: [$(merged)]"
+grep -qx 'pr merge 1 --squash --delete-branch' "$stub/gh.log" || fail "the merge was not a squash: $(cat "$stub/gh.log")"
+grep -q 'merged #1' <<<"$out" || fail "the sweep did not report the merge: $out"
+[[ "$(board)" == "[]" ]] || fail "a green pull request filed a bead"
+[[ ! -e "$stub/pushed" ]] || fail "a sweep that wrote nothing pushed the board"
+pass "a green pull request is merged with --squash, and nothing is filed"
+
+# --- a pull request whose CI has not finished waits -------------------------------------------------
+
+for rollup in "[]" "[$success,$running]" "[$ctx_pending]"; do
+  reset_case "$(prs "$(pr 3 "$rollup")")"
+  out="$(run)" || fail "a sweep over a pending pull request ($rollup) exited non-zero"
+  [[ -z "$(merged)" ]] || fail "a pull request with CI unfinished ($rollup) was merged"
+  [[ "$(board)" == "[]" ]] || fail "a pull request with CI unfinished ($rollup) filed a bead"
+  grep -q 'waiting #3' <<<"$out" || fail "the sweep did not say #3 waits ($rollup): $out"
+done
+pass "no checks, a running check, or a pending status: the pull request waits"
+
+# --- a red pull request gets exactly one P4 bug bead, and stays open ----------------------------------
+
+for rollup in "[$failure]" "[$cancelled]" "[$ctx_error]" "[$failure,$running]"; do
+  reset_case "$(prs "$(pr 2 "$rollup")")"
+  out="$(run)" || fail "a sweep over a red pull request ($rollup) exited non-zero"
+  [[ -z "$(merged)" ]] || fail "a red pull request ($rollup) was merged"
+  [[ "$(jq length <<<"$(board)")" == 1 ]] || fail "a red pull request ($rollup) did not file exactly one bead: $(board)"
+  bead="$(jq -c '.[0]' <<<"$(board)")"
+  [[ "$(jq -r .issue_type <<<"$bead")" == bug ]] || fail "the bead is not a bug: $bead"
+  jq -e '.labels | index("bugfix")' <<<"$bead" >/dev/null || fail "the bead is not on the bugfixer's route: $bead"
+  [[ "$(jq -r .priority <<<"$bead")" == 4 ]] || fail "the bead was not filed unranked at P4: $bead"
+  [[ "$(jq -r '.metadata.dependabot_pr | tostring' <<<"$bead")" == 2 ]] || fail "the bead does not record its pull request: $bead"
+  grep -q '#2' <<<"$(jq -r .title <<<"$bead")" || fail "the bead's title does not name #2: $bead"
+  grep -qF 'https://github.com/o/r/pull/2' <<<"$(jq -r .description <<<"$bead")" || fail "the bead's description does not link the pull request: $bead"
+  grep -qF 'dependabot/npm_and_yarn/dep-2' <<<"$(jq -r .description <<<"$bead")" || fail "the bead's description does not name the branch: $bead"
+  ! grep -q 'rerun\|merge' "$stub/gh.log" || fail "the sweep re-ran or merged a red pull request: $(cat "$stub/gh.log")"
+  grep -q "filed cb-d0 for #2" <<<"$out" || fail "the sweep did not report the bead it filed: $out"
+  [[ "$(wc -l < "$stub/pushed")" -eq 1 ]] || fail "the board was not pushed exactly once after filing"
+done
+grep -qF 'Tests' <<<"$(jq -r '.[0].description' <<<"$(board)")" || fail "the bead does not name the failing check"
+pass "a failed, cancelled or errored check files one P4 bugfix bug naming the pull request, with no re-run"
+
+# --- a later sweep files no second bead ---------------------------------------------------------------
+
+reset_case "$(prs "$(pr 2 "[$failure]")")"
+run >/dev/null || fail "the first sweep exited non-zero"
+out="$(run)" || fail "the second sweep exited non-zero"
+[[ "$(jq length <<<"$(board)")" == 1 ]] || fail "a second sweep filed a second bead: $(board)"
+grep -q 'held by cb-d0' <<<"$out" || fail "the second sweep did not say the bead holds #2: $out"
+
+# Nor once that bead is closed while its pull request is still open.
+jq 'map(.status = "closed")' "$stub/board.json" > "$stub/b.tmp" && mv "$stub/b.tmp" "$stub/board.json"
+run >/dev/null || fail "a sweep over a closed bead's open pull request exited non-zero"
+[[ "$(jq length <<<"$(board)")" == 1 ]] || fail "a closed bead's open pull request was filed again"
+pass "a pull request that already has a bead is never filed twice"
+
+# --- a pull request a bead holds is the bead's, even once green ----------------------------------------
+
+reset_case "$(prs "$(pr 2 "[$success]")")"
+echo '[{"id":"cb-h","status":"in_progress","title":"t","metadata":{"dependabot_pr":"2"},"notes":""}]' > "$stub/board.json"
+out="$(run)" || fail "a sweep over a held green pull request exited non-zero"
+[[ -z "$(merged)" ]] || fail "the sweep merged a pull request a bead holds"
+grep -q 'held by cb-h' <<<"$out" || fail "the sweep did not say cb-h holds #2: $out"
+pass "a green pull request a bead holds is left to whoever takes the bead"
+
+# --- a replaced pull request: the bead follows it ------------------------------------------------------
+
+follow_case() {
+  # $1: the replacement's branch; $2: the old pull request's view
+  reset_case "$(prs "$(pr 5 "[$failure]" "$1")")"
+  echo '[{"id":"cb-f","status":"open","title":"Dependabot update fails CI: #2","description":"old","metadata":{"dependabot_pr":"2"},"notes":""}]' \
+    > "$stub/board.json"
+  printf '%s' "$2" > "$stub/pr-2.json"
+}
+
+superseded='{"state":"CLOSED","headRefName":"dependabot/npm_and_yarn/dep-2","comments":[
+  {"author":{"login":"dependabot"},"body":"Looks like this is being regrouped."},
+  {"author":{"login":"dependabot"},"body":"Superseded by #5."}]}'
+same_branch='{"state":"CLOSED","headRefName":"dependabot/npm_and_yarn/group-x","comments":[]}'
+
+for shape in superseded same_branch; do
+  if [[ "$shape" == superseded ]]; then
+    follow_case dependabot/npm_and_yarn/group-y "$superseded"
+  else
+    follow_case dependabot/npm_and_yarn/group-x "$same_branch"
+  fi
+  out="$(run)" || fail "a sweep following a replaced pull request ($shape) exited non-zero"
+  [[ "$(jq length <<<"$(board)")" == 1 ]] || fail "the replacement ($shape) got a second bead: $(board)"
+  bead="$(jq -c '.[0]' <<<"$(board)")"
+  [[ "$(jq -r '.metadata.dependabot_pr | tostring' <<<"$bead")" == 5 ]] || fail "the bead ($shape) does not name the replacement: $bead"
+  grep -q '#5' <<<"$(jq -r .title <<<"$bead")" || fail "the bead's title ($shape) does not name #5: $bead"
+  grep -qF 'https://github.com/o/r/pull/5' <<<"$(jq -r .description <<<"$bead")" || fail "the bead's description ($shape) does not link #5: $bead"
+  grep -q '#2' <<<"$(jq -r .notes <<<"$bead")" && grep -q '#5' <<<"$(jq -r .notes <<<"$bead")" \
+    || fail "the bead's notes ($shape) do not record the replacement: $bead"
+  grep -q 'followed cb-f from #2 to #5' <<<"$out" || fail "the sweep did not report the follow ($shape): $out"
+  [[ -e "$stub/pushed" ]] || fail "the follow ($shape) was not pushed"
+done
+pass "a bead follows the pull request Dependabot replaced its own with, by comment or by branch"
+
+# --- an old pull request merged, or closed with no replacement ------------------------------------------
+
+follow_case dependabot/npm_and_yarn/other '{"state":"MERGED","headRefName":"dependabot/npm_and_yarn/dep-2","comments":[]}'
+out="$(run)" || fail "a sweep over a bead whose pull request merged exited non-zero"
+[[ "$(jq -r '.[0].metadata.dependabot_pr' <<<"$(board)")" == 2 ]] || fail "a merged pull request's bead was moved"
+
+follow_case dependabot/npm_and_yarn/other '{"state":"CLOSED","headRefName":"dependabot/npm_and_yarn/dep-2","comments":[]}'
+out="$(run)" || fail "a sweep over an orphaned bead exited non-zero"
+[[ "$(jq -r '.[0].metadata.dependabot_pr' <<<"$(board)")" == 2 ]] || fail "an orphaned bead was moved"
+grep -q 'orphaned cb-f' <<<"$out" || fail "the sweep did not report the orphaned bead: $out"
+[[ "$(jq length <<<"$(board)")" == 2 ]] || fail "the unrelated red #5 was not filed on its own: $(board)"
+pass "a bead whose pull request merged stays; one closed with no replacement is reported, not moved"
+
+# --- failed reads act on nothing -----------------------------------------------------------------------
+
+reset_case "$(prs "$(pr 1 "[$success]")" "$(pr 2 "[$failure]")")"
+touch "$stub/list-fails"
+set +e; out="$(run 2>&1)"; status=$?; set -e
+[[ "$status" -eq 1 ]] || fail "a failed gh pr list exited $status, not 1"
+[[ -z "$(merged)" && "$(board)" == "[]" ]] || fail "a failed gh pr list still acted"
+grep -q 'dependabot-sweep' <<<"$out" || fail "a failed gh pr list said nothing on stderr: $out"
+
+reset_case "$(prs "$(pr 1 "[$success]")" "$(pr 2 "[$failure]")")"
+touch "$stub/bd-fails"
+set +e; run >/dev/null 2>&1; status=$?; set -e
+[[ "$status" -eq 1 ]] || fail "a failed bd list exited $status, not 1"
+[[ -z "$(merged)" && "$(board)" == "[]" ]] || fail "a failed bd list still acted"
+
+follow_case dependabot/npm_and_yarn/other '{}'
+rm -f "$stub/pr-2.json"
+set +e; out="$(run 2>/dev/null)"; status=$?; set -e
+[[ "$status" -eq 1 ]] || fail "an unreadable old pull request exited $status, not 1"
+[[ "$(jq length <<<"$(board)")" == 2 ]] || fail "an unreadable old pull request stopped the rest of the sweep"
+pass "an unreadable list exits 1 having acted on nothing; an unreadable old pull request exits 1 after the rest"
+
+# --- a refused merge is reported and the sweep goes on -----------------------------------------------------
+
+reset_case "$(prs "$(pr 1 "[$success]")" "$(pr 4 "[$success]")")"
+touch "$stub/merge-fails-1"
+out="$(run 2>/dev/null)" || fail "a refused merge made the sweep exit non-zero"
+grep -q 'merge refused #1' <<<"$out" || fail "the refused merge was not reported: $out"
+grep -qF 'base branch policy' <<<"$out" || fail "the refusal does not say why: $out"
+[[ "$(merged)" == "merged 4" ]] || fail "a refused merge stopped the next one: [$(merged)]"
+pass "a refused merge is reported with gh's reason, and the next pull request is still merged"
+
+# --- nothing open -----------------------------------------------------------------------------------------
+
+reset_case
+out="$(run)" || fail "a sweep with nothing open exited non-zero"
+[[ "$out" == "no open Dependabot pull requests" ]] || fail "a sweep with nothing open said: $out"
+[[ ! -e "$stub/pushed" ]] || fail "a sweep with nothing open pushed"
+pass "nothing open says so in one line"
+
+suite_passed

@@ -40,6 +40,22 @@ no `design` and add no `planned`: the reproduction test is the plan. *Known trap
    *Merging*), then close the bead, close its parent if you were the last child, and end the pass.
    A bead is never closed without its bug log.
 
+## A bead that names a Dependabot pull request
+
+A bead whose `metadata.dependabot_pr` is set was filed by Cerebro's Dependabot sweep for a
+dependency update whose CI failed (`scripts/dependabot-sweep`). Its fix lands on **that pull
+request**, not on a new one:
+
+- **The red check is the reproduction.** Run the failing suite locally on the pull request's branch
+  and see it fail for the reason CI gave before changing anything; that is the contract's step 2.
+- **Work on its branch, in your own tree**: `gh pr checkout <n>` inside the tree, then commit and
+  `git push` there. Dependabot stops rebasing a pull request once somebody else has pushed to it.
+- **A flaky test is a defect too.** If the failure is a test that fails without the update, fix the
+  test on the same branch and say so in the bug log.
+- **Merge that pull request** through `produce-bead` *Merging*, after the review and green checks,
+  and close the bead. If Dependabot replaced it meanwhile, the sweep has moved the bead onto the
+  replacement: read `dependabot_pr` again before you push.
+
 ## Logging the bug
 
 One note, appended when the fix is green and before the pull request, under this heading so the

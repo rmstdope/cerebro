@@ -109,13 +109,14 @@ The plan lives in the bead's `design` field (`bd update <id> --design-file plan.
 `bd show <id> --json`: the pretty renderer mangles Markdown tables.
 
 **Escalating takes three commands**, the first applying the named transition `park_for_navigator`
-from `scripts/candidate-label-policy.sh`, so a policy that does not load writes nothing rather than
-half the change:
+from `scripts/candidate-label-policy.sh`. The update and the unclaim are one chain, so a policy that
+does not load, or an update that fails, releases nothing: an unclaim on its own would hand the bead
+straight to the next builder with no `human` and no note. The push stays its own command:
 
 ```bash
 source .cerebro/cerebro/scripts/candidate-label-policy.sh && route_flags_for park_for_navigator &&
 bd update <id> "${route_flags[@]}" --append-notes "<what stopped it>" \
-  --set-metadata paused_at=$(date -u +%Y-%m-%dT%H:%M:%SZ) --if-assignee <name>
+  --set-metadata paused_at=$(date -u +%Y-%m-%dT%H:%M:%SZ) --if-assignee <name> &&
 bd unclaim <id> --if-assignee <name>   # clears the assignee and returns the status to open
 bd dolt push                           # or no other machine learns it was released
 ```
@@ -131,10 +132,10 @@ bd dolt push                           # or no other machine learns it was relea
   `bd unclaim` takes whoever holds the bead now, another builder included (cb-0elv.4).
 
 **Exception (written in full in `produce-bead`, *Handing back*):** a bead carrying
-`verification:failed`, handed back because nothing is left to implement, runs all three commands
-but adds **no `human`** and no `paused_at`, and adds **`second-look`** instead: the one label that
-says the verifier holds it, which `scripts/second-look-beads` matches and every builder and UX
-queue excludes. Only the verifier ever adds `plan:revise`, and only her verdict removes
+`verification:failed`, handed back because nothing is left to implement, uses that skill's own
+block rather than this transition: **no `human`** and no `paused_at`, and **`second-look`**
+instead: the one label that says the verifier holds it, which `scripts/second-look-beads` matches
+and every builder and UX queue excludes. Only the verifier ever adds `plan:revise`, and only her verdict removes
 `second-look`.
 
 **A UX agent escalating has no claim**, so it runs the first and third commands with

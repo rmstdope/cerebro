@@ -1,0 +1,49 @@
+<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><title>Install fleet roles</title><style>:root{--bg:#f6f6f4;--fg:#1d1d1b;--term:#141414;--tfg:#e8e8e3;--dim:#8a8a85;--new:#7ee787;--hl:#ffd479}
+@media (prefers-color-scheme: dark){:root{--bg:#1b1b1a;--fg:#e8e8e3}}
+body{background:var(--bg);color:var(--fg);font:15px/1.5 -apple-system,system-ui,sans-serif;margin:0;padding:24px 16px;max-width:900px;margin:auto}
+h1{font-size:20px;margin:0 0 4px}p.sub{color:var(--dim);margin:0 0 16px}
+pre{background:var(--term);color:var(--tfg);padding:16px;border-radius:8px;overflow-x:auto;font:13px/1.55 ui-monospace,Menlo,monospace;white-space:pre}
+.n{color:var(--new);font-weight:600}.d{color:var(--dim)}.h{color:var(--hl)}
+h2{font-size:15px;margin:20px 0 6px}.note{border-left:3px solid var(--hl);padding:4px 12px;margin:12px 0}</style><h1>Setup brings in the whole fleet, the bugfixer included</h1><p class=sub>cb-6z49 · the agreed shape. Green is new; everything else is unchanged.</p>
+<h2>1 · A fresh setup: the bugfixer is always included, asked only how it starts (standby)</h2><pre>install: the fleet declared
+  How many ux agents, to agree what a person will see [1]: 
+  How many producers, to plan and build UX-agreed beads [2]: 
+  A verifier, to verify merged beads with you (y/n) [y]: 
+  A reviewer, for pull requests from outside the fleet (y/n) [n]: 
+  A user-feedback agent, to own the GitHub issues (y/n) [n]: 
+  How the fleet view starts each role: autostart as it opens, standby to arm it for its
+  own trigger, or manual to start it yourself with 's'.
+  orchestrator (Cerebro) [autostart]: 
+  ux (Xavier) [standby]: 
+  verifier (Psylocke) [manual]: 
+  architect (Forge) [manual]: 
+  qa (Sage) [manual]: 
+<span class=n>  bugfixer (Bishop) [standby]: </span>
+  producer (Cyclops Storm) [standby]: 
+  wrote    .cerebro/roster.conf (7 agents)</pre>
+<h2>The fleet list it writes: Cerebro first, as today</h2><pre>Cerebro         orchestrator   autostart
+Xavier          ux             standby
+Psylocke        verifier
+Forge           architect
+Sage            qa
+<span class=n>Bishop          bugfixer       standby</span>
+Cyclops         producer       standby
+Storm           producer       standby</pre>
+<h2>2 · A kind of agent added to Cerebro later (illustrative "docs"): listed, asked only how it starts, default manual</h2><pre>  ...
+  qa (Sage) [manual]: 
+  bugfixer (Bishop) [standby]: 
+<span class=n>  docs (Banshee) [manual]: </span>
+  producer (Cyclops Storm) [standby]: </pre>
+<h2>3 · More agents than the built-in fleet names: the extras keep their character names</h2><pre>  How many ux agents, to agree what a person will see [1]: 3
+  How many producers, to plan and build UX-agreed beads [2]: 6
+  ...
+  ux (Xavier Beast Jean) [standby]: 
+  ...
+  producer (Cyclops Storm Wolverine Rogue Nightcrawler Colossus) [standby]: </pre>
+<h2>4 · Re-running setup over an older fleet list: it is kept, and what it lacks is named</h2><pre>install: the fleet declared
+  kept     .cerebro/roster.conf (exists; edit it by hand)
+<span class=n>  missing  bugfixer - nobody picks up bug reports; add a line such as:  Bishop  bugfixer  standby</span></pre>
+<p class=sub>A kind of agent setup has no sentence for gets the line without the reason:</p><pre>install: the fleet declared
+  kept     .cerebro/roster.conf (exists; edit it by hand)
+<span class=n>  missing  docs - add a line such as:  Banshee  docs</span></pre>
+<div class=note>Only kinds of agent every project gets are named as missing. Design agents, producers, the verifier, the reviewer and the feedback agent can be left out at setup, so they never are.</div>

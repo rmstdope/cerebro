@@ -518,8 +518,18 @@ pub fn read_supervisor_location(
     paths: &ReaderPaths,
     commands: &dyn CommandRunner,
 ) -> Result<Option<SupervisorLocation>, ReadError> {
-    if !paths.scripts_dir.join("fleet-supervisor").exists() {
-        return Ok(None);
+    let program = paths.scripts_dir.join("fleet-supervisor");
+    // `try_exists`, not `exists`: a metadata call that failed (EACCES) is a failed read, never
+    // the silent degrade.
+    match program.try_exists() {
+        Ok(true) => {}
+        Ok(false) => return Ok(None),
+        Err(e) => {
+            return Err(ReadError::Spawn {
+                source: Invocation::new(&program, &[]),
+                message: format!("cannot tell whether it exists: {e}"),
+            })
+        }
     }
     Ok(Some(SupervisorLocation {
         endpoint: read_supervisor_endpoint(paths, commands)?,

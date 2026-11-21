@@ -200,8 +200,8 @@ impl SupervisorController {
     /// Reconcile the lease this tick, and return what to display.
     ///
     /// One boolean in and one mode out: hold it and this window supervises, or try to take it.
-    /// There is nothing to read and nothing to declare, so this cannot fail on its own — only the
-    /// bind can, and its reason is what the header then shows.
+    /// Two things can fail an attempt: the lookup of where the lease lives, while that is still
+    /// unknown (cb-pd0f), and the bind. Either one's reason is a `LockError` the header shows.
     fn apply(&mut self) -> SupervisionMode {
         let (mode, action) = reconcile_supervision(self.lease.is_some());
         let mode = match action {

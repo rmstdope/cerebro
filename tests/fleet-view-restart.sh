@@ -51,12 +51,16 @@ done
 # Built into the workspace's own target directory, which `cargo test' shares: cargo locks it, so
 # this build and a parallel `cargo test' wait on each other rather than collide. Never `cargo run':
 # the view hands its environment to every session it starts (traps.md).
-cargo build --locked --quiet --manifest-path "$repo_root/Cargo.toml" -p cerebro-tui --bin cerebro-tui \
-  || fail "cargo could not build cerebro-tui"
-target_dir="$(cargo metadata --format-version 1 --no-deps --manifest-path "$repo_root/Cargo.toml" \
-  | jq -r .target_directory)"
-tui="$target_dir/debug/cerebro-tui"
-[[ -x "$tui" ]] || fail "no binary at $tui after the build"
+# The same invocation as every other fleet suite: a `-p cerebro-tui' build resolves a different
+# feature set and recompiles the dependencies their build already made (cb-o8xw).
+build_log="$work_dir/cargo-build.log"
+if ! artifacts="$(cargo build --locked --manifest-path "$repo_root/Cargo.toml" --bin cerebro-tui \
+                    --message-format=json-render-diagnostics 2>"$build_log")"; then
+  fail "cargo build of cerebro-tui failed: $(tail -20 "$build_log")"
+fi
+tui="$(jq -r 'select(.reason == "compiler-artifact" and .target.name == "cerebro-tui")
+              | .executable // empty' <<<"$artifacts" | tail -1)"
+[ -x "$tui" ] || fail "cargo build named no cerebro-tui executable"
 
 # --- the consumer --------------------------------------------------------------------------------
 

@@ -250,7 +250,8 @@ Each of these answers one question in one place. Add a caller, never a second co
   `production_code_paths` and `test_code_paths`; like `app-paths`, it fails rather than guesses.
 - `scripts/work-beads` — the board read, and the epic rule. Which beads under an epic are its
   family (an `event` never is) is held to `tests/lib/epic-family.json`, which it,
-  `verifier-epic-candidates`, `sweep-epics.sh` and the fleet view's `model.rs` all answer.
+  `verifier-epic-candidates`, `verifier-pass-epic-family` (those two through
+  `scripts/epic-family.sh`), `sweep-epics.sh` and the fleet view's `model.rs` all answer.
 - `scripts/worktree-safety.sh` — whether a worktree can go without losing anything.
 - `scripts/session-marker.sh` — the marker sentence; `scripts/marker-readers` checks every
   reader subscribes to `tests/lib/session-args.cases`.

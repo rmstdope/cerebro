@@ -13,6 +13,8 @@
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Which beads under an epic are its family: the rule tests/lib/epic-family.json holds.
+source "$script_dir/epic-family.sh"
 repo_root="$("$script_dir/consumer-root" --shared 2>/dev/null)" || {
   echo "verifier-epic-candidates: not in a git repository, or this copy of cerebro has no consumer" >&2
   exit 1
@@ -34,18 +36,7 @@ family_settled_jq='((.labels // []) | index("verification:passed") != null or in
 while IFS= read -r epic_id; do
   [[ -n "$epic_id" ]] || continue
 
-  if ! children="$(bd -C "$repo_root" children "$epic_id" --json)"; then
-    echo "verifier-epic-candidates: bd children failed for $epic_id" >&2
-    exit 1
-  fi
-  if ! jq -e . >/dev/null 2>&1 <<<"$children"; then
-    echo "verifier-epic-candidates: bd children printed something that is not JSON for $epic_id" >&2
-    exit 1
-  fi
-  # `bd children` also returns the event beads `bd set-state` writes under the bead it changed.
-  # They are not members of the family and never carry a verdict, so they are dropped here,
-  # as `bd list --exclude-type event` drops them above.
-  children="$(jq '[.[] | select(.issue_type != "event")]' <<<"$children")"
+  children="$(epic_family_children "$repo_root" "$epic_id")" || exit 1
 
   child_count="$(jq 'length' <<<"$children")"
   [[ "$child_count" -gt 0 ]] || continue

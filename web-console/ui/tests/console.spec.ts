@@ -895,7 +895,9 @@ test("a supervision answer that could not be read is asked again", async ({ page
   await expect.poll(() => askedControl).toBeGreaterThan(0);
   readable = true;
 
-  await page.clock.runFor(3000);
-
-  await expect(page.getByText("Supervised")).toBeVisible();
+  // Advanced again if the page had not yet set its retry when the clock first moved.
+  await expect(async () => {
+    await page.clock.runFor(3000);
+    await expect(page.getByText("Supervised")).toBeVisible({ timeout: 200 });
+  }).toPass({ timeout: 5000 });
 });

@@ -626,6 +626,7 @@ impl Gate {
             self.changed.wait_timeout_while(released, Duration::from_secs(10), |released| !*released).unwrap();
         if timeout.timed_out() {
             *released = true;
+            self.changed.notify_all();
         }
     }
 }

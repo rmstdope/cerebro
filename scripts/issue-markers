@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+#
+# issue-markers <issue number> - the hidden markers Moira has posted on a GitHub issue, one per
+# line in thread order: `moira-ack`, and `beads-state:<STATE>` for each status comment (cb-ajvp).
+#
+# Only comments written by the account gh is authenticated as (`gh api user`) are read. Anyone can
+# comment on a public issue, and the markers are HTML comments nobody sees in the rendered thread,
+# so a stranger's `<!-- moira-ack -->` would otherwise silence the acknowledgement for good and a
+# stranger's `<!-- beads-state:RELEASED -->` would bend the status ladder.
+#
+# A marker counts only in its comment form, `<!-- moira-ack -->` or `<!-- beads-state:X -->`: a
+# comment that merely discusses one is not one.
+#
+# Exit 0 with the markers (nothing at all when there are none), 2 on usage, 1 when the login or the
+# issue cannot be read: a failed read is never an empty answer, which would read as "never
+# acknowledged" and post the acknowledgement again.
+
+set -euo pipefail
+
+if [[ $# -ne 1 ]]; then
+  echo "usage: issue-markers <issue number>" >&2
+  exit 2
+fi
+
+if ! login="$(gh api user --jq .login)" || [[ -z "$login" ]]; then
+  echo "issue-markers: cannot read the login gh is authenticated as (gh api user)" >&2
+  exit 1
+fi
+if ! thread="$(gh issue view "$1" --json comments)"; then
+  echo "issue-markers: cannot read the comments on issue $1" >&2
+  exit 1
+fi
+if ! bodies="$(jq -r --arg me "$login" '.comments[] | select(.author.login == $me) | .body' <<<"$thread")"; then
+  echo "issue-markers: gh issue view did not print the comments as JSON" >&2
+  exit 1
+fi
+
+{ grep -oE '<!-- (moira-ack|beads-state:[A-Z]+) -->' <<<"$bodies" || [[ $? -eq 1 ]]; } \
+  | sed -E 's/^<!-- (.*) -->$/\1/'

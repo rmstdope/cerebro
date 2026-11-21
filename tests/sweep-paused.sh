@@ -211,4 +211,14 @@ out="$(cd "$consumer" && "$sweep" --json)" || fail "sweep-paused.sh --json exite
   || fail "the renamed ui-question word did not read as ui_decision: $out"
 pass "a pause is read under the label policy's words, whatever they are"
 
+# --- a policy it cannot read is an error, never an empty answer -----------------------------------
+# The fleet view reads `[]` as "nothing parked"; with no policy there is no word to look for, so the
+# sweep answers the same `{"error": ...}` its other refusals do, and exits 1.
+rm "$policy"
+rc=0; out="$(cd "$consumer" && "$sweep" --json 2>/dev/null)" || rc=$?
+[[ "$rc" == 1 ]] || fail "expected exit 1 with no policy, got $rc"
+jq -e '.error | test("candidate-label-policy")' >/dev/null 2>&1 <<<"$out" \
+  || fail "expected a JSON error naming the policy, got: $out"
+pass "a policy that cannot be read is a JSON error and exit 1, never []"
+
 suite_passed

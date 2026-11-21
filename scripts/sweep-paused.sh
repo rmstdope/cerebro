@@ -56,9 +56,16 @@ if [[ "${1:-}" != "--json" ]]; then
 fi
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# `human_label` and `ui_question_label`: the words are the label policy's (cb-t51j.3). A policy that
-# cannot be read leaves them unset, and `-u` ends the sweep there rather than printing `[]`.
-source "$script_dir/candidate-label-policy.sh"
+# `human_label` and `ui_question_label`: the words are the label policy's (cb-t51j.3).
+# A policy that cannot be read is refused here. Left to `-u`, the unset word would end only the
+# process substitution that reads it, and the sweep would print `[]`: nothing to look at, on a board
+# that may be full of it.
+# Spelled as a bare `source` line so `tests/lib/place-scripts` places the policy with this script.
+source "$script_dir/candidate-label-policy.sh" 2>/dev/null
+if [[ -z "${human_label:-}" ]]; then
+  echo '{"error": "could not read candidate-label-policy.sh"}'
+  exit 1
+fi
 
 # ISO-8601 UTC ("2026-08-14T09:00:17Z") to a Unix timestamp. GNU date takes `-d`; BSD/macOS date
 # has no such flag and wants `-j -f` with an explicit format instead - so try GNU first and fall

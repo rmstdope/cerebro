@@ -63,9 +63,16 @@ fi
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # `verifier_only_label` and `stale_verdict_label`: the words are the label policy's (cb-t51j.3).
-# `verification:failed` is not one of them, and stays spelled here. A policy that cannot be read
-# leaves them unset, and `-u` ends the sweep there rather than printing `[]`.
-source "$script_dir/candidate-label-policy.sh"
+# `verification:failed` is not one of them, and stays spelled here.
+# A policy that cannot be read is refused here. Left to `-u`, the unset word would end only the
+# process substitution that reads it, and the sweep would print `[]`: nothing to look at, on a board
+# that may be full of it.
+# Spelled as a bare `source` line so `tests/lib/place-scripts` places the policy with this script.
+source "$script_dir/candidate-label-policy.sh" 2>/dev/null
+if [[ -z "${verifier_only_label:-}" ]]; then
+  echo '{"error": "could not read candidate-label-policy.sh"}'
+  exit 1
+fi
 
 repo_root="$("$script_dir/consumer-root" --shared 2>/dev/null)" || {
   echo '{"error": "not in a git repository"}'

@@ -2,7 +2,7 @@
 #
 # Proves that every named hand-off in `scripts/candidate-label-policy.sh` sends a bead to the queue
 # meant to take it, and to no other (cb-q6yb). The writers (`producer-park`, `reopen-failed`, and the
-# two hand-offs agents apply by hand through `route_flags_for`) and the four queues
+# three hand-offs agents apply by hand through `route_flags_for`) and the four queues
 # (`stage-candidates`, `assignable-beads`, `bugfix-candidates`, `second-look-beads`) are run for
 # real against one board,
 # held by a `bd` that applies every write: each case asks the readers about the bead the writer has
@@ -94,7 +94,12 @@ case "$sub" in
     if [[ -n "$if_status" && "$(jq -r '.status' <<<"$current")" != "$if_status" ]]; then exit 13; fi
     edit --arg id "$id" "map(if .id == \$id then ($filter) else . end)" ;;
   unclaim)
-    edit --arg id "$1" 'map(if .id == $id then .assignee = "" | .status = "open" else . end)' ;;
+    id="$1"; shift
+    if [[ "${1:-}" == --if-assignee ]]; then
+      current="$(jq -r --arg id "$id" '.[] | select(.id == $id) | .assignee // ""' "$board")"
+      if [[ "$current" != "$2" ]]; then exit 13; fi
+    fi
+    edit --arg id "$id" 'map(if .id == $id then .assignee = "" | .status = "open" else . end)' ;;
   reopen)
     edit --arg id "$1" 'map(if .id == $id then .status = "open" else . end)' ;;
   set-state)
@@ -221,6 +226,35 @@ unpark cb-x
 got="$(offered_by cb-x)"
 [[ "$got" == "ux" ]] || fail "a UI-decision park the navigator unparks is offered by [$got], not by the UX queue alone"
 pass "park_for_ui_decision by hand: the navigator's, then the UX queue's alone when unparked"
+
+# --- the escalation (`beads-workflow`, *Escalating*): the navigator's, then back where it came from -
+
+for case in 'task|["ux:agreed","planned"]|producer' 'bug|["bugfix"]|bugfixer'; do
+  IFS='|' read -r type labels queue <<<"$case"
+  with_board '[{"id":"cb-x","status":"in_progress","assignee":"Storm","priority":1,"issue_type":"'"$type"'","labels":'"$labels"'}]'
+  apply_route cb-x park_for_navigator --if-assignee Storm
+  bd_env bd unclaim cb-x --if-assignee Storm || fail "the escalation's guarded unclaim refused its own claim"
+  got="$(offered_by cb-x)"
+  [[ -z "$got" ]] || fail "an escalated $type is offered by [$got]; it is the navigator's"
+  unpark cb-x
+  got="$(offered_by cb-x)"
+  [[ "$got" == "$queue" ]] || fail "an escalated $type the navigator unparks is offered by [$got], not by the $queue queue alone"
+done
+pass "park_for_navigator by hand: an escalated bead is the navigator's, then its builder queue's alone when unparked"
+
+# --- a guarded escalation leaves another builder's claim alone ---------------------------------------
+
+board='[{"id":"cb-x","status":"in_progress","assignee":"Rogue","priority":1,"issue_type":"task","labels":["ux:agreed","planned"]}]'
+with_board "$board"
+if bd_env bash -c 'source "$1/candidate-label-policy.sh" && route_flags_for park_for_navigator && bd update cb-x "${route_flags[@]}" --if-assignee Storm' _ "$scripts"; then
+  fail "the escalation's update applied under another builder's claim"
+fi
+if bd_env bd unclaim cb-x --if-assignee Storm; then
+  fail "the escalation's unclaim released another builder's claim"
+fi
+[[ "$(jq -c . "$stub/board.json")" == "$(jq -c . <<<"$board")" ]] \
+  || fail "a guarded escalation under another builder's claim changed the bead: $(cat "$stub/board.json")"
+pass "a guarded escalation leaves another builder's claim alone"
 
 # --- a hand-off with no name is refused, so a typo cannot apply an empty label change --------------
 

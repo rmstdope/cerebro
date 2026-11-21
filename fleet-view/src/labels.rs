@@ -19,6 +19,9 @@ pub const UI_QUESTION_LABEL: &str = "needs-ui-decision";
 pub const PLAN_REVISE_LABEL: &str = "plan:revise";
 /// The navigator's one queue: every fleet queue excludes it (`human_label`).
 pub const HUMAN_LABEL: &str = "human";
+/// Cerebro asked the navigator about a parked bead and was told to leave it: not asked again
+/// (`kept_pause_label`).
+pub const KEPT_PAUSE_LABEL: &str = "pause:kept";
 /// A failed verdict main has moved past: the verifier's to redo (`stale_verdict_label`).
 pub const STALE_VERDICT_LABEL: &str = "verdict:stale";
 /// A producer's hand-back with nothing to build: the verifier's alone, cb-wf24
@@ -28,13 +31,14 @@ pub const VERIFIER_ONLY_LABEL: &str = "second-look";
 pub const BUGFIX_LABEL: &str = "bugfix";
 
 /// Each policy variable and the const that twins it, for the contract test.
-pub const POLICY: [(&str, &str); 9] = [
+pub const POLICY: [(&str, &str); 10] = [
     ("stage_label", STAGE_LABEL),
     ("skip_label", SKIP_LABEL),
     ("plan_label", PLAN_LABEL),
     ("ui_question_label", UI_QUESTION_LABEL),
     ("plan_revise_label", PLAN_REVISE_LABEL),
     ("human_label", HUMAN_LABEL),
+    ("kept_pause_label", KEPT_PAUSE_LABEL),
     ("stale_verdict_label", STALE_VERDICT_LABEL),
     ("verifier_only_label", VERIFIER_ONLY_LABEL),
     ("bugfix_label", BUGFIX_LABEL),

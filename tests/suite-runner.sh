@@ -309,9 +309,12 @@ pass "--jobs refuses a bad count and --jobs 1 keeps the contract"
 # measurement of the scheduler, and no assertion here depends on how busy the machine is.
 #
 # The --jobs 1 run gets fixtures of its own that do not wait (cb-06dm): the waiting pair would
-# spend its whole bound there, about 9s of the suite. Each serial fixture sleeps one second between
-# its marks, never zero: two suites that started and ended inside the same second would read as no
-# overlap however they were scheduled, and the non-overlap check would prove nothing.
+# spend its whole bound there, about 9s of the suite. What proves the serial run is the ordering
+# check below it (e-slow named only after d-slow's result), which needs no clock. The windows check
+# is a second signal: each serial fixture sleeps one second between its marks, never zero, since two
+# suites that started and ended inside the same second would always read as no overlap. One second
+# can still miss a concurrent pair whose forks straddle a second boundary, which the ordering check
+# catches.
 #
 # Their own directories, so cases 1-5 are untouched by the sleeping.
 

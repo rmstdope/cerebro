@@ -153,7 +153,8 @@ async fn event_stream_is_available_only_through_a_read_request() {
     assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
 }
 
-#[tokio::test]
+/// On paused time, so the poll interval's tick costs no wall clock.
+#[tokio::test(start_paused = true)]
 async fn event_stream_emits_a_named_event_when_a_snapshot_changes() {
     let commands = Arc::new(ToggleCommands {
         fails: AtomicBool::new(false),

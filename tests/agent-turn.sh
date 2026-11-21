@@ -90,8 +90,10 @@ run_state "$tmp" Cyclops working --bead cb-1 --phase build --pid 42
 f="$(state_file "$tmp" Cyclops)"
 out="$(run_turn "$tmp" Cyclops ended)"
 [[ -z "$out" ]] || fail "a-second-ended-overwrites: wrote to stdout: $out"
+# Stage the first stamp as old rather than wait for the second-resolution clock to tick.
+jq '.turn_ended = "2020-01-01T00:00:00Z"' "$f" > "$f.staged" && mv -f "$f.staged" "$f" \
+  || fail "a-second-ended-overwrites: could not stage the first stamp"
 first="$(jq -r '.turn_ended' "$f")"
-sleep 1.1
 out="$(run_turn "$tmp" Cyclops ended)"
 [[ -z "$out" ]] || fail "a-second-ended-overwrites: wrote to stdout: $out"
 second="$(jq -r '.turn_ended' "$f")"

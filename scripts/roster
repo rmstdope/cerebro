@@ -189,7 +189,9 @@ root="$(cerebro_hinted_root "$here/.." plain)" \
   || root="$("$here/consumer-root" 2>/dev/null)" || root=""
 consider_root "$root"
 
-if [[ -z "$CONSUMER_ROSTER" && -n "$OLD_ROSTER" ]]; then
+# `--built-in' does not read the consumer's declaration at all, so the retired path is not its to
+# refuse: install needs the table to write a fresh roster.conf over exactly such a consumer.
+if [[ -z "$CONSUMER_ROSTER" && -n "$OLD_ROSTER" && "${1:-}" != "--built-in" ]]; then
   refuse "the fleet declaration has moved - run: mv .cerebro/cerebro-roster .cerebro/roster.conf"
 fi
 
@@ -226,8 +228,8 @@ parse_rows() {
   done
 }
 
-# `--built-in' answers before any consumer file is read: it is the shipped table whatever the
-# consumer declares, so a consumer file that would refuse cannot refuse it. `install' derives a
+# `--built-in' answers before any consumer file is read (and past the retired-path refusal above):
+# it is the shipped table whatever the consumer declares, so no consumer file can refuse it. `install' derives a
 # fresh fleet from it and names what an existing roster.conf lacks against it (cb-6z49).
 if [[ "${1:-}" == "--built-in" ]]; then
   stage="printing --built-in"

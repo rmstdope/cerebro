@@ -540,6 +540,15 @@ grep -qxF '  missing  docs - add a line such as:  Banshee  docs' <<<"$out" \
 ! grep -q 'missing  verifier' <<<"$out" || fail "later rerun: an optional kind was named missing: $out"
 pass "a re-run names each always-included kind the fleet list lacks, in order, never an optional one"
 
+# A fleet list roster refuses: roster says why, the missing courtesy says nothing, install exits 0.
+printf 'Ada  ux  sometimes\n' > "$later/.cerebro/roster.conf"
+run_install "$all" "$later"
+[[ $status -eq 0 ]] || fail "refused rerun: the advisory decided install's status ($status); stderr: $err"
+grep -Eq "^  kept     \.cerebro/roster\.conf" <<<"$out" || fail "refused rerun: no kept line: $out"
+grep -q "sometimes" <<<"$err" || fail "refused rerun: roster's reason was not shown: $err"
+! grep -q '^  missing' <<<"$out" || fail "refused rerun: missing lines from an unreadable fleet list: $out"
+pass "a re-run over a fleet list roster refuses keeps it, shows why, and still exits 0"
+
 # --- 5. the agent settings: tool, models, effort, and an external source on copilot ----------------
 # field <line> <n>  ->  the n-th tab-separated field of an agents-conf answer
 field() { awk -F'\t' -v n="$2" '{print $n}' <<<"$1"; }

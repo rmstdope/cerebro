@@ -1049,16 +1049,19 @@ fn start_due(
         // `clears_flag` is `false` and can only be: a flagged name is never `Start`ed.
         match lifecycle::start(host, paths, name, false, bead.as_deref()) {
             Ok(_) => {
-                app.armed.insert(name.clone());
                 if let Some(id) = &bead {
-                    app.handed.insert(name.clone(), id.clone());
                     // The within-tick rule: the next row in this loop is not handed it again.
                     facts.take(id);
                 }
                 // `found` was taken by the decision from the facts as this pass FOUND them, so
                 // the `take` above cannot reach it (cb-r9ac).
-                ledger.note_started(name, now, found);
-                log_start(logger, name, role, Some(&reason), bead.as_deref(), now);
+                record_start(
+                    app,
+                    ledger,
+                    logger,
+                    Started { name, role, bead: bead.as_deref(), reason: Some(&reason), found, clear_failures: false },
+                    now,
+                );
                 app.set_notice(triggers::start_notice(name, &reason));
             }
             // The red Session pane is the report, which is the rule `s` already follows.
@@ -1404,9 +1407,11 @@ fn give_back(
 ///
 /// No backoff, give-up counter, role spacing or armed check: the navigator's own act is newer than
 /// any of them, and a start that fails is given back once, not retried.
+#[allow(clippy::too_many_arguments)]
 fn start_given(
     app: &mut App,
     host: &mut SessionHost,
+    ledger: &mut StartLedger,
     logger: &mut Logger,
     paths: &ReaderPaths,
     roster: &[RosterEntry],
@@ -1432,10 +1437,14 @@ fn start_given(
         let Some(bead) = lifecycle::read_given(paths, name) else { continue };
         match lifecycle::start(host, paths, name, false, Some(&bead)) {
             Ok(_) => {
-                app.armed.insert(name.to_string());
-                app.handed.insert(name.to_string(), bead.clone());
+                record_start(
+                    app,
+                    ledger,
+                    logger,
+                    Started { name, role: &entry.role, bead: Some(&bead), reason: None, found: None, clear_failures: false },
+                    now,
+                );
                 app.given.remove(name);
-                log_start(logger, name, &entry.role, None, Some(&bead), now);
                 app.reapply_standby();
             }
             Err(error) => {
@@ -1508,6 +1517,40 @@ fn log_start(
             ("by", serde_json::Value::from(if reason.is_some() { "trigger" } else { "navigator" })),
         ],
     );
+}
+
+/// What one successful launch records, whoever asked for it. Every start path builds one and
+/// hands it to `record_start`, so no path can start a session without arming it or without
+/// telling the ledger (cb-wklg; cb-op0 was a copy that did not arm, and the `a` key's copy never
+/// called `note_started`).
+struct Started<'a> {
+    name: &'a str,
+    role: &'a str,
+    bead: Option<&'a str>,
+    /// `Some` only for a trigger's start: it is what makes the line's `by` "trigger".
+    reason: Option<&'a str>,
+    /// The unchanged-work fingerprint the trigger's decision took from the facts as the pass
+    /// found them; `None` drops an older pass's.
+    found: Option<triggers::Fingerprint>,
+    /// The navigator's own act or a declaration says the failures behind the start do not count.
+    clear_failures: bool,
+}
+
+/// Record a launch `lifecycle::start` has just answered `Ok` for: the name is armed - starting an
+/// agent is what arms it, whoever asked (cb-op0) - handed its bead, its start noted in the ledger
+/// and its `start` line written. What is a caller's own (the within-tick `take`, the notice, the
+/// handover's `given`) stays with the caller.
+fn record_start(app: &mut App, ledger: &mut StartLedger, logger: &mut Logger, started: Started, now: DateTime<Utc>) {
+    let Started { name, role, bead, reason, found, clear_failures } = started;
+    app.armed.insert(name.to_string());
+    if let Some(id) = bead {
+        app.handed.insert(name.to_string(), id.to_string());
+    }
+    ledger.note_started(name, now, found);
+    if clear_failures {
+        ledger.clear_failures(name);
+    }
+    log_start(logger, name, role, reason, bead, now);
 }
 
 /// NAME's role as the last fleet read saw it, or the empty string.
@@ -1619,17 +1662,24 @@ fn arm_and_autostart(
         let bead = bead_for_start(app, &role_of_name(name));
         match lifecycle::start(host, paths, name, clears_flag, bead.as_deref()) {
             Ok(_) => {
-                app.armed.insert(name.clone());
-                ledger.note_started(name, now, None);
                 // A declaration, not a trigger: it starts whatever the countdown said, and says
-                // the failures behind it do not count.
-                ledger.clear_failures(name);
-                // A declaration is the navigator's own act, which is what `by` says: two words
-                // and only two, byte-parity with the file Emacs has written since May.
-                if let Some(id) = &bead {
-                    app.handed.insert(name.clone(), id.clone());
-                }
-                log_start(logger, name, &role_of_name(name), None, bead.as_deref(), now);
+                // the failures behind it do not count. It is the navigator's own act, which is
+                // what `by` says: two words and only two, byte-parity with the file Emacs has
+                // written since May.
+                record_start(
+                    app,
+                    ledger,
+                    logger,
+                    Started {
+                        name,
+                        role: &role_of_name(name),
+                        bead: bead.as_deref(),
+                        reason: None,
+                        found: None,
+                        clear_failures: true,
+                    },
+                    now,
+                );
                 started.push(name.clone());
             }
             // A start that fails is reported and does not stop the others.
@@ -1891,7 +1941,7 @@ where
                 tidy_worktrees(app, &state.host, &config.paths, now);
                 // Between the two: a given handover is not an orphan, and a name it starts must
                 // not also be started by a trigger this tick (cb-10d.5).
-                start_given(app, &mut state.host, &mut state.logger, &config.paths, &roster, now);
+                start_given(app, &mut state.host, &mut state.ledger, &mut state.logger, &config.paths, &roster, now);
                 start_due(app, &mut state.host, &mut state.ledger, &mut state.logger, &config.paths, &config.spacing, config.ux_multiple, &config.cadences, &roster, now);
                 // And a line into an idle Cerebro, on the same freshly derived rows (cb-kcs.5.2).
                 // After `start_due` for its own reason: a Cerebro started on this very tick has
@@ -2485,20 +2535,26 @@ fn lifecycle_act(
                 let bead = bead_for_start(app, &role_of(app, &name));
                 match lifecycle::start(host, paths, &name, clears_flag, bead.as_deref()) {
                     Ok(line) => {
-                        // Starting an agent is what arms it, whoever asked - the rule
-                        // `cerebro--launch` has always followed (cb-op0). Without it a name
-                        // disarmed by a retire, a `k` or a give-up came back for exactly one pass
-                        // and then went grey for good.
-                        app.armed.insert(name.clone());
-                        // The navigator asking for a session is what says the last failures do
-                        // not count - and without the start being recorded at all, the row would
-                        // count down against a start that never happened.
-                        ledger.note_started(&name, now, None);
-                        ledger.clear_failures(&name);
-                        if let Some(id) = &bead {
-                            app.handed.insert(name.clone(), id.clone());
-                        }
-                        log_start(logger, &name, &role_of(app, &name), None, bead.as_deref(), now);
+                        // Arming here is what keeps a name disarmed by a retire, a `k` or a
+                        // give-up from coming back for exactly one pass and then going grey for
+                        // good (cb-op0). The navigator asking for a session is what says the last
+                        // failures do not count - and without the start being recorded at all,
+                        // the row would count down against a start that never happened.
+                        let role = role_of(app, &name);
+                        record_start(
+                            app,
+                            ledger,
+                            logger,
+                            Started {
+                                name: &name,
+                                role: &role,
+                                bead: bead.as_deref(),
+                                reason: None,
+                                found: None,
+                                clear_failures: true,
+                            },
+                            now,
+                        );
                         Acted::Done { text: line, refresh: true }
                     }
                     // A refusal of the KEY is not an error and writes nothing; a launch that was
@@ -9727,13 +9783,96 @@ mod main_tests {
             now,
         );
         app.armed.clear();
-        start_given(&mut app, &mut host, &mut logger, &paths, &implementer_roster(&["Rogue"]), now);
+        start_given(&mut app, &mut host, &mut StartLedger::default(), &mut logger, &paths, &implementer_roster(&["Rogue"]), now);
         assert_eq!(args_of(&dir.path().join("launch.args")), "Rogue --bead cb-x");
         assert_eq!(app.handed.get("Rogue").map(String::as_str), Some("cb-x"));
         assert!(app.armed.contains("Rogue"));
         let line = one_line(dir.path(), "decisions", "start");
         assert!(line.contains(r#""bead":"cb-x""#), "{line}");
         assert!(line.contains(r#""by":"navigator""#), "{line}");
+        host.kill(&paths, "Rogue");
+        settle_gone(&mut host, "Rogue");
+    }
+
+    /// Every start path records through `record_start`, so every shape a caller builds arms the
+    /// name, notes the start in the ledger and writes one `start` line (cb-wklg; cb-op0 was a copy
+    /// that did not arm). The table is the four callers' own argument shapes.
+    #[test]
+    fn record_start_records_every_start_shape() {
+        let fingerprint =
+            || Some(cerebro_tui::triggers::Fingerprint::Producer { assignable_ids: vec!["cb-a".into()] });
+        // (caller, role, bead, reason, found, clear_failures)
+        let shapes: [(&str, &str, Option<&str>, Option<&str>, bool, bool); 5] = [
+            ("start_due", "producer", Some("cb-a"), Some("work is waiting"), true, false),
+            ("start_due", "architect", None, Some("the hour is up"), false, false),
+            ("start_given", "producer", Some("cb-a"), None, false, false),
+            ("arm_and_autostart", "orchestrator", None, None, false, true),
+            ("s", "producer", Some("cb-a"), None, false, true),
+        ];
+        for (caller, role, bead, reason, found, clear) in shapes {
+            let dir = tempfile::tempdir().unwrap();
+            let mut logger = logging(dir.path());
+            let now = Utc::now();
+            let mut app = App::with_supervision(supervising());
+            let mut ledger = StartLedger::default();
+            ledger.set_failures("Rogue", 2);
+            // An older pass's fingerprint, which a start without one must drop.
+            ledger.note_started("Rogue", now - chrono::Duration::seconds(3600), fingerprint());
+
+            record_start(
+                &mut app,
+                &mut ledger,
+                &mut logger,
+                Started {
+                    name: "Rogue",
+                    role,
+                    bead,
+                    reason,
+                    found: if found { fingerprint() } else { None },
+                    clear_failures: clear,
+                },
+                now,
+            );
+
+            assert!(app.armed.contains("Rogue"), "{caller}: a start arms");
+            assert_eq!(app.handed.get("Rogue").map(String::as_str), bead, "{caller}: handed iff a bead");
+            assert_eq!(ledger.started_at("Rogue"), Some(now), "{caller}: the start is noted");
+            assert_eq!(ledger.fingerprint("Rogue").is_some(), found, "{caller}: the fingerprint it was given");
+            assert_eq!(ledger.failures("Rogue"), if clear { 0 } else { 2 }, "{caller}: failures cleared iff asked");
+            let line = one_line(dir.path(), "decisions", "start");
+            assert!(line.contains(&format!(r#""role":"{role}""#)), "{caller}: {line}");
+            let by = if reason.is_some() { "trigger" } else { "navigator" };
+            assert!(line.contains(&format!(r#""by":"{by}""#)), "{caller}: {line}");
+        }
+    }
+
+    /// A start from a hand-given bead is a start like any other: the ledger records it, so the
+    /// backoff counts from it and the unchanged-work fingerprint of an older pass is dropped
+    /// (cb-wklg - the `a` key's copy of the start was the one that never called `note_started`).
+    #[test]
+    fn a_given_start_notes_its_start_in_the_ledger() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+        given_handover(dir.path(), "Rogue", "cb-x\ngiven\n", 0);
+        let mut app = standby_app(
+            supervising(),
+            vec![implementer_row("Rogue", RowState::Dead)],
+            None,
+            now,
+        );
+        let mut ledger = StartLedger::default();
+        let earlier = now - chrono::Duration::seconds(3600);
+        ledger.note_started(
+            "Rogue",
+            earlier,
+            Some(cerebro_tui::triggers::Fingerprint::Producer { assignable_ids: vec!["cb-old".into()] }),
+        );
+        start_given(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &implementer_roster(&["Rogue"]), now);
+        assert!(host.is_live("Rogue"), "the given bead was started");
+        assert_eq!(ledger.started_at("Rogue"), Some(now), "the start is in the ledger");
+        assert_eq!(ledger.fingerprint("Rogue"), None, "and the older pass's fingerprint is gone");
         host.kill(&paths, "Rogue");
         settle_gone(&mut host, "Rogue");
     }
@@ -9752,7 +9891,7 @@ mod main_tests {
             None,
             now,
         );
-        start_given(&mut app, &mut host, &mut test_logger(), &paths, &implementer_roster(&["Rogue"]), now);
+        start_given(&mut app, &mut host, &mut StartLedger::default(), &mut test_logger(), &paths, &implementer_roster(&["Rogue"]), now);
         assert!(!dir.path().join("launch.args").exists(), "nothing was launched");
         assert!(app.handed.is_empty());
         assert!(dir.path().join(".cerebro/state/Rogue.handover").exists(), "the handover is kept");
@@ -9805,7 +9944,7 @@ mod main_tests {
             None,
             now,
         );
-        start_given(&mut app, &mut host, &mut test_logger(), &paths, &implementer_roster(&["Rogue"]), now);
+        start_given(&mut app, &mut host, &mut StartLedger::default(), &mut test_logger(), &paths, &implementer_roster(&["Rogue"]), now);
         let out = app.take_outbox();
         assert!(
             matches!(
@@ -9854,7 +9993,7 @@ mod main_tests {
             None,
             now,
         );
-        start_given(&mut app, &mut host, &mut test_logger(), &paths, &implementer_roster(&["Rogue"]), now);
+        start_given(&mut app, &mut host, &mut StartLedger::default(), &mut test_logger(), &paths, &implementer_roster(&["Rogue"]), now);
         std::thread::sleep(std::time::Duration::from_millis(300));
         assert!(!dir.path().join("launch.args").exists());
         assert!(app.handed.is_empty());

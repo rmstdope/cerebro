@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 #
-# R13, as a navigator meets it: a producer is started, with a bead claimed for it, when a ranked
-# UX-agreed unclaimed bead exists; at most one every 30 seconds. A SYSTEM suite
+# R13 (FLV-9), as a navigator meets it: a producer is started, with a bead claimed for it, when a
+# ranked UX-agreed unclaimed bead exists; at most one every 30 seconds. A SYSTEM suite
 # (.cerebro/test-architecture.md): it builds the real `cerebro-tui', runs it on a pseudo-terminal
 # over a throwaway consumer, and asserts what the fleet and the board were left with. The rules
 # underneath - the trigger and its spacing (`triggers::start_decision', `role_start_too_soon'),
 # the queue (`scripts/assignable-beads') and the claim (`scripts/assign-bead') - are tested on their
-# own; this proves the path through them.
+# own; this proves the path through them. The 30 seconds is the built-in default, proven by
+# `triggers::spacing_for', and reading a declared value by `readers::read_role_spacing'; the
+# fixture declares `role_start_spacing_producer 5', so the window this suite waits out is five
+# seconds (cb-4wf1).
 #
 # Real, and unstubbed: the view, `scripts/launch' (the view's one way to start a session), its
 # preflight, `assign-bead', `assignable-beads', `disk-preflight' (the fixture declares no floor),
@@ -21,8 +24,8 @@
 # person would see them:
 #   1. Rogue is started on cb-b1, which is claimed for Rogue - in progress, Rogue's, with its tree
 #      made - before Rogue's session exists;
-#   2. Gambit is started on cb-b2, claimed the same way, no sooner than 30 seconds after Rogue: in
-#      between, the view logged an evaluation in which Gambit was due and held by the spacing.
+#   2. Gambit is started on cb-b2, claimed the same way, no sooner than the declared spacing after
+#      Rogue: in between, the view logged an evaluation in which Gambit was due and held by it.
 # Which beads a producer may NOT take - unranked, un-agreed, held - is `assignable-beads'' own
 # decision, proven in tests/assignable-beads.sh and not re-proven here (cb-n895).
 #
@@ -32,7 +35,7 @@
 #
 # The binary is built with `cargo build' and run by this suite itself - never as cargo's child
 # (.cerebro/traps.md). Every wait is a bounded poll that fails with what the view saw and did.
-# The suite costs about 35 seconds, most of it the 30-second window R13 names.
+# The suite costs the cargo build plus about ten seconds, five of them the declared spacing.
 #
 #     bash tests/fleet-producer-start.sh
 
@@ -68,12 +71,17 @@ stubs="$fixture/stubs"
 beads="$fixture/beads"
 mkdir -p "$stubs" "$beads" "$fixture/started"
 
-cat > "$consumer/.cerebro/project.conf" <<'CONF'
+# A short declared spacing, so the window is seconds rather than the built-in 30: the default is
+# proven by triggers.rs `spacing_for', and what this suite proves is the path through it - held
+# by the spacing, then started and claimed.
+spacing=5
+cat > "$consumer/.cerebro/project.conf" <<CONF
 project_name   ProducerStart
 default_branch main
 audience_noun  navigator
 gate_fast      true
 gate_full      true
+role_start_spacing_producer $spacing
 CONF
 
 cat > "$consumer/.cerebro/roster.conf" <<'ROSTER'
@@ -193,7 +201,7 @@ chmod +x "$stubs/bd" "$stubs/gh" "$stubs/claude"
 # The links a consumer keeps synced, made now, as any consumer that has run a session already has
 # them. Left to the first launch, two launch preflights both find them missing and both run
 # `sync-symlinks.sh', and one loses with `ln: File exists' - a separate defect, and not R13's: on a
-# loaded machine a launch can take longer than the 30-second spacing.
+# loaded machine a launch can take longer than the spacing.
 "$consumer/.cerebro/cerebro/scripts/sync-symlinks.sh" >/dev/null \
   || fail "sync-symlinks.sh could not link the fixture"
 
@@ -288,19 +296,19 @@ wait_until 10 "the view's start line for Rogue" has_start_line Rogue
 claimed_at_start Rogue cb-b1
 pass "Rogue is started on cb-b1, claimed for Rogue and its tree made before the session began"
 
-# --- 2. the second producer, no sooner than 30 seconds later --------------------------------------
+# --- 2. the second producer, no sooner than the declared spacing later -----------------------------
 
 rogue_at="$(epoch "$(start_ts Rogue)")"
 wait_until 120 "Gambit's session to start" has_session Gambit
 wait_until 10 "the view's start line for Gambit" has_start_line Gambit
 claimed_at_start Gambit cb-b2
 gambit_at="$(epoch "$(start_ts Gambit)")"
-((gambit_at - rogue_at >= 30)) \
-  || fail "Gambit was started $((gambit_at - rogue_at))s after Rogue; R13 says at most one every 30s$(evidence)"
-jq -se --arg from "$(start_ts Rogue)" --arg to "$(start_ts Gambit)" \
-  'any(.[]; .agent == "Gambit" and .spaced_out == true and .spacing == 30 and .ts >= $from and .ts <= $to)' \
+((gambit_at - rogue_at >= spacing)) \
+  || fail "Gambit was started $((gambit_at - rogue_at))s after Rogue; the declared spacing is ${spacing}s$(evidence)"
+jq -se --arg from "$(start_ts Rogue)" --arg to "$(start_ts Gambit)" --argjson spacing "$spacing" \
+  'any(.[]; .agent == "Gambit" and .spaced_out == true and .spacing == $spacing and .ts >= $from and .ts <= $to)' \
   "$state/evaluations.jsonl" >/dev/null 2>&1 \
-  || fail "no evaluation between the two starts shows Gambit held by the 30s spacing$(evidence)"
+  || fail "no evaluation between the two starts shows Gambit held by the ${spacing}s spacing$(evidence)"
 pass "Gambit is started on cb-b2, claimed the same way, $((gambit_at - rogue_at))s after Rogue and held by the spacing in between"
 
 [ "$(session_count)" = 2 ] || fail "expected exactly two sessions, got $(session_count)$(evidence)"

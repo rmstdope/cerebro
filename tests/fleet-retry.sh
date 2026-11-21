@@ -20,17 +20,16 @@
 #   1. Rogue is started on cb-b1, claimed for it; the session dies; the view gives cb-b1 back
 #      (`give-back', cause `did-not-start') and starts Rogue on it again. The first two failures
 #      come straight back (`RETRY_BACKOFF[0]' is 0), so there are three starts in quick succession;
-#   2. after the third, Rogue is held: its row reads `↻ retry in <n>s, 2 failed', an evaluation
-#      logs it `backed_off' with `failed_starts' 2, and the fourth start comes no sooner than 30
-#      seconds after the third;
-#   3. after the fourth, the wait has grown: the row reads `↻ retry in 2m, 3 failed'.
-# The suite stops there. The two-minute and ten-minute waits and the give-up after five are the
-# unit tests' to pin; waiting them out here would cost a quarter of an hour for nothing new.
+#   2. after the third, Rogue is held: while the hold lasts its row reads `↻ retry in <n>s,
+#      2 failed', an evaluation logs it `backed_off' with `failed_starts' 2, and no fourth start
+#      comes.
+# The suite stops there, inside the hold. How long each wait is (`retry_delay'), that it runs out
+# (`retry_wait'), that the next start then comes and counts on (`start_decision'), the row's words
+# at any count (`retry_label', `standby_cell') and the give-up after five are the unit tests' to
+# pin; waiting the holds out here would cost real minutes for nothing new (cb-hwpj).
 #
 # The binary is built with `cargo build' and run by this suite itself - never as cargo's child
 # (.cerebro/traps.md). Every wait is a bounded poll that fails with what the view saw and did.
-# The suite costs about a minute and a half, most of it the 30-second wait `RETRY_BACKOFF[1]' sets
-# after two failures.
 #
 #     bash tests/fleet-retry.sh
 
@@ -258,16 +257,13 @@ exec 7<>"$work_dir/view.keys"
 
 session_count() { [ -f "$fixture/sessions" ] && wc -l < "$fixture/sessions" | tr -d ' ' || echo 0; }
 has_sessions() { (( $(session_count) >= $1 )); }
-# The `ts' of the view's Nth trigger start of Rogue (1-based), as epoch seconds.
-start_at() {
-  local ts
-  ts="$(jq -rs --argjson n "$1" \
-          '[.[] | select(.event == "start" and .agent == "Rogue" and .by == "trigger")] | .[$n - 1].ts // empty' \
-          "$state/decisions.jsonl" 2>/dev/null || true)"
-  [ -n "$ts" ] || return 0
-  python3 -I -c 'import sys, datetime; print(int(datetime.datetime.strptime(sys.argv[1], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc).timestamp()))' "$ts"
+# The `ts' of the view's Nth trigger start of Rogue (1-based), or nothing before it is logged.
+start_ts() {
+  jq -rs --argjson n "$1" \
+     '[.[] | select(.event == "start" and .agent == "Rogue" and .by == "trigger")] | .[$n - 1].ts // empty' \
+     "$state/decisions.jsonl" 2>/dev/null || true
 }
-has_start() { [ -n "$(start_at "$1")" ]; }
+has_start() { [ -n "$(start_ts "$1")" ]; }
 give_backs() {
   jq -s '[.[] | select(.event == "give-back" and .agent == "Rogue" and .bead == "cb-b1" and .cause == "did-not-start")] | length' \
     "$state/decisions.jsonl" 2>/dev/null || echo 0
@@ -300,42 +296,40 @@ wait_until 30 "Rogue's second session" has_sessions 2
 wait_until 30 "Rogue's third session" has_sessions 3
 wait_until 10 "the view's third start line for Rogue" has_start 3
 all_claimed_at_start
-third="$(start_at 3)"
 # Straight back means no backoff held any of the first three: read from what the view logged, not
 # from the clock, since each launch's preflight and tree take a loaded machine several seconds.
-third_ts="$(jq -rs '[.[] | select(.event == "start" and .agent == "Rogue" and .by == "trigger")] | .[2].ts' \
-              "$state/decisions.jsonl")"
+third_ts="$(start_ts 3)"
 jq -se --arg to "$third_ts" '[.[] | select(.agent == "Rogue" and .ts <= $to)] | all(.backed_off == null)' \
   "$state/evaluations.jsonl" >/dev/null 2>&1 \
   || fail "a backoff held Rogue before its third start; the first two failures should come straight back$(evidence)"
 pass "Rogue's dead session gives cb-b1 back, and Rogue is started on it again at once, claimed each time"
 
-# --- 2. after two failures, a 30-second backoff ---------------------------------------------------
+# --- 2. after two failures, Rogue is held, and its row says for how long and how many -----------
 #
-# The proof here is the view's own evaluation, not the row: the 30 seconds count from the start
-# decision, and a slow runner can spend most of them in the launch's preflight and tree before the
-# dead row is first drawn. The row's words are asserted in step 3, whose wait is two minutes.
+# The row is read inside the hold, the one window it shows the countdown in: from the tick the
+# view sees the third session dead until 30 seconds after the third start decision. A slow runner
+# spends part of that in the launch's preflight and tree, but the view logs its evaluation on the
+# same ticks it draws the row, so this window is exactly the one the `backed_off' evaluation is
+# written in. Should the hold run out before the row is read, a fourth start comes, and the wait
+# fails at once saying so instead of waiting out its bound.
 
+# Sets held_row_text to the row it matched, so what is reported is what was read in the hold.
+held_row_text=""
+held_row() {
+  (( $(session_count) < 4 )) \
+    || fail "Rogue was started a fourth time before its row was read during the hold after two failures$(evidence)"
+  row_says "↻ retry in " "s, 2 failed" || return 1
+  held_row_text="$(rogue_row)"
+}
 backed_off_twice() {
   jq -se 'any(.[]; .agent == "Rogue" and .backed_off == true and .failed_starts == 2)' \
     "$state/evaluations.jsonl" >/dev/null 2>&1
 }
 wait_until 30 "the give-back after the third session" has_give_backs 3
-wait_until 30 "an evaluation of Rogue backed off with 2 failed starts" backed_off_twice
-(( $(session_count) == 3 )) || fail "Rogue was started again while the view held it backed off$(evidence)"
-wait_until 60 "Rogue's fourth session" has_sessions 4
-wait_until 10 "the view's fourth start line for Rogue" has_start 4
-all_claimed_at_start
-fourth="$(start_at 4)"
-((fourth - third >= 30)) \
-  || fail "Rogue's fourth start came $((fourth - third))s after its third; R16's backoff is 30s after two failures$(evidence)"
-pass "after two failed starts the view holds Rogue back, and starts it again $((fourth - third))s after the third"
-
-# --- 3. after three, the wait has grown, and the row says how long and how many -------------------
-
-wait_until 30 "Rogue's row to read '↻ retry in 2m, 3 failed'" row_says "↻ retry in 2m" ", 3 failed"
-(( $(session_count) == 4 )) || fail "Rogue was started a fifth time inside its two-minute backoff$(evidence)"
-grown_row="$(rogue_row)"
-pass "after three failed starts the wait grows to two minutes: '$grown_row'"
+wait_until 30 "Rogue's row to read '↻ retry in <n>s, 2 failed'" held_row
+(( $(session_count) == 3 )) || fail "Rogue was started again while its row said it was held$(evidence)"
+wait_until 10 "an evaluation of Rogue backed off with 2 failed starts, beside the row '$held_row_text'" \
+  backed_off_twice
+pass "after two failed starts the view holds Rogue back, and its row says so: '$held_row_text'"
 
 suite_passed

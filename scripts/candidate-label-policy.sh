@@ -7,16 +7,14 @@
 # hand a bead on by hand (produce-bead's parks and hand-backs, the verifier's verdict, Cerebro's
 # unpark and send-back, the UX agent's park, `beads-workflow`'s escalation). A writer that
 # hand-coded its own label set and a reader that read another stranded a bead in nobody's queue four
-# times in two days
-# (cb-b26a, cb-lcfq, cb-0elv.1, cb-0elv.5). Here a writer applies a named transition instead of
-# composing labels, and `tests/label-routes.sh` runs every transition and proves the bead lands in
-# exactly the queue meant to take it (cb-q6yb).
+# times in two days (cb-b26a, cb-lcfq, cb-0elv.1, cb-0elv.5). Here a writer applies a named
+# transition instead of composing labels, and `tests/label-routes.sh` runs every transition and
+# proves the bead lands in exactly the queue meant to take it (cb-q6yb).
 #
 # NOT YET HERE, and spelling these words for themselves: the fleet view's sweeps
 # (`sweep-paused.sh`, `sweep-verdicts.sh`), its Rust consts (`fleet-view/src/model.rs`, `give.rs`,
 # `triggers.rs`), and the snippets that mark a bead without handing it on (agree-experience's record,
-# Cerebro's filing and decline), and beads-workflow's escalation block (cb-t51j.1). A word renamed
-# here is renamed there by hand.
+# Cerebro's filing and decline). A word renamed here is renamed there by hand.
 #
 # The routing table these words implement is `skills/beads-workflow`, *The lifecycle a bead moves
 # through*; change a word there and here together. Its jq twin is `candidate-label-policy.jq`.

@@ -471,8 +471,9 @@ done
 # Whole minutes are what a cadence reason names (`triggers::cadence_figure'), so ten seconds is
 # `0m'; `triggers::cadence_noun' calls a pass of the two GitHub roles a pass, and of the two
 # filing roles a sweep.
-# The view read `gh' with the quiet issue and pull requests listed, and still started Moira and
-# Cypher on their clocks: neither was started on any of them.
+# The view read `gh' (the baseline's read check, kept), and Moira and Cypher started on their clocks.
+# That the quiet pull requests start nobody is run 2's `PR #14 moved' and triggers.rs' to prove:
+# this run does not order the read before the clock starts.
 gh_answered() { grep -q ' pr list ' "$fixture/gh.log" 2>/dev/null; }
 wait_until 30 "the view to read gh" gh_answered
 started_on Moira "0m since its last pass"

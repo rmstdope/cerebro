@@ -62,6 +62,10 @@ if [[ "${1:-}" != "--json" ]]; then
 fi
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# `verifier_only_label` and `stale_verdict_label`: the words are the label policy's (cb-t51j.3).
+# `verification:failed` is not one of them, and stays spelled here. A policy that cannot be read
+# leaves them unset, and `-u` ends the sweep there rather than printing `[]`.
+source "$script_dir/candidate-label-policy.sh"
 
 repo_root="$("$script_dir/consumer-root" --shared 2>/dev/null)" || {
   echo '{"error": "not in a git repository"}'
@@ -118,10 +122,10 @@ while IFS= read -r bead; do
     --argjson merges_since "$merges_since" \
     '{id: $id, title: $title, priority: $priority, verified_at: $verified_at, merges_since: $merges_since}')"
   entries+=("$entry")
-done < <(jq -c '.[]
+done < <(jq -c --arg look "$verifier_only_label" --arg stale "$stale_verdict_label" '.[]
   | select((.labels // []) | index("verification:failed"))
-  | select((.labels // []) | index("second-look"))
-  | select(((.labels // []) | index("verdict:stale")) | not)' <<<"$bd_output")
+  | select((.labels // []) | index($look))
+  | select(((.labels // []) | index($stale)) | not)' <<<"$bd_output")
 
 if [[ ${#entries[@]} -eq 0 ]]; then
   echo "[]"

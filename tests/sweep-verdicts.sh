@@ -43,7 +43,7 @@ export PATH="$stub_dir:$PATH"
 origin="$work_dir/origin.git"
 git init -q --bare -b main "$origin"
 
-consumer="$(consumer_new repo --link consumer-root project-conf default-branch sweep-verdicts.sh)"
+consumer="$(consumer_new repo --link consumer-root project-conf default-branch sweep-verdicts.sh candidate-label-policy.sh)"
 git_q -C "$consumer" commit -q --allow-empty -m "init"
 verdict_sha="$(git -C "$consumer" rev-parse HEAD)"
 # Three commits after the verdict's own, so the distance is a number this suite can pin exactly.
@@ -179,5 +179,33 @@ pass "no candidates prints an empty array"
 # --- the usage guard -------------------------------------------------------------------------------
 if (cd "$consumer" && "$sweep" >/dev/null 2>&1); then fail "exited zero with no --json"; fi
 pass "the usage guard refuses anything but --json"
+
+# --- the words are the label policy's, not the sweep's (cb-t51j.3) ---------------------------------
+# A second-look word renamed in `candidate-label-policy.sh` and not here would hide every handed-back
+# verdict from the sweep, and a stale word renamed would offer the same bead again after its `x`.
+policy="$consumer/.cerebro/cerebro/scripts/candidate-label-policy.sh"
+renamed="$(sed -e 's/^verifier_only_label="second-look"$/verifier_only_label="look-again"/' \
+               -e 's/^stale_verdict_label="verdict:stale"$/stale_verdict_label="stale-x"/' "$policy")"
+[[ "$renamed" == *'verifier_only_label="look-again"'* && "$renamed" == *'stale_verdict_label="stale-x"'* ]] \
+  || fail "could not rename the policy's words; the policy no longer spells them as this case expects"
+rm "$policy"
+printf '%s\n' "$renamed" > "$policy"
+cat > "$beads_file" <<JSON
+[
+  {"id": "ah-new", "title": "handed back under the renamed word", "priority": 1,
+   "status": "open", "labels": ["verification:failed", "look-again"],
+   "metadata": {"verified_at": "$verdict_sha"}},
+  {"id": "ah-old", "title": "wearing the word the policy dropped", "priority": 1,
+   "status": "open", "labels": ["verification:failed", "second-look"],
+   "metadata": {"verified_at": "$verdict_sha"}},
+  {"id": "ah-flag", "title": "already flagged under the renamed word", "priority": 1,
+   "status": "open", "labels": ["verification:failed", "look-again", "stale-x"],
+   "metadata": {"verified_at": "$verdict_sha"}}
+]
+JSON
+out="$(cd "$consumer" && "$sweep" --json)" || fail "sweep-verdicts.sh --json exited non-zero under a renamed policy"
+[[ "$(jq -r '[.[].id] | join(" ")' <<<"$out")" == "ah-new" ]] \
+  || fail "expected only the bead wearing the policy's words, got: $out"
+pass "a handed-back verdict is read under the label policy's words, whatever they are"
 
 suite_passed

@@ -52,7 +52,7 @@ STUB
 chmod +x "$stub_dir/bd"
 export PATH="$stub_dir:$PATH"
 
-consumer="$(consumer_new repo --link consumer-root sweep-paused.sh)"
+consumer="$(consumer_new repo --link consumer-root sweep-paused.sh candidate-label-policy.sh)"
 sweep="$consumer/.cerebro/cerebro/scripts/sweep-paused.sh"
 
 # --- an empty board prints an empty array --------------------------------------------------------
@@ -184,5 +184,31 @@ if (cd "$consumer" && "$sweep" --all >/dev/null 2>&1); then fail "exited zero wi
 usage="$( (cd "$consumer" && "$sweep" --all 2>&1 >/dev/null) || true)"
 [[ "$usage" == *"--json"* ]] || fail "the usage line does not name --json: $usage"
 pass "the usage guard refuses anything but --json, naming it on stderr"
+
+# --- the words are the label policy's, not the sweep's (cb-t51j.3) ---------------------------------
+# The fleet view's `Waiting on you` section and its unpause read what this prints, so a word renamed
+# in `candidate-label-policy.sh` and not here would empty the section with every pause still on the
+# board. The consumer's policy is swapped for a copy with both words renamed: the sweep follows it.
+policy="$consumer/.cerebro/cerebro/scripts/candidate-label-policy.sh"
+renamed="$(sed -e 's/^human_label="human"$/human_label="parked-x"/' \
+               -e 's/^ui_question_label="needs-ui-decision"$/ui_question_label="ask-x"/' "$policy")"
+[[ "$renamed" == *'human_label="parked-x"'* && "$renamed" == *'ui_question_label="ask-x"'* ]] \
+  || fail "could not rename the policy's words; the policy no longer spells them as this case expects"
+rm "$policy"
+printf '%s\n' "$renamed" > "$policy"
+cat > "$beads_file" <<'JSON'
+[
+  {"id": "cb-new", "title": "parked under the renamed word", "priority": 2,
+   "status": "open", "labels": ["parked-x", "ask-x"]},
+  {"id": "cb-old", "title": "wearing the word the policy dropped", "priority": 2,
+   "status": "open", "labels": ["human", "needs-ui-decision"]}
+]
+JSON
+out="$(cd "$consumer" && "$sweep" --json)" || fail "sweep-paused.sh --json exited non-zero under a renamed policy"
+[[ "$(jq -r '[.[].id] | join(" ")' <<<"$out")" == "cb-new" ]] \
+  || fail "expected only the bead wearing the policy's word, got: $out"
+[[ "$(jq -r '.[0].ui_decision' <<<"$out")" == "true" ]] \
+  || fail "the renamed ui-question word did not read as ui_decision: $out"
+pass "a pause is read under the label policy's words, whatever they are"
 
 suite_passed

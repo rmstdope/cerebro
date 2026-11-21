@@ -56,6 +56,9 @@ if [[ "${1:-}" != "--json" ]]; then
 fi
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# `human_label` and `ui_question_label`: the words are the label policy's (cb-t51j.3). A policy that
+# cannot be read leaves them unset, and `-u` ends the sweep there rather than printing `[]`.
+source "$script_dir/candidate-label-policy.sh"
 
 # ISO-8601 UTC ("2026-08-14T09:00:17Z") to a Unix timestamp. GNU date takes `-d`; BSD/macOS date
 # has no such flag and wants `-j -f` with an explicit format instead - so try GNU first and fall
@@ -86,7 +89,7 @@ while IFS= read -r bead; do
   priority="$(jq -r 'if (.priority | type) == "number" then .priority else empty end' <<<"$bead")"
   [[ -n "$priority" ]] || priority=null
 
-  ui_decision="$(jq -r 'if ((.labels // []) | index("needs-ui-decision")) then "true" else "false" end' <<<"$bead")"
+  ui_decision="$(jq -r --arg ask "$ui_question_label" 'if ((.labels // []) | index($ask)) then "true" else "false" end' <<<"$bead")"
 
   # `.metadata // {}` because the key is ABSENT, not empty, when a bead carries no metadata at all -
   # `.metadata.paused_at` errors out in jq rather than returning null.
@@ -123,7 +126,7 @@ while IFS= read -r bead; do
     '{id: $id, title: $title, priority: $priority, paused_at: $paused_at,
       ui_decision: $ui_decision, blockers: $blockers}')"
   entries+=("$entry")
-done < <(jq -c '.[] | select((.labels // []) | index("human"))' <<<"$bd_output")
+done < <(jq -c --arg human "$human_label" '.[] | select((.labels // []) | index($human))' <<<"$bd_output")
 
 if [[ ${#entries[@]} -eq 0 ]]; then
   echo "[]"

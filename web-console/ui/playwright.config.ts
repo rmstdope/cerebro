@@ -13,8 +13,8 @@ export default defineConfig({
   testDir: "./tests",
   // Every spec, not only every file, gets a worker (cb-uri6): the specs share nothing but the one
   // cerebro-web/Vite pair below. Each runs in its own browser context, and what it sends the
-  // service unmocked is a read; every write (priority, input, agents, control) is answered by its
-  // own page.route and never reaches the service. Workers stay at Playwright's default, half the
+  // service unmocked is a read; every write (priority, session input, agent actions) is answered
+  // by its own page.route and never reaches the service. Workers stay at Playwright's default, half the
   // cores, so a small CI runner is not oversubscribed beside the two servers.
   fullyParallel: true,
   use: {

@@ -528,7 +528,10 @@ test("the arrow keys move through the fleet list, and the session follows", asyn
     { name: "Rogue", role: "producer", state: "Dead" },
     { name: "Moira", role: "user-feedback", state: "Standby" },
   )));
-  await page.route(/\/api\/sessions\/(Storm|Cyclops)/, route => {
+  // The arrow keys pressed on a session's screen are typed into it; this spec answers them itself
+  // rather than leaning on the session regex below, so none reaches the shared service.
+  await page.route(/\/api\/sessions\/[^/]+\/input$/, route => route.fulfill({ status: 204 }));
+  await page.route(/\/api\/sessions\/(Storm|Cyclops)(\?|$)/, route => {
     const name = new URL(route.request().url()).pathname.split("/").pop()!;
     return route.fulfill({ json: { state: "live", log: `${name}.log`, reset: true, data: `this is ${name}\r\n`, offset: 10, more: false } });
   });

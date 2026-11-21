@@ -641,11 +641,16 @@ impl SlowCommands {
         Self { rosters: Default::default(), gate }
     }
 
-    /// Until a fleet read is inside `roster`, waiting at the gate.
+    /// Until a fleet read is inside `roster`, waiting at the gate; bounded, so a read that never
+    /// gets there fails the test rather than hanging it.
     async fn reading(&self) {
-        while self.rosters.load(Ordering::SeqCst) == 0 {
-            tokio::task::yield_now().await;
-        }
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while self.rosters.load(Ordering::SeqCst) == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("no fleet read reached roster");
     }
 }
 

@@ -26,8 +26,9 @@
 # which would hand every session cargo's environment (.cerebro/traps.md).
 #
 # Every wait is a bounded poll that fails with the screen and the view's stderr. The refresh is the
-# view's own 30-second cadence (`WORK_REFRESH_INTERVAL'); there is no key that shortens it, so the
-# suite waits one real interval for it.
+# view's own cadence, 30 seconds unless the project declares `work_refresh_seconds' (cb-u71s); the
+# fixture declares 2, so the suite waits one short declared interval rather than half a minute. The
+# 30-second default is unit-tested (`app::work_refresh_is_due_every_thirty_seconds').
 #
 #     bash tests/fleet-board.sh
 
@@ -58,6 +59,8 @@ binary="$(jq -r 'select(.reason == "compiler-artifact" and .target.name == "cere
 
 consumer="$(consumer_new board --copy)"
 printf 'Forge  architect  standby\n' > "$consumer/.cerebro/roster.conf"
+# The work pane's cadence, declared short so the self-refresh below is a two-second wait.
+printf 'work_refresh_seconds 2\n' >> "$consumer/.cerebro/project.conf"
 
 board="$work_dir/board.json"
 bd_log="$work_dir/bd.log"
@@ -204,8 +207,9 @@ write_board <<'JSON'
 ]
 JSON
 
-# One cadence is 30 s, counted from the last read's start; 75 s allows for a slow read either side.
-wait_until 75 "the pane to show the new board on its own" on_screen 'cb-newly'
+# One declared cadence is 2 s, counted from the last read's start; 20 s allows for a slow read
+# either side, and is still well short of the built-in 30 s a lost declaration would fall back to.
+wait_until 20 "the pane to show the new board on its own" on_screen 'cb-newly'
 wait_until 5 "the claimed bead to move" in_section cb-agreed "Claimed 2"
 expect_in cb-claimed "Claimed 2"
 expect_in cb-newly "Waiting on you 2"

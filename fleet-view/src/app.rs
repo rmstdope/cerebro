@@ -2016,6 +2016,9 @@ pub struct App {
     fleet_viewport: usize,
     last_fleet_request: Option<Instant>,
     last_work_request: Option<Instant>,
+    /// The work pane's cadence: `WORK_REFRESH_INTERVAL` unless the project declares
+    /// `work_refresh_seconds` (cb-u71s), set once at startup by `set_work_refresh_interval`.
+    work_refresh_interval: Duration,
     /// When the board was last ASKED, in wall-clock terms - for the read whose value the pane
     /// still holds. See `begin_work_refresh`.
     work_requested_at: Option<DateTime<Utc>>,
@@ -2197,6 +2200,7 @@ impl App {
             fleet_viewport: 0,
             last_fleet_request: None,
             last_work_request: None,
+            work_refresh_interval: WORK_REFRESH_INTERVAL,
             work_requested_at: None,
             work_request_pending: None,
             gh: Pane::default(),
@@ -2402,7 +2406,7 @@ impl App {
         };
         match (
             due(self.last_fleet_request, FLEET_REFRESH_INTERVAL),
-            due(self.last_work_request, WORK_REFRESH_INTERVAL),
+            due(self.last_work_request, self.work_refresh_interval),
         ) {
             (true, true) => AppAction::RefreshAll,
             (true, false) => AppAction::RefreshFleet,
@@ -3031,6 +3035,12 @@ impl App {
         } else {
             false
         }
+    }
+
+    /// The work pane's cadence in place of `WORK_REFRESH_INTERVAL`: the project's
+    /// `work_refresh_seconds`, read once at startup (`readers::read_work_refresh`).
+    pub fn set_work_refresh_interval(&mut self, interval: Duration) {
+        self.work_refresh_interval = interval;
     }
 
     /// The work pane's counterpart of `begin_refresh`, on its own slot and its own clock.
@@ -4901,6 +4911,20 @@ mod tests {
         assert_eq!(app.on_tick(at), AppAction::RefreshWork, "the fleet is not due at 30s");
         started_both(&mut app, at);
         assert_eq!(app.on_tick(at + Duration::from_secs(30)), AppAction::RefreshAll);
+    }
+
+    /// cb-u71s: a project that declares `work_refresh_seconds` is read on that cadence instead
+    /// of the built-in thirty seconds.
+    #[test]
+    fn work_refresh_follows_a_declared_interval() {
+        let mut app = App::new();
+        app.set_work_refresh_interval(Duration::from_secs(2));
+        let start = Instant::now();
+        assert_eq!(app.on_tick(start), AppAction::RefreshAll);
+        started_both(&mut app, start);
+
+        assert_eq!(app.on_tick(start + Duration::from_secs(1)), AppAction::None);
+        assert_eq!(app.on_tick(start + Duration::from_secs(2)), AppAction::RefreshWork);
     }
 
     /// Each pane counts from its own last *start*, so a work read that took twenty seconds does

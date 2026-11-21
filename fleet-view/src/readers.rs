@@ -498,6 +498,41 @@ pub fn read_ux_multiple(
     }
 }
 
+/// The project.conf key that sets the work pane's cadence in whole seconds (cb-u71s). ABSENT
+/// means `app::WORK_REFRESH_INTERVAL`. It exists so a system suite can watch the pane refresh on
+/// its own without sitting out half a minute; a consumer has no reason to declare it.
+pub const WORK_REFRESH_KEY: &str = "work_refresh_seconds";
+
+/// The `work_refresh_seconds` this project declares, and a complaint if it declared something
+/// unusable, by `read_ux_multiple`'s three rules. Zero is refused, not taken at face value: it
+/// would run a whole `bd list` on every tick.
+///
+/// Runs once, at startup, beside `read_ux_multiple`.
+pub fn read_work_refresh(
+    paths: &ReaderPaths,
+    commands: &dyn CommandRunner,
+) -> (Duration, Option<String>) {
+    let default = crate::app::WORK_REFRESH_INTERVAL;
+    let program = paths.scripts_dir.join("project-conf");
+    let Ok(stdout) =
+        commands.run(&program, &[WORK_REFRESH_KEY], Some(&paths.consumer_root), COMMAND_TIMEOUT)
+    else {
+        return (default, None);
+    };
+    let raw = String::from_utf8_lossy(&stdout).trim().to_string();
+    match crate::triggers::parse_spacing(&raw) {
+        Ok(Some(seconds)) if seconds > 0 => (Duration::from_secs(seconds), None),
+        Ok(None) => (default, None),
+        _ => (
+            default,
+            Some(format!(
+                "project.conf: {WORK_REFRESH_KEY} is not a whole number above zero (\"{raw}\"); using {}.",
+                default.as_secs()
+            )),
+        ),
+    }
+}
+
 /// Where this checkout's supervision lease lives: the three answers `fleet-supervisor` gives.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SupervisorLocation {
@@ -2021,6 +2056,45 @@ mod tests {
             })
         });
         assert_eq!(read_ux_multiple(&paths, &failed), (1, None));
+    }
+
+    #[test]
+    fn project_conf_declares_the_work_refresh_and_names_a_bad_one() {
+        let paths = paths_at(Path::new("/consumer"));
+        let default = crate::app::WORK_REFRESH_INTERVAL;
+        let declared = FakeCommands::new(|call: &Call| {
+            assert_eq!(call.args, vec![WORK_REFRESH_KEY.to_string()]);
+            Ok(b"2\n".to_vec())
+        });
+        assert_eq!(read_work_refresh(&paths, &declared), (Duration::from_secs(2), None));
+
+        // Zero would read the board on every tick; a unit suffix is not whole seconds.
+        for bad in ["0", "30s"] {
+            let answer = format!("{bad}\n").into_bytes();
+            let fake = FakeCommands::new(move |_: &Call| Ok(answer.clone()));
+            assert_eq!(
+                read_work_refresh(&paths, &fake),
+                (
+                    default,
+                    Some(format!(
+                        "project.conf: work_refresh_seconds is not a whole number above zero (\"{bad}\"); using 30."
+                    ))
+                ),
+                "declared {bad:?}"
+            );
+        }
+
+        // Nothing declared, and a non-zero exit, are the same answer: the built-in thirty.
+        let absent = FakeCommands::new(|_: &Call| Ok(b"\n".to_vec()));
+        assert_eq!(read_work_refresh(&paths, &absent), (default, None));
+        let failed = FakeCommands::new(|_: &Call| {
+            Err(ReadError::Exit {
+                source: "project-conf".into(),
+                status: Some(1),
+                stderr: String::new(),
+            })
+        });
+        assert_eq!(read_work_refresh(&paths, &failed), (default, None));
     }
 
     // --- the gh reader (cb-kcs.4.3) ------------------------------------------------------------

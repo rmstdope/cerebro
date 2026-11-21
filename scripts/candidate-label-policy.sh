@@ -14,7 +14,8 @@
 # NOT YET HERE, and spelling these words for themselves: the fleet view's sweeps
 # (`sweep-paused.sh`, `sweep-verdicts.sh`), its Rust consts (`fleet-view/src/model.rs`, `give.rs`,
 # `triggers.rs`), and the snippets that mark a bead without handing it on (agree-experience's record,
-# Cerebro's filing and decline). A word renamed here is renamed there by hand.
+# Cerebro's filing and decline), and Moira's park when the navigator is away
+# (`agents/user-feedback.md`). A word renamed here is renamed there by hand.
 #
 # The routing table these words implement is `skills/beads-workflow`, *The lifecycle a bead moves
 # through*; change a word there and here together. Its jq twin is `candidate-label-policy.jq`.

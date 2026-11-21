@@ -146,7 +146,7 @@ navigator answers when present. An empty declaration is today's fleet: no gate, 
   bd update <id> "${route_flags[@]}" --append-notes "## Ready to merge
 
 PR #<n>, reviewed and green at <sha>; the merge is yours." \
-    --set-metadata paused_at=$(date -u +%Y-%m-%dT%H:%M:%SZ) --if-assignee <name>
+    --set-metadata paused_at=$(date -u +%Y-%m-%dT%H:%M:%SZ) --if-assignee <name> &&
   bd unclaim <id> --if-assignee <name>
   bd dolt push
   ```
@@ -339,20 +339,23 @@ gh pr merge <n> --squash --delete-branch
 ## Handing back
 
 A bead you cannot finish goes back to the board, never to another producer by your hand. **The
-hand-back block**, three commands and never a chain, the label change being the named
-`park_for_navigator` hand-off (`scripts/candidate-label-policy.sh`, cb-t51j), sourced in the first
-command's own `&&` so a policy that does not load writes nothing; if that first command fails,
-stop there rather than release the claim:
+hand-back block** applies the named `park_for_navigator` hand-off
+(`scripts/candidate-label-policy.sh`), as `beads-workflow`'s escalation does. The update and the
+unclaim are one `&&` chain, so a policy that does not load, or an update that fails, releases
+nothing: an unclaim on its own would hand the bead to the next builder with no `human` and no
+note. The push stays its own command. The merge-gate park above and the second-look hand-back
+below have the same shape:
 
 ```bash
 source .cerebro/cerebro/scripts/candidate-label-policy.sh && route_flags_for park_for_navigator &&
 bd update <id> "${route_flags[@]}" --append-notes "<what stopped it, and what would unblock it>" \
-  --set-metadata paused_at=$(date -u +%Y-%m-%dT%H:%M:%SZ) --if-assignee <name>
+  --set-metadata paused_at=$(date -u +%Y-%m-%dT%H:%M:%SZ) --if-assignee <name> &&
 bd unclaim <id> --if-assignee <name>
 bd dolt push
 ```
 
-`--if-assignee <name>` on both: the block only ever releases your own claim. Why each command
+`--if-assignee <name>` on both: the block only ever releases your own claim, and a failed guard
+releases nothing. Why each command
 matters is `beads-workflow`, *The lifecycle a bead moves through*. It is the exit for: a bead with
 no tree; a review that could not be obtained three times; a red CI budget spent; a finding about
 the approach you may not decide. **A bead that is not yours** (another
@@ -377,7 +380,7 @@ saying so. The label change is the named `hand_to_verifier` hand-off:
 ```bash
 source .cerebro/cerebro/scripts/candidate-label-policy.sh && route_flags_for hand_to_verifier &&
 bd update <id> "${route_flags[@]}" --append-notes "<why there is nothing to build>" \
-  --if-assignee <name>
+  --if-assignee <name> &&
 bd unclaim <id> --if-assignee <name>
 bd dolt push
 ```

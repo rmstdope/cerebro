@@ -107,8 +107,8 @@ Two states reach you through it:
 hold the bead out of every other queue. A handed-back bead takes one of the three outcomes below;
 acting on it in any of those ways clears the state, and doing nothing leaves it here. Clearing
 the labels is the named `fresh_verdict` hand-off (`scripts/candidate-label-policy.sh`), the same
-one `reopen-failed` applies for the first outcome, in one `&&` chain so a policy that does not
-load writes nothing.
+one `reopen-failed` applies for the first outcome, in one `&&` chain with the close, so a policy
+that does not load writes nothing and closes nothing.
 
 - **The finding still holds.** Record a fresh verdict by the `failed` recipe in *Taking the verdict*.
 - **The finding no longer holds.** Pass it, clear the labels, and **close it**: the work is on
@@ -117,7 +117,7 @@ load writes nothing.
   ```bash
   bd set-state <id> verification=passed --reason "re-verified at <short sha>; the finding no longer holds"
   source .cerebro/cerebro/scripts/candidate-label-policy.sh && route_flags_for fresh_verdict &&
-  bd update <id> --set-metadata verified_at=<full sha> "${route_flags[@]}"
+  bd update <id> --set-metadata verified_at=<full sha> "${route_flags[@]}" &&
   bd close <id> --reason "Re-verified at <short sha>; the finding no longer holds"
   bd dolt push
   ```
@@ -127,7 +127,7 @@ load writes nothing.
 
   ```bash
   source .cerebro/cerebro/scripts/candidate-label-policy.sh && route_flags_for fresh_verdict &&
-  bd update <id> "${route_flags[@]}"
+  bd update <id> "${route_flags[@]}" &&
   bd close <id> --reason "Delivered by <sibling id>; verification finding no longer applies"
   bd dolt push
   ```

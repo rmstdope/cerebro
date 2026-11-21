@@ -592,10 +592,61 @@ async fn an_unreadable_publication_is_a_failure_not_an_absence() {
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
 }
 
-/// A reader that takes its time, counting each fleet read by its one `roster` run.
+/// Where a reader thread waits until the test lets its read finish. The bound is for a broken
+/// service only: a read that blocks the test's one async worker would otherwise hang the test
+/// rather than fail it.
+struct Gate {
+    released: std::sync::Mutex<bool>,
+    changed: std::sync::Condvar,
+}
+
+impl Gate {
+    fn closed() -> Self {
+        Self { released: std::sync::Mutex::new(false), changed: std::sync::Condvar::new() }
+    }
+
+    fn open() -> Self {
+        let gate = Self::closed();
+        gate.release();
+        gate
+    }
+
+    fn release(&self) {
+        *self.released.lock().unwrap() = true;
+        self.changed.notify_all();
+    }
+
+    fn is_released(&self) -> bool {
+        *self.released.lock().unwrap()
+    }
+
+    fn wait(&self) {
+        let released = self.released.lock().unwrap();
+        let (mut released, timeout) =
+            self.changed.wait_timeout_while(released, Duration::from_secs(10), |released| !*released).unwrap();
+        if timeout.timed_out() {
+            *released = true;
+        }
+    }
+}
+
+/// A reader whose fleet reads wait at a gate, counting each fleet read by its one `roster` run.
 struct SlowCommands {
     rosters: std::sync::atomic::AtomicUsize,
-    delay: Duration,
+    gate: Gate,
+}
+
+impl SlowCommands {
+    fn new(gate: Gate) -> Self {
+        Self { rosters: Default::default(), gate }
+    }
+
+    /// Until a fleet read is inside `roster`, waiting at the gate.
+    async fn reading(&self) {
+        while self.rosters.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+    }
 }
 
 impl cerebro_tui::CommandRunner for SlowCommands {
@@ -608,7 +659,7 @@ impl cerebro_tui::CommandRunner for SlowCommands {
     ) -> Result<Vec<u8>, cerebro_tui::ReadError> {
         if program.file_name().is_some_and(|name| name == "roster") {
             self.rosters.fetch_add(1, Ordering::SeqCst);
-            std::thread::sleep(self.delay);
+            self.gate.wait();
             return Ok(b"Storm\tproducer\tinteractive\n".to_vec());
         }
         Ok(if program == std::path::Path::new("ps") { Vec::new() } else { b"[]".to_vec() })
@@ -620,36 +671,41 @@ fn get(path: &str) -> Request<Body> {
 }
 
 /// Requests that arrive while a read is running share it, rather than queueing one read each
-/// behind it: a queue that grows faster than it drains is a service that never answers.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+/// behind it: a queue that grows faster than it drains is a service that never answers. On one
+/// thread, tasks spawned together are polled in one round, and each reaches the read's lock on
+/// its first poll, so all six have arrived before the read is let go.
+#[tokio::test]
 async fn requests_during_a_read_share_it() {
-    let commands = Arc::new(SlowCommands { rosters: Default::default(), delay: Duration::from_millis(400) });
+    let commands = Arc::new(SlowCommands::new(Gate::closed()));
     let router = service_with_commands(PathBuf::from("/assets"), commands.clone()).router();
 
     let requests: Vec<_> = (0..6).map(|_| tokio::spawn(router.clone().oneshot(get("/api/fleet")))).collect();
+    commands.reading().await;
+    for _ in 0..10 {
+        tokio::task::yield_now().await;
+    }
+    commands.gate.release();
     for request in requests {
         assert_eq!(request.await.unwrap().unwrap().status(), StatusCode::OK);
     }
 
-    assert!(commands.rosters.load(Ordering::SeqCst) <= 2, "{} reads", commands.rosters.load(Ordering::SeqCst));
+    assert_eq!(commands.rosters.load(Ordering::SeqCst), 1, "one read for six requests");
 }
 
-/// A read runs off the async workers, so a slow `bd` holds up nothing but the requests that need it.
+/// A read runs off the async workers, so a slow `bd` holds up nothing but the requests that need
+/// it. One thread: a read that blocked it would hold up everything else until it was done.
 #[tokio::test]
 async fn a_slow_read_does_not_hold_up_other_requests() {
-    let commands = Arc::new(SlowCommands { rosters: Default::default(), delay: Duration::from_millis(1500) });
+    let commands = Arc::new(SlowCommands::new(Gate::closed()));
     let router = service_with_commands(PathBuf::from("/assets"), commands.clone()).router();
-    let start = std::time::Instant::now();
 
-    // One thread: a read that blocks it holds up everything else until it is done.
-    let (slow, other) = tokio::join!(router.clone().oneshot(get("/api/fleet")), async {
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        router.clone().oneshot(get("/api/sessions/Storm")).await.unwrap();
-        start.elapsed()
-    });
+    let slow = tokio::spawn(router.clone().oneshot(get("/api/fleet")));
+    commands.reading().await;
+    router.clone().oneshot(get("/api/sessions/Storm")).await.unwrap();
+    assert!(!commands.gate.is_released(), "a session request waited behind a fleet read");
 
-    assert!(other < Duration::from_millis(1000), "a session request waited {other:?} behind a fleet read");
-    assert_eq!(slow.unwrap().status(), StatusCode::OK);
+    commands.gate.release();
+    assert_eq!(slow.await.unwrap().unwrap().status(), StatusCode::OK);
 }
 
 /// However many pages are open, their event streams read the fleet about once an interval between
@@ -657,7 +713,7 @@ async fn a_slow_read_does_not_hold_up_other_requests() {
 /// `spawn_blocking` holds the clock still while it runs, so the ticks stay at 0 s, 2 s and 4 s.
 #[tokio::test(start_paused = true)]
 async fn event_streams_share_their_reads() {
-    let commands = Arc::new(SlowCommands { rosters: Default::default(), delay: Duration::from_millis(50) });
+    let commands = Arc::new(SlowCommands::new(Gate::open()));
     let router = service_with_commands(PathBuf::from("/assets"), commands.clone()).router();
     let mut bodies = Vec::new();
     for _ in 0..5 {

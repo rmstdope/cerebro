@@ -165,7 +165,9 @@ m="$(.cerebro/cerebro/scripts/issue-markers <number>)" && grep -cFx moira-ack <<
 `issue-markers` prints the markers in the comments *you* posted, one per line, and only in their
 `<!-- … -->` form: anyone can comment, and a stranger's hidden `<!-- moira-ack -->` must never stop
 the reporter being thanked. A failed read says why on stderr and prints no count: post nothing on
-that issue this pass.
+that issue this pass. Your markers are the ones posted by the login gh is authenticated as, so
+always run under the same `gh` login: under another, every earlier marker counts for nothing and
+each tracked issue is thanked and updated again.
 
 A count above zero means it has been acknowledged; move on. `0` means it has not:
 

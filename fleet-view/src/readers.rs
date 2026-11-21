@@ -498,6 +498,46 @@ pub fn read_ux_multiple(
     }
 }
 
+/// Where this checkout's supervision lease lives: the three answers `fleet-supervisor` gives.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SupervisorLocation {
+    pub endpoint: SocketAddr,
+    pub identity: String,
+    pub record: PathBuf,
+}
+
+/// The lease's endpoint, identity and record, or `Ok(None)` when this checkout has no
+/// `fleet-supervisor` at all (cb-pd0f).
+///
+/// The two are kept apart because they mean different things. A consumer whose submodule predates
+/// the script has no lease for anybody to hold: that is the documented degrade, an answer. A
+/// script that is there and did not answer - above all one that timed out under load - is a
+/// failed read, and a failed read is never an empty answer: the error names the call that failed.
+/// The three calls stop at the first failure, so a failing lookup costs one bound and not three.
+pub fn read_supervisor_location(
+    paths: &ReaderPaths,
+    commands: &dyn CommandRunner,
+) -> Result<Option<SupervisorLocation>, ReadError> {
+    let program = paths.scripts_dir.join("fleet-supervisor");
+    // `try_exists`, not `exists`: a metadata call that failed (EACCES) is a failed read, never
+    // the silent degrade.
+    match program.try_exists() {
+        Ok(true) => {}
+        Ok(false) => return Ok(None),
+        Err(e) => {
+            return Err(ReadError::Spawn {
+                source: Invocation::new(&program, &[]),
+                message: format!("cannot tell whether it exists: {e}"),
+            })
+        }
+    }
+    Ok(Some(SupervisorLocation {
+        endpoint: read_supervisor_endpoint(paths, commands)?,
+        identity: read_supervisor_identity(paths, commands)?,
+        record: read_supervisor_record(paths, commands)?,
+    }))
+}
+
 /// The loopback address this checkout's supervision lease lives at.
 pub fn read_supervisor_endpoint(
     paths: &ReaderPaths,
@@ -1369,6 +1409,60 @@ mod tests {
     }
 
 
+
+    /// cb-pd0f: a checkout with no `fleet-supervisor` at all is the documented degrade - an
+    /// answer, not a failure - and nothing is run to find that out.
+    #[test]
+    fn supervisor_location_is_absent_without_the_script() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let paths = paths_at(dir.path());
+        let commands = FakeCommands::always("127.0.0.1:20001\n");
+        assert!(matches!(read_supervisor_location(&paths, &commands), Ok(None)));
+        assert!(commands.calls().is_empty(), "absence is a file test, not a spawn");
+    }
+
+    fn with_supervisor_script(root: &Path) -> ReaderPaths {
+        let paths = paths_at(root);
+        std::fs::create_dir_all(&paths.scripts_dir).expect("scripts dir");
+        std::fs::write(paths.scripts_dir.join("fleet-supervisor"), "").expect("script");
+        paths
+    }
+
+    /// All three answers, from the three calls the existing readers make.
+    #[test]
+    fn supervisor_location_answers_all_three() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let paths = with_supervisor_script(dir.path());
+        let commands = FakeCommands::new(|call| {
+            Ok(match call.args[0].as_str() {
+                "--endpoint" => b"127.0.0.1:20001\n".to_vec(),
+                "--identity" => b"/repos/x\n".to_vec(),
+                "--record" => b"/repos/x/.cerebro/state/supervisor.json\n".to_vec(),
+                other => panic!("unexpected {other}"),
+            })
+        });
+        let found = read_supervisor_location(&paths, &commands).expect("ok").expect("present");
+        assert_eq!(found.endpoint, "127.0.0.1:20001".parse().unwrap());
+        assert_eq!(found.identity, "/repos/x");
+        assert_eq!(found.record, PathBuf::from("/repos/x/.cerebro/state/supervisor.json"));
+    }
+
+    /// A present script that did not answer is an ERROR naming the call, never the degrade, and
+    /// the lookup stops at the first failure so a failing tick costs one bound, not three.
+    #[test]
+    fn supervisor_location_failure_names_the_call() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let paths = with_supervisor_script(dir.path());
+        let commands = FakeCommands::new(|call| {
+            let args: Vec<&str> = call.args.iter().map(String::as_str).collect();
+            Err(ReadError::Timeout { source: Invocation::new(&call.program, &args), seconds: 5 })
+        });
+        let error = read_supervisor_location(&paths, &commands).unwrap_err();
+        let message = error.log_message();
+        assert!(message.contains("fleet-supervisor --endpoint"), "{message}");
+        assert!(message.contains("did not answer within 5s"), "{message}");
+        assert_eq!(commands.calls().len(), 1, "the lookup stops at its first failure");
+    }
 
     /// A reader that cannot run at all is an error, never a guess. Fail-open here is the one
     /// failure cb-kcs.1 exists to refuse.

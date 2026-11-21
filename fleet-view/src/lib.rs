@@ -74,6 +74,7 @@ pub mod control;
 pub mod give;
 pub mod history;
 pub mod inbox;
+pub mod labels;
 pub mod lifecycle;
 pub mod log;
 pub mod model;

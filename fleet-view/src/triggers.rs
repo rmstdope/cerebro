@@ -47,10 +47,10 @@ pub fn parse_ux_multiple(raw: &str) -> Result<Option<usize>, String> {
 
 /// `cerebro-parked-labels`: a bead wearing one of these is the navigator's rather than a
 /// planner's, and counting it starts a session to find nothing to do.
-pub const PARKED_LABELS: [&str; 2] = ["human", "triage:declined"];
+pub const PARKED_LABELS: [&str; 2] = [crate::labels::HUMAN_LABEL, "triage:declined"];
 
-/// The label that parks a bead in front of the verifier (`cerebro--stale-verdict-p`).
-pub const STALE_VERDICT_LABEL: &str = "verdict:stale";
+// The label that parks a bead in front of the verifier (`cerebro--stale-verdict-p`).
+use crate::labels::STALE_VERDICT_LABEL;
 
 /// `cerebro-cadence-triggers` (`emacs/cerebro.el:1717`): seconds after which a role on standby is
 /// started again whatever else is true, or `None` for a role with no floor.

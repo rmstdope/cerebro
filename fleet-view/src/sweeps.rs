@@ -400,7 +400,7 @@ pub fn finding_command(finding: &Finding, program: &Path) -> Vec<String> {
         // that puts the bead straight in front of an implementer, which loops when the pause was
         // not really about the blocker.
         Finding::Unpause { id, .. } => {
-            vec![bd, "update".into(), id.clone(), "--remove-label".into(), "human".into()]
+            vec![bd, "update".into(), id.clone(), "--remove-label".into(), crate::labels::HUMAN_LABEL.into()]
         }
     }
 }

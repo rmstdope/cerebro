@@ -274,8 +274,9 @@ bd create "Title" --type bug --external-ref gh-<n> -p 4 --body-file body.md
 ```
 
 P4 however urgent the report reads; put the reporter's urgency in the description. `bd github pull`
-sets its own priority, so correct an imported bead to P4 unless the navigator has ranked it. Then
-comment on the issue naming the bead and close it. The sync is pull-only and manual.
+sets its own priority, so correct an imported bead to P4 unless the navigator has ranked it. Leave
+the issue to Moira, who posts its status comments and closes it on release
+(`agents/user-feedback.md`). The sync is pull-only and manual.
 
 ## Storage, and what is committed
 

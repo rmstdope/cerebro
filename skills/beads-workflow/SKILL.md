@@ -108,13 +108,17 @@ Three rules that the table depends on:
 The plan lives in the bead's `design` field (`bd update <id> --design-file plan.md`). Read it with
 `bd show <id> --json`: the pretty renderer mangles Markdown tables.
 
-**Escalating takes three commands:**
+**Escalating takes three commands**, the first applying the named transition `park_for_navigator`
+from `scripts/candidate-label-policy.sh`. The update and the unclaim are one chain, so a policy that
+does not load, or an update that fails, releases nothing: an unclaim on its own would hand the bead
+straight to the next builder with no `human` and no note. The push stays its own command:
 
 ```bash
-bd update <id> --remove-label planned --add-label human --append-notes "<what stopped it>" \
-  --set-metadata paused_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-bd unclaim <id>          # clears the assignee and returns the status to open
-bd dolt push             # or no other machine learns it was released
+source .cerebro/cerebro/scripts/candidate-label-policy.sh && route_flags_for park_for_navigator &&
+bd update <id> "${route_flags[@]}" --append-notes "<what stopped it>" \
+  --set-metadata paused_at=$(date -u +%Y-%m-%dT%H:%M:%SZ) --if-assignee <name> &&
+bd unclaim <id> --if-assignee <name>   # clears the assignee and returns the status to open
+bd dolt push                           # or no other machine learns it was released
 ```
 
 - `paused_at` lets the fleet view's *Waiting on you* section show the pause as a duration; without
@@ -124,16 +128,18 @@ bd dolt push             # or no other machine learns it was released
 - Removing `planned` records that the producer must revisit its own build design before resuming.
 - `bd unclaim` matters because `bd update` sets no status: without it the bead stays `in_progress`
   under an agent that has left.
+- `--if-assignee <name>` on both writes: the escalation only ever releases your own claim. A bare
+  `bd unclaim` takes whoever holds the bead now, another builder included (cb-0elv.4).
 
 **Exception (written in full in `produce-bead`, *Handing back*):** a bead carrying
-`verification:failed`, handed back because nothing is left to implement, runs all three commands
-but adds **no `human`** and no `paused_at`, and adds **`second-look`** instead: the one label that
-says the verifier holds it, which `scripts/second-look-beads` matches and every builder and UX
-queue excludes. Only the verifier ever adds `plan:revise`, and only her verdict removes
+`verification:failed`, handed back because nothing is left to implement, uses that skill's own
+block rather than this transition: **no `human`** and no `paused_at`, and **`second-look`**
+instead: the one label that says the verifier holds it, which `scripts/second-look-beads` matches
+and every builder and UX queue excludes. Only the verifier ever adds `plan:revise`, and only her verdict removes
 `second-look`.
 
 **A UX agent escalating has no claim**, so it runs the first and third commands with
-`--assignee ""` in place of the second — never `bd unclaim`.
+`--assignee ""` in place of the second and of `--if-assignee` — never `bd unclaim`.
 
 `pause:kept` is the orchestrator's alone: *this pause was put to the user and they left it parked*,
 so the next sweep does not ask again. It never suppresses unparking a bead whose blockers have all
@@ -310,5 +316,5 @@ Lease: expires in 1 min (heartbeat 3 mins ago)      # an agent actively working,
 ## Checklist before ending a session
 
 - [ ] Bead claimed or closed to match reality
-- [ ] Nothing left `in_progress` that you are not actually working on — `bd unclaim <id>` releases it
+- [ ] Nothing left `in_progress` that you are not actually working on — `bd unclaim <id> --if-assignee <name>` releases it
 - [ ] `bd dolt push`

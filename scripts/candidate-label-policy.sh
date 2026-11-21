@@ -4,7 +4,7 @@
 # SOURCED, NEVER EXECUTED, by the scripts that read a queue (`stage-candidates`,
 # `assignable-beads`, `bugfix-candidates`, `second-look-beads`) and the scripts that write a route
 # (`producer-park`, `reopen-failed`, `verifier-pass-epic-family`), and by the skill snippets that
-# hand a bead on by hand (Cerebro's send-back, the UX agent's park). A writer that hand-coded its own
+# hand a bead on by hand (Cerebro's send-back, the UX agent's park, `beads-workflow`'s escalation). A writer that hand-coded its own
 # label set and a reader that read another stranded a bead in nobody's queue four times in two days
 # (cb-b26a, cb-lcfq, cb-0elv.1, cb-0elv.5). Here a writer applies a named transition instead of
 # composing labels, and `tests/label-routes.sh` runs every transition and proves the bead lands in
@@ -55,7 +55,8 @@ bugfix_label="bugfix"
 #                         label and plan and goes back to a producer, or a bug to the bugfixer.
 #                         `reopen-failed` (both faults); `verifier-pass-epic-family`.
 #   park_for_navigator    to the navigator: the work itself is in question. `planned` off, `human` on;
-#                         unparked (`human` off) it goes back to a producer. `producer-park … scope`.
+#                         unparked (`human` off) it goes back to a producer. `producer-park … scope`;
+#                         `beads-workflow`'s escalation, by hand.
 #   park_for_ui_decision  to the navigator, from the UX stage, when nobody answered: `needs-ui-decision`
 #                         and `human` on; unparked it goes back to the UX queue. `agree-experience`.
 route_flags_for() {

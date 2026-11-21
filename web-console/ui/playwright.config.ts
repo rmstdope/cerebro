@@ -11,6 +11,12 @@ const vitePort = base ? base + 1 : 5199;
 
 export default defineConfig({
   testDir: "./tests",
+  // Specs in the same file may be scheduled across workers (cb-uri6): they share nothing but the one
+  // cerebro-web/Vite pair below. Each runs in its own browser context, and what it sends the
+  // service unmocked is a read; every write (priority, session input, agent actions) is answered
+  // by its own page.route and never reaches the service. Workers stay at Playwright's default, half
+  // the logical cores (2 on a 4-vCPU CI runner), so it is not oversubscribed beside the two servers.
+  fullyParallel: true,
   use: {
     baseURL: `http://127.0.0.1:${vitePort}`,
   },

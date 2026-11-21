@@ -6,9 +6,10 @@
 # over a throwaway consumer, and asserts what the fleet and the board were left with. The rules
 # underneath - the trigger and its spacing (`triggers::start_decision', `role_start_too_soon'),
 # the queue (`scripts/assignable-beads') and the claim (`scripts/assign-bead') - are tested on their
-# own; this proves the path through them. The 30 seconds is the built-in default, proven by the
-# unit tests (`triggers::spacing_for', `readers::read_role_spacing'); the fixture declares
-# `role_start_spacing_producer 5', so the window this suite waits out is five seconds (cb-4wf1).
+# own; this proves the path through them. The 30 seconds is the built-in default, proven by
+# `triggers::spacing_for', and reading a declared value by `readers::read_role_spacing'; the
+# fixture declares `role_start_spacing_producer 5', so the window this suite waits out is five
+# seconds (cb-4wf1).
 #
 # Real, and unstubbed: the view, `scripts/launch' (the view's one way to start a session), its
 # preflight, `assign-bead', `assignable-beads', `disk-preflight' (the fixture declares no floor),
@@ -71,8 +72,8 @@ beads="$fixture/beads"
 mkdir -p "$stubs" "$beads" "$fixture/started"
 
 # A short declared spacing, so the window is seconds rather than the built-in 30: the default is
-# the unit tests' (triggers.rs `spacing_for', readers.rs `read_role_spacing'), and what this suite
-# proves is the path through it - held by the spacing, then started and claimed.
+# proven by triggers.rs `spacing_for', and what this suite proves is the path through it - held
+# by the spacing, then started and claimed.
 spacing=5
 cat > "$consumer/.cerebro/project.conf" <<CONF
 project_name   ProducerStart

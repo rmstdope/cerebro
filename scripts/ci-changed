@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+#
+# Which paths the one commit CI is looking at changed, for the `changes' job (cb-5eny):
+#
+#     bash scripts/ci-changed "$EVENT" "$BEFORE" | bash scripts/ci-needed >> "$GITHUB_OUTPUT"
+#
+#   <event>   github.event_name
+#   <before>  github.event.before: the tip the branch had before a push; empty for other events
+#
+#   stdout   `git diff --name-only --no-renames HEAD^1 HEAD', one path per line, when HEAD^1..HEAD
+#            is the whole change under test: a pull_request (HEAD is its merge commit, whose first
+#            parent is the base tip) or a push whose <before> IS HEAD^1, i.e. it added exactly one
+#            commit (a squash merge). Otherwise NOTHING: a push of several commits, a new branch, a
+#            force push, workflow_dispatch, a commit with no first parent, a failed diff.
+#   stderr   why, one `ci-changed: ' line.
+#   exit 0   whenever it answered, either way. exit 2 on a usage error, with nothing on stdout.
+#
+# Printing nothing is the fail-safe: ci-needed reads an empty list as a broken diff and answers
+# `run=true'. So nothing here can cause a skip by itself - only a real path list can - and the
+# caller does not read this script's status at all (`bash -e', no pipefail: ci-needed is the last
+# command of the pipe and its status is the step's).
+#
+# --no-renames: a file renamed OUT of a gated path is listed as a deletion of the old path, so the
+# gate still runs.
+#
+# NOT under `tests/', for the reason scripts/ci-needed gives. Its suite is `tests/ci-changed.sh'.
+
+set -uo pipefail
+
+if [[ $# -ne 2 ]]; then
+  echo "usage: ci-changed <event_name> <before_sha>" >&2
+  exit 2
+fi
+event="$1"
+before="$2"
+
+if ! parent="$(git rev-parse --verify --quiet 'HEAD^1')"; then
+  echo "ci-changed: HEAD has no first parent here, so nothing to diff" >&2
+  exit 0
+fi
+
+case "$event" in
+  pull_request)
+    ;;
+  push)
+    if [[ "$before" != "$parent" ]]; then
+      echo "ci-changed: push of more than one commit (before ${before:-unset}, HEAD^1 $parent)" >&2
+      exit 0
+    fi
+    ;;
+  *)
+    echo "ci-changed: $event is not a pull request or a push, so nothing to diff" >&2
+    exit 0
+    ;;
+esac
+
+# Settle the answer first: a diff that fails prints nothing, never a partial list.
+if ! changed="$(git diff --name-only --no-renames "$parent" HEAD)"; then
+  echo "ci-changed: git diff failed" >&2
+  exit 0
+fi
+if [[ -n "$changed" ]]; then
+  printf '%s\n' "$changed"
+fi
+echo "ci-changed: $event, HEAD^1..HEAD" >&2
+exit 0

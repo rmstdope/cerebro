@@ -99,8 +99,8 @@ Writing a suite:
 - End with `suite_passed`. A suite that dies under `set -e` can reach the trap with `$?` at 0, so
   the trap refuses green unless that line ran.
 - A rule whose grep or awk fails is an advisory naming the step, never an `ok` line.
-- `scripts/ci-needed` skips CI for pull requests touching only `docs/`, `README.md`, `LICENSE` and
-  `agents.conf.example`. Nothing checks that list against what suites read, so a suite that starts
+- `scripts/ci-needed` skips CI for pull requests, and single-commit pushes to main, touching only
+  `docs/`, `README.md`, `LICENSE` and `agents.conf.example`. Nothing checks that list against what suites read, so a suite that starts
   reading one of those paths must edit `scripts/ci-needed` in the same pull request.
 - CI runs on ubuntu-latest. A suite or Rust test that only passes on macOS, or only against the
   developer's own `bd`, is a red PR.
@@ -264,7 +264,8 @@ Each of these answers one question in one place. Add a caller, never a second co
   `scripts/marker-readers`, `scripts/portable-snippets`, `scripts/pipefail-pipelines` — gate
   predicates, each scanning the live tree from inside its own suite so CI runs it. None of them may join
   `launch-preflight`: a check that refuses there is a fleet that cannot start.
-- `scripts/ci-needed` — which paths skip CI.
+- `scripts/ci-needed` — which paths skip CI; `scripts/ci-changed` — which paths a CI run's
+  commit changed, or nothing when the run is not one commit's.
 
 ## Gotchas
 

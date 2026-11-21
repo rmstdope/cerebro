@@ -16,32 +16,33 @@ jobs:
       - uses: actions/checkout@v4
         with:
           # On pull_request the checkout is the PR's merge commit, whose first parent is the base
-          # tip: two commits are the whole diff, and a two-dot diff needs no more history than that.
+          # tip; on push it is the pushed tip, whose first parent is main before a squash merge.
+          # Either way two commits are the whole diff, and a two-dot diff needs no more history.
           # Leave `ref:' unset - overriding it stops actions/checkout checking out the merge commit.
           fetch-depth: 2
 
       - name: Decide whether the gate can be affected
         id: decide
+        # Through env, never `${{ }}' inside the script body.
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
         run: |
-          if [ "${{ github.event_name }}" != "pull_request" ]; then
-            echo "run=true" >> "$GITHUB_OUTPUT"
-            echo "not a pull request: everything runs"
-            exit 0
-          fi
-          # --no-renames: a file renamed OUT of a gated path is listed as a deletion of the old
-          # path, so the gate still runs. On any diff failure, changed is empty and ci-needed
-          # answers "run everything".
-          changed="$(git diff --name-only --no-renames HEAD^1 HEAD 2>/dev/null)" || changed=""
-          # ci-needed's stdout IS the output line; its reasons are on stderr, in the log. Under the
-          # -e GitHub puts on the interpreter's own command line, a predicate that crashes fails
-          # this step, and a failed `changes' job skips nothing (see the `if:' on the gated jobs).
-          # No `set' line of any kind here: that -e is the safety net now, and defusing it is what
-          # turned the first docs-only pull request red (cb-ypx, cb-e33).
+          # ci-changed prints the paths HEAD^1..HEAD changed when that is the whole change - a pull
+          # request, or a push of exactly one commit (cb-5eny) - and nothing otherwise: a push of
+          # several commits, a new branch, workflow_dispatch, a failed diff. ci-needed answers an
+          # empty list with run=true, so ci-changed can never cause a skip by itself.
+          #
+          # ci-needed's stdout IS the output line; both scripts' reasons are on stderr, in the log.
+          # Under the -e GitHub puts on the interpreter's own command line, a predicate that crashes
+          # fails this step, and a failed `changes' job skips nothing (see the `if:' on the gated
+          # jobs). No `set' line of any kind here: that -e is the safety net now, and defusing it is
+          # what turned the first docs-only pull request red (cb-ypx, cb-e33).
           #
           # Without `shell: bash' the interpreter is `bash -e {0}' - -e, and NOT -o pipefail (cb-e33
-          # measured it). ci-needed's status still reaches the step because it is the LAST command
-          # in the pipe. Do not append anything after it.
-          printf '%s\n' "$changed" | bash scripts/ci-needed >> "$GITHUB_OUTPUT"
+          # measured it). ci-needed's status reaches the step because it is the LAST command in the
+          # pipe, and ci-changed's is deliberately not read. Do not append anything after it.
+          bash scripts/ci-changed "$EVENT" "$BEFORE" | bash scripts/ci-needed >> "$GITHUB_OUTPUT"
 
   bash-tests:
     name: Bash suites (ubuntu-latest)

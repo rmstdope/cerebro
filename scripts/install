@@ -210,9 +210,11 @@ step_declare() {
 #
 # `.cerebro/roster.conf', from a second interview: how many ux and producer agents,
 # whether the three optional roles run, and per role present how the fleet view starts it -
-# `autostart' as the view opens, `standby' armed for its trigger, or `manual' for `s'. The
-# orchestrator, the architect and the QA architect are always there. Names come from the built-in fleet's pool, in
-# the order `scripts/roster' wants: the interactive roles first, then the producers.
+# `autostart' as the view opens, `standby' armed for its trigger, or `manual' for `s'. Every other
+# role in `scripts/roster --built-in' - the orchestrator, the architect, QA, the bugfixer, and any
+# added later - is always there, once. Roles, their order and their first names come from that
+# table: Cerebro first, then ux, the other interactive roles in table order, the producers last.
+# Over an existing roster.conf, each always-there role it holds nobody for is named `missing'.
 
 # ask_count <var> <prompt> <default> <min>
 ask_count() {
@@ -235,19 +237,85 @@ ask_choice() {
   return 1
 }
 
-# names_for <role> <n>  ->  <n> names for that role from the pool, then <Role><n> past its end
-names_for() {
-  local role="$1" n="$2" pool i=0 name
-  case "$role" in
-    orchestrator)  pool="Cerebro" ;;
-    ux)            pool="Xavier Beast Jean Emma" ;;
-    verifier)      pool="Psylocke" ;;
-    reviewer)      pool="Cypher" ;;
-    user-feedback) pool="Moira" ;;
-    architect)     pool="Forge" ;;
-    qa)            pool="Sage" ;;
-    producer)      pool="Cyclops Storm Wolverine Rogue Nightcrawler Colossus Jubilee Phoenix Mystique Magneto" ;;
+# What install keeps of its own, as against the fleet itself: the questions it asks (the two counts
+# and the three yes/no roles below), each role's default start word, the character names past the
+# built-in fleet's, and why a missing kind matters. The roles, their order and their first names
+# come from `scripts/roster --built-in' (cb-6z49): a kind of agent added there is installed with no
+# line here, asked only how it starts.
+optional_roles="ux producer verifier reviewer user-feedback"
+
+# builtin_rows  ->  NAME<TAB>ROLE<TAB>KIND, the shipped table
+builtin_rows() { "$here/roster" --built-in; }
+
+# is_optional <role>
+is_optional() {
+  local r
+  for r in $optional_roles; do
+    if [[ "$r" == "$1" ]]; then return 0; fi
+  done
+  return 1
+}
+
+# default_start <role>  ->  autostart, standby or manual
+default_start() {
+  case "$1" in
+    orchestrator)            echo autostart ;;
+    ux|producer|bugfixer)    echo standby ;;
+    *)                       echo manual ;;
   esac
+}
+
+# missing_reason <role>  ->  why nobody holding it matters, or nothing
+missing_reason() {
+  case "$1" in
+    orchestrator) echo "nobody ranks the backlog or files beads" ;;
+    architect)    echo "nobody files refactoring beads" ;;
+    qa)           echo "nobody files testing beads" ;;
+    bugfixer)     echo "nobody picks up bug reports" ;;
+  esac
+}
+
+# table_roles <rows>  ->  ROLE<TAB>KIND, each role once, in table order
+table_roles() {
+  local seen=" " name role kind
+  while IFS=$'\t' read -r name role kind; do
+    [[ -n "$role" ]] || continue
+    case "$seen" in *" $role "*) continue ;; esac
+    seen+="$role "
+    printf '%s\t%s\n' "$role" "$kind"
+  done <<<"$1"
+}
+
+# fleet_roles <rows>  ->  each role once, in the order install writes them: the orchestrator, ux,
+# the other interactive roles in table order, then the implementers (the producers) last
+fleet_roles() {
+  local listed role kind
+  listed="$(table_roles "$1")"
+  for role in orchestrator ux; do
+    if grep -q "^$role	" <<<"$listed"; then echo "$role"; fi
+  done
+  while IFS=$'\t' read -r role kind; do
+    if [[ "$role" != orchestrator && "$role" != ux && "$kind" != implementer ]]; then echo "$role"; fi
+  done <<<"$listed"
+  while IFS=$'\t' read -r role kind; do
+    if [[ "$kind" == implementer ]]; then echo "$role"; fi
+  done <<<"$listed"
+}
+
+# names_for <rows> <role> <n>  ->  <n> names: the built-in fleet's for that role, then install's own
+# character names, then <Role><n> past their end
+names_for() {
+  local rows="$1" role="$2" n="$3" pool="" extra="" i=0 name r _k
+  while IFS=$'\t' read -r name r _k; do
+    if [[ "$r" == "$role" ]]; then pool+="$name "; fi
+  done <<<"$rows"
+  case "$role" in
+    ux)       extra="Xavier Beast Jean Emma" ;;
+    producer) extra="Cyclops Storm Wolverine Rogue Nightcrawler Colossus Jubilee Phoenix Mystique Magneto" ;;
+  esac
+  for name in $extra; do
+    case " $pool" in *" $name "*) ;; *) pool+="$name " ;; esac
+  done
   for name in $pool; do
     [[ $i -lt $n ]] || break
     echo "$name"; i=$((i + 1))
@@ -257,13 +325,37 @@ names_for() {
   done
 }
 
+# report_missing <rows>  ->  one `missing' line per always-included kind the consumer's fleet list
+# holds nobody for. Advisory: a fleet list roster refuses has said why on stderr, and the step's
+# status is not this courtesy's to decide.
+report_missing() {
+  local rows="$1" role holders first start reason line
+  while IFS= read -r role; do
+    if is_optional "$role"; then continue; fi
+    holders="$("$here/roster" --role "$role")" || return 0
+    if [[ -n "$holders" ]]; then continue; fi
+    first="$(names_for "$rows" "$role" 1)"
+    start="$(default_start "$role")"
+    line="$first  $role"
+    if [[ "$start" != manual ]]; then line+="  $start"; fi
+    reason="$(missing_reason "$role")"
+    if [[ -n "$reason" ]]; then
+      report missing "$role - $reason; add a line such as:  $line"
+    else
+      report missing "$role - add a line such as:  $line"
+    fi
+  done < <(fleet_roles "$rows")
+}
+
 step_fleet() {
-  local root conf
+  local root conf rows
   root="$("$here/consumer-root")"
   conf="$root/.cerebro/roster.conf"
   echo "install: the fleet declared"
+  rows="$(builtin_rows)" || { echo "install: could not read the built-in fleet from scripts/roster" >&2; return 1; }
   if [[ -f "$conf" ]]; then
     report kept ".cerebro/roster.conf (exists; edit it by hand)"
+    report_missing "$rows" || true
     return 0
   fi
 
@@ -274,33 +366,31 @@ step_fleet() {
   ask_choice reviewer "A reviewer, for pull requests from outside the fleet (y/n)" n y n || return 1
   ask_choice feedback "A user-feedback agent, to own the GitHub issues (y/n)" n y n || return 1
 
-  # role<TAB>count, in file order; a count of 0 is a role left out.
-  local roles=() r role count word start rows="" name
-  roles+=("orchestrator	1" "ux	$n_ux")
-  [[ "$verifier" == y ]] && roles+=("verifier	1")
-  [[ "$reviewer" == y ]] && roles+=("reviewer	1")
-  [[ "$feedback" == y ]] && roles+=("user-feedback	1")
-  roles+=("architect	1" "qa	1" "producer	$n_producer")
+  local roles=() role count word start out="" name
+  while IFS= read -r role; do roles+=("$role"); done < <(fleet_roles "$rows")
 
   echo "  How the fleet view starts each role: autostart as it opens, standby to arm it for its"
   echo "  own trigger, or manual to start it yourself with 's'."
-  for r in "${roles[@]}"; do
-    role="${r%%	*}"; count="${r#*	}"
-    [[ "$count" -gt 0 ]] || continue
+  for role in "${roles[@]}"; do
     case "$role" in
-      orchestrator)                 start=autostart ;;
-      ux|producer)                 start=standby ;;
-      *)                            start=manual ;;
+      ux)            count="$n_ux" ;;
+      producer)      count="$n_producer" ;;
+      verifier)      count=0; [[ "$verifier" == y ]] && count=1 ;;
+      reviewer)      count=0; [[ "$reviewer" == y ]] && count=1 ;;
+      user-feedback) count=0; [[ "$feedback" == y ]] && count=1 ;;
+      *)             count=1 ;;
     esac
-    ask_choice word "$role ($(names_for "$role" "$count" | tr '\n' ' ' | sed 's/ $//'))" "$start" autostart standby manual || return 1
+    [[ "$count" -gt 0 ]] || continue
+    start="$(default_start "$role")"
+    ask_choice word "$role ($(names_for "$rows" "$role" "$count" | tr '\n' ' ' | sed 's/ $//'))" "$start" autostart standby manual || return 1
     [[ "$word" == manual ]] && word=""
     while IFS= read -r name; do
       if [[ -n "$word" ]]; then
-        rows+="$(printf '%-14s %-14s %s' "$name" "$role" "$word")"$'\n'
+        out+="$(printf '%-14s %-14s %s' "$name" "$role" "$word")"$'\n'
       else
-        rows+="$(printf '%-14s %s' "$name" "$role")"$'\n'
+        out+="$(printf '%-14s %s' "$name" "$role")"$'\n'
       fi
-    done < <(names_for "$role" "$count")
+    done < <(names_for "$rows" "$role" "$count")
   done
 
   mkdir -p "$root/.cerebro"
@@ -311,9 +401,9 @@ step_fleet() {
     echo "# started as the fleet view opens; \`standby' is armed and started by its role's trigger; no"
     echo "# third word means you start it with \`s'. The roles are the files in .cerebro/cerebro/agents/."
     echo
-    printf '%s' "$rows"
+    printf '%s' "$out"
   } > "$conf"
-  report wrote ".cerebro/roster.conf ($(printf '%s' "$rows" | grep -c .) agents)"
+  report wrote ".cerebro/roster.conf ($(printf '%s' "$out" | grep -c .) agents)"
 }
 
 # --- 5. the agent settings -------------------------------------------------------------------------
@@ -344,6 +434,9 @@ step_settings() {
   fi
   while IFS= read -r p; do known+=("$p"); done < <("$here/agent-cli" --known)
   default_tool="$("$here/agent-cli" --default-tool)"
+  local roles
+  roles="$(builtin_rows)" || { echo "install: could not read the built-in fleet from scripts/roster" >&2; return 1; }
+  roles="$(table_roles "$roles" | cut -f1)"
 
   local tool want_ext ext_name="" ext_url ext_env ext_model external_line=""
   ask_choice tool "Which agent CLI the agents run on (${known[*]})" "$default_tool" "${known[@]}" || return 1
@@ -389,9 +482,10 @@ step_settings() {
     echo
     echo "# Every other role runs on the default line. Uncomment one to give that role its own settings."
     local r
-    for r in ux orchestrator verifier reviewer user-feedback architect qa; do
+    while IFS= read -r r; do
+      [[ "$r" != producer ]] || continue
       printf '#'; setting_line "$r" "$tool" "$model" "$effort"
-    done
+    done <<<"$roles"
   } > "$conf"
   report wrote ".cerebro/agents.conf"
 }

@@ -302,6 +302,31 @@ pass "consumer roster: replaces the built-in table, in file order, past comments
 grep -q "Xavier" <<<"$("$roster_at")" && fail "consumer roster: the built-in table was merged in, not replaced"
 pass "consumer roster: the built-in table is replaced, not merged"
 
+# `--built-in' is the shipped table whatever the consumer declares: install derives a fresh fleet
+# from it, and names what an existing roster.conf lacks against it (cb-6z49).
+[[ "$("$roster_at" --built-in)" == "$roster_out" ]] \
+  || fail "roster --built-in: expected the built-in table over a consumer file, got: $("$roster_at" --built-in)"
+pass "roster --built-in prints the built-in table over a consumer roster.conf"
+
+cp "$consumer_roster_file" "$work_dir/roster-consumer.keep"
+printf 'Ada  ux  sometimes\n' > "$consumer_roster_file"
+builtin_status=0
+builtin_out="$("$roster_at" --built-in 2>"$work_dir/builtin-err")" || builtin_status=$?
+[[ $builtin_status -eq 0 && "$builtin_out" == "$roster_out" && ! -s "$work_dir/builtin-err" ]] \
+  || fail "roster --built-in: a malformed consumer file refused it (status $builtin_status): $(cat "$work_dir/builtin-err")"
+cp "$work_dir/roster-consumer.keep" "$consumer_roster_file"
+pass "roster --built-in is not refused by a malformed consumer roster.conf"
+
+# Nor by the retired path: a consumer with only `.cerebro/cerebro-roster' is refused for every other
+# mode, but install still needs the built-in table to write a fresh roster.conf over it.
+oldpath_consumer="$(consumer_new roster-oldpath --copy)"
+printf 'Ada  ux\n' > "$oldpath_consumer/.cerebro/cerebro-roster"
+builtin_status=0
+builtin_out="$("$oldpath_consumer/.cerebro/cerebro/scripts/roster" --built-in 2>"$work_dir/builtin-err")" || builtin_status=$?
+[[ $builtin_status -eq 0 && "$builtin_out" == "$roster_out" ]] \
+  || fail "roster --built-in: the retired cerebro-roster path refused it (status $builtin_status): $(cat "$work_dir/builtin-err")"
+pass "roster --built-in is not refused by a retired cerebro-roster file"
+
 [[ "$("$roster_at" --implementers)" == "$(printf 'Turing\nLovelace')" ]] \
   || fail "consumer roster --implementers: got $("$roster_at" --implementers)"
 # The same rule the built-in table is held to, asserted against a fleet that shares no name with

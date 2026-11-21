@@ -59,7 +59,7 @@ binary="$(jq -r 'select(.reason == "compiler-artifact" and .target.name == "cere
 
 consumer="$(consumer_new board --copy)"
 printf 'Forge  architect  standby\n' > "$consumer/.cerebro/roster.conf"
-# The work pane's cadence, declared short so the self-refresh below is a two-second wait.
+# The work pane's cadence: one declared tick of 2 s instead of the built-in 30.
 printf 'work_refresh_seconds 2\n' >> "$consumer/.cerebro/project.conf"
 
 board="$work_dir/board.json"
@@ -168,6 +168,9 @@ section_of() {
 }
 in_section() { [ "$(section_of "$1")" = "$2" ]; }
 list_calls() { grep -c -- ' list ' "$bd_log" 2>/dev/null || true; }
+# The view's own board read is the one `bd list' that passes `--brief'; `work-beads' does not.
+own_reads() { grep -c -- '--brief' "$bd_log" 2>/dev/null || true; }
+own_reads_reach() { [ "$(own_reads)" -ge "$1" ]; }
 
 # expect_in <id> <header>: one assertion, failing with the screen.
 expect_in() {
@@ -183,6 +186,15 @@ expect_in cb-parked "Waiting on you 1"
 expect_in cb-merged "Merged, unverified 1"
 expect_in cb-fresh "Unplanned 1"
 pass "the board is drawn as work queues: Claimed, Ready to produce, Waiting on you, Merged unverified, Unplanned"
+
+# --- the declared cadence is the one in force ---------------------------------------------------------
+#
+# Two more board reads within 10 s of the first draw. Under the built-in 30 s the second of them could
+# not come sooner than 30 s after the first, wherever this window falls, so a declaration the view
+# failed to read cannot pass here however slow the first draw was.
+reads_drawn="$(own_reads)"
+wait_until 10 "two more board reads on the declared 2 s cadence" own_reads_reach $((reads_drawn + 2))
+pass "the work pane is read on the declared work_refresh_seconds, not the built-in 30 s"
 
 # --- the board changes, and the queues follow without a key ----------------------------------------------
 #
@@ -208,7 +220,7 @@ write_board <<'JSON'
 JSON
 
 # One declared cadence is 2 s, counted from the last read's start; 20 s allows for a slow read
-# either side, and is still well short of the built-in 30 s a lost declaration would fall back to.
+# either side. That the cadence is the declared one is proven above, not by this bound.
 wait_until 20 "the pane to show the new board on its own" on_screen 'cb-newly'
 wait_until 5 "the claimed bead to move" in_section cb-agreed "Claimed 2"
 expect_in cb-claimed "Claimed 2"

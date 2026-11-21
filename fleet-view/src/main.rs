@@ -1402,11 +1402,13 @@ fn give_back(
 }
 
 /// Start every agent a bead was given to by hand (a handover marked `given`, cb-10d.5) whose
-/// session is not running: `launch <Name> --bead <id>`, armed and recorded in `handed` exactly as a
-/// trigger start is. A start that fails is given back at once with `GiveBack::DidNotStart`.
+/// session is not running: `launch <Name> --bead <id>`, recorded through `record_start` exactly as
+/// every other start is. A start that fails is given back at once with `GiveBack::DidNotStart`.
 ///
-/// No backoff, give-up counter, role spacing or armed check: the navigator's own act is newer than
-/// any of them, and a start that fails is given back once, not retried.
+/// No backoff, give-up counter, role spacing or armed check decides THIS start: the navigator's own
+/// act is newer than any of them, and a start that fails is given back once, not retried. Once
+/// made, it is noted in the ledger like any start (cb-wklg), so later decisions do count it: a
+/// same-role trigger start on this tick is spaced out, and this name's next failed start backs off.
 #[allow(clippy::too_many_arguments)]
 fn start_given(
     app: &mut App,
@@ -9843,6 +9845,8 @@ mod main_tests {
             assert!(line.contains(&format!(r#""role":"{role}""#)), "{caller}: {line}");
             let by = if reason.is_some() { "trigger" } else { "navigator" };
             assert!(line.contains(&format!(r#""by":"{by}""#)), "{caller}: {line}");
+            let logged_bead = bead.map_or("null".to_string(), |id| format!(r#""{id}""#));
+            assert!(line.contains(&format!(r#""bead":{logged_bead}"#)), "{caller}: {line}");
         }
     }
 

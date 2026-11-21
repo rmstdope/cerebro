@@ -387,9 +387,9 @@ PATH="$stub_dir:$PATH" bash "$standalone/scripts/launch-preflight" ux Xavier cla
   || fail "standalone: expected exit 0"
 pass "a standalone clone is untouched"
 
-# --- an producer with no fast gate is refused (ah-qled.7.1) ------------------------------------
+# --- a producer with no fast gate is refused (ah-qled.7.1) -------------------------------------
 #
-# The bead: produce-bead names no tool any more, so an producer with no declared and no
+# The bead: produce-bead names no tool any more, so a producer with no declared and no
 # detectable gate has nothing to run before it opens a PR - and an agent with nothing to run
 # improvises. A loud refusal at launch beats a green report nobody earned.
 c="$(make_consumer nogate)"
@@ -400,16 +400,6 @@ set -e
 [[ $status -eq 2 ]] || fail "no gate: expected exit 2, got $status"
 grep -q "gate_fast" <<<"$out" || fail "no gate: expected the message to name gate_fast, got: $out"
 grep -q "submodule is behind" <<<"$out" && fail "no gate: the message blames the submodule, got: $out"
-pass "an producer with no fast gate is refused, and the message names the gate"
-
-# --- a producer with no fast gate is refused -------------------------------------------------------
-c="$(make_consumer nogateproducer)"
-set +e
-out="$(run_preflight "$c" producer Storm 2>&1)"
-status=$?
-set -e
-[[ $status -eq 2 ]] || fail "producer no gate: expected exit 2, got $status"
-grep -q "gate_fast" <<<"$out" || fail "producer no gate: expected the message to name gate_fast, got: $out"
 pass "a producer with no fast gate is refused, and the message names the gate"
 
 # --- a bugfixer with no fast gate is refused too (cb-cjp7) -------------------------------------
@@ -464,12 +454,10 @@ c="$(make_consumer nogateplanner)"
 run_preflight "$c" ux Xavier || fail "no gate, ux: expected exit 0"
 pass "a UX agent with no fast gate still launches"
 
-# --- an producer with a declared gate launches --------------------------------------------------
+# --- a producer with a declared gate launches ---------------------------------------------------
 c="$(make_consumer withgate)"
 echo "gate_fast make check" > "$c/.cerebro/project.conf"
 run_preflight "$c" producer Cyclops || fail "declared gate: expected exit 0"
-pass "an producer whose project declares a gate launches"
-run_preflight "$c" producer Storm || fail "declared gate, producer: expected exit 0"
 pass "a producer whose project declares a gate launches"
 
 # --- a declaration left at the retired .claude/ path is refused, before anything else (cb-epr) ----

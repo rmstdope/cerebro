@@ -1409,7 +1409,6 @@ fn give_back(
 /// act is newer than any of them, and a start that fails is given back once, not retried. Once
 /// made, it is noted in the ledger like any start (cb-wklg), so later decisions do count it: a
 /// same-role trigger start on this tick is spaced out, and this name's next failed start backs off.
-#[allow(clippy::too_many_arguments)]
 fn start_given(
     app: &mut App,
     host: &mut SessionHost,

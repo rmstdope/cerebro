@@ -403,6 +403,10 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
     // Onto the same vector, so a bad declaration reaches the header by the path the spacing
     // complaint already uses.
     complaints.extend(multiple_complaint);
+    let (work_refresh, work_refresh_complaint) =
+        readers::read_work_refresh(&paths, commands.as_ref());
+    app.set_work_refresh_interval(work_refresh);
+    complaints.extend(work_refresh_complaint);
     state.undeclared = Some(complaints);
     declare_if_in_charge(&mut app, &mut state, &paths, commands.as_ref(), Utc::now());
 

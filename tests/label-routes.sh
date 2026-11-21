@@ -138,18 +138,20 @@ offered_by() {
 
 sha="0123456789abcdef0123456789abcdef01234567"
 
-# The navigator's unpark (`agents/orchestrator.md`, *Unpark it*): `human` and `pause:kept` off,
-# nothing else, so where an unparked bead goes is decided by the labels the park left under them.
-unpark() {
-  bd_env bd update "$1" --remove-label human --remove-label pause:kept
+# A hand-off an agent applies by hand, as its skill's snippet does: the named transitions' flags.
+# The transitions are one word, or several separated by spaces (`"unpark send_to_ux"`).
+apply_route() {
+  local id="$1" transitions="$2"
+  shift 2
+  # shellcheck disable=SC2086 # the transitions are word-split on purpose
+  bd_env bash -c 'source "$1/candidate-label-policy.sh" && route_flags_for $2 && bd update "$3" "${route_flags[@]}" "${@:4}"' \
+    _ "$scripts" "$transitions" "$id" "$@" || fail "route_flags_for $transitions refused"
 }
 
-# A hand-off an agent applies by hand, as its skill's snippet does: the named transition's flags.
-apply_route() {
-  local id="$1" transition="$2"
-  shift 2
-  bd_env bash -c 'source "$1/candidate-label-policy.sh" && route_flags_for "$2" && bd update "$3" "${route_flags[@]}" "${@:4}"' \
-    _ "$scripts" "$transition" "$id" "$@" || fail "route_flags_for $transition refused"
+# The navigator's unpark (`agents/orchestrator.md`, *Unpark it*): the named `unpark` hand-off, so
+# where an unparked bead goes is decided by the labels the park left under it.
+unpark() {
+  apply_route "$1" unpark
 }
 
 # --- producer-park: a UX question goes to the UX queue and nowhere else ----------------------------
@@ -210,11 +212,11 @@ pass "reopen-failed on a bug: the bead goes to the bugfixer queue alone, plan or
 
 for labels in '["ux:agreed","planned","human","pause:kept"]' '["ux:none","human"]'; do
   with_board '[{"id":"cb-x","status":"open","assignee":"","priority":1,"issue_type":"task","labels":'"$labels"'}]'
-  apply_route cb-x send_to_ux --remove-label human --remove-label pause:kept
+  apply_route cb-x "unpark send_to_ux"
   got="$(offered_by cb-x)"
   [[ "$got" == "ux" ]] || fail "a parked $labels bead Cerebro sends back is offered by [$got], not by the UX queue alone"
 done
-pass "send_to_ux by hand: a parked bead goes to the UX queue alone"
+pass "unpark send_to_ux by hand: a parked bead goes to the UX queue alone"
 
 # --- the UX agent's park: the navigator's, then back to the UX queue when unparked -----------------
 
@@ -255,6 +257,45 @@ fi
 [[ "$(jq -c . "$stub/board.json")" == "$(jq -c . <<<"$board")" ]] \
   || fail "a guarded escalation under another builder's claim changed the bead: $(cat "$stub/board.json")"
 pass "a guarded escalation leaves another builder's claim alone"
+
+# --- the merge gate: the navigator merges; unparked, a producer finishes it -------------------------
+
+with_board '[{"id":"cb-x","status":"in_progress","assignee":"Storm","priority":1,"issue_type":"task","labels":["ux:agreed","planned"]}]'
+apply_route cb-x park_for_merge --if-assignee Storm
+bd_env bd unclaim cb-x
+got="$(offered_by cb-x)"
+[[ -z "$got" ]] || fail "a bead parked at the merge gate is offered by [$got]; it is the navigator's"
+jq -e '.[0].labels | index("planned")' "$stub/board.json" >/dev/null \
+  || fail "the merge-gate park took the plan off; the producer who finishes it needs it"
+unpark cb-x
+got="$(offered_by cb-x)"
+[[ "$got" == "producer" ]] || fail "a merge-gate park the navigator unparks is offered by [$got], not by the producer queue alone"
+pass "park_for_merge by hand: the navigator's, plan kept, then a producer's when unparked"
+
+# --- the second-look hand-back: the verifier's alone, until a fresh verdict clears it ---------------
+
+for labels in '["ux:agreed","planned","verification:failed"]' '["ux:none","planned","verification:failed"]'; do
+  with_board '[{"id":"cb-x","status":"in_progress","assignee":"Storm","priority":0,"issue_type":"task","labels":'"$labels"'}]'
+  apply_route cb-x hand_to_verifier --if-assignee Storm
+  bd_env bd unclaim cb-x
+  got="$(offered_by cb-x)"
+  [[ "$got" == "verifier" ]] || fail "a $labels bead handed to the verifier is offered by [$got], not by the verifier alone"
+  apply_route cb-x fresh_verdict
+  got="$(offered_by cb-x)"
+  [[ "$got" != *verifier* ]] || fail "a fresh verdict left a $labels bead on the verifier's list [$got]"
+done
+pass "hand_to_verifier by hand: the verifier's alone, and off her list once she records a verdict"
+
+# --- several transitions in one call: every one's flags; one unknown name refuses them all ----------
+
+if out="$(bd_env bash -c 'source "$1/candidate-label-policy.sh"; route_flags_for unpark send_to_xu; s=$?; echo "${#route_flags[@]}"; exit $s' _ "$scripts" 2>/dev/null)"; then
+  fail "route_flags_for accepted a list holding a transition it does not name"
+fi
+[[ "$out" == 0 ]] || fail "route_flags_for refused a list but left $out flags set; a caller ignoring the status would write half a change"
+if bd_env bash -c 'source "$1/candidate-label-policy.sh" && route_flags_for' _ "$scripts" 2>/dev/null; then
+  fail "route_flags_for accepted no transition at all"
+fi
+pass "route_flags_for refuses an empty list, or one holding an unknown name, leaving no flags"
 
 # --- a hand-off with no name is refused, so a typo cannot apply an empty label change --------------
 

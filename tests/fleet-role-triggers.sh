@@ -15,25 +15,26 @@
 # `end-pass'. Stubbed, because this suite may not touch them: `bd' (one JSON file per bead, every
 # call logged), `gh' (two fixture files and a login), and the agent CLI `claude', a pass that
 # reports `working', ends itself through the real `end-pass', records the `since' its `waiting'
-# carries (dated back past the grace in run 2), and waits to be killed.
+# carries (dated back past the grace in run 1), and waits to be killed.
 #
 # The fleet is the seven interactive rows, all standby. Forge and Sage have no trigger but their
 # clock, and Moira and Cypher a clock as well as their conditions: an hour unless the project
 # declares one (`role_cadence_<role>', cb-kmxs). Runs declaring ten seconds watch the start rather
 # than take it on trust.
 #
-# Three runs of the view, because `gh' is read on the view's own schedule - at startup, then every
+# Two runs of the view, because `gh' is read on the view's own schedule - at startup, then every
 # ten minutes or after a start - and never on `g', so a trigger that lives on GitHub is given at
 # startup, and because a role started once is not started again inside its 600 s wake interval:
-#   1. the baseline. The board is empty and `gh' lists only what starts nobody - an issue older
-#      than the view, the navigator's own pull request and a draft. Once `gh' has answered, every
-#      one of the seven rows is evaluated with no reason, and no session starts. Then `q'.
-#   2. the clock (R27, cb-3qf2). The same quiet board and `gh', and all four clock roles declared
-#      at ten seconds: each starts on its clock, no sooner than ten seconds after it was armed,
-#      and nobody else starts. The view refuses `q' over a live session, so the four passes are
-#      ended by the view before it quits; their `waiting' is dated back past the grace, so that
-#      takes a tick rather than the half minute run 3 measures (cb-yf8h).
-#   3. the triggers, one at a time. Only Forge and Sage are declared at ten seconds, so their clock
+#   1. the clock (R27, cb-3qf2). An empty board, `gh' listing only what starts nobody - an issue
+#      older than the view, the navigator's own pull request, a draft and a stale one - and all
+#      four clock roles declared at ten seconds: once `gh' has answered, each has started on its
+#      clock, no sooner than ten seconds after it was armed, and nobody else starts. (A separate
+#      baseline view with no clock re-proved what this run, run 2 and triggers.rs already show,
+#      for a quarter of the suite's time; cb-i6yf removed it.) The view refuses `q' over a live
+#      session, so the four passes are ended by the view before it quits; their `waiting' is dated
+#      back past the grace, so that takes a tick rather than the half minute run 2 measures
+#      (cb-yf8h).
+#   2. the triggers, one at a time. Only Forge and Sage are declared at ten seconds, so their clock
 #      runs out while the other five are being given their triggers instead of after them
 #      (cb-fwt6), and Moira and Cypher are left to their conditions. `gh' now lists a
 #      contributor's pull request updated after the view armed, and Cypher starts on it. Then a
@@ -44,13 +45,13 @@
 #      none. Forge and Sage start on their clock, no sooner than ten seconds after they were armed,
 #      whichever step that falls in. Their 600 s wake interval keeps either from being started a
 #      second time before the run ends.
-# Every one of run 3's seven passes then ends itself, and the view ends each session no sooner than
+# Every one of run 2's seven passes then ends itself, and the view ends each session no sooner than
 # 30 seconds and no later than 50 after its `waiting', and its process is gone.
 #
 # The binary is built with `cargo build' and run by this suite itself - never as cargo's child
 # (.cerebro/traps.md). Every wait is a bounded poll that fails with what the view saw and did.
 # Most of the suite's time is the condition walk and the half minutes passes are given before they
-# are ended; in run 3 the clock roles' ten seconds run out inside the walk.
+# are ended; in run 2 the clock roles' ten seconds run out inside the walk.
 #
 #     bash tests/fleet-role-triggers.sh
 
@@ -241,7 +242,7 @@ if [ -n "$bead" ]; then
   bd --actor "$name" update "$bead" --add-label ux:agreed
 fi
 "$scripts/end-pass" "$name" --pid $$
-# Run 2 asks only when each clock role starts; the half minute before its end is run 3's to measure.
+# Run 1 asks only when each clock role starts; the half minute before its end is run 2's to measure.
 # While `backdate' exists the `waiting' is dated ten minutes back, so the view ends the pass on its
 # next tick (as fleet-view-restart.sh does, cb-n53p). Written beside the file and moved over it, so
 # the view never reads half of one.
@@ -279,11 +280,9 @@ evidence() {
   printf '\n--- load ---\n';              uptime 2>/dev/null || true
   printf -- '--- lease ---\n'
   local endpoint
-  for endpoint in "$(cd "$consumer" && .cerebro/cerebro/scripts/fleet-supervisor --endpoint 2>&1)" \
-                  "$(cd "$consumer" && .cerebro/cerebro/scripts/fleet-supervisor --legacy-endpoint 2>&1)"; do
-    printf '%s held by: %s\n' "$endpoint" \
-      "$(lsof -nP -iTCP:"${endpoint##*:}" -sTCP:LISTEN 2>/dev/null | awk 'NR > 1 { print $1, $2 }' | tr '\n' ' ')"
-  done
+  endpoint="$(cd "$consumer" && .cerebro/cerebro/scripts/fleet-supervisor --endpoint 2>&1)" || true
+  printf '%s held by: %s\n' "$endpoint" \
+    "$(lsof -nP -iTCP:"${endpoint##*:}" -sTCP:LISTEN 2>/dev/null | awk 'NR > 1 { print $1, $2 }' | tr '\n' ' ')"
   cat "$state/supervisor.json" 2>/dev/null || echo "(no supervisor.json)"
   printf -- '--- screen ---\n';          cat "$work_dir/view.screen" 2>/dev/null || echo "(no screen yet)"
   printf -- '--- view stderr ---\n';     cat "$work_dir/view.err" 2>/dev/null || true
@@ -429,8 +428,13 @@ quit_view() {
   : > "$fixture/gh.log"
 }
 
-# --- run 1: nothing anybody's trigger is ----------------------------------------------------------
+# --- the quiet `gh' ------------------------------------------------------------------------------
 
+# Only what starts nobody: an issue older than the view, the navigator's own pull request, a draft,
+# and a contributor's pull request older than the view. Run 1's clock starts are read against it;
+# run 2 adds a moved one. That none of these starts a row is triggers.rs' unit tests
+# (`what_moved_is_measured_against_this_roles_own_pass'), run 1's clock reasons and run 2's
+# `PR #14 moved' (cb-i6yf: the baseline view that re-proved it is gone).
 jq -n --arg old "$(iso -3600)" '[{number: 7, updatedAt: $old}]' > "$fixture/gh-issues.json"
 jq -n --arg old "$(iso -3600)" --arg soon "$(iso 600)" '[
   {number: 11, author: {login: "navigator"},   isDraft: false, updatedAt: $soon},
@@ -438,26 +442,10 @@ jq -n --arg old "$(iso -3600)" --arg soon "$(iso 600)" '[
   {number: 13, author: {login: "contributor"}, isDraft: false, updatedAt: $old}
 ]' > "$fixture/gh-prs.json"
 
-start_view
-# Run 1 declares no cadence, so the four clock roles keep the built-in hour, which no baseline
-# outlasts.
-# The arm lines are written only by a view that took charge: a read-only one starts nothing, and
-# would pass the baseline for the wrong reason.
-wait_until 60 "the view to take charge and arm the roster" has_decision arm Sage
-gh_answered() { grep -q ' pr list ' "$fixture/gh.log" 2>/dev/null; }
-wait_until 90 "the view to read gh" gh_answered
-asked_at="$(awk '/ pr list / { print $1; exit }' "$fixture/gh.log")"
-wait_until 30 "an evaluation of all seven rows, after gh answered, with no reason" \
-  evaluated_free_since "$((asked_at + 6))" "${roles[@]}"
-[ ! -s "$fixture/sessions" ] || fail "a row was started with nothing to start it on$(evidence)"
-pass "with no trigger anywhere, none of the seven rows starts"
+# --- run 1: R27, each clock role on the cadence the project declares -----------------------------
 
-quit_view run1
-
-# --- run 2: R27, each clock role on the cadence the project declares -----------------------------
-
-# All four clock roles declared at ten seconds, on the quiet board and the quiet `gh' of run 1, so
-# nothing but the clock can start any of them. Moira and Cypher are what this run is for: run 3
+# All four clock roles declared at ten seconds, on the quiet board and the quiet `gh', so nothing
+# but the clock can start any of them. Moira and Cypher are what this run is for: run 2
 # gives them their conditions, which a ten-second clock there would pre-empt (cb-3qf2).
 cadence=10
 cp "$consumer/.cerebro/project.conf" "$fixture/project.conf.base"
@@ -483,6 +471,10 @@ done
 # Whole minutes are what a cadence reason names (`triggers::cadence_figure'), so ten seconds is
 # `0m'; `triggers::cadence_noun' calls a pass of the two GitHub roles a pass, and of the two
 # filing roles a sweep.
+# The view read `gh' with the quiet issue and pull requests listed, and still started Moira and
+# Cypher on their clocks: neither was started on any of them.
+gh_answered() { grep -q ' pr list ' "$fixture/gh.log" 2>/dev/null; }
+wait_until 30 "the view to read gh" gh_answered
 started_on Moira "0m since its last pass"
 started_on Cypher "0m since its last pass"
 started_on Forge "0m since its last sweep"
@@ -501,16 +493,16 @@ pass "Moira, Cypher, Forge and Sage are started on their declared cadence, no so
 
 # The view refuses `q' over a live session, so each pass, which ended itself, is left for the view
 # to end before it quits. Its `waiting' was dated back past the grace, so that is the next tick:
-# the half minute itself is run 3's to measure. Twenty seconds, well short of the grace, so a
+# the half minute itself is run 2's to measure. Twenty seconds, well short of the grace, so a
 # back-dating that stopped working fails here rather than quietly costing the half minute again.
 for name in Moira Cypher Forge Sage; do
   wait_until 20 "the view to end $name's pass" has_decision end "$name"
 done
 expect_started Moira Cypher Forge Sage
-quit_view run2
+quit_view run1
 rm -f "$fixture/backdate"
 
-# --- run 3: each trigger in turn ------------------------------------------------------------------
+# --- run 2: each trigger in turn ------------------------------------------------------------------
 
 # Forge's and Sage's clock only, so it runs out while the condition roles are being given theirs,
 # rather than after them; Moira and Cypher keep their hour and start on their conditions.

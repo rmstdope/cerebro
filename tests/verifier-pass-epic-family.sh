@@ -33,8 +33,20 @@ done
 [ -n "$sub" ] || sub="unknown"
 argv="$stub_dir/argv.$sub"
 for a in "$@"; do printf 'ARG:%s\n' "$a" >> "$argv"; done
-if [ -f "$stub_dir/stdout.$sub" ]; then
-  cat "$stub_dir/stdout.$sub"
+out="$stub_dir/stdout.$sub"
+if [ "$sub" = "children" ]; then
+  # `bd children <id>` answers per id; a bead with no file has no children.
+  id=""
+  next=0
+  for a in "$@"; do
+    if [ "$next" = 1 ]; then id="$a"; break; fi
+    [ "$a" = "children" ] && next=1
+  done
+  out="$stub_dir/stdout.children.$id"
+  [ -f "$out" ] || { [ -f "$stub_dir/exit.children" ] || echo '[]'; }
+fi
+if [ -f "$out" ]; then
+  cat "$out"
 fi
 if [ -f "$stub_dir/exit.$sub" ]; then
   exit "$(cat "$stub_dir/exit.$sub")"
@@ -57,6 +69,16 @@ set_stdout() {
   printf '%s' "$2" > "$stub_dir/stdout.$1"
 }
 
+clear_children() {
+  rm -f "$stub_dir"/stdout.children.* "$stub_dir/exit.children"
+}
+
+# The ids one `bd <sub>` call was made for: the argument after the subcommand word.
+ids_for() {
+  [ -f "$stub_dir/argv.$1" ] || return 0
+  awk -v word="ARG:$1" '$0 == word { if ((getline id) > 0) print substr(id, 5) }' "$stub_dir/argv.$1" | sort
+}
+
 sha40="0123456789abcdef0123456789abcdef01234567"
 
 # --- records a passed epic family ---------------------------------------------------------------
@@ -65,6 +87,12 @@ set_stdout list '[
   {"id":"ep-1.1","issue_type":"task","status":"open","labels":[]},
   {"id":"ep-1.2","issue_type":"task","status":"closed","labels":["verification:pending"]},
   {"id":"ep-2","issue_type":"epic","status":"open","labels":[]}
+]'
+clear_children
+set_stdout children.ep-1 '[
+  {"id":"ep-1.1","issue_type":"task","status":"open","labels":[]},
+  {"id":"ep-1.2","issue_type":"task","status":"closed","labels":["verification:pending"]},
+  {"id":"ep-1.3","issue_type":"event","status":"open","labels":[]}
 ]'
 run ep-1 --sha "$sha40"
 [ "$status" -eq 0 ] || fail "records-a-passed-epic-family: expected exit 0, got $status ($err)"
@@ -89,7 +117,69 @@ fi
 [ "$(grep -cxF "ARG:second-look" "$stub_dir/argv.update")" -eq 3 ] \
   || fail "second-look was not removed for every family member (cb-0elv.3)"
 grep -qxF "ARG:dolt" "$stub_dir/argv.dolt" || fail "bd dolt push was not called"
+if grep -qxF "ARG:ep-1.3" "$stub_dir/argv.close" "$stub_dir/argv.set-state"; then
+  fail "an event bead under the epic was treated as family"
+fi
 pass "records a passed epic family across epic and children"
+
+# --- the family is what bd children says, not what the ids look like ----------------------------
+set_stdout list '[
+  {"id":"ep-3","issue_type":"epic","status":"closed","labels":[]},
+  {"id":"ep-3.7","issue_type":"task","status":"closed","labels":[]}
+]'
+clear_children
+set_stdout children.ep-3 '[{"id":"zz-9","issue_type":"task","status":"closed","labels":[]}]'
+set_stdout children.zz-9 '[{"id":"zz-9.1","issue_type":"task","status":"open","labels":[]}]'
+run ep-3 --sha "$sha40"
+[ "$status" -eq 0 ] || fail "children-not-prefixes: expected exit 0, got $status ($err)"
+got="$(ids_for set-state | tr '\n' ' ')"
+[ "$got" = "ep-3 zz-9 zz-9.1 " ] \
+  || fail "the family marked passed was '$got', not the epic, its child zz-9 and grandchild zz-9.1"
+[ "$(ids_for close)" = "zz-9.1" ] || fail "only the open grandchild should have been closed: $(ids_for close)"
+pass "marks the children bd reports, at every depth, and not beads that only share the prefix"
+
+# --- a failed bd children is a failure, not an empty family ------------------------------------
+clear_children
+echo 1 > "$stub_dir/exit.children"
+run ep-3 --sha "$sha40"
+rm -f "$stub_dir/exit.children"
+[ "$status" -eq 1 ] || fail "failed-children: expected exit 1, got $status"
+[ ! -f "$stub_dir/argv.set-state" ] || fail "failed-children: marked beads passed without knowing the family"
+pass "exits 1 without marking anything when bd children fails"
+
+# --- the shared table: which beads under an epic are its family (cb-nm5p) ----------------------
+table="$repo_root/tests/lib/epic-family.json"
+rows="$(jq -c '.[] | select(has("_") | not)' "$table")" || fail "could not read $table"
+[ -n "$rows" ] || fail "$table has no rows"
+bad=""
+while IFS= read -r row; do
+  name="$(jq -r '.name' <<<"$row")"
+  epic_id="$(jq -r '.epic.id' <<<"$row")"
+  set_stdout list "$(jq -c '[.epic + {issue_type: "epic", labels: []}]' <<<"$row")"
+  clear_children
+  set_stdout "children.$epic_id" "$(jq -c '[.under[] + {labels: []}]' <<<"$row")"
+  run "$epic_id" --sha "$sha40"
+  if [ "$status" -ne 0 ]; then
+    bad="$bad
+  $name: exited $status ($err)"
+    continue
+  fi
+  want_marked="$(jq -r '[.epic.id] + .family | .[]' <<<"$row" | sort)"
+  want_closed="$(jq -r '. as $r | ([$r.epic] + [$r.under[] | select(.id as $i | $r.family | index($i))])
+    | .[] | select(.status != "closed") | .id' <<<"$row" | sort)"
+  got_marked="$(ids_for set-state)"
+  got_closed="$(ids_for close)"
+  if [ "$got_marked" != "$want_marked" ]; then
+    bad="$bad
+  $name: marked passed [$(echo $got_marked)], the epic and its family are [$(echo $want_marked)]"
+  fi
+  if [ "$got_closed" != "$want_closed" ]; then
+    bad="$bad
+  $name: closed [$(echo $got_closed)], the open members are [$(echo $want_closed)]"
+  fi
+done <<<"$rows"
+[ -z "$bad" ] || fail "verifier-pass-epic-family disagrees with tests/lib/epic-family.json:$bad"
+pass "answers every row of the epic-family table"
 
 # --- refuses non-epics -------------------------------------------------------------------------
 set_stdout list '[{"id":"tt-1","issue_type":"task","status":"open","labels":[]}]'

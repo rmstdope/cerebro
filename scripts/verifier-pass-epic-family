@@ -4,8 +4,9 @@
 #
 #     .cerebro/cerebro/scripts/verifier-pass-epic-family <epic-id> --sha <full-sha> [--reason <line>]
 #
-# It ensures every bead in the family (the epic and every descendant `<epic-id>.*`) is closed and
-# marked verification=passed at the sha that was verified.
+# It ensures every bead in the family (the epic and every descendant, as `bd children` reports
+# them with events dropped, through epic-family.sh) is closed and marked verification=passed at the
+# sha that was verified.
 #
 #   exit 0  family updated and pushed
 #   exit 1  a bd call failed; the family may be partially updated
@@ -16,6 +17,8 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # The labels a verdict clears are spelled there, beside the queues that read them (cb-q6yb).
 source "$script_dir/candidate-label-policy.sh"
+# Which beads under a bead are family: the rule tests/lib/epic-family.json holds (cb-nm5p).
+source "$script_dir/epic-family.sh"
 
 usage() {
   echo "usage: verifier-pass-epic-family <epic-id> --sha <full-sha> [--reason <line>]" >&2
@@ -84,16 +87,20 @@ if [[ "$is_epic" != "epic" ]]; then
   exit 2
 fi
 
-family_json="$(
-  jq -c --arg epic "$epic_id" '
-    [.[] | select(.id == $epic or (.id | startswith($epic + ".")))]
-  ' <<<"$all_beads"
-)"
-family_count="$(jq 'length' <<<"$family_json")"
-if [[ "$family_count" -eq 0 ]]; then
-  echo "verifier-pass-epic-family: no family beads found for '$epic_id'" >&2
-  exit 2
-fi
+epic_status="$(jq -r --arg epic "$epic_id" '[.[] | select(.id == $epic) | .status][0] // empty' <<<"$all_beads")"
+
+# The epic, then every member's own family, breadth first; a repeated id is visited once.
+family_json="$(jq -c --arg epic "$epic_id" --arg status "$epic_status" '[{id: $epic, status: $status}]' <<<'null')"
+next=0
+while [[ "$next" -lt "$(jq 'length' <<<"$family_json")" ]]; do
+  member="$(jq -r --argjson i "$next" '.[$i].id' <<<"$family_json")"
+  children="$(epic_family_children "$root" "$member")" || exit 1
+  family_json="$(jq -c --argjson more "$children" '
+    . as $known | reduce $more[] as $c ($known;
+      if any(.[]; .id == $c.id) then . else . + [{id: $c.id, status: $c.status}] end)
+  ' <<<"$family_json")"
+  next=$((next + 1))
+done
 
 short=""
 if git -C "$root" cat-file -e "$sha^{commit}" 2>/dev/null; then

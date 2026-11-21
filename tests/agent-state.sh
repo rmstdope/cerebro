@@ -158,7 +158,8 @@ tmp="$(new_fixture)"
 run_state "$tmp" Cyclops working --bead ah-f9c --phase build --pid 1
 f="$(state_file "$tmp" Cyclops)"
 # Stage the first write as old rather than wait for the second-resolution clock to tick.
-jq '.since = "2020-01-01T00:00:00Z" | .phase_since = "2020-01-01T00:00:00Z"' "$f" > "$f.staged" && mv -f "$f.staged" "$f"
+jq '.since = "2020-01-01T00:00:00Z" | .phase_since = "2020-01-01T00:00:00Z"' "$f" > "$f.staged" && mv -f "$f.staged" "$f" \
+  || fail "phase-change-keeps-since: could not stage the first write"
 since1="$(jq -r '.since' "$f")"
 phase_since1="$(jq -r '.phase_since' "$f")"
 run_state "$tmp" Cyclops working --bead ah-f9c --phase review --pid 1
@@ -176,7 +177,8 @@ tmp="$(new_fixture)"
 run_state "$tmp" Cyclops working --bead ah-f9c --phase review --pid 1
 f="$(state_file "$tmp" Cyclops)"
 # Stage the first write as old rather than wait for the second-resolution clock to tick.
-jq '.since = "2020-01-01T00:00:00Z" | .phase_since = "2020-01-01T00:00:00Z"' "$f" > "$f.staged" && mv -f "$f.staged" "$f"
+jq '.since = "2020-01-01T00:00:00Z" | .phase_since = "2020-01-01T00:00:00Z"' "$f" > "$f.staged" && mv -f "$f.staged" "$f" \
+  || fail "state-change-resets-since: could not stage the first write"
 since1="$(jq -r '.since' "$f")"
 phase_since1="$(jq -r '.phase_since' "$f")"
 run_state "$tmp" Cyclops asking --bead ah-f9c --phase review --pid 1

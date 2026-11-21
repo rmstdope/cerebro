@@ -314,12 +314,18 @@ pass "Rogue's dead session gives cb-b1 back, and Rogue is started on it again at
 # fails at once saying so instead of waiting out its bound.
 
 # Sets held_row_text to the row it matched, so what is reported is what was read in the hold.
+# held_row_seen is the last countdown row drawn, named if the hold runs out first: a countdown
+# whose words changed then says so, rather than reading as a timing fault.
 held_row_text=""
+held_row_seen="(none drawn)"
 held_row() {
   (( $(session_count) < 4 )) \
-    || fail "Rogue was started a fourth time before its row was read during the hold after two failures$(evidence)"
+    || fail "Rogue was started a fourth time before its row read '↻ retry in <n>s, 2 failed' during the hold after two failures; the last countdown it drew: '${held_row_seen}'$(evidence)"
+  local row
+  row="$(rogue_row)"
+  [[ "$row" == *"↻"* ]] && held_row_seen="$row"
   row_says "↻ retry in " "s, 2 failed" || return 1
-  held_row_text="$(rogue_row)"
+  held_row_text="$row"
 }
 backed_off_twice() {
   jq -se 'any(.[]; .agent == "Rogue" and .backed_off == true and .failed_starts == 2)' \

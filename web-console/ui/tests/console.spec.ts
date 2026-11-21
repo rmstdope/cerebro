@@ -882,22 +882,25 @@ test("a supervision answer that could not be read is asked again", async ({ page
   const start = new Date("2026-01-01T00:00:00Z");
   await page.clock.install({ time: start });
   await page.clock.pauseAt(start);
-  let readable = false;
+  let advanced = false;
   let askedControl = 0;
   await page.route("/api/fleet", (route) => route.fulfill({ json: { state: "fresh", value: [storm] } }));
   await page.route(/\/api\/sessions\//, (route) => route.fulfill({ json: { state: "absent" } }));
   await page.route("/api/control", (route) => {
     askedControl += 1;
-    return route.fulfill({ json: readable ? { supervised: true } : { supervised: false, error: "unreadable" } });
+    return route.fulfill({ json: advanced ? { supervised: true } : { supervised: false, error: "unreadable" } });
   });
   await page.goto("/");
   await expect(page.getByText("Read-only")).toBeVisible();
-  await expect.poll(() => askedControl).toBeGreaterThan(0);
-  readable = true;
+  // Every ask made at load answered unreadable and the page has set its retry: StrictMode asks
+  // more than once, and an ask still to come would be answered readable without any retry.
+  let seen = -1;
+  await expect.poll(() => { const settled = askedControl > 0 && askedControl === seen; seen = askedControl; return settled; }, { intervals: [100] }).toBe(true);
+  const askedAtLoad = askedControl;
+  advanced = true;
 
-  // Advanced again if the page had not yet set its retry when the clock first moved.
-  await expect(async () => {
-    await page.clock.runFor(3000);
-    await expect(page.getByText("Supervised")).toBeVisible({ timeout: 200 });
-  }).toPass({ timeout: 5000 });
+  await page.clock.runFor(3000);
+
+  await expect(page.getByText("Supervised")).toBeVisible();
+  expect(askedControl).toBeGreaterThan(askedAtLoad);
 });

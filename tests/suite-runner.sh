@@ -306,11 +306,17 @@ pass "--jobs refuses a bad count and --jobs 1 keeps the contract"
 # other on a saturated machine - the same direction as the sighting this bead came from. So each
 # fixture writes its start, then WAITS for its sibling's start before sleeping, bounded so a serial
 # run still terminates. Overlap at --jobs 2 is then a fact the fixtures create rather than a
-# measurement of the scheduler, and no assertion here depends on how busy the machine is. At
-# --jobs 1 the first fixture waits out the bound and the second finds the mark already there, so
-# the windows still cannot touch.
+# measurement of the scheduler, and no assertion here depends on how busy the machine is.
 #
-# Their own directory, so cases 1-5 are untouched by the sleeping.
+# The --jobs 1 run gets fixtures of its own that do not wait (cb-06dm): the waiting pair would
+# spend its whole bound there, about 9s of the suite. What proves the serial run is the ordering
+# check below it (e-slow named only after d-slow's result), which needs no clock. The windows check
+# is a second signal: each serial fixture sleeps one second between its marks, never zero, since two
+# suites that started and ended inside the same second would always read as no overlap. One second
+# can still miss a concurrent pair whose forks straddle a second boundary, which the ordering check
+# catches.
+#
+# Their own directories, so cases 1-5 are untouched by the sleeping.
 
 mkdir -p "$work_dir/slow"
 marks="$work_dir/marks"
@@ -323,6 +329,13 @@ for f in d-slow e-slow; do
   if [[ "$f" == e-slow ]]; then other=d-slow; fi
   printf '#!/usr/bin/env bash\nmkdir -p "%s"\ndate +%%s >"%s/%s.start"\nw=0\nwhile [ $w -lt 5 ] && [ ! -f "%s/%s.start" ]; do sleep 1; w=$((w+1)); done\nsleep 2\ndate +%%s >"%s/%s.end"\nexit 0\n' \
     "$marks" "$marks" "$f" "$marks" "$other" "$marks" "$f" >"$work_dir/slow/$f.sh"
+done
+
+# Same names and marks, so read_windows and overlapping read them unchanged.
+mkdir -p "$work_dir/serial"
+for f in d-slow e-slow; do
+  printf '#!/usr/bin/env bash\nmkdir -p "%s"\ndate +%%s >"%s/%s.start"\nsleep 1\ndate +%%s >"%s/%s.end"\nexit 0\n' \
+    "$marks" "$marks" "$f" "$marks" "$f" >"$work_dir/serial/$f.sh"
 done
 
 # The four recorded seconds, as $ds $de $es $ee, and a one-line summary for a failure message.
@@ -367,7 +380,7 @@ overlapping || fail "--jobs 2: the two suites did not overlap ($windows)
 $both"
 
 rm -rf "$marks"
-run --jobs 1 "$work_dir/slow"
+run --jobs 1 "$work_dir/serial"
 [[ $status -eq 0 ]] || fail "--jobs 1 on two sleeping suites: expected exit 0, got $status
 $both"
 read_windows "--jobs 1"
@@ -375,8 +388,8 @@ read_windows "--jobs 1"
 $both"
 
 # At --jobs 1 at most one name is ahead of its result, which is the property a stalled run relies on.
-named="$(line_of_fixed "$both" "-- $work_dir/slow/e-slow.sh")"
-first_result="$(line_of_fixed "$both" "ok   $work_dir/slow/d-slow.sh (")"
+named="$(line_of_fixed "$both" "-- $work_dir/serial/e-slow.sh")"
+first_result="$(line_of_fixed "$both" "ok   $work_dir/serial/d-slow.sh (")"
 [[ -n "$named" && -n "$first_result" && $named -gt $first_result ]] || fail "--jobs 1: e-slow.sh is named at line $named, before d-slow.sh's result at $first_result
 $both"
 

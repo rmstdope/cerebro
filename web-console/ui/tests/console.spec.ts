@@ -877,12 +877,25 @@ test("an agent that is not running can be started", async ({ page }) => {
 });
 
 test("a supervision answer that could not be read is asked again", async ({ page }) => {
-  const readable = Date.now() + 1500;
+  // The page's clock, held still, so the retry's three seconds are advanced rather than waited out
+  // (cb-forz).
+  const start = new Date("2026-01-01T00:00:00Z");
+  await page.clock.install({ time: start });
+  await page.clock.pauseAt(start);
+  let readable = false;
+  let askedControl = 0;
   await page.route("/api/fleet", (route) => route.fulfill({ json: { state: "fresh", value: [storm] } }));
   await page.route(/\/api\/sessions\//, (route) => route.fulfill({ json: { state: "absent" } }));
-  await page.route("/api/control", (route) => route.fulfill({ json: Date.now() < readable ? { supervised: false, error: "unreadable" } : { supervised: true } }));
+  await page.route("/api/control", (route) => {
+    askedControl += 1;
+    return route.fulfill({ json: readable ? { supervised: true } : { supervised: false, error: "unreadable" } });
+  });
   await page.goto("/");
   await expect(page.getByText("Read-only")).toBeVisible();
+  await expect.poll(() => askedControl).toBeGreaterThan(0);
+  readable = true;
 
-  await expect(page.getByText("Supervised")).toBeVisible({ timeout: 8000 });
+  await page.clock.runFor(3000);
+
+  await expect(page.getByText("Supervised")).toBeVisible();
 });

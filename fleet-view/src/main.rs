@@ -125,11 +125,15 @@ fn reader_paths(read: impl Fn(&str) -> Option<String>) -> Result<ReaderPaths, St
 /// releases the listener, and `TerminalGuard` already proves that a `Drop` is the only cleanup an
 /// early return, a `?` and a panic all respect.
 ///
-/// The endpoint, identity and record are read ONCE, before the terminal is entered. They are
-/// facts about the checkout rather than about this run, and reading them here is what lets this
-/// process own the checkout on its first frame.
+/// The endpoint, identity and record are looked up by `acquire`, wherever a lease attempt is
+/// made, until they are known (cb-pd0f). They are facts about the checkout rather than about this
+/// run, so once found they are kept; but a lookup that failed - one slow exec under gate load - is
+/// asked again on the next tick instead of leaving the view read-only for life. `start` applies
+/// before the first frame, so a window that owns the checkout still owns it on that frame.
 struct SupervisorController {
     lease: Option<SupervisorLease>,
+    paths: ReaderPaths,
+    commands: Commands,
     endpoint: Option<SocketAddr>,
     identity: Option<String>,
     record: Option<PathBuf>,
@@ -146,13 +150,15 @@ struct SupervisorController {
 }
 
 impl SupervisorController {
-    /// Read what cannot change, and answer what this process is before the first frame.
-    fn new(paths: &ReaderPaths, commands: &dyn CommandRunner) -> Self {
+    /// Reads nothing: the lookup is `acquire`'s, so a failed one is retried rather than kept.
+    fn new(paths: ReaderPaths, commands: Commands) -> Self {
         Self {
             lease: None,
-            endpoint: readers::read_supervisor_endpoint(paths, commands).ok(),
-            identity: readers::read_supervisor_identity(paths, commands).ok(),
-            record: readers::read_supervisor_record(paths, commands).ok(),
+            paths,
+            commands,
+            endpoint: None,
+            identity: None,
+            record: None,
             last_request: None,
             diagnostic: None,
         }
@@ -216,7 +222,36 @@ impl SupervisorController {
         matches!(mode, SupervisionMode::ReadOnly(ReadOnlyReason::LockError(_)))
     }
 
+    /// Fill in where the lease lives, if any of it is still unknown. `Err` is the mode to show.
+    fn locate(&mut self) -> Result<(), SupervisionMode> {
+        if self.endpoint.is_some() && self.identity.is_some() && self.record.is_some() {
+            return Ok(());
+        }
+        match readers::read_supervisor_location(&self.paths, self.commands.as_ref()) {
+            Ok(Some(found)) => {
+                self.endpoint = Some(found.endpoint);
+                self.identity = Some(found.identity);
+                self.record = Some(found.record);
+                Ok(())
+            }
+            // The documented degrade, answered below with no diagnostic.
+            Ok(None) => Ok(()),
+            // A failed read is never an empty answer: this one names its call on the exit line
+            // and in `errors.jsonl`, and is asked again on the next tick.
+            Err(e) => {
+                self.note_diagnostic(format!(
+                    "supervision lease lookup failed: {}",
+                    e.log_message()
+                ));
+                Err(SupervisionMode::ReadOnly(ReadOnlyReason::LockError(e.to_string())))
+            }
+        }
+    }
+
     fn acquire(&mut self) -> SupervisionMode {
+        if let Err(mode) = self.locate() {
+            return mode;
+        }
         let (Some(endpoint), Some(identity), Some(record)) =
             (self.endpoint, self.identity.as_ref(), self.record.as_ref())
         else {
@@ -323,7 +358,7 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
     };
     // Ownership before the first frame: the lease is taken here, so a window that owns the
     // checkout never draws a `Cerebro — starting` frame it has already left.
-    let mut controller = SupervisorController::new(&paths, commands.as_ref());
+    let mut controller = SupervisorController::new(paths.clone(), commands.clone());
     let initial = controller.apply();
     let enabled = initial.may_supervise();
     let mut app = App::with_supervision(initial);
@@ -3475,7 +3510,7 @@ mod main_tests {
             standby: Default::default(),
             ledger: StartLedger::default(),
             logger: test_logger(),
-            controller: SupervisorController::new(&nowhere().0, &RealCommands),
+            controller: SupervisorController::new(nowhere().0, Arc::new(RealCommands)),
             control: None,
             undeclared: None,
         }
@@ -3690,7 +3725,7 @@ mod main_tests {
     #[test]
     fn a_resolved_collision_does_not_become_the_parting_line() {
         let (paths, _) = nowhere();
-        let mut controller = SupervisorController::new(&paths, &RealCommands);
+        let mut controller = SupervisorController::new(paths.clone(), Arc::new(RealCommands));
 
         let dir = tempfile::tempdir().expect("tempdir");
         controller.identity = Some("/repos/x".to_string());
@@ -3715,7 +3750,7 @@ mod main_tests {
     #[test]
     fn a_consumer_with_no_lease_machinery_degrades_silently() {
         let (paths, _) = nowhere();
-        let mut controller = SupervisorController::new(&paths, &RealCommands);
+        let mut controller = SupervisorController::new(paths.clone(), Arc::new(RealCommands));
         assert!(
             controller.endpoint.is_none()
                 && controller.identity.is_none()
@@ -3734,6 +3769,63 @@ mod main_tests {
             controller.diagnostic().is_none(),
             "the degrade is not a fault and must print nothing on the way out"
         );
+    }
+
+    /// cb-pd0f: a lookup that timed out under load is a fault the exit line names, not the
+    /// documented degrade - and it is asked again, so the view takes charge on a later tick
+    /// instead of staying read-only for life.
+    #[test]
+    fn a_lookup_that_timed_out_once_supervises_on_a_later_tick() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let dir = tempfile::tempdir().expect("tempdir");
+        let scripts = dir.path().join("scripts");
+        std::fs::create_dir_all(&scripts).expect("scripts");
+        std::fs::write(scripts.join("fleet-supervisor"), "").expect("script");
+        let paths = ReaderPaths {
+            consumer_root: dir.path().to_path_buf(),
+            shared_root: dir.path().to_path_buf(),
+            scripts_dir: scripts,
+        };
+        let record = dir.path().join("supervisor.json");
+        let timed_out = Arc::new(AtomicBool::new(false));
+        let seen = timed_out.clone();
+        let commands: Commands = Arc::new(cerebro_tui::readers::testing::FakeCommands::new(
+            move |call| {
+                let args: Vec<&str> = call.args.iter().map(String::as_str).collect();
+                if !seen.swap(true, Ordering::SeqCst) {
+                    return Err(ReadError::Timeout {
+                        source: cerebro_tui::readers::Invocation::new(&call.program, &args),
+                        seconds: 5,
+                    });
+                }
+                Ok(match args[0] {
+                    // A fresh address on every ask: a probe's port is not reserved (traps.md).
+                    "--endpoint" => format!("{}\n", probe::free_endpoint()).into_bytes(),
+                    "--identity" => b"/repos/x\n".to_vec(),
+                    "--record" => format!("{}\n", record.display()).into_bytes(),
+                    other => panic!("unexpected {other}"),
+                })
+            },
+        ));
+        let mut controller = SupervisorController::new(paths, commands);
+
+        match controller.apply() {
+            SupervisionMode::ReadOnly(ReadOnlyReason::LockError(_)) => {}
+            other => panic!("a failed lookup cannot supervise: {other:?}"),
+        }
+        let diagnostic = controller.diagnostic().expect("a failed lookup is a named fault");
+        assert!(diagnostic.contains("fleet-supervisor --endpoint"), "{diagnostic}");
+        assert!(diagnostic.contains("did not answer within 5s"), "{diagnostic}");
+
+        let held = probe::wait_until(probe::POLL_BOUND, || {
+            if controller.apply() == SupervisionMode::Supervising {
+                return true;
+            }
+            controller.endpoint = None; // a lost bind race asks again for a new address
+            false
+        });
+        assert!(held && controller.lease.is_some(), "the later tick must take the lease");
+        assert!(controller.diagnostic().is_none(), "a resolved lookup is not the parting line");
     }
 
     #[test]
@@ -9227,13 +9319,14 @@ mod main_tests {
     #[test]
     fn a_released_lease_is_bindable_by_a_successor() {
         let (_dir, paths) = supervisor_consumer();
-        let mut controller = SupervisorController::new(&paths, &RealCommands);
-        let record = reported_record(&controller);
+        let mut controller = SupervisorController::new(paths.clone(), Arc::new(RealCommands));
 
         assert_eq!(
             apply_until(&mut controller, &SupervisionMode::Supervising),
             SupervisionMode::Supervising
         );
+        // Known only once a lease attempt has looked it up (cb-pd0f).
+        let record = reported_record(&controller);
         let written = std::fs::read_to_string(&record).expect("the record exists once supervising");
         assert!(
             written.contains(&format!("\"pid\":{}", std::process::id())),
@@ -9245,7 +9338,7 @@ mod main_tests {
         assert!(!record.exists(), "dropping the lease removes the record it wrote");
 
         // A SECOND, independent controller takes it.
-        let mut successor = SupervisorController::new(&paths, &RealCommands);
+        let mut successor = SupervisorController::new(paths.clone(), Arc::new(RealCommands));
         assert_eq!(
             apply_until(&mut successor, &SupervisionMode::Supervising),
             SupervisionMode::Supervising,

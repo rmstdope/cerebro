@@ -1400,8 +1400,6 @@ mod tests {
 
 
 
-    /// A reader that cannot run at all is an error, never a guess. Fail-open here is the one
-    /// failure cb-kcs.1 exists to refuse.
     /// cb-pd0f: a checkout with no `fleet-supervisor` at all is the documented degrade - an
     /// answer, not a failure - and nothing is run to find that out.
     #[test]
@@ -1456,6 +1454,8 @@ mod tests {
         assert_eq!(commands.calls().len(), 1, "the lookup stops at its first failure");
     }
 
+    /// A reader that cannot run at all is an error, never a guess. Fail-open here is the one
+    /// failure cb-kcs.1 exists to refuse.
     #[test]
     fn a_missing_supervisor_script_is_an_error_not_a_default() {
         let paths = paths_at(Path::new("/consumer"));

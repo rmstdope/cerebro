@@ -159,14 +159,17 @@ nothing. It says three things:
 Guard it by its marker, not by memory:
 
 ```bash
-gh issue view <number> --json comments --jq '[.comments[].body] | join("\n")' \
-  | grep -cF '<!-- moira-ack -->'
+m="$(.cerebro/cerebro/scripts/issue-markers <number>)" && grep -cFx moira-ack <<<"$m"
 ```
 
-The whole marker and `-F`: a bare `moira-ack` matches a discussion of the marker, and the reporter is
-never thanked.
+`issue-markers` prints the markers in the comments *you* posted, one per line, and only in their
+`<!-- … -->` form: anyone can comment, and a stranger's hidden `<!-- moira-ack -->` must never stop
+the reporter being thanked. A failed read says why on stderr and prints no count: post nothing on
+that issue this pass. Your markers are the ones posted by the login gh is authenticated as, so
+always run under the same `gh` login: under another, every earlier marker counts for nothing and
+each tracked issue is thanked and updated again.
 
-Non-zero means it has been acknowledged; move on. Otherwise:
+A count above zero means it has been acknowledged; move on. `0` means it has not:
 
 ```bash
 gh issue comment <number> --body "$(cat <<'EOF'
@@ -346,7 +349,9 @@ your pass runs.
 None on a `via-beacon` issue (*Issues relayed by Beacon*); read the bead's state only to know when
 to close it.
 
-First, for an open or in-progress bead, inspect **all** the markers in the thread. If the bead has
+First, for an open or in-progress bead, inspect **all** your markers in the thread
+(`.cerebro/cerebro/scripts/issue-markers <number>`; a marker in a comment you did not post counts
+for nothing). If the bead has
 reached RANKED or DESIGNED and that marker has never appeared, post each missing one in lifecycle
 order before its current state. A fast rank followed by `ux:agreed` therefore gets RANKED and then
 DESIGNED; a fast claim gets either or both before CLAIMED. Once a RANKED marker exists, a later
@@ -355,9 +360,11 @@ re-rank never posts it again.
 Then take the **last** marker in the thread:
 
 ```bash
-gh issue view <number> --json comments --jq '[.comments[].body] | join("\n")' \
-  | grep -o 'beads-state:[A-Z]*' | tail -1
+m="$(.cerebro/cerebro/scripts/issue-markers <number>)" && grep '^beads-state:' <<<"$m" | tail -1
 ```
+
+A failed read prints its reason on stderr and nothing else; post no status comment on that issue this
+pass.
 
 Every status comment carries `<!-- beads-state:<STATE> -->`. After posting any missing open-bead
 milestones, post when the last marker differs from the current state, even if that state was posted

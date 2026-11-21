@@ -319,7 +319,8 @@ pass "Rogue's dead session gives cb-b1 back, and Rogue is started on it again at
 held_row_text=""
 held_row_seen="(none drawn)"
 held_row() {
-  (( $(session_count) < 4 )) \
+  # The view logs a start before the launched session records itself, so either is a fourth start.
+  (( $(session_count) < 4 )) && ! has_start 4 \
     || fail "Rogue was started a fourth time before its row read '↻ retry in <n>s, 2 failed' during the hold after two failures; the last countdown it drew: '${held_row_seen}'$(evidence)"
   local row
   row="$(rogue_row)"
@@ -333,7 +334,8 @@ backed_off_twice() {
 }
 wait_until 30 "the give-back after the third session" has_give_backs 3
 wait_until 30 "Rogue's row to read '↻ retry in <n>s, 2 failed'" held_row
-(( $(session_count) == 3 )) || fail "Rogue was started again while its row said it was held$(evidence)"
+(( $(session_count) == 3 )) && ! has_start 4 \
+  || fail "Rogue was started again while its row said it was held$(evidence)"
 wait_until 10 "an evaluation of Rogue backed off with 2 failed starts, beside the row '$held_row_text'" \
   backed_off_twice
 pass "after two failed starts the view holds Rogue back, and its row says so: '$held_row_text'"

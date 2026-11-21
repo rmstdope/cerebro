@@ -24,6 +24,8 @@
 #
 #     roster                    every row, NAME<TAB>ROLE<TAB>KIND, in file order
 #     roster --implementers     the implementer names only, one per line, in file order
+#     roster --built-in         the built-in table's rows, NAME<TAB>ROLE<TAB>KIND, whatever the
+#                               consumer's roster.conf says
 #     roster --entry <Name>     that one row (NAME<TAB>ROLE<TAB>KIND); exit 2 if absent
 #     roster --role <role>      the names holding that ROLE, one per line, in file order; nothing
 #     roster --policy <role>    that role's routing policy; exit 2 if unknown
@@ -89,7 +91,7 @@ refuse() {
 }
 
 usage() {
-  echo "usage: roster [--implementers | --role <role> | --policy <role> | --entry <Name> | --autostart | --standby]" >&2
+  echo "usage: roster [--built-in | --implementers | --role <role> | --policy <role> | --entry <Name> | --autostart | --standby]" >&2
   exit 2
 }
 
@@ -223,6 +225,18 @@ parse_rows() {
     printf '%s\t%s\t%s\t%s\n' "$name" "$role" "$(kind_of "$role")" "$third"
   done
 }
+
+# `--built-in' answers before any consumer file is read: it is the shipped table whatever the
+# consumer declares, so a consumer file that would refuse cannot refuse it. `install' derives a
+# fresh fleet from it and names what an existing roster.conf lacks against it (cb-6z49).
+if [[ "${1:-}" == "--built-in" ]]; then
+  stage="printing --built-in"
+  BUILT_IN="$(parse_rows "built-in table" <<<"$TABLE")" || exit $?
+  while IFS=$'\t' read -r name role kind _; do
+    printf '%s\t%s\t%s\n' "$name" "$role" "$kind"
+  done <<<"$BUILT_IN"
+  exit 0
+fi
 
 print_all() {
   # One parser for both sources: the consumer file has the same NAME ROLE shape, so a second reader

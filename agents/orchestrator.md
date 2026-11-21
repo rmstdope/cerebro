@@ -469,10 +469,12 @@ bd show <id> --json                                     # the notes: the reason,
   recommendation.
 - **Already declined** — it carries `pause:kept`. Count it; do not ask.
 
-Unparking:
+Unparking is the named `unpark` hand-off (`scripts/candidate-label-policy.sh`): `human` and
+`pause:kept` off, nothing else. One `&&` chain, so a policy that does not load writes nothing:
 
 ```bash
-bd update <id> --remove-label human --remove-label pause:kept
+source .cerebro/cerebro/scripts/candidate-label-policy.sh && route_flags_for unpark &&
+bd update <id> "${route_flags[@]}"
 bd dolt push
 ```
 
@@ -487,8 +489,8 @@ bd update <id> --add-label pause:kept
 bd dolt push
 ```
 
-`--remove-label` is exact and harmless on a missing label. It does not touch `planned`: that is not
-yours to change. The push matters as much as the update.
+A label removal is exact and harmless on a missing label. `unpark` does not touch `planned`: that is
+not yours to change. The push matters as much as the update.
 
 **One bead per question.** Title it with the bead's id and title, and put the reason in the text:
 
@@ -514,13 +516,13 @@ Three options, in this order, your recommendation marked `(Recommended)`:
   `ux:none` **and `planned`**, add `needs-ui-decision` if it is missing, record no answer; that is
   the state `producer-park … ux` leaves, so the next UX pass takes it as a returned piece of work,
   interviews the navigator and clears it. With a stage label still on, a producer takes it instead
-  and finds a question it may not answer. The label change is the named `send_to_ux` hand-off, the
-  same one `producer-park` applies, so the two cannot drift apart (cb-q6yb). One `&&` chain, so a
+  and finds a question it may not answer. The label change is the named `unpark` hand-off followed
+  by `send_to_ux`, the same one `producer-park` applies, so the two cannot drift apart (cb-q6yb). One `&&` chain, so a
   policy that does not load writes nothing rather than half the change:
 
   ```bash
-  source .cerebro/cerebro/scripts/candidate-label-policy.sh && route_flags_for send_to_ux &&
-  bd update <id> --remove-label human --remove-label pause:kept "${route_flags[@]}" \
+  source .cerebro/cerebro/scripts/candidate-label-policy.sh && route_flags_for unpark send_to_ux &&
+  bd update <id> "${route_flags[@]}" \
     --append-notes "## Sent back to the UX stage
 
 <what the navigator wants looked at again, in their words>"
@@ -535,7 +537,8 @@ Three options, in this order, your recommendation marked `(Recommended)`:
 An answer in the navigator's own words is appended verbatim in the update that unparks:
 
 ```bash
-bd update <id> --remove-label human --remove-label pause:kept \
+source .cerebro/cerebro/scripts/candidate-label-policy.sh && route_flags_for unpark &&
+bd update <id> "${route_flags[@]}" \
   --append-notes "## Navigator's answer, $(date -u +%Y-%m-%d)
 
 <the answer, in the navigator's own words>"

@@ -142,7 +142,8 @@ navigator answers when present. An empty declaration is today's fleet: no gate, 
   ready, release your claim and end the pass:
 
   ```bash
-  bd update <id> --add-label human --append-notes "## Ready to merge
+  source .cerebro/cerebro/scripts/candidate-label-policy.sh && route_flags_for park_for_merge &&
+  bd update <id> "${route_flags[@]}" --append-notes "## Ready to merge
 
 PR #<n>, reviewed and green at <sha>; the merge is yours." \
     --set-metadata paused_at=$(date -u +%Y-%m-%dT%H:%M:%SZ) --if-assignee <name>
@@ -338,10 +339,14 @@ gh pr merge <n> --squash --delete-branch
 ## Handing back
 
 A bead you cannot finish goes back to the board, never to another producer by your hand. **The
-hand-back block**, three commands and never a chain:
+hand-back block**, three commands and never a chain, the label change being the named
+`park_for_navigator` hand-off (`scripts/candidate-label-policy.sh`, cb-t51j), sourced in the first
+command's own `&&` so a policy that does not load writes nothing; if that first command fails,
+stop there rather than release the claim:
 
 ```bash
-bd update <id> --remove-label planned --add-label human --append-notes "<what stopped it, and what would unblock it>" \
+source .cerebro/cerebro/scripts/candidate-label-policy.sh && route_flags_for park_for_navigator &&
+bd update <id> "${route_flags[@]}" --append-notes "<what stopped it, and what would unblock it>" \
   --set-metadata paused_at=$(date -u +%Y-%m-%dT%H:%M:%SZ) --if-assignee <name>
 bd unclaim <id> --if-assignee <name>
 bd dolt push
@@ -367,10 +372,11 @@ lists it, every builder and UX queue refuses it, and Psylocke removes it when sh
 verdict. Nobody but this hand-back sets it. **Once per bead**: if the notes already carry a
 second-look hand-back and Psylocke sent it back as still holding, you and she disagree about what
 is left to build, and the third opinion is the navigator's: use the `human` form above instead,
-saying so.
+saying so. The label change is the named `hand_to_verifier` hand-off:
 
 ```bash
-bd update <id> --remove-label planned --add-label second-look --append-notes "<why there is nothing to build>" \
+source .cerebro/cerebro/scripts/candidate-label-policy.sh && route_flags_for hand_to_verifier &&
+bd update <id> "${route_flags[@]}" --append-notes "<why there is nothing to build>" \
   --if-assignee <name>
 bd unclaim <id> --if-assignee <name>
 bd dolt push

@@ -713,9 +713,9 @@ straight back to the UX agent.
 To put one back into circulation after you have answered, or ask Cerebro to:
 
 ```bash
-bd update <id> --remove-label human --remove-label pause:kept        # back to whoever held it
-bd update <id> --remove-label human --remove-label ux:agreed --remove-label ux:none \
-  --remove-label planned --add-label needs-ui-decision \
+source .cerebro/cerebro/scripts/candidate-label-policy.sh             # the named hand-offs
+route_flags_for unpark && bd update <id> "${route_flags[@]}"         # back to whoever held it
+route_flags_for unpark send_to_ux && bd update <id> "${route_flags[@]}" \
   --append-notes "## Sent back to the UX stage
 
 <what you want looked at again>"                                     # back to UX, resuming from the notes; never for a bugfix bead

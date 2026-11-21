@@ -253,8 +253,11 @@ fn real_fleet_health_output_matches_the_health_struct() {
 #[test]
 fn labels_match_the_policy() {
     let policy = repo_root().join("scripts/candidate-label-policy.sh");
+    // A cleared environment, so an exported `*_label` on the machine cannot join the shell's set.
     let output = std::process::Command::new("bash")
-        .arg("-c")
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .args(["--noprofile", "--norc", "-c"])
         .arg(r#"source "$1" || exit 1; for v in $(compgen -v | grep '_label$'); do printf '%s=%s\n' "$v" "${!v}"; done"#)
         .arg("bash")
         .arg(&policy)

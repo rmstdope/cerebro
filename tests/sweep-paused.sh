@@ -52,7 +52,7 @@ STUB
 chmod +x "$stub_dir/bd"
 export PATH="$stub_dir:$PATH"
 
-consumer="$(consumer_new repo --link consumer-root sweep-paused.sh candidate-label-policy.sh)"
+consumer="$(consumer_new repo --link consumer-root sweep-paused.sh)"
 sweep="$consumer/.cerebro/cerebro/scripts/sweep-paused.sh"
 
 # --- an empty board prints an empty array --------------------------------------------------------

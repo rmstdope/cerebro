@@ -43,7 +43,7 @@ export PATH="$stub_dir:$PATH"
 origin="$work_dir/origin.git"
 git init -q --bare -b main "$origin"
 
-consumer="$(consumer_new repo --link consumer-root project-conf default-branch sweep-verdicts.sh candidate-label-policy.sh)"
+consumer="$(consumer_new repo --link consumer-root project-conf default-branch sweep-verdicts.sh)"
 git_q -C "$consumer" commit -q --allow-empty -m "init"
 verdict_sha="$(git -C "$consumer" rev-parse HEAD)"
 # Three commits after the verdict's own, so the distance is a number this suite can pin exactly.

@@ -45,8 +45,9 @@ set -euo pipefail
 
 # The label that says a bead's experience is agreed (`stage_label`), and the one that says there is
 # no experience to agree (`skip_label`, cb-uump), are spelled in `candidate-label-policy.sh` with
-# every other routing label (cb-q6yb). A caller in another language asks for them through
-# `--print-stage-label` and `--print-skip-label` rather than repeating them.
+# every other routing label (cb-q6yb). `--print-stage-label` and `--print-skip-label` print them for
+# a caller that cannot source the policy; the fleet view's Rust no longer asks, since
+# `fleet-view/tests/reader_contracts.rs` holds `labels.rs` to the policy file itself (cb-t51j.3).
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$script_dir/candidate-label-policy.sh"
 

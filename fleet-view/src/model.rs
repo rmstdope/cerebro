@@ -1006,43 +1006,18 @@ pub struct Releasing {
 /// to `scripts/work-beads --print-excluded-types`.
 const SKIPPED_ISSUE_TYPES: [&str; 2] = ["epic", "event"];
 const CONDITIONAL_ISSUE_TYPE: &str = "epic";
-const PAUSED_LABEL: &str = "human";
-/// Set by the navigator's `x` on a verdict-sweep finding: main moved past the commit a failed
-/// verdict was formed against, and the bead is Psylocke's until she looks again. Every builder
-/// queue excludes it (`scripts/assignable-beads`, `bugfix-candidates`, `stage-candidates`).
-const STALE_VERDICT_LABEL: &str = "verdict:stale";
-/// Set by a producer's hand-back when nothing is left to build (produce-bead, *Handing back*):
-/// the bead is the verifier's second look, and every builder and UX queue excludes it (cb-wf24).
-const SECOND_LOOK_LABEL: &str = "second-look";
-const PLANNED_LABEL: &str = "planned";
-/// The stage label the UX agent adds when a bead's experience has been agreed (cb-lz5.1).
-/// The shell owner is `scripts/stage-candidates --print-stage-label`, and
-/// `fleet-view/tests/reader_contracts.rs` holds this copy to it.
-const UX_AGREED_LABEL: &str = "ux:agreed";
-/// The label the navigator's filing interview adds when nothing a person sees changes (cb-uump):
-/// no experience to agree, so the bead is a producer's without a UX pass and sits in the same
-/// bucket as an agreed one. The shell owner is `scripts/stage-candidates --print-skip-label`, and
-/// `fleet-view/tests/reader_contracts.rs` holds this copy to it.
-const UX_NONE_LABEL: &str = "ux:none";
-
-/// The stage label this view partitions on, for the contract test that holds it to
-/// `scripts/stage-candidates --print-stage-label`.
-pub fn ux_agreed_label() -> &'static str {
-    UX_AGREED_LABEL
-}
-
-/// The skip label this view partitions on, for the contract test that holds it to
-/// `scripts/stage-candidates --print-skip-label`.
-pub fn ux_none_label() -> &'static str {
-    UX_NONE_LABEL
-}
+// Each route label this file reads is one const in `crate::labels`, held to
+// `scripts/candidate-label-policy.sh` by `fleet-view/tests/reader_contracts.rs` (cb-t51j.3).
+use crate::labels::{
+    HUMAN_LABEL, PLAN_LABEL, SKIP_LABEL, STAGE_LABEL, STALE_VERDICT_LABEL, VERIFIER_ONLY_LABEL,
+};
 
 /// Whether BEAD is past the UX stage: agreed by a designer, or filed as changing nothing a person
 /// sees. The one Rust spelling of the question `scripts/assignable-beads` answers in the shell.
 pub fn past_ux_stage(bead: &Bead) -> bool {
     bead.labels
         .iter()
-        .any(|l| l == UX_AGREED_LABEL || l == UX_NONE_LABEL)
+        .any(|l| l == STAGE_LABEL || l == SKIP_LABEL)
 }
 const SETTLED_LABELS: [&str; 2] = ["verification:passed", "verification:not-needed"];
 
@@ -1179,15 +1154,15 @@ pub fn partition_beads(beads: Vec<Bead>) -> WorkBuckets {
         match bead.status.as_str() {
             "in_progress" => buckets.claimed.push(bead),
             "open" => {
-                if bead.labels.iter().any(|l| l == PAUSED_LABEL) {
+                if bead.labels.iter().any(|l| l == HUMAN_LABEL) {
                     buckets.paused.push(bead);
                 } else if bead
                     .labels
                     .iter()
-                    .any(|l| l == STALE_VERDICT_LABEL || l == SECOND_LOOK_LABEL)
+                    .any(|l| l == STALE_VERDICT_LABEL || l == VERIFIER_ONLY_LABEL)
                 {
                     buckets.second_look_beads.push(bead);
-                } else if bead.labels.iter().any(|l| l == PLANNED_LABEL) {
+                } else if bead.labels.iter().any(|l| l == PLAN_LABEL) {
                     buckets.planned.push(bead);
                 } else if is_assigned(&bead) {
                     buckets.being_planned.push(bead);

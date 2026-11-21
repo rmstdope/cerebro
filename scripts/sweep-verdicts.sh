@@ -62,6 +62,17 @@ if [[ "${1:-}" != "--json" ]]; then
 fi
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# `verifier_only_label` and `stale_verdict_label`: the words are the label policy's (cb-t51j.3).
+# `verification:failed` is not one of them, and stays spelled here.
+# A policy that cannot be read is refused here. Left to `-u`, the unset word would end only the
+# process substitution that reads it, and the sweep would print `[]`: nothing to look at, on a board
+# that may be full of it.
+# Spelled as a bare `source` line so `tests/lib/place-scripts` places the policy with this script.
+source "$script_dir/candidate-label-policy.sh" 2>/dev/null
+if [[ -z "${verifier_only_label:-}" ]]; then
+  echo '{"error": "could not read candidate-label-policy.sh"}'
+  exit 1
+fi
 
 repo_root="$("$script_dir/consumer-root" --shared 2>/dev/null)" || {
   echo '{"error": "not in a git repository"}'
@@ -118,10 +129,10 @@ while IFS= read -r bead; do
     --argjson merges_since "$merges_since" \
     '{id: $id, title: $title, priority: $priority, verified_at: $verified_at, merges_since: $merges_since}')"
   entries+=("$entry")
-done < <(jq -c '.[]
+done < <(jq -c --arg look "$verifier_only_label" --arg stale "$stale_verdict_label" '.[]
   | select((.labels // []) | index("verification:failed"))
-  | select((.labels // []) | index("second-look"))
-  | select(((.labels // []) | index("verdict:stale")) | not)' <<<"$bd_output")
+  | select((.labels // []) | index($look))
+  | select(((.labels // []) | index($stale)) | not)' <<<"$bd_output")
 
 if [[ ${#entries[@]} -eq 0 ]]; then
   echo "[]"

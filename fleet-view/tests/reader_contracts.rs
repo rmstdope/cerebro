@@ -9,6 +9,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
+use cerebro_tui::labels;
 use cerebro_tui::model::{self, StateInputs};
 use cerebro_tui::readers::{read_history, CommandRunner};
 use cerebro_tui::{read_roster, ReaderPaths, RealCommands};
@@ -242,37 +243,34 @@ fn real_fleet_health_output_matches_the_health_struct() {
     }
 }
 
-/// The stage label this view partitions on is `scripts/stage-candidates`'s to declare, and the
-/// two copies drifting apart is a `Ready to produce` section that never draws a row (cb-lz5.1).
+/// Every route label this view reads or writes is `scripts/candidate-label-policy.sh`'s to declare
+/// (cb-t51j.3). Two copies drifting apart strand a bead: a `Ready to produce` section that never
+/// draws a row, a pause the view cannot see, an unpause that removes a word nobody set.
 ///
-/// `--print-stage-label` resolves no root and reads no board, which is why cb-lz5.1.1 built that
-/// mode and why this case can run in CI.
+/// Both directions, as a set: a word renamed in the policy, a policy label with no twin in
+/// `labels.rs`, and a twin for a word the policy dropped are each red. The policy is sourced, never
+/// executed; it resolves no root and reads no board, so this runs on CI.
 #[test]
-fn the_stage_label_matches_the_shell() {
-    let output = std::process::Command::new(repo_root().join("scripts/stage-candidates"))
-        .arg("--print-stage-label")
+fn labels_match_the_policy() {
+    let policy = repo_root().join("scripts/candidate-label-policy.sh");
+    // A cleared environment, so an exported `*_label` on the machine cannot join the shell's set.
+    let output = std::process::Command::new("bash")
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .args(["--noprofile", "--norc", "-c"])
+        .arg(r#"source "$1" || exit 1; for v in $(compgen -v | grep '_label$'); do printf '%s=%s\n' "$v" "${!v}"; done"#)
+        .arg("bash")
+        .arg(&policy)
         .output()
-        .expect("this checkout's scripts/stage-candidates must run");
-    assert!(output.status.success(), "--print-stage-label exits 0");
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout).trim(),
-        model::ux_agreed_label(),
-        "the label this view buckets on is the one the shell prints"
-    );
-}
-
-/// The skip label is the shell's to declare too (cb-uump): a drift is a bead filed as invisible
-/// that a producer is started on while the view draws it as unplanned.
-#[test]
-fn the_skip_label_matches_the_shell() {
-    let output = std::process::Command::new(repo_root().join("scripts/stage-candidates"))
-        .arg("--print-skip-label")
-        .output()
-        .expect("this checkout's scripts/stage-candidates must run");
-    assert!(output.status.success(), "--print-skip-label exits 0");
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout).trim(),
-        model::ux_none_label(),
-        "the skip label this view buckets on is the one the shell prints"
-    );
+        .expect("bash must run");
+    assert!(output.status.success(), "sourcing the policy exits 0: {output:?}");
+    let shell: std::collections::BTreeSet<(String, String)> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| line.split_once('='))
+        .map(|(name, value)| (name.to_string(), value.to_string()))
+        .collect();
+    let rust: std::collections::BTreeSet<(String, String)> =
+        labels::POLICY.iter().map(|(name, value)| (name.to_string(), value.to_string())).collect();
+    assert!(!shell.is_empty(), "the policy declares labels");
+    assert_eq!(shell, rust, "labels.rs holds exactly the policy's labels, word for word");
 }

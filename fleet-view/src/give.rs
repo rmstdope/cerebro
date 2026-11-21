@@ -9,8 +9,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::lifecycle::row_is_alive;
 use crate::model::{past_ux_stage, Bead, FleetRow, Releasing, RolePolicy, RowState};
 
-const PLANNED_LABEL: &str = "planned";
-const BUGFIX_LABEL: &str = "bugfix";
+use crate::labels::{BUGFIX_LABEL, PLAN_LABEL};
 
 /// Which kind of work a role takes from the board.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -68,7 +67,7 @@ fn standing_for(
             .or_else(|| row.bead.clone());
         return Standing::Busy { bead: busy };
     }
-    let planned = bead.labels.iter().any(|l| l == PLANNED_LABEL);
+    let planned = bead.labels.iter().any(|l| l == PLAN_LABEL);
     let bugfix = bead.labels.iter().any(|l| l == BUGFIX_LABEL);
     let ux_agreed = past_ux_stage(bead);
     match stage {

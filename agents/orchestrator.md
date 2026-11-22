@@ -146,8 +146,10 @@ bead:
    while the pull request is still green and still at the head that was reviewed, and asks GitHub
    to hold the merge to that head. A refusal on stderr (the head moved, CI is no longer green, a
    bead now holds it) needs nothing: the next turn's sweep says what it is now. A `merge refused`
-   line is GitHub refusing a reviewed head (a required approval, say): append that line to the
-   review file and hand it back (step 5), so the same head is not reviewed again every turn.
+   line is GitHub refusing the merge — usually a reviewed head it will never take (a required
+   approval, say), though a head that moved in the last second or a passing gh failure reads the
+   same: append that line to the review file and hand it back (step 5) either way, so the same head
+   is not reviewed again every turn; gh's reason in the bead lets the navigator tell them apart.
 5. Any finding, or three unusable results (an error, an empty answer, or one with neither findings
    nor *No findings.*): `.cerebro/cerebro/scripts/dependabot-sweep --hand-back <n> <file>`, with
    the review (or the attempts) in the file. That files one P4 bead in the navigator's queue naming

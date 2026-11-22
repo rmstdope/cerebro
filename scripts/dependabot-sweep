@@ -5,7 +5,7 @@
 #
 #     dependabot-sweep                              the sweep
 #     dependabot-sweep --merge <n> <sha>            merge #<n> after a review of head <sha>
-#     dependabot-sweep --hand-back <n> <file>       file #<n>'s review findings for the navigator
+#     dependabot-sweep --hand-back <n> <file>       hand #<n> and its review to the navigator
 #
 # What a green pull request gets is the project's `dependabot_merge` (project.conf, cb-au3o):
 #
@@ -40,7 +40,8 @@
 # One line per pull request or bead on stdout. Exit 0, or 1 when something failed, said on stderr:
 # the open pull requests or the board unreadable (nothing is done at all), or a replaced pull request
 # unreadable or a bead write refused (everything else is still done, and what was written is
-# pushed), or a `--merge` or `--hand-back` refused. A refused merge is a line, not a failure; a merge
+# pushed), or a `--merge` or `--hand-back` refused. A merge the sweep tries and GitHub refuses is a
+# line, not a failure (under `--merge` it is the line and exit 1); a merge
 # gh reports failed after the pull request merged (the branch delete, say) is a merge. Bad
 # arguments exit 2.
 
@@ -193,7 +194,7 @@ if [[ "$action" != sweep ]]; then
       "Filed by the Dependabot sweep (`scripts/dependabot-sweep --hand-back`).\n\n## The review\n"' <<<"$prs"
     cat "$arg"
   } > "$body"
-  if id="$(bd -C "$root" create "Dependabot update has review findings: $title (#$target)" --type task \
+  if id="$(bd -C "$root" create "Dependabot update not cleared by review: $title (#$target)" --type task \
             --labels "$human_label" -p 4 --metadata "{\"dependabot_pr\":\"$target\"}" --body-file "$body" \
             --acceptance "The navigator has merged or closed Dependabot's pull request #$target, or the one that replaces it." \
             --silent)" && [[ -n "$id" ]]; then

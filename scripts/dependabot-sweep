@@ -1,31 +1,64 @@
 #!/usr/bin/env bash
 #
 # dependabot-sweep - what Cerebro does with the project's open Dependabot pull requests, run at the
-# start of every turn it takes (cb-hpwc). No arguments; run from anywhere inside the consumer.
+# start of every turn it takes (cb-hpwc). Run from anywhere inside the consumer.
 #
-#   * CI passed  -> merged (`gh pr merge --squash --delete-branch`), whatever the version jump, and
-#                   with no review: the navigator's deliberate exception for a dependency bump.
-#                   "Nothing merges red" still holds: only an all-green rollup merges.
+#     dependabot-sweep                              the sweep
+#     dependabot-sweep --merge <n> <sha>            merge #<n> after a review of head <sha>
+#     dependabot-sweep --hand-back <n> <file>       file #<n>'s review findings for the navigator
+#
+# What a green pull request gets is the project's `dependabot_merge` (project.conf, cb-au3o):
+#
+#   auto, or absent  -> the sweep merges it (`gh pr merge --squash --delete-branch`), whatever the
+#                       version jump, and with no review: the navigator's deliberate exception for a
+#                       dependency bump. "Nothing merges red" still holds: only an all-green rollup.
+#   review           -> the sweep never merges. It prints `awaiting review #<n> <title>`; Cerebro has
+#                       a review sub-agent read it, then runs `--merge <n> <sha>` when the review of
+#                       head <sha> has no findings, or `--hand-back <n> <file>` when it has.
+#   anything else    -> said on stderr and read as `review`: a typo never merges unreviewed.
+#
+# The rest of the sweep is the same under either:
+#
 #   * CI failed  -> one P4 `bugfix` bug bead naming the pull request, filed at once with no CI
 #                   re-run; the pull request stays open for whoever takes the bead.
 #   * CI not finished, or no checks at all -> left for a later turn.
-#   * Already named by a bead (any status) -> the bead's, never merged or filed here.
+#   * Already named by a bead (any status) -> the bead's, never merged, reviewed or filed here.
+#
+# `--merge <n> <sha>` merges only an open Dependabot pull request no bead names, whose CI is green
+# and whose head is still <sha>; anything else is refused, exit 1, with nothing done. A head that
+# moved after the review is a head nobody reviewed. `--hand-back <n> <file>` files one P4 task in
+# the navigator's queue (`human`) naming #<n> and carrying the review in <file>; the bead then holds
+# the pull request, so it is never reviewed again. It refuses a pull request a bead already names.
 #
 # A bead names its pull request in metadata (`dependabot_pr`), not `external_ref`, which Moira reads
 # as a GitHub issue. When Dependabot closes that pull request for a replacement - its "Superseded by
 # #N" comment, or a new pull request on the same branch - the bead is moved onto the replacement
-# instead of a second bead being filed.
+# instead of a second bead being filed; a bug bead's title and description are rewritten to name the
+# replacement, a hand-back keeps its review.
 #
 # One line per pull request or bead on stdout. Exit 0, or 1 when something failed, said on stderr:
 # the open pull requests or the board unreadable (nothing is done at all), or a replaced pull request
 # unreadable or a bead write refused (everything else is still done, and what was written is
-# pushed). A refused merge is a line, not a failure; a merge gh reports failed after the pull
-# request merged (the branch delete, say) is a merge.
+# pushed), or a `--merge` or `--hand-back` refused. A refused merge is a line, not a failure; a merge
+# gh reports failed after the pull request merged (the branch delete, say) is a merge. Bad
+# arguments exit 2.
 
 set -euo pipefail
 
-if [[ $# -gt 0 ]]; then
-  echo "usage: dependabot-sweep" >&2
+usage() {
+  echo "usage: dependabot-sweep [--merge <n> <sha> | --hand-back <n> <findings-file>]" >&2
+  exit 2
+}
+action=sweep
+case "${1:-}" in
+  "") [[ $# -eq 0 ]] || usage ;;
+  --merge|--hand-back)
+    [[ $# -eq 3 && "$2" =~ ^[0-9]+$ && -n "$3" ]] || usage
+    action="${1#--}"; target="$2"; arg="$3" ;;
+  *) usage ;;
+esac
+if [[ "$action" == hand-back && ! -r "$arg" ]]; then
+  echo "dependabot-sweep: cannot read the review in $arg" >&2
   exit 2
 fi
 
@@ -34,10 +67,20 @@ source "$script_dir/candidate-label-policy.sh"
 root="$("$script_dir/consumer-root" --shared)"
 cd "$root"
 
+if ! merge_mode="$("$script_dir/project-conf" dependabot_merge auto 2>/dev/null)"; then
+  echo "dependabot-sweep: project-conf could not read dependabot_merge - read as review" >&2
+  merge_mode=review
+fi
+case "$merge_mode" in
+  auto|review) ;;
+  *) echo "dependabot-sweep: dependabot_merge '$merge_mode' is neither auto nor review - read as review" >&2
+     merge_mode=review ;;
+esac
+
 # --- the reads, before anything is done ------------------------------------------------------------
 
 if ! prs="$(gh pr list --author app/dependabot --state open --limit 200 \
-             --json number,title,url,headRefName,statusCheckRollup)"; then
+             --json number,title,url,headRefName,headRefOid,statusCheckRollup)"; then
   echo "dependabot-sweep: gh pr list failed - cannot see the Dependabot pull requests" >&2
   exit 1
 fi
@@ -49,6 +92,23 @@ if ! jq -e 'type == "array"' >/dev/null 2>&1 <<<"$prs" || ! jq -e 'type == "arra
   echo "dependabot-sweep: gh or bd did not print a JSON list" >&2
   exit 1
 fi
+
+# The CI verdict of each open pull request - green, red or pending - as `<n>\t<verdict>\t<head>\t<title>`
+# lines. The sweep and `--merge` both read it, so they cannot disagree about what green is.
+verdicts() {
+  jq -r '
+    def red: (.conclusion // "") as $c | (.state // "") as $s
+      | ($c == "FAILURE" or $c == "TIMED_OUT" or $c == "CANCELLED" or $c == "ACTION_REQUIRED"
+         or $c == "STARTUP_FAILURE" or $s == "FAILURE" or $s == "ERROR");
+    def unfinished: if .__typename == "StatusContext"
+                    then (.state == "PENDING" or .state == "EXPECTED")
+                    else (.status != "COMPLETED") end;
+    .[] | (.statusCheckRollup // []) as $checks
+    | (if any($checks[]; red) then "red"
+       elif ($checks | length) == 0 or any($checks[]; unfinished) then "pending"
+       else "green" end) as $verdict
+    | "\(.number)\t\($verdict)\t\(.headRefOid // "")\t\(.title)"' <<<"$prs"
+}
 
 status=0
 wrote=false
@@ -75,6 +135,69 @@ bead_body() {
     "If the failure is a flaky test rather than the update, the flaky test is a defect too: fix it as well.\n\n" +
     "Filed by the Dependabot sweep (`scripts/dependabot-sweep`) without re-running CI."' <<<"$prs"
 }
+
+# merge <n> <title> - the merge, and its one line.
+merge() {
+  local err
+  if err="$(gh pr merge "$1" --squash --delete-branch 2>&1 >/dev/null)"; then
+    say "merged #$1 $2"
+  elif [[ "$(jq -r '.state // ""' 2>/dev/null <<<"$(gh pr view "$1" --json state 2>/dev/null || true)" || true)" == MERGED ]]; then
+    say "merged #$1 $2"                             # gh failed after the merge, deleting the branch
+  else
+    say "merge refused #$1 $2: ${err%%$'\n'*}"
+  fi
+}
+
+# --- --merge and --hand-back: one pull request, after Cerebro's review -----------------------------
+
+if [[ "$action" != sweep ]]; then
+  line="$(verdicts | awk -F'\t' -v n="$target" '$1 == n' | head -n 1)"
+  if [[ -z "$line" ]]; then
+    echo "dependabot-sweep: #$target is not an open Dependabot pull request" >&2
+    exit 1
+  fi
+  IFS=$'\t' read -r _ verdict head title <<<"$line"
+  held="$(bead_for "$target")"
+  if [[ -n "$held" ]]; then
+    echo "dependabot-sweep: #$target is held by $held - it is the bead's, not the sweep's" >&2
+    exit 1
+  fi
+  if [[ "$action" == merge ]]; then
+    if [[ "$verdict" != green ]]; then
+      echo "dependabot-sweep: #$target is not green ($verdict) - not merged" >&2
+      exit 1
+    fi
+    if [[ "$head" != "$arg" ]]; then
+      echo "dependabot-sweep: #$target's head is $head, not the reviewed $arg - review it again" >&2
+      exit 1
+    fi
+    merge "$target" "$title"
+    exit 0
+  fi
+  body="$(mktemp)"
+  {
+    jq -r --argjson n "$target" '.[] | select(.number == $n) |
+      "## Outcome\nThe navigator decides what becomes of Dependabot'"'"'s update \"\(.title)\".\n\n" +
+      "## Scope\nPull request: #\(.number) \(.url), branch `\(.headRefName)`, reviewed at `\(.headRefOid)`.\n" +
+      "Its CI is green, but this project reviews Dependabot pull requests before they merge " +
+      "(`dependabot_merge review`), and the review below has findings. Merge it, close it, or " +
+      "send the work on as a bead of its own; close this bead when that is done.\n\n" +
+      "Filed by the Dependabot sweep (`scripts/dependabot-sweep --hand-back`).\n\n## The review\n"' <<<"$prs"
+    cat "$arg"
+  } > "$body"
+  if id="$(bd -C "$root" create "Dependabot update has review findings: $title (#$target)" --type task \
+            --labels "$human_label" -p 4 --metadata "{\"dependabot_pr\":\"$target\"}" --body-file "$body" \
+            --acceptance "The navigator has merged or closed Dependabot's pull request #$target, or the one that replaces it." \
+            --silent)" && [[ -n "$id" ]]; then
+    rm -f "$body"
+    say "handed back $id for #$target $title"
+    bd -C "$root" dolt push >/dev/null 2>&1 || echo "dependabot-sweep: bd dolt push failed - push the board by hand" >&2
+    exit 0
+  fi
+  rm -f "$body"
+  echo "dependabot-sweep: bd create failed - #$target was not handed back" >&2
+  exit 1
+fi
 
 # --- follow: a bead whose pull request Dependabot replaced moves onto the replacement --------------
 
@@ -105,9 +228,12 @@ while IFS=$'\t' read -r id old; do
     continue
   fi
   body="$(mktemp)"
-  bead_body "$new" > "$body"
-  if ! bd -C "$root" update "$id" --set-metadata "dependabot_pr=$new" --title "$(bead_title "$new")" \
-      --body-file "$body" --append-notes "## Dependabot replaced #$old with #$new
+  rewrite=()
+  if [[ "$(jq -r --arg id "$id" 'first(.[] | select(.id == $id) | .issue_type) // ""' <<<"$beads")" == bug ]]; then
+    bead_body "$new" > "$body"
+    rewrite=(--title "$(bead_title "$new")" --body-file "$body")
+  fi
+  if ! bd -C "$root" update "$id" --set-metadata "dependabot_pr=$new" ${rewrite[@]+"${rewrite[@]}"} --append-notes "## Dependabot replaced #$old with #$new
 
 Dependabot closed #$old and opened #$new for the same update; this bead now names #$new." >/dev/null; then
     rm -f "$body"
@@ -128,7 +254,7 @@ done < <(jq -r --argjson open "$prs" '
 
 # --- each open pull request ------------------------------------------------------------------------
 
-while IFS=$'\t' read -r n verdict title; do
+while IFS=$'\t' read -r n verdict _ title; do
   [[ -n "$n" ]] || continue
   held="$(bead_for "$n")"
   if [[ -n "$held" ]]; then
@@ -137,12 +263,10 @@ while IFS=$'\t' read -r n verdict title; do
   fi
   case "$verdict" in
     green)
-      if err="$(gh pr merge "$n" --squash --delete-branch 2>&1 >/dev/null)"; then
-        say "merged #$n $title"
-      elif [[ "$(jq -r '.state // ""' 2>/dev/null <<<"$(gh pr view "$n" --json state 2>/dev/null || true)" || true)" == MERGED ]]; then
-        say "merged #$n $title"                     # gh failed after the merge, deleting the branch
+      if [[ "$merge_mode" == review ]]; then
+        say "awaiting review #$n $title"
       else
-        say "merge refused #$n $title: ${err%%$'\n'*}"
+        merge "$n" "$title"
       fi ;;
     red)
       body="$(mktemp)"
@@ -161,18 +285,7 @@ while IFS=$'\t' read -r n verdict title; do
     *)
       say "waiting #$n $title (CI has not finished)" ;;
   esac
-done < <(jq -r '
-    def red: (.conclusion // "") as $c | (.state // "") as $s
-      | ($c == "FAILURE" or $c == "TIMED_OUT" or $c == "CANCELLED" or $c == "ACTION_REQUIRED"
-         or $c == "STARTUP_FAILURE" or $s == "FAILURE" or $s == "ERROR");
-    def unfinished: if .__typename == "StatusContext"
-                    then (.state == "PENDING" or .state == "EXPECTED")
-                    else (.status != "COMPLETED") end;
-    .[] | (.statusCheckRollup // []) as $checks
-    | (if any($checks[]; red) then "red"
-       elif ($checks | length) == 0 or any($checks[]; unfinished) then "pending"
-       else "green" end) as $verdict
-    | "\(.number)\t\($verdict)\t\(.title)"' <<<"$prs")
+done < <(verdicts)
 
 if ! $said; then
   echo "no open Dependabot pull requests"

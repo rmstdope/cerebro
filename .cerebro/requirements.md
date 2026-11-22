@@ -102,7 +102,7 @@ SES-4  The navigator watches the fleet and its sessions from a browser through t
 SES-5  From the web console, the navigator starts, finishes or kills an agent. Each button
        does exactly what s, f or k would do on that row in the fleet view, and shows only when
        that key would.
-       Proven by: nothing yet
+       Proven by: tests/web-console.sh
 
 ## Worktrees (WKT)
 

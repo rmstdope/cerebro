@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { type Agent, running, stateOf } from "./api";
+import { type Agent, running } from "./api";
 
 export type Action = "start" | "finish" | "resume" | "kill" | "disarm" | "stop";
 
@@ -13,25 +13,32 @@ export type Offer = { action: Action; verb: string; label: string; title: string
 
 export const unsupervised = "No fleet view is supervising this checkout, so nothing can be started, finished or killed from here. Start one with cerebro-tui.";
 
-/// What can be done to AGENT, by the same rules as the fleet view's keys. The fleet view has the
-/// last word: a refusal comes back as its own sentence.
-export function offersFor(agent: Agent): Offer[] {
+/// What each action looks like on AGENT's row: its label, key and question. Which ones the row
+/// shows is not decided here.
+function describe(action: Action, agent: Agent): Offer {
   const { name } = agent;
-  // A session the fleet view hosts is running whatever its row reads: for the seconds after a
-  // start, a standby row's k kills it, and s is refused as already up (cb-gyw0).
-  const state = agent.hosted && stateOf(agent) === "standby" ? "up" : stateOf(agent);
-  const live = running(agent) || agent.hosted === true;
-  const offers: Offer[] = [];
-  if (!live) offers.push({ action: "start", verb: "Start", label: "Start", title: `Start ${name}`, key: "s" });
-  if (agent.finishing) offers.push({ action: "resume", verb: "Keep", label: "Keep going", title: `Keep ${name} going`, key: "f" });
-  else if (live && state !== "starting") offers.push({ action: "finish", verb: "Finish", label: "Finish after this pass", title: `Finish ${name} after this pass`, key: "f" });
-  if (state === "standby") offers.push({ action: "disarm", verb: "Disarm", label: "Disarm", title: `Disarm ${name}`, key: "k", danger: true, ask: {
-    title: `Disarm ${name}?`, body: `The fleet view won’t start ${name} when there is work for it, until you start it again.` } });
-  else if (state === "starting") offers.push({ action: "stop", verb: "Stop", label: "Stop starting", title: `Stop ${name}’s start`, key: "k", danger: true, ask: {
-    title: `Stop ${name}’s start?`, body: `The session being started is stopped, ${name} is disarmed, and the bead it was handed goes back to the board.` } });
-  else if (live) offers.push({ action: "kill", verb: "Kill", label: "Kill", title: `Kill ${name}`, key: "k", danger: true, ask: {
-    title: `Kill ${name}?`, body: `The session ends now, mid-pass, and ${name} is disarmed: the fleet view won’t start it again until you do.${agent.bead ? ` Its bead ${agent.bead} stays claimed.` : ""}` } });
-  return offers;
+  switch (action) {
+    case "start": return { action, verb: "Start", label: "Start", title: `Start ${name}`, key: "s" };
+    case "finish": return { action, verb: "Finish", label: "Finish after this pass", title: `Finish ${name} after this pass`, key: "f" };
+    case "resume": return { action, verb: "Keep", label: "Keep going", title: `Keep ${name} going`, key: "f" };
+    case "disarm": return { action, verb: "Disarm", label: "Disarm", title: `Disarm ${name}`, key: "k", danger: true, ask: {
+      title: `Disarm ${name}?`, body: `The fleet view won’t start ${name} when there is work for it, until you start it again.` } };
+    case "stop": return { action, verb: "Stop", label: "Stop starting", title: `Stop ${name}’s start`, key: "k", danger: true, ask: {
+      title: `Stop ${name}’s start?`, body: `The session being started is stopped, ${name} is disarmed, and the bead it was handed goes back to the board.` } };
+    case "kill": return { action, verb: "Kill", label: "Kill", title: `Kill ${name}`, key: "k", danger: true, ask: {
+      title: `Kill ${name}?`, body: `The session ends now, mid-pass, and ${name} is disarmed: the fleet view won’t start it again until you do.${agent.bead ? ` Its bead ${agent.bead} stays claimed.` : ""}` } };
+  }
+}
+
+const actions: readonly string[] = ["start", "finish", "resume", "kill", "disarm", "stop"] satisfies Action[];
+const isAction = (action: string): action is Action => actions.includes(action);
+
+/// What can be done to AGENT: what the fleet view's s, f and k would carry out on its row, as
+/// cerebro-web sends it from the fleet view's own rules. The page works out none of its own: a row
+/// with no verdict shows nothing. The fleet view still has the last word, so a row that changed
+/// since is refused in its own sentence.
+export function offersFor(agent: Agent): Offer[] {
+  return (agent.offers ?? []).filter(isAction).map(action => describe(action, agent));
 }
 
 const icons: Record<Action, typeof Play> = { start: Play, finish: Flag, resume: Flag, kill: OctagonX, disarm: PowerOff, stop: OctagonX };

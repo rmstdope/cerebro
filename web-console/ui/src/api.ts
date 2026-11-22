@@ -13,9 +13,9 @@ export type Agent = {
   diagnostic?: string | null;
   /// Its stop flag is set: it stops after this pass, and the fleet view won't start it.
   finishing?: boolean;
-  /// The supervising fleet view hosts its session, though the row may still read standby for the
-  /// seconds after a start (cb-gyw0).
-  hosted?: boolean;
+  /// What the fleet view's s, f and k would carry out on this row, in that order (`Action` in
+  /// actions.tsx); absent when the page has no verdict for it.
+  offers?: string[];
 };
 export type Bead = { id: string; title: string; status: string; issue_type: string; labels: string[]; priority?: number | null; assignee?: string | null };
 export type Work = {

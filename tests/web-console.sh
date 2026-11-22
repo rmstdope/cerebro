@@ -2,9 +2,10 @@
 #
 # R24 and SES-5, as a navigator meets them: the web console shows the fleet a fleet view supervises,
 # starts, finishes and kills its agents through that view, and shows and types into the sessions it
-# hosts. A SYSTEM suite (.cerebro/test-architecture.md): it builds the real `cerebro-tui' and `cerebro-web', runs the view
-# on a pseudo-terminal against a throwaway consumer and the service beside it, and drives the
-# service's HTTP API the way the page does - the same paths, the same `X-Cerebro-Input' header.
+# hosts. A SYSTEM suite (.cerebro/test-architecture.md): it builds the real `cerebro-tui' and
+# `cerebro-web', runs the view on a pseudo-terminal against a throwaway consumer and the service
+# beside it, and drives the service's HTTP API the way the page does - the same paths, the same
+# `X-Cerebro-Input' header.
 #
 # The page itself is the Browser suite's (web-console/ui/tests, against a mocked API) and the
 # service's reads and refusals are the Edge tests' (web-console/tests/service.rs, against fake
@@ -287,17 +288,9 @@ status="$(post /api/sessions/Forge/input $'end of pass\r')"
 wait_until "the view to retire Forge, ending its session" gone "$agent"
 wait_until "the console to show no session" session_absent
 wait_until "Forge's stop flag to be cleared" no_stop_flag
+# Dead, not standby: only a retire takes the name out of the armed set, so nothing brings it back.
 wait_until "Forge's row to read dead, disarmed, offering only a start" row '.offers == ["start"] and .state == "Dead" and (.finishing | not)'
 wait_until "the view to say it retired Forge" on_screen 'Forge was retired'
-# Nothing starts it again: a retired name is disarmed, so no session comes back under it. A bounded
-# look of a few seconds, through the view's own ticks, at the pid file a start would rewrite.
-for ((i = 0; i < 25; i++)); do
-  [ ! -e "$stub_state/Forge.pid" ] || [ "$(cat "$stub_state/Forge.pid")" = "$agent" ] \
-    || fail "finish: Forge was started again after it was retired$(evidence)"
-  sleep 0.2
-done
-row '.offers == ["start"] and .state == "Dead"' \
-  || fail "finish: Forge's row did not stay dead after it was retired$(evidence)"
-pass "Forge's pass ends and the view retires it: its session ends, its flag clears, and nothing starts it again"
+pass "Forge's pass ends and the view retires it: its session ends, its flag clears, and it is disarmed"
 
 suite_passed

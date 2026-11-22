@@ -66,9 +66,11 @@ $err"
 
 # --- a root commit has no first parent: nothing ---
 commit "root" README.md
-run push ""
-expect_nothing "a root commit" 'ci-changed: '
-pass "a commit with no first parent prints nothing"
+for event in push pull_request; do
+  run "$event" ""
+  expect_nothing "a root commit, $event" 'no first parent'
+done
+pass "a commit with no first parent prints nothing, whatever the event"
 
 # --- usage errors print nothing at all, and exit 2 ---
 for args in "" "push" "push a b"; do

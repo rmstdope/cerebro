@@ -26,7 +26,8 @@
 #
 # `--merge <n> <sha>` merges only an open Dependabot pull request no bead names, whose CI is green
 # and whose head is still <sha>; anything else is refused, exit 1, with nothing done. A head that
-# moved after the review is a head nobody reviewed. `--hand-back <n> <file>` files one P4 task in
+# moved after the review is a head nobody reviewed, and GitHub is asked to hold the merge to <sha>
+# too; a merge GitHub refuses is its `merge refused` line and exit 1. `--hand-back <n> <file>` files one P4 task in
 # the navigator's queue (`human`) naming #<n> and carrying the review in <file>; the bead then holds
 # the pull request, so it is never reviewed again. It refuses a pull request a bead already names.
 #
@@ -107,7 +108,7 @@ verdicts() {
     | (if any($checks[]; red) then "red"
        elif ($checks | length) == 0 or any($checks[]; unfinished) then "pending"
        else "green" end) as $verdict
-    | "\(.number)\t\($verdict)\t\(.headRefOid // "")\t\(.title)"' <<<"$prs"
+    | "\(.number)\t\($verdict)\t\(.headRefOid // "-" | if . == "" then "-" else . end)\t\(.title)"' <<<"$prs"
 }
 
 status=0
@@ -136,15 +137,19 @@ bead_body() {
     "Filed by the Dependabot sweep (`scripts/dependabot-sweep`) without re-running CI."' <<<"$prs"
 }
 
-# merge <n> <title> - the merge, and its one line.
+# merge <n> <title> [<sha>] - the merge, and its one line; status 1 only when GitHub refused it. With
+# <sha>, GitHub itself refuses a head other than the one reviewed, so a rebase between the check
+# below and the merge cannot slip an unreviewed head through.
 merge() {
-  local err
-  if err="$(gh pr merge "$1" --squash --delete-branch 2>&1 >/dev/null)"; then
+  local err head_flag=()
+  [[ -z "${3:-}" ]] || head_flag=(--match-head-commit "$3")
+  if err="$(gh pr merge "$1" --squash --delete-branch ${head_flag[@]+"${head_flag[@]}"} 2>&1 >/dev/null)"; then
     say "merged #$1 $2"
   elif [[ "$(jq -r '.state // ""' 2>/dev/null <<<"$(gh pr view "$1" --json state 2>/dev/null || true)" || true)" == MERGED ]]; then
     say "merged #$1 $2"                             # gh failed after the merge, deleting the branch
   else
     say "merge refused #$1 $2: ${err%%$'\n'*}"
+    return 1
   fi
 }
 
@@ -171,16 +176,19 @@ if [[ "$action" != sweep ]]; then
       echo "dependabot-sweep: #$target's head is $head, not the reviewed $arg - review it again" >&2
       exit 1
     fi
-    merge "$target" "$title"
-    exit 0
+    if merge "$target" "$title" "$arg"; then
+      exit 0
+    fi
+    exit 1
   fi
   body="$(mktemp)"
   {
     jq -r --argjson n "$target" '.[] | select(.number == $n) |
       "## Outcome\nThe navigator decides what becomes of Dependabot'"'"'s update \"\(.title)\".\n\n" +
-      "## Scope\nPull request: #\(.number) \(.url), branch `\(.headRefName)`, reviewed at `\(.headRefOid)`.\n" +
+      "## Scope\nPull request: #\(.number) \(.url), branch `\(.headRefName)`.\n" +
       "Its CI is green, but this project reviews Dependabot pull requests before they merge " +
-      "(`dependabot_merge review`), and the review below has findings. Merge it, close it, or " +
+      "(`dependabot_merge review`), and what follows did not clear it to merge: review findings, " +
+      "or GitHub refusing the merge after a clean review. Merge it, close it, or " +
       "send the work on as a bead of its own; close this bead when that is done.\n\n" +
       "Filed by the Dependabot sweep (`scripts/dependabot-sweep --hand-back`).\n\n## The review\n"' <<<"$prs"
     cat "$arg"
@@ -266,7 +274,7 @@ while IFS=$'\t' read -r n verdict _ title; do
       if [[ "$merge_mode" == review ]]; then
         say "awaiting review #$n $title"
       else
-        merge "$n" "$title"
+        merge "$n" "$title" || true                # a refused merge is a line, not a failure
       fi ;;
     red)
       body="$(mktemp)"

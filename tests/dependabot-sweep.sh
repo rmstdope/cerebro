@@ -363,9 +363,26 @@ reset_case "$(prs "$(pr 1 "[$success]")")"
 merge_mode review
 out="$(run --merge 1 head-1)" || fail "--merge at the reviewed head exited non-zero"
 [[ "$(merged)" == "merged 1" ]] || fail "--merge at the reviewed head did not merge: [$(merged)]"
-grep -qx 'pr merge 1 --squash --delete-branch' "$stub/gh.log" || fail "--merge was not a squash: $(cat "$stub/gh.log")"
+grep -qx 'pr merge 1 --squash --delete-branch --match-head-commit head-1' "$stub/gh.log" \
+  || fail "--merge did not squash with GitHub holding it to the reviewed head: $(cat "$stub/gh.log")"
 grep -q 'merged #1' <<<"$out" || fail "--merge did not report the merge: $out"
-pass "--merge merges a green pull request at the head that was reviewed"
+pass "--merge merges a green pull request at the head that was reviewed, held there by GitHub"
+
+reset_case "$(prs "$(pr 1 "[$success]")")"
+merge_mode review
+touch "$stub/merge-fails-1"
+set +e; out="$(run --merge 1 head-1 2>/dev/null)"; status=$?; set -e
+[[ "$status" -eq 1 ]] || fail "--merge that GitHub refused exited $status, not 1"
+grep -q 'merge refused #1' <<<"$out" || fail "--merge did not report GitHub's refusal: $out"
+grep -qF 'base branch policy' <<<"$out" || fail "--merge's refusal does not say why: $out"
+pass "--merge that GitHub refuses says why and exits 1"
+
+# A pull request gh lists with no head still reads its title right, and is never merged.
+reset_case "$(prs "$(pr 1 "[$success]" | jq -c 'del(.headRefOid)')")"
+merge_mode review
+out="$(run)" || fail "a sweep over a pull request with no head exited non-zero"
+grep -qx 'awaiting review #1 Bump dep-1 from 1.0.0 to 2.0.0' <<<"$out" || fail "a missing head shifted the title: $out"
+pass "a pull request listed with no head keeps its title"
 
 refuse_merge() {  # <why> <args...>
   local why="$1"; shift
@@ -402,6 +419,7 @@ jq -e '.labels | index("human")' <<<"$bead" >/dev/null || fail "the hand-back be
 [[ "$(jq -r '.metadata.dependabot_pr | tostring' <<<"$bead")" == 1 ]] || fail "the hand-back bead does not record its pull request: $bead"
 grep -qF 'https://github.com/o/r/pull/1' <<<"$(jq -r .description <<<"$bead")" || fail "the hand-back bead does not link the pull request: $bead"
 grep -qF 'second copy of dep-1' <<<"$(jq -r .description <<<"$bead")" || fail "the hand-back bead does not carry the review: $bead"
+! grep -qF 'head-1' <<<"$(jq -r .description <<<"$bead")" || fail "the hand-back bead names a head the sweep never saw reviewed: $bead"
 grep -q 'handed back cb-d0 for #1' <<<"$out" || fail "--hand-back did not report the bead: $out"
 [[ "$(wc -l < "$stub/pushed")" -eq 1 ]] || fail "the hand-back was not pushed exactly once"
 out="$(run)" || fail "a sweep after a hand-back exited non-zero"

@@ -22,7 +22,7 @@
 # It lived at <consumer>/.cerebro/cerebro-project.conf until cb-epr. A file still sitting there is
 # the ONE case this script fails on (exit 2, naming the `mv'): see THIS NEVER FAILS below.
 #
-# Six keys are worth naming here because their ABSENCE is meaningful rather than merely a default:
+# Seven keys are worth naming here because their ABSENCE is meaningful rather than merely a default:
 #
 #   disk_floor_gb  — GB of free disk below which a bead must not start. ABSENT means no disk
 #                    preflight runs at all, and prune-worktrees.sh loses its pressure path.
@@ -42,6 +42,11 @@
 #                  — planned beads wanted per implementer. ABSENT means 1, the rule every consumer
 #                    had before the key existed. Read by the fleet
 #                    views (cb-3in).
+#   dependabot_merge
+#                  — `review' stops dependabot-sweep merging a green Dependabot pull request until
+#                    Cerebro's review sub-agent found nothing. ABSENT (or `auto') means it merges
+#                    unreviewed, as before the key existed; any other value is read as `review'
+#                    (cb-au3o).
 #   work_refresh_seconds
 #                  — seconds between two reads of the fleet view's Work pane. ABSENT means the
 #                    built-in 30; 0 is refused. Declared by system suites so a self-refresh is

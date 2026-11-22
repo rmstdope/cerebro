@@ -117,8 +117,10 @@ chmod +x "$stub/bd"
 
 # --- fixtures -------------------------------------------------------------------------------------
 
-# A fresh case: an empty board, no logs, no failure switches, the given open pull requests.
+# A fresh case: an empty board, no logs, no failure switches, the given open pull requests, and no
+# dependabot_merge declared (merge_mode sets one).
 reset_case() {
+  rm -f "$consumer/.cerebro/project.conf"
   rm -f "$stub"/*.json "$stub"/*.log "$stub/merged" "$stub/pushed" "$stub"/*-fails*
   echo '[]' > "$stub/board.json"
   printf '%s' "${1:-[]}" > "$stub/prs.json"
@@ -128,7 +130,7 @@ reset_case() {
 pr() {
   jq -cn --argjson n "$1" --argjson rollup "$2" --arg branch "${3:-dependabot/npm_and_yarn/dep-$1}" \
     '{number: $n, title: "Bump dep-\($n) from 1.0.0 to 2.0.0", url: "https://github.com/o/r/pull/\($n)",
-      headRefName: $branch, statusCheckRollup: $rollup}'
+      headRefName: $branch, headRefOid: "head-\($n)", statusCheckRollup: $rollup}'
 }
 prs() { jq -cs . <<<"$(printf '%s\n' "$@")"; }
 
@@ -144,6 +146,7 @@ ctx_pending='{"__typename":"StatusContext","context":"ci/legacy","state":"PENDIN
 ctx_error='{"__typename":"StatusContext","context":"ci/legacy","state":"ERROR"}'
 
 board() { cat "$stub/board.json"; }
+merge_mode() { mkdir -p "$consumer/.cerebro"; printf 'dependabot_merge %s\n' "$1" > "$consumer/.cerebro/project.conf"; }
 merged() { cat "$stub/merged" 2>/dev/null || true; }
 
 # --- a green pull request is merged, majors included, with no review --------------------------------
@@ -218,7 +221,7 @@ pass "a green pull request a bead holds is left to whoever takes the bead"
 follow_case() {
   # $1: the replacement's branch; $2: the old pull request's view
   reset_case "$(prs "$(pr 5 "[$failure]" "$1")")"
-  echo '[{"id":"cb-f","status":"open","title":"Dependabot update fails CI: #2","description":"old","metadata":{"dependabot_pr":"2"},"notes":""}]' \
+  echo '[{"id":"cb-f","status":"open","issue_type":"bug","title":"Dependabot update fails CI: #2","description":"old","metadata":{"dependabot_pr":"2"},"notes":""}]' \
     > "$stub/board.json"
   printf '%s' "$2" > "$stub/pr-2.json"
 }
@@ -326,6 +329,127 @@ echo '{"state":"MERGED"}' > "$stub/pr-1.json"
 out="$(run 2>/dev/null)" || fail "a merge that failed after merging made the sweep exit non-zero"
 grep -q 'merged #1' <<<"$out" || fail "a pull request merged before gh failed was not reported merged: $out"
 pass "a pull request gh merged before failing (the branch delete) is reported merged"
+
+# --- dependabot_merge review: a green pull request is never merged by the sweep (cb-au3o) -----------
+
+reset_case "$(prs "$(pr 1 "[$success]")" "$(pr 2 "[$failure]")")"
+merge_mode review
+out="$(run)" || fail "a review-mode sweep exited non-zero"
+[[ -z "$(merged)" ]] || fail "a review-mode sweep merged: [$(merged)]"
+! grep -q '^pr merge' "$stub/gh.log" || fail "a review-mode sweep called gh pr merge: $(cat "$stub/gh.log")"
+grep -qx 'awaiting review #1 Bump dep-1 from 1.0.0 to 2.0.0' <<<"$out" || fail "the green pull request was not reported awaiting review: $out"
+[[ "$(jq length <<<"$(board)")" == 1 ]] || fail "review mode filed other than the one red bead: $(board)"
+jq -e '.[0].labels | index("bugfix")' <<<"$(board)" >/dev/null || fail "the red pull request's bead is not a bugfix bead: $(board)"
+grep -q 'filed cb-d0 for #2' <<<"$out" || fail "review mode did not file the red pull request: $out"
+pass "under dependabot_merge review a green pull request awaits review and a red one is still filed"
+
+reset_case "$(prs "$(pr 1 "[$success]")")"
+merge_mode revew
+out="$(run 2>"$stub/err")" || fail "a sweep with an unknown dependabot_merge exited non-zero"
+[[ -z "$(merged)" ]] || fail "an unknown dependabot_merge value merged unreviewed"
+grep -q 'awaiting review #1' <<<"$out" || fail "an unknown value did not fall back to review: $out"
+grep -q 'revew' "$stub/err" || fail "an unknown value was not announced on stderr: $(cat "$stub/err")"
+pass "an unknown dependabot_merge value is announced and treated as review"
+
+reset_case "$(prs "$(pr 1 "[$success]")")"
+merge_mode auto
+out="$(run)" || fail "an auto-mode sweep exited non-zero"
+[[ "$(merged)" == "merged 1" ]] || fail "dependabot_merge auto did not merge: [$(merged)]"
+pass "dependabot_merge auto merges as an absent key does"
+
+# --- --merge: the one merge after a review, at the reviewed head ---------------------------------------
+
+reset_case "$(prs "$(pr 1 "[$success]")")"
+merge_mode review
+out="$(run --merge 1 head-1)" || fail "--merge at the reviewed head exited non-zero"
+[[ "$(merged)" == "merged 1" ]] || fail "--merge at the reviewed head did not merge: [$(merged)]"
+grep -qx 'pr merge 1 --squash --delete-branch --match-head-commit head-1' "$stub/gh.log" \
+  || fail "--merge did not squash with GitHub holding it to the reviewed head: $(cat "$stub/gh.log")"
+grep -q 'merged #1' <<<"$out" || fail "--merge did not report the merge: $out"
+pass "--merge merges a green pull request at the head that was reviewed, held there by GitHub"
+
+reset_case "$(prs "$(pr 1 "[$success]")")"
+merge_mode review
+touch "$stub/merge-fails-1"
+set +e; out="$(run --merge 1 head-1 2>/dev/null)"; status=$?; set -e
+[[ "$status" -eq 1 ]] || fail "--merge that GitHub refused exited $status, not 1"
+grep -q 'merge refused #1' <<<"$out" || fail "--merge did not report GitHub's refusal: $out"
+grep -qF 'base branch policy' <<<"$out" || fail "--merge's refusal does not say why: $out"
+pass "--merge that GitHub refuses says why and exits 1"
+
+# A pull request gh lists with no head still reads its title right, and is never merged.
+reset_case "$(prs "$(pr 1 "[$success]" | jq -c 'del(.headRefOid)')")"
+merge_mode review
+out="$(run)" || fail "a sweep over a pull request with no head exited non-zero"
+grep -qx 'awaiting review #1 Bump dep-1 from 1.0.0 to 2.0.0' <<<"$out" || fail "a missing head shifted the title: $out"
+pass "a pull request listed with no head keeps its title"
+
+refuse_merge() {  # <why> <args...>
+  local why="$1"; shift
+  set +e; out="$(run "$@" 2>"$stub/err")"; status=$?; set -e
+  [[ "$status" -eq 1 ]] || fail "--merge $why exited $status, not 1"
+  [[ -z "$(merged)" ]] || fail "--merge $why merged"
+  [[ -s "$stub/err" ]] || fail "--merge $why said nothing on stderr"
+}
+reset_case "$(prs "$(pr 1 "[$success]")")"; merge_mode review
+refuse_merge "with a head that moved since the review" --merge 1 head-old
+reset_case "$(prs "$(pr 1 "[$running]")")"; merge_mode review
+refuse_merge "with CI unfinished" --merge 1 head-1
+reset_case "$(prs "$(pr 1 "[$failure]")")"; merge_mode review
+refuse_merge "with CI red" --merge 1 head-1
+reset_case "$(prs "$(pr 1 "[$success]")")"; merge_mode review
+refuse_merge "of a pull request that is not an open Dependabot one" --merge 7 head-7
+reset_case "$(prs "$(pr 1 "[$success]")")"; merge_mode review
+echo '[{"id":"cb-h","status":"open","title":"t","metadata":{"dependabot_pr":"1"},"notes":""}]' > "$stub/board.json"
+refuse_merge "of a pull request a bead holds" --merge 1 head-1
+pass "--merge refuses a moved head, unfinished or red CI, a stranger, and a held pull request"
+
+# --- --hand-back: a review with findings goes to the navigator as a bead -------------------------------
+
+reset_case "$(prs "$(pr 1 "[$success]")")"
+merge_mode review
+printf '%s\n' '**Review (cold read)**' '' '1. The lockfile pulls in a second copy of dep-1.' > "$stub/review.md"
+out="$(run --hand-back 1 "$stub/review.md")" || fail "--hand-back exited non-zero"
+[[ -z "$(merged)" ]] || fail "--hand-back merged"
+[[ "$(jq length <<<"$(board)")" == 1 ]] || fail "--hand-back did not file exactly one bead: $(board)"
+bead="$(jq -c '.[0]' <<<"$(board)")"
+jq -e '.labels | index("human")' <<<"$bead" >/dev/null || fail "the hand-back bead is not in the navigator's queue: $bead"
+! jq -e '.labels | index("bugfix")' <<<"$bead" >/dev/null || fail "the hand-back bead went to the bugfixer: $bead"
+[[ "$(jq -r .priority <<<"$bead")" == 4 ]] || fail "the hand-back bead was not filed at P4: $bead"
+[[ "$(jq -r '.metadata.dependabot_pr | tostring' <<<"$bead")" == 1 ]] || fail "the hand-back bead does not record its pull request: $bead"
+grep -qF 'https://github.com/o/r/pull/1' <<<"$(jq -r .description <<<"$bead")" || fail "the hand-back bead does not link the pull request: $bead"
+grep -qF 'second copy of dep-1' <<<"$(jq -r .description <<<"$bead")" || fail "the hand-back bead does not carry the review: $bead"
+! grep -qF 'head-1' <<<"$(jq -r .description <<<"$bead")" || fail "the hand-back bead names a head the sweep never saw reviewed: $bead"
+grep -q 'handed back cb-d0 for #1' <<<"$out" || fail "--hand-back did not report the bead: $out"
+[[ "$(wc -l < "$stub/pushed")" -eq 1 ]] || fail "the hand-back was not pushed exactly once"
+out="$(run)" || fail "a sweep after a hand-back exited non-zero"
+grep -q 'held by cb-d0 #1' <<<"$out" || fail "a later sweep did not leave the handed-back pull request held: $out"
+! grep -q 'awaiting review' <<<"$out" || fail "a handed-back pull request was offered for review again: $out"
+set +e; run --hand-back 1 "$stub/review.md" >/dev/null 2>&1; status=$?; set -e
+[[ "$status" -eq 1 ]] || fail "a second --hand-back of a held pull request exited $status, not 1"
+[[ "$(jq length <<<"$(board)")" == 1 ]] || fail "a second --hand-back filed a second bead"
+set +e; run --hand-back 9 "$stub/review.md" >/dev/null 2>&1; status=$?; set -e
+[[ "$status" -eq 1 ]] || fail "--hand-back of a stranger exited $status, not 1"
+pass "--hand-back files one P4 human bead naming the pull request and its review, which then holds it"
+
+# A replaced pull request moves a hand-back bead without rewriting its review into a CI failure.
+follow_case dependabot/npm_and_yarn/group-y "$superseded"
+jq 'map(.issue_type = "task" | .title = "Dependabot update has review findings: #2" | .description = "the review")' \
+  "$stub/board.json" > "$stub/b.tmp" && mv "$stub/b.tmp" "$stub/board.json"
+out="$(run)" || fail "a sweep following a hand-back bead exited non-zero"
+bead="$(jq -c '.[0]' <<<"$(board)")"
+[[ "$(jq -r '.metadata.dependabot_pr | tostring' <<<"$bead")" == 5 ]] || fail "the hand-back bead was not moved: $bead"
+[[ "$(jq -r .description <<<"$bead")" == "the review" ]] || fail "following rewrote a hand-back bead's description: $bead"
+grep -q 'review findings' <<<"$(jq -r .title <<<"$bead")" || fail "following rewrote a hand-back bead's title: $bead"
+pass "a replaced pull request moves a hand-back bead and keeps its review"
+
+# --- bad arguments ---------------------------------------------------------------------------------------
+
+for args in "extra" "--merge 1" "--merge" "--hand-back 1" "--merge one head-1"; do
+  set +e; run $args >/dev/null 2>&1; status=$?; set -e
+  [[ "$status" -eq 2 ]] || fail "dependabot-sweep $args exited $status, not 2"
+done
+pass "bad arguments exit 2"
 
 # --- nothing open -----------------------------------------------------------------------------------------
 

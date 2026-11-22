@@ -52,9 +52,13 @@ while IFS= read -r path; do
     agents.conf.example)
       # Read by nothing; the live copy is .cerebro/agents.conf, which IS read.
       ;;
+    .cerebro/requirements.md | .cerebro/test-architecture.md)
+      # Prose Sage keeps with the navigator (cb-kg5p): suites name them in header comments and
+      # nothing opens them. Exact paths: the rest of .cerebro/ is read and stays gated.
+      ;;
     *)
       # Everything else: agents/, skills/, templates/, CLAUDE.md, emacs/, scripts/, hooks/,
-      # githooks/, tests/, .github/, .cerebro/, .claude/.
+      # githooks/, tests/, .github/, the rest of .cerebro/, .claude/.
       echo "ci-needed: $path" >&2
       echo run=true
       exit 0

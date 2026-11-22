@@ -113,7 +113,38 @@ grep -q 'none of 1 paths' <<<"$err" \
 $err"
 pass "docs/agent-workflow.md is skippable like any other docs file"
 
+for p in .cerebro/requirements.md .cerebro/test-architecture.md; do
+  run "$p"$'\n'
+  [[ $status -eq 0 ]] || fail "$p: expected exit 0, got $status
+$err"
+  [[ "$out" == "run=false" ]] || fail "$p: stdout is not exactly run=false
+$out"
+  grep -q 'none of 1 paths' <<<"$err" || fail "$p: should reach no gate
+$err"
+done
+run $'.cerebro/requirements.md\n.cerebro/test-architecture.md\n'
+[[ $status -eq 0 ]] || fail "requirements and test architecture: expected exit 0, got $status
+$err"
+[[ "$out" == "run=false" ]] || fail "requirements and test architecture: stdout is not exactly run=false
+$out"
+grep -q 'none of 2 paths' <<<"$err" \
+  || fail "requirements and test architecture: does not count the paths
+$err"
+pass "the requirements and the test architecture, alone or together, are skippable"
+
 # --- the gated side ---
+for p in .cerebro/requirements.md .cerebro/test-architecture.md; do
+  run "$p"$'\nscripts/ci-needed\n'
+  [[ $status -eq 0 ]] || fail "$p beside a script: expected exit 0, got $status
+$err"
+  [[ "$out" == "run=true" ]] || fail "$p beside a script: stdout is not exactly run=true
+$out"
+  grep -q 'ci-needed: scripts/ci-needed' <<<"$err" \
+    || fail "$p beside a script: does not name scripts/ci-needed
+$err"
+done
+pass "the requirements or the test architecture beside a script runs the gate"
+
 run $'docs/x.md\nemacs/cerebro.el\n'
 [[ $status -eq 0 ]] || fail "mixed paths: expected exit 0, got $status
 $err"
@@ -135,14 +166,15 @@ $err"
 pass "a changed suite beside a docs change runs the gate"
 
 # --- the skip list matches paths, not prefixes ---
-for p in docs-notes/x.md README.md.orig emacs/README.md; do
+for p in docs-notes/x.md README.md.orig emacs/README.md .cerebro/requirements.md.orig \
+         .cerebro/traps.md requirements.md; do
   run "$p"$'\n'
   [[ $status -eq 0 ]] || fail "$p: expected exit 0 (not on the skip list), got $status
 $err"
   [[ "$out" == "run=true" ]] || fail "$p: stdout is not exactly run=true
 $out"
 done
-pass "docs-notes/, README.md.orig and emacs/README.md are not on the skip list"
+pass "docs-notes/, README.md.orig, emacs/README.md, .cerebro/requirements.md.orig, .cerebro/traps.md and requirements.md are not on the skip list"
 
 # --- everything the gate can see is gated ---
 for p in .github/workflows/ci.yml scripts/ci-needed tests/gate agents/ux.md \

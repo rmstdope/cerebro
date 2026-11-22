@@ -1858,6 +1858,7 @@ where
                     names: app.standby_names(),
                     control,
                     handed: app.starting_beads(),
+                    hosted: state.host.live_names(&[]).into_iter().collect(),
                     updated_at: clock(),
                 };
                 state.standby.publish(&standby, publication, Instant::now());

@@ -228,7 +228,9 @@ jq -e '.done == true' "$last_answer" >/dev/null || fail "start: the view refused
 polls=300 wait_until "the stub agent to start" started
 agent="$(cat "$stub_state/Forge.pid")"
 alive "$agent" || fail "start: the stub agent is not running"
-wait_until "Forge's row to read hosted and working" row '.hosted == true and .state == "Working"'
+# The offers are the view's own s/f/k answers over the hosted set it publishes (cb-hezw): a session
+# it hosts finishes or is killed, never started again.
+wait_until "Forge's row to read working, offering finish and kill" row '.offers == ["finish", "kill"] and .state == "Working"'
 pass "Start asks the view, which starts Forge in a session it hosts; the console shows it working"
 
 # --- the session: watched and typed into --------------------------------------------------------------
@@ -246,7 +248,7 @@ status="$(post /api/agents/Forge/kill)"
 jq -e '.done == true' "$last_answer" >/dev/null || fail "kill: the view refused it$(evidence)"
 wait_until "the stub agent to be killed" gone "$agent"
 wait_until "the console to show no session" session_absent
-wait_until "Forge's row to read dead and unhosted" row '(.hosted // false) == false and .state == "Dead"'
+wait_until "Forge's row to read dead, offering only a start" row '.offers == ["start"] and .state == "Dead"'
 pass "Kill asks the view, which ends Forge's session; the console shows it dead with no session"
 
 suite_passed

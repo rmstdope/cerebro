@@ -792,8 +792,8 @@ fn publish_standby_with(
     let publication = cerebro_tui::PublishedStandby {
         names: names.iter().map(|name| name.to_string()).collect(),
         control: socket.map(|socket| socket.to_string_lossy().into_owned()),
-        handed: Default::default(),
         updated_at: chrono::Utc::now() - age,
+        ..Default::default()
     };
     std::fs::create_dir_all(root.join(".cerebro/state")).unwrap();
     std::fs::write(root.join(".cerebro/state/standby.json"), serde_json::to_string(&publication).unwrap()).unwrap();
@@ -838,6 +838,7 @@ async fn a_bead_the_fleet_view_handed_is_shown_until_the_state_file_names_one() 
         control: None,
         handed: [("Storm".to_string(), "cb-njw".to_string())].into_iter().collect(),
         updated_at: chrono::Utc::now(),
+        ..Default::default()
     };
     std::fs::create_dir_all(root.path().join(".cerebro/state")).unwrap();
     std::fs::write(root.path().join(".cerebro/state/standby.json"), serde_json::to_string(&publication).unwrap()).unwrap();
@@ -872,54 +873,55 @@ async fn a_bead_the_fleet_view_handed_is_shown_until_the_state_file_names_one() 
     );
 }
 
-/// `s` on a standby row starts a session seconds before any fleet read can see it, and the row
-/// reads standby meanwhile (cb-gyw0). The session's publication is the fleet view saying it hosts
-/// one, so the console can offer what the terminal's `k` does there: kill it, not disarm the name.
-/// A publication the view stopped refreshing is a file a gone view left behind, and says nothing.
+/// Each row carries what the fleet view's `s`, `f` and `k` would carry out on it, judged with the
+/// hosted set the view publishes: a standby row it already hosts is killed, not disarmed
+/// (cb-gyw0), and one it does not host can be started, finished or disarmed.
 #[tokio::test]
-async fn a_standby_agent_whose_session_the_fleet_view_publishes_is_reported_hosted() {
+async fn each_row_carries_the_offers_the_fleet_view_would_carry_out() {
     let root = tempfile::tempdir().unwrap();
-    publish_standby(root.path(), &["Moira", "Storm"], chrono::Duration::zero());
-    publish(root.path(), "Moira", chrono::Duration::zero(), b"");
-    publish(root.path(), "Storm", chrono::Duration::seconds(60), b"");
+    let publication = cerebro_tui::PublishedStandby {
+        names: ["Moira".to_string(), "Storm".to_string()].into_iter().collect(),
+        hosted: ["Moira".to_string()].into_iter().collect(),
+        updated_at: chrono::Utc::now(),
+        ..Default::default()
+    };
+    std::fs::create_dir_all(root.path().join(".cerebro/state")).unwrap();
+    std::fs::write(root.path().join(".cerebro/state/standby.json"), serde_json::to_string(&publication).unwrap()).unwrap();
 
-    let response = service_with_two_dead(root.path()).router().oneshot(get("/api/fleet")).await.unwrap();
+    assert_eq!(
+        fleet_offers(root.path()).await,
+        offers(&[("Storm", &["start", "finish", "disarm"]), ("Moira", &["finish", "kill"])])
+    );
+}
+
+/// No publication: nothing is hosted, so a dead row offers what `s` does there, and nothing else.
+/// Whether any view supervises is `/api/control`'s answer, which greys these on the page.
+#[tokio::test]
+async fn a_view_that_publishes_nothing_hosted_offers_what_an_unhosted_row_gets() {
+    let root = tempfile::tempdir().unwrap();
+    assert_eq!(
+        fleet_offers(root.path()).await,
+        offers(&[("Storm", &["start"]), ("Moira", &["start"])])
+    );
+}
+
+fn offers(rows: &[(&str, &[&str])]) -> Vec<(String, Vec<String>)> {
+    rows.iter().map(|(name, offers)| (name.to_string(), offers.iter().map(|offer| offer.to_string()).collect())).collect()
+}
+
+async fn fleet_offers(root: &std::path::Path) -> Vec<(String, Vec<String>)> {
+    let response = service_with_two_dead(root).router().oneshot(get("/api/fleet")).await.unwrap();
     let body: serde_json::Value =
         serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
-    let hosted: Vec<(String, String, bool)> = body["value"]
+    body["value"]
         .as_array()
         .unwrap_or_else(|| panic!("not a fresh fleet: {body}"))
         .iter()
         .map(|row| {
-            (row["name"].as_str().unwrap().into(), row["state"].as_str().unwrap().into(), row["hosted"].as_bool().unwrap_or(false))
+            let offers = row["offers"].as_array().unwrap_or_else(|| panic!("no offers: {row}"));
+            (row["name"].as_str().unwrap().into(), offers.iter().map(|offer| offer.as_str().unwrap().to_string()).collect())
         })
-        .collect();
-    assert_eq!(
-        hosted,
-        vec![("Storm".into(), "Standby".into(), false), ("Moira".into(), "Standby".into(), true)]
-    );
-}
-
-/// A publication that cannot be read says nothing about that row, and nothing about the others:
-/// the fleet is still read (the panes fail apart).
-#[tokio::test]
-async fn a_session_publication_that_cannot_be_read_is_not_hosted_and_the_fleet_is_still_read() {
-    let root = tempfile::tempdir().unwrap();
-    publish_standby(root.path(), &["Moira", "Storm"], chrono::Duration::zero());
-    publish(root.path(), "Moira", chrono::Duration::zero(), b"");
-    std::fs::write(root.path().join(".cerebro/state/sessions/Storm.json"), "{ not json").unwrap();
-
-    let response = service_with_two_dead(root.path()).router().oneshot(get("/api/fleet")).await.unwrap();
-    let body: serde_json::Value =
-        serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
-    assert_eq!(body["state"], "fresh", "{body}");
-    let hosted: Vec<(String, bool)> = body["value"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|row| (row["name"].as_str().unwrap().into(), row["hosted"].as_bool().unwrap_or(false)))
-        .collect();
-    assert_eq!(hosted, vec![("Storm".into(), false), ("Moira".into(), true)]);
+        .collect()
 }
 
 fn service_with_two_dead(root: &std::path::Path) -> ReadOnlyService {
@@ -1055,8 +1057,8 @@ fn publish_control(root: &std::path::Path, socket: Option<&std::path::Path>, age
     let publication = cerebro_tui::PublishedStandby {
         names: Default::default(),
         control: socket.map(|socket| socket.to_string_lossy().into_owned()),
-        handed: Default::default(),
         updated_at: chrono::Utc::now() - age,
+        ..Default::default()
     };
     std::fs::create_dir_all(root.join(".cerebro/state")).unwrap();
     std::fs::write(root.join(".cerebro/state/standby.json"), serde_json::to_string(&publication).unwrap()).unwrap();

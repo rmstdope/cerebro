@@ -753,8 +753,10 @@ async function controlled(page: import("@playwright/test").Page, agents: object[
   return asked;
 }
 
-const storm = { name: "Storm", role: "producer", state: "Working", bead: "cb-1" };
-const moira = { name: "Moira", role: "user-feedback", state: "Standby" };
+// Each row's offers are what the fleet view's s, f and k would carry out there, decided by
+// cerebro-web from lifecycle.rs; the page only draws them.
+const storm = { name: "Storm", role: "producer", state: "Working", bead: "cb-1", offers: ["finish", "kill"] };
+const moira = { name: "Moira", role: "user-feedback", state: "Standby", offers: ["start", "finish", "disarm"] };
 
 test("the action bar asks the supervising fleet view, and says what it answered", async ({ page }) => {
   const asked = await controlled(page, [storm], true, () => ({ done: true, text: "Storm will finish after this pass." }));
@@ -825,14 +827,18 @@ test("⌘K finds any action on any agent", async ({ page }) => {
   await expect(page.getByRole("heading", { level: 2, name: "Moira" })).toBeVisible();
 });
 
+test("a row shows exactly the offers the fleet view sent, in its order and with today's labels", async ({ page }) => {
+  await controlled(page, [moira]);
+  const toolbar = page.getByRole("toolbar", { name: "Moira actions" });
+  await expect(toolbar.getByRole("button")).toHaveText([/^Start/, /^Finish after this pass/, /^Disarm/]);
+});
+
 test("a standby agent the fleet view already hosts is killed, not disarmed", async ({ page }) => {
   // cb-gyw0: in the seconds after s, the row still reads standby while the fleet view hosts its
-  // session, and the fleet view's k kills it; a disarm sent then is refused.
-  const asked = await controlled(page, [{ ...moira, hosted: true }]);
+  // session, and the fleet view's k kills it - which is what it sends as this row's offers.
+  const asked = await controlled(page, [{ ...moira, offers: ["finish", "kill"] }]);
   const toolbar = page.getByRole("toolbar", { name: "Moira actions" });
-  await expect(toolbar.getByRole("button", { name: /Kill/ })).toBeVisible();
-  await expect(toolbar.getByRole("button", { name: /Finish after this pass/ })).toBeVisible();
-  await expect(toolbar.getByRole("button", { name: /Disarm|Start/ })).toHaveCount(0);
+  await expect(toolbar.getByRole("button")).toHaveText([/^Finish after this pass/, /^Kill/]);
 
   await page.keyboard.press("k");
   await expect(page.getByRole("dialog")).toContainText("Kill Moira?");
@@ -841,12 +847,31 @@ test("a standby agent the fleet view already hosts is killed, not disarmed", asy
   await expect.poll(() => asked.map(item => item.path)).toEqual(["/api/agents/Moira/kill"]);
 });
 
-test("an agent the fleet view hosts is not offered a start, whatever its row reads", async ({ page }) => {
-  // The fleet view refuses s on a session it hosts as already up, and its k kills it.
-  await controlled(page, [{ name: "Rogue", role: "producer", state: "Dead", hosted: true }]);
-  const toolbar = page.getByRole("toolbar", { name: "Rogue actions" });
-  await expect(toolbar.getByRole("button", { name: /Kill/ })).toBeVisible();
-  await expect(toolbar.getByRole("button", { name: /Start/ })).toHaveCount(0);
+test("a starting row can finish after this pass beside stopping its start", async ({ page }) => {
+  await controlled(page, [{ name: "Wolverine", role: "producer", state: "Starting", bead: "cb-2", offers: ["finish", "stop"] }]);
+  const toolbar = page.getByRole("toolbar", { name: "Wolverine actions" });
+  await expect(toolbar.getByRole("button")).toHaveText([/^Finish after this pass/, /^Stop starting/]);
+});
+
+test("a row the fleet view would do nothing to has no buttons, and the page works out none of its own", async ({ page }) => {
+  // Running in another terminal: the view refuses every key there. A row with no verdict at all
+  // gets nothing either, whatever its state reads.
+  await controlled(page, [{ ...storm, offers: [] }, { name: "Rogue", role: "producer", state: "Dead" }]);
+  await expect(page.getByRole("heading", { level: 2, name: "Storm" })).toBeVisible();
+  await expect(page.getByRole("toolbar")).toHaveCount(0);
+  await page.getByRole("button", { name: /Rogue/ }).click();
+  await expect(page.getByRole("heading", { level: 2, name: "Rogue" })).toBeVisible();
+  await expect(page.getByRole("toolbar")).toHaveCount(0);
+});
+
+test("the palette lists exactly the buttons each row shows", async ({ page }) => {
+  await controlled(page, [storm, moira, { name: "Rogue", role: "producer", state: "Working", offers: [] }]);
+  await expect(page.getByRole("toolbar", { name: "Storm actions" })).toBeVisible();
+
+  await page.keyboard.press("Meta+k");
+  await expect(page.getByRole("listbox", { name: "Actions" }).getByRole("option")).toHaveText([
+    /Finish Storm after this pass/, /Kill Storm/, /Start Moira/, /Finish Moira after this pass/, /Disarm Moira/,
+  ]);
 });
 
 test("with no fleet view supervising, nothing can be done and the page says why", async ({ page }) => {
@@ -862,7 +887,7 @@ test("with no fleet view supervising, nothing can be done and the page says why"
 });
 
 test("an agent that will finish after this pass says so and can be kept going", async ({ page }) => {
-  const asked = await controlled(page, [{ ...storm, finishing: true }]);
+  const asked = await controlled(page, [{ ...storm, finishing: true, offers: ["resume", "kill"] }]);
   await expect(page.getByText("Storm will stop when this pass ends")).toBeVisible();
   await expect(page.getByRole("toolbar", { name: "Storm actions" }).getByRole("button", { name: /Keep going/ })).toBeVisible();
 
@@ -872,7 +897,7 @@ test("an agent that will finish after this pass says so and can be kept going", 
 });
 
 test("an agent that is not running can be started", async ({ page }) => {
-  const asked = await controlled(page, [{ name: "Rogue", role: "producer", state: "Dead" }]);
+  const asked = await controlled(page, [{ name: "Rogue", role: "producer", state: "Dead", offers: ["start"] }]);
 
   await page.getByRole("toolbar", { name: "Rogue actions" }).getByRole("button", { name: /Start/ }).click();
 

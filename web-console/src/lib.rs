@@ -210,7 +210,6 @@ impl SnapshotState {
             let rows = read_fleet(&reader.reader_paths, &reader.programs, reader.commands.as_ref())?;
             let published = read_publication(&standby_path(&reader.reader_paths))?.unwrap_or_default();
             let rows = cerebro_tui::model::apply_starting(rows, &published.handed);
-            let sessions = reader.reader_paths.shared_root.join(".cerebro/state/sessions");
             let rows = cerebro_tui::model::apply_standby(rows, &published.names, &Default::default());
             Ok(rows
                 .into_iter()
@@ -222,10 +221,11 @@ impl SnapshotState {
                     }
                     row
                 })
-                .map(|row| Agent {
-                    finishing: cerebro_tui::lifecycle::stop_flag_set(&reader.reader_paths, &row.name),
-                    hosted: hosts(&sessions, &row.name),
-                    row,
+                .map(|row| {
+                    let finishing = cerebro_tui::lifecycle::stop_flag_set(&reader.reader_paths, &row.name);
+                    let offers =
+                        cerebro_tui::lifecycle::offers(&row, published.hosted.contains(&row.name), finishing);
+                    Agent { finishing, offers, row }
                 })
                 .collect())
         })
@@ -457,27 +457,9 @@ pub struct Agent {
     row: FleetRow,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     finishing: bool,
-    /// The supervising fleet view hosts its session, whatever the row reads: for seconds after `s`
-    /// on a standby row, the row still reads standby and the view's `k` kills (cb-gyw0).
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    hosted: bool,
-}
-
-/// Whether the fleet view publishes a live session for NAME in DIR: a publication it still
-/// refreshes. One it stopped refreshing is a file a gone view left behind. One that cannot be read
-/// is not hosted, for that row alone: the panes fail apart, and this bit only chooses an offer the
-/// fleet view still has the last word on.
-///
-/// It approximates the view's own `is_live`: a loop held past `SCREEN_STALE_SECONDS`, or a session
-/// whose log could not be opened, is hosted and not published, and the page offers what a standby
-/// row's does - which the view then refuses in words.
-fn hosts(dir: &std::path::Path, name: &str) -> bool {
-    std::fs::read_to_string(dir.join(format!("{name}.json")))
-        .ok()
-        .and_then(|text| serde_json::from_str::<PublishedSession>(&text).ok())
-        .is_some_and(|publication| {
-            Utc::now().signed_duration_since(publication.updated_at).num_seconds() < SCREEN_STALE_SECONDS
-        })
+    /// What the fleet view's `s`, `f` and `k` would carry out on this row, in that order: the
+    /// page's buttons, decided by `lifecycle::offers` and never on the page.
+    offers: Vec<cerebro_tui::control::Action>,
 }
 
 fn standby_path(paths: &ReaderPaths) -> std::path::PathBuf {

@@ -779,6 +779,31 @@ pub fn kill_outcome(situation: Situation<'_>) -> KillOutcome {
     KillOutcome::Confirm { prompt: kill_prompt(row), disarm: false }
 }
 
+/// What `s`, `f` and `k` would carry out on ROW, in that order, from a view that supervises -
+/// what the web console offers as buttons. Refused and ignored keys offer nothing. Built from
+/// the three outcomes and nothing else, so a change to any of them reaches the page unasked.
+/// Whether a view supervises at all is the console's separate question: it greys the offers.
+pub fn offers(row: &FleetRow, hosted: bool, stop_flag: bool) -> Vec<crate::control::Action> {
+    use crate::control::Action;
+    let situation = Situation { mode: &SupervisionMode::Supervising, row: Some(row), hosted, stop_flag };
+    let start = match start_outcome(situation) {
+        StartOutcome::Launch { .. } => Some(Action::Start),
+        StartOutcome::Refuse(_) | StartOutcome::Ignore => None,
+    };
+    let finish = match finish_outcome(situation) {
+        FinishOutcome::Write => Some(Action::Finish),
+        FinishOutcome::Clear => Some(Action::Resume),
+        FinishOutcome::Refuse(_) | FinishOutcome::Ignore => None,
+    };
+    let kill = match kill_outcome(situation) {
+        KillOutcome::Confirm { disarm: true, .. } => Some(Action::Disarm),
+        KillOutcome::Confirm { disarm: false, .. } => Some(Action::Kill),
+        KillOutcome::ConfirmStop { .. } => Some(Action::Stop),
+        KillOutcome::Refuse(_) | KillOutcome::Ignore => None,
+    };
+    [start, finish, kill].into_iter().flatten().collect()
+}
+
 /// The two sentences `f` and `k` share for an agent this view is not hosting.
 fn elsewhere_or_absent(row: &FleetRow) -> String {
     if row_is_alive(row) {
@@ -2331,6 +2356,30 @@ mod tests {
         stop_flag: bool,
     ) -> Situation<'a> {
         Situation { mode, row, hosted, stop_flag }
+    }
+
+    #[test]
+    fn offers_are_what_each_key_would_carry_out() {
+        use crate::control::Action::*;
+        use RowState::*;
+        let up = |state: RowState| row("Rogue", AgentKind::Interactive, state);
+        // (row state, hosted here, stop flag, what s / f / k would carry out, in that order)
+        let cases = [
+            (Working, true, false, vec![Finish, Kill]),
+            (Standby, false, false, vec![Start, Finish, Disarm]),
+            (Standby, true, false, vec![Finish, Kill]),
+            (Invalid, false, false, vec![Start]),
+            (Working, false, false, vec![]),
+            (Dead, false, false, vec![Start]),
+            (Dead, false, true, vec![Start, Resume]),
+            (Working, true, true, vec![Resume, Kill]),
+            (Starting, true, false, vec![Finish, Stop]),
+            (Starting, false, false, vec![Start, Stop]),
+        ];
+        for (state, hosted, stop_flag, expected) in cases {
+            let label = format!("{state:?} hosted={hosted} flag={stop_flag}");
+            assert_eq!(offers(&up(state), hosted, stop_flag), expected, "{label}");
+        }
     }
 
     #[test]

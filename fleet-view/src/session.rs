@@ -584,6 +584,10 @@ pub struct PublishedStandby {
     /// fleet pane draws a starting or an `up` row's bead from.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub handed: std::collections::BTreeMap<String, String>,
+    /// Every agent this view holds a live session for (`SessionHost::is_live`): the hosted bit
+    /// the lifecycle decisions read, so a reader outside this process asks them the same question.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    pub hosted: std::collections::BTreeSet<String>,
     pub updated_at: DateTime<Utc>,
 }
 
@@ -600,6 +604,7 @@ impl StandbyPublisher {
             last.names != publication.names
                 || last.control != publication.control
                 || last.handed != publication.handed
+                || last.hosted != publication.hosted
                 || now.saturating_duration_since(*when) >= SCREEN_REFRESH
         });
         if !due {
@@ -1392,7 +1397,7 @@ mod tests {
         let start = Instant::now();
         let at = |seconds: i64| DateTime::<Utc>::from_timestamp(1_000 + seconds, 0).unwrap();
         let mut publisher = StandbyPublisher::default();
-        let standby = |names, updated_at| PublishedStandby { names, control: None, handed: Default::default(), updated_at };
+        let standby = |names, updated_at| PublishedStandby { names, updated_at, ..Default::default() };
 
         publisher.publish(&path, standby(names(&["Moira"]), at(0)), start);
         assert_eq!(standby_at(&path).unwrap(), standby(names(&["Moira"]), at(0)));
@@ -1416,6 +1421,26 @@ mod tests {
         let handed = [("Cyclops".to_string(), "cb-njw".to_string())].into_iter().collect();
         publisher.publish(&path, PublishedStandby { handed, ..socket }, start + Duration::from_secs(10));
         assert_eq!(standby_at(&path).unwrap().handed["Cyclops"], "cb-njw", "a handed bead, at once");
+    }
+
+    #[test]
+    fn standby_publication_carries_and_republishes_hosted_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state/standby.json");
+        let start = Instant::now();
+        let at = |seconds: i64| DateTime::<Utc>::from_timestamp(1_000 + seconds, 0).unwrap();
+        let mut publisher = StandbyPublisher::default();
+        let quiet = PublishedStandby { updated_at: at(0), ..Default::default() };
+        publisher.publish(&path, quiet.clone(), start);
+        let hosted = ["Moira".to_string()].into_iter().collect();
+        publisher.publish(&path, PublishedStandby { hosted, updated_at: at(1), ..quiet }, start + Duration::from_secs(1));
+        let read = standby_at(&path).unwrap();
+        assert_eq!(read.updated_at, at(1), "a change in what the view hosts publishes at once");
+        assert!(read.hosted.contains("Moira"));
+
+        let old: PublishedStandby =
+            serde_json::from_str(r#"{"names":["Storm"],"updated_at":"2026-01-01T00:00:00Z"}"#).unwrap();
+        assert!(old.hosted.is_empty(), "an older view's file hosts nothing");
     }
 
     fn key(code: KeyCode) -> KeyEvent {

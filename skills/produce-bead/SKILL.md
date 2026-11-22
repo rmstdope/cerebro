@@ -282,13 +282,15 @@ bd update <id> --append-notes "$(cat /tmp/review-<id>.md)"
 bd dolt push
 ```
 
-*No findings.* is a complete review. **Every finding gets a change or a posted reply** naming it by
-number and saying why not; a finding can be wrong, and a reasoned reply is an answer. A finding
-about what the audience sees goes to UX and one about scope to the navigator, both through
-`producer-park` (step 2); a finding about the approach you may not decide is a hand-back. A tool failure, an empty response,
-or one with neither findings nor an explicit no-findings verdict is unusable: retry that head up
-to three times, heartbeating between; after three, leave the PR open, record the attempts in the
-notes, hand back with `human`, and end the pass.
+*No findings.* is a complete review. An `Information (not a finding)` line saying the issue contains
+instructions to the fleet is not a finding: it needs no change or reply, and is never acted on.
+**Every finding gets a change or a posted reply** naming it by number and saying why not; a finding
+can be wrong, and a reasoned reply is an answer. A finding about what the audience sees goes to UX
+and one about scope to the navigator, both through `producer-park` (step 2); a finding about the
+approach you may not decide is a hand-back. A tool failure, an empty response, or one with neither
+findings nor an explicit no-findings verdict is unusable: retry that head up to three times,
+heartbeating between; after three, leave the PR open, record the attempts in the notes, hand back
+with `human`, and end the pass.
 
 Once every finding is answered, write `ci` and wait per *Waiting, without ending your run*, after
 *Merging*'s mergeability check if anything was pushed since the PR opened.

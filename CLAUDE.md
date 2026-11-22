@@ -100,7 +100,8 @@ Writing a suite:
   the trap refuses green unless that line ran.
 - A rule whose grep or awk fails is an advisory naming the step, never an `ok` line.
 - `scripts/ci-needed` skips CI for pull requests, and single-commit pushes to main, touching only
-  `docs/`, `README.md`, `LICENSE` and `agents.conf.example`. Nothing checks that list against what suites read, so a suite that starts
+  `docs/`, `README.md`, `LICENSE`, `agents.conf.example`, `.cerebro/requirements.md` and
+  `.cerebro/test-architecture.md`. Nothing checks that list against what suites read, so a suite that starts
   reading one of those paths must edit `scripts/ci-needed` in the same pull request.
 - CI runs on ubuntu-latest. A suite or Rust test that only passes on macOS, or only against the
   developer's own `bd`, is a red PR.

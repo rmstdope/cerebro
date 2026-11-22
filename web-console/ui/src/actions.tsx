@@ -30,8 +30,10 @@ function describe(action: Action, agent: Agent): Offer {
   }
 }
 
-const actions: readonly string[] = ["start", "finish", "resume", "kill", "disarm", "stop"] satisfies Action[];
-const isAction = (action: string): action is Action => actions.includes(action);
+// A Record, so an Action added to the type and not here is a type error rather than an offer
+// silently dropped from every row.
+const actions: Record<Action, true> = { start: true, finish: true, resume: true, kill: true, disarm: true, stop: true };
+const isAction = (action: string): action is Action => Object.hasOwn(actions, action);
 
 /// What can be done to AGENT: what the fleet view's s, f and k would carry out on its row, as
 /// cerebro-web sends it from the fleet view's own rules. The page works out none of its own: a row

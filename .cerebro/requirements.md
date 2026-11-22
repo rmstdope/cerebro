@@ -81,6 +81,11 @@ BRD-7  A green Dependabot pull request is merged by Cerebro without review; a re
        becomes exactly one P4 bug bead, which follows the pull request when Dependabot
        replaces it.
        Proven by: nothing yet
+BRD-8  When the project declares dependabot_merge review, Cerebro merges a green Dependabot
+       pull request only once a reviewer sub-agent has read it and found nothing; the merge
+       is held to the reviewed head, and findings or a refused merge hand it back to the
+       navigator.
+       Proven by: nothing yet
 
 ## Sessions and spend (SES)
 

@@ -116,3 +116,7 @@ WKT-2  Finished worktrees are removed without losing unmerged or uncommitted wor
 TST-1  The navigator asks test-code-ratio how many lines of test code the project keeps
        for each line of production code, and Sage warns once it passes 2.
        Proven by: nothing yet
+TST-2  A pull request or a single-commit push to main that changes only docs/, README.md,
+       LICENSE, agents.conf.example, .cerebro/requirements.md or .cerebro/test-architecture.md
+       skips the gate; any other path beside them runs it.
+       Proven by: nothing yet

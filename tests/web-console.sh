@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# R24, as a navigator meets it: the web console shows the fleet a fleet view supervises, starts and
-# kills its agents through that view, and shows and types into the sessions it hosts. A SYSTEM suite
-# (.cerebro/test-architecture.md): it builds the real `cerebro-tui' and `cerebro-web', runs the view
+# R24 and SES-5, as a navigator meets them: the web console shows the fleet a fleet view supervises,
+# starts, finishes and kills its agents through that view, and shows and types into the sessions it
+# hosts. A SYSTEM suite (.cerebro/test-architecture.md): it builds the real `cerebro-tui' and `cerebro-web', runs the view
 # on a pseudo-terminal against a throwaway consumer and the service beside it, and drives the
 # service's HTTP API the way the page does - the same paths, the same `X-Cerebro-Input' header.
 #
@@ -15,7 +15,8 @@
 #   - one roster row, `Forge architect standby': an architect is handed no bead, so a start
 #     launches without a board.
 #   - a stub `claude' that writes `working' through the real `scripts/agent-state', records its
-#     pid, and answers every line typed into its terminal with `heard: <line>'.
+#     pid, and answers every line typed into its terminal with `heard: <line>'; the line
+#     `end of pass' also ends its pass through the real `scripts/end-pass'.
 #   - `bd' and `gh' stubs that refuse: the board is not part of this suite.
 #
 # Both binaries are built with `cargo build' and run by this suite itself - never as cargo's child
@@ -71,7 +72,10 @@ dir="$CEREBRO_CONSUMER_SHARED_ROOT/.cerebro/stub"
 echo $$ > "$dir/$BEADS_ACTOR.pid"
 echo "stub session for $BEADS_ACTOR"
 while IFS= read -r line; do
+  line="${line%$'\r'}"
   echo "heard: $line"
+  # As an agent ends its pass. It goes on running: only the view ends a session.
+  [ "$line" != "end of pass" ] || "$scripts/end-pass" "$BEADS_ACTOR" --pid $$ || echo "end-pass failed"
 done
 # The terminal closed under it: wait to be ended rather than end the pass itself.
 while :; do sleep 1; done
@@ -207,6 +211,8 @@ session_says() {
   text="$(session_text 2>/dev/null)" || return 1
   grep -q -- "$1" <<<"$text"
 }
+stop_flag() { [ -e "$state/Forge.stop" ]; }
+no_stop_flag() { ! stop_flag; }
 session_absent() { get /api/sessions/Forge | jq -e '.state == "absent"' >/dev/null 2>&1; }
 
 # --- the fleet, as the console reads it ---------------------------------------------------------------
@@ -250,5 +256,48 @@ wait_until "the stub agent to be killed" gone "$agent"
 wait_until "the console to show no session" session_absent
 wait_until "Forge's row to read dead, offering only a start" row '.offers == ["start"] and .state == "Dead"'
 pass "Kill asks the view, which ends Forge's session; the console shows it dead with no session"
+
+# --- finish, through the view -------------------------------------------------------------------------
+#
+# `f' on a working session the view hosts writes the stop flag and nothing else: the pass goes on,
+# and the console offers to resume or kill it. When the pass ends, the view retires the name - ends
+# the session, clears the flag and disarms it - so the row reads dead with only a start on offer.
+# A pass that ends with no flag is merely ended and stays armed, reading standby: that difference is
+# what proves the finish and not an ordinary end.
+
+rm -f "$stub_state/Forge.pid"
+status="$(post /api/agents/Forge/start)"
+[ "$status" = 200 ] || fail "start again: answered $status$(evidence)"
+jq -e '.done == true' "$last_answer" >/dev/null || fail "start again: the view refused it$(evidence)"
+polls=300 wait_until "the stub agent to start again" started
+agent="$(cat "$stub_state/Forge.pid")"
+wait_until "Forge's row to read working again, offering finish and kill" row '.offers == ["finish", "kill"] and .state == "Working"'
+
+status="$(post /api/agents/Forge/finish)"
+[ "$status" = 200 ] || fail "finish: answered $status$(evidence)"
+jq -e '.done == true' "$last_answer" >/dev/null || fail "finish: the view refused it$(evidence)"
+wait_until "Forge's stop flag" stop_flag
+wait_until "Forge's row to read finishing, offering resume and kill" row '.finishing == true and .offers == ["resume", "kill"] and .state == "Working"'
+alive "$agent" || fail "finish: the view ended Forge's working pass instead of letting it finish$(evidence)"
+session_says 'stub session for Forge' || fail "finish: Forge's session is no longer live$(evidence)"
+pass "Finish asks the view, which marks Forge to stop after this pass; its session keeps working"
+
+status="$(post /api/sessions/Forge/input $'end of pass\r')"
+[ "$status" = 204 ] || fail "input: answered $status$(evidence)"
+wait_until "the view to retire Forge, ending its session" gone "$agent"
+wait_until "the console to show no session" session_absent
+wait_until "Forge's stop flag to be cleared" no_stop_flag
+wait_until "Forge's row to read dead, disarmed, offering only a start" row '.offers == ["start"] and .state == "Dead" and (.finishing | not)'
+wait_until "the view to say it retired Forge" on_screen 'Forge was retired'
+# Nothing starts it again: a retired name is disarmed, so no session comes back under it. A bounded
+# look of a few seconds, through the view's own ticks, at the pid file a start would rewrite.
+for ((i = 0; i < 25; i++)); do
+  [ ! -e "$stub_state/Forge.pid" ] || [ "$(cat "$stub_state/Forge.pid")" = "$agent" ] \
+    || fail "finish: Forge was started again after it was retired$(evidence)"
+  sleep 0.2
+done
+row '.offers == ["start"] and .state == "Dead"' \
+  || fail "finish: Forge's row did not stay dead after it was retired$(evidence)"
+pass "Forge's pass ends and the view retires it: its session ends, its flag clears, and nothing starts it again"
 
 suite_passed

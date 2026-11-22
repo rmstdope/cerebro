@@ -1,6 +1,6 @@
 # Requirements
 
-Agreed with the navigator 2026-11-18. Each requirement keeps its ID for ever;
+Agreed with the navigator 2026-11-22. Each requirement keeps its ID for ever;
 a dropped one is struck, never renumbered.
 
 ## Setting up a project (SET)
@@ -94,6 +94,10 @@ SES-3  The navigator reads the fleet's health and history from its own logs. (wa
 SES-4  The navigator watches the fleet and its sessions from a browser through the web
        console. (was R24)
        Proven by: tests/web-console.sh
+SES-5  From the web console, the navigator starts, finishes or kills an agent. Each button
+       does exactly what s, f or k would do on that row in the fleet view, and shows only when
+       that key would.
+       Proven by: nothing yet
 
 ## Worktrees (WKT)
 

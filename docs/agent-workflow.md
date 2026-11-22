@@ -316,7 +316,9 @@ cut a minor release
 ```
 
 Every turn it takes opens with the Dependabot sweep (`scripts/dependabot-sweep`, cb-hpwc): each
-open Dependabot pull request whose CI passed is merged, majors included and with no review, and
+open Dependabot pull request whose CI passed is merged, majors included and with no review (or,
+when the project declares `dependabot_merge review`, reviewed by a sub-agent first and merged only
+with no findings, otherwise handed to you as a bead, cb-au3o), and
 each whose CI failed becomes one P4 `bugfix` bead naming it, filed without a re-run, for you to rank;
 the bugfixer then fixes that pull request's branch and merges it. When Dependabot replaces a pull
 request, the bead follows the replacement.
@@ -786,7 +788,8 @@ Honest numbers from building this repository's own harness:
   Small, self-contained answers do not create a mandatory review loop.
 - **Nothing merges red or with unresolved review findings.** The `main` ruleset enforces the
   former on the server; producers enforce the latter. A green Dependabot pull request is the one
-  merge without a review: Cerebro's sweep merges it, by the navigator's choice (cb-hpwc).
+  merge without a review: Cerebro's sweep merges it, by the navigator's choice (cb-hpwc), unless
+  the project declares `dependabot_merge review` (cb-au3o).
 - **Interactive agents cost nothing between passes** — the view ends them, producers included
   since cb-1or.1: one with nothing to build costs nothing — and a fresh start
   re-reads the role's instructions; a role whose trigger is true but whose pass cannot clear it

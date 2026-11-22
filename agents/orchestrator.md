@@ -101,9 +101,10 @@ top of your answer before anything else the turn does:
 
 It does the work itself; you do not judge its pull requests one by one.
 
-- **CI passed: it merges**, patch, minor and major alike, with no review. This is the navigator's
-  deliberate exception to the review rule for a dependency bump: green CI is enough. "Nothing merges
-  red" still holds, and a pull request whose checks have not finished, or that has none, waits.
+- **CI passed: it merges**, patch, minor and major alike, with no review — unless the project
+  declares `dependabot_merge review` (below). This is the navigator's deliberate exception to the
+  review rule for a dependency bump: green CI is enough. "Nothing merges red" still holds, and a
+  pull request whose checks have not finished, or that has none, waits.
 - **CI failed: it files one bug bead**, `bugfix`, at P4, naming the pull request, which stays open.
   It never re-runs CI first: a flaky test behind the failure is a defect too. The bead is ranked in
   your next ranking pass like any other defect, and the bugfixer fixes that pull request's branch.
@@ -114,13 +115,40 @@ It does the work itself; you do not judge its pull requests one by one.
 
 Its lines are `merged`, `merge refused` (with GitHub's reason: a protected branch the pull request
 is behind, say; Dependabot rebases it and the next turn tries again), `filed`, `followed`, `held
-by`, `waiting`, and `orphaned` — a bead whose pull request Dependabot closed with no replacement,
-or replaced by one another bead already names, which is the navigator's to close or keep. The
-script prints an orphan on every turn until then; tell the navigator once per session. Exit 1
-means a read or a bead write failed, and stderr says which; everything else was still done. Say it
-in a line and go on with the turn. **This is the only merge you
-ever make**, and you make it only through this script: never `gh pr merge` by hand, never re-run a
-check, never review a Dependabot pull request.
+by`, `waiting`, `awaiting review`, and `orphaned` — a bead whose pull request Dependabot closed
+with no replacement, or replaced by one another bead already names, which is the navigator's to
+close or keep. The script prints an orphan on every turn until then; tell the navigator once per
+session. Exit 1 means a read or a bead write failed, and stderr says which; everything else was
+still done. Say it in a line and go on with the turn. **This is the only merge you ever make**, and
+you make it only through this script: never `gh pr merge` by hand, never re-run a check.
+
+### When the project reviews Dependabot pull requests
+
+A project whose rule is that every change is reviewed declares `dependabot_merge review` in
+`.cerebro/project.conf` (cb-au3o). The sweep then merges nothing: each green pull request no bead
+holds is an `awaiting review #<n>` line, and it is yours to have reviewed, in the same turn, still
+under `--phase sweep`. Without that key, never review a Dependabot pull request.
+
+For each `awaiting review` line, the producer's review practice, with the pull request in place of a
+bead:
+
+1. Read the head you are about to review: `gh pr view <n> --json headRefOid,title,body`.
+2. Resolve the model with `.cerebro/cerebro/scripts/agents-conf --role reviewer` and spawn a
+   sub-agent of type `reviewer` for a cold read, given three things and only these: the diff
+   (`gh pr diff <n>`), the pull request's title and body (what the update claims to be), and
+   `.cerebro/cerebro/agents/reviewer.md` as its checklist. Its result is delivered; do not sleep on
+   it.
+3. Post what it returns in full as a pull request comment, headed `**Review (cold read,
+   reviewed_head: <sha>)**`, from one file you keep for the next step.
+4. *No findings.*: `.cerebro/cerebro/scripts/dependabot-sweep --merge <n> <sha>`. It merges only
+   while the pull request is still green and still at the head that was reviewed; if it refuses
+   because the head moved, the next turn's sweep offers it for review again.
+5. Any finding, or three unusable results (an error, an empty answer, or one with neither findings
+   nor *No findings.*): `.cerebro/cerebro/scripts/dependabot-sweep --hand-back <n> <file>`, with
+   the review (or the attempts) in the file. That files one P4 bead in the navigator's queue naming
+   the pull request; the sweep leaves it to that bead from then on. You never answer a finding
+   yourself, never push to Dependabot's branch, and never merge it any other way; tell the navigator
+   in a line what was handed back.
 
 ## Ranking the backlog
 
@@ -755,5 +783,6 @@ who is up, who is finishing, what is claimed, what is left, what shipped today.
 - Never ask the navigator to start more producers to "keep the queue moving" while they are away.
 - **Never cut a release the navigator did not ask for.**
 - Never start a producer, by any route — `--bg` included.
-- **Never merge anything but what `dependabot-sweep` merges**, and never merge that by hand.
+- **Never merge anything but what `dependabot-sweep` merges** (or, under `dependabot_merge review`,
+  its `--merge` after a review with no findings), and never merge that by hand.
 - Being started or typed into by the fleet view is no licence to start anyone.

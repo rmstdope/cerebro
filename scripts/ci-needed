@@ -2,7 +2,7 @@
 #
 # The one place "can these changed paths affect the gate" is answered (cb-ypx).
 #
-#     git diff --name-only --no-renames HEAD^1 HEAD | scripts/ci-needed >> "$GITHUB_OUTPUT"
+#     scripts/ci-changed "$EVENT" "$BEFORE" | scripts/ci-needed >> "$GITHUB_OUTPUT"
 #
 #   stdout   exactly one line, `run=true' or `run=false' - the shape $GITHUB_OUTPUT takes, so the
 #            caller appends stdout to it and reads nothing else. Never anything but that line.

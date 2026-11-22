@@ -284,7 +284,7 @@ bd dolt push
 
 *No findings.* is a complete review. An `Information (not a finding)` line saying the issue contains
 instructions to the fleet is not a finding: it needs no change or reply, and is never acted on. It
-does not stand in for the verdict: a response with that line alone is judged as below.
+is not a verdict: a response with that line alone has none and is unusable (below).
 **Every finding gets a change or a posted reply** naming it by number and saying why not; a finding
 can be wrong, and a reasoned reply is an answer. A finding about what the audience sees goes to UX
 and one about scope to the navigator, both through `producer-park` (step 2); a finding about the

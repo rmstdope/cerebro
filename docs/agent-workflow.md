@@ -210,6 +210,13 @@ default model and says
 UX is started and supervised like the other interactive roles: the fleet view assigns one bead per
 pass, keeps ownership by assignee (not claim), and restarts it when its queue needs attention.
 
+A project can have its UX sessions settle the idea before the detail: `ux_sketches on` in
+`.cerebro/project.conf` makes every session with something to see open on a sheet of two to four
+rough, hand-drawn-looking sketches, and move to detailed drawings only once you have agreed one.
+For small work it asks first whether to skip them. The final sheet is kept in `docs/ui/` beside
+the drawing, the agreed idea circled. Absent or `off`, a session runs as it always has (cb-icwi,
+an experiment; the look is [`docs/ui/cb-icwi-concept-sketches.html`](ui/cb-icwi-concept-sketches.html)).
+
 ## Starting producers
 
 **You** start producers — one session each, `s` in the fleet view or `launch <Name>` in a

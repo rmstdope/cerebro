@@ -272,7 +272,7 @@ then ask this as a question of its own, before anything is drawn:
 "Straight to the drawings" runs *The interview* as it is today from there; "Sketch it first" goes
 on to the sheet. Neither ends the session. Work you do not judge small gets no question.
 
-**A round is one sheet**: one page, one `file://` link, with **two to four** ideas side by side.
+**A round is one sheet**: one page, one `file://` link, with **two to four** ideas one above the other, each at full width.
 Never one: if you can think of only one, draw an honest second, such as the closest thing to
 today's screen. Never more than four: an idea cut from a round is not shown. Each idea is captioned
 with a letter and a short name ("A — list beside the fleet") and has one line under it saying what

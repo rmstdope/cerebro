@@ -246,7 +246,7 @@ Rewrite the title in the product's words, never quoted. Offer no choice of work.
 Read once, at the start of the pass:
 
 ```bash
-.cerebro/cerebro/scripts/project-conf ux_sketches off
+.cerebro/cerebro/scripts/project-conf ux_sketches on
 ```
 
 **Anything but `on` is off**, and then this section does not exist: no sketch, no "Sketches

@@ -1,0 +1,77 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Concept sketches (cb-icwi)</title><link href="https://fonts.googleapis.com/css2?family=Caveat:wght@400;600&display=swap" rel="stylesheet"><style>body{margin:0;background:#fdfcf8;font-family:system-ui,sans-serif;color:#222}header{padding:14px 20px;border-bottom:1px solid #ddd;background:#fff}h1{margin:0;font-size:18px}h2{font-size:16px;margin:28px 0 4px}p{margin:4px 0 10px;font-size:13px;color:#555}main{padding:0 20px 40px;max-width:1240px}svg{max-width:100%;height:auto;background:#fffef9;border:1px solid #e6e2d6;border-radius:4px}.term{background:#1e1e1e;color:#ddd;font:14px/1.5 ui-monospace,Menlo,monospace;padding:16px 18px;border-radius:6px;white-space:pre-wrap;max-width:800px}.term b{color:#fff}.box{border:1px solid #555;border-radius:4px;padding:10px 12px;margin-top:10px;color:#eee}.sel{color:#7fd1ff}</style>
+<script>
+// Tiny hand-drawn SVG helper: wobbly double strokes, hachure fills, squiggle text.
+function Sketch(svg, o){ this.svg=svg; this.o=Object.assign({stroke:'#222',w:2.2,jit:1.6,double:true,font:"'Caveat', cursive"},o||{}); this.seed=7; }
+Sketch.prototype.r=function(){ this.seed=(this.seed*9301+49297)%233280; return this.seed/233280-0.5; };
+Sketch.prototype.add=function(tag,attrs,text){ const e=document.createElementNS('http://www.w3.org/2000/svg',tag); for(const k in attrs) e.setAttribute(k,attrs[k]); if(text) e.textContent=text; this.svg.appendChild(e); return e; };
+Sketch.prototype.line=function(x1,y1,x2,y2,o){ o=Object.assign({},this.o,o||{}); const passes=o.double?2:1; for(let p=0;p<passes;p++){ const j=o.jit; const mx=(x1+x2)/2+this.r()*j*2, my=(y1+y2)/2+this.r()*j*2; const d=`M${x1+this.r()*j},${y1+this.r()*j} Q${mx},${my} ${x2+this.r()*j},${y2+this.r()*j}`; this.add('path',{d,fill:'none',stroke:o.stroke,'stroke-width':o.w*(p?0.7:1),'stroke-linecap':'round',opacity:p?0.6:1}); } };
+Sketch.prototype.rect=function(x,y,w,h,o){ this.line(x,y,x+w,y,o); this.line(x+w,y,x+w,y+h,o); this.line(x+w,y+h,x,y+h,o); this.line(x,y+h,x,y,o); };
+Sketch.prototype.hachure=function(x,y,w,h,color,gap){ gap=gap||7; for(let i=-h;i<w;i+=gap){ const ax=Math.max(x,x+i), ay=y+Math.max(0,-i); const bx=Math.min(x+w,x+i+h), by=y+Math.min(h,w-i); this.line(ax,ay,bx,by,{stroke:color,w:1.3,double:false,jit:0.8}); } };
+Sketch.prototype.text=function(x,y,s,o){ o=Object.assign({size:22,fill:this.o.stroke,anchor:'start'},o||{}); this.add('text',{x,y,'font-family':this.o.font,'font-size':o.size,fill:o.fill,'text-anchor':o.anchor},s); };
+Sketch.prototype.squiggle=function(x,y,len,o){ o=Object.assign({},this.o,{w:1.4,double:false},o||{}); let d=`M${x},${y}`; for(let i=6;i<=len;i+=6){ d+=` L${x+i},${y+(i/6%2?-3:3)+this.r()*2}`; } this.add('path',{d,fill:'none',stroke:o.stroke,'stroke-width':o.w,'stroke-linecap':'round','stroke-linejoin':'round'}); };
+Sketch.prototype.circle=function(cx,cy,r,o){ o=Object.assign({},this.o,o||{}); let d=''; for(let a=0;a<=6.6;a+=0.35){ const rr=r+this.r()*o.jit*1.5; d+=(a?' L':'M')+(cx+rr*Math.cos(a))+','+(cy+rr*Math.sin(a)); } this.add('path',{d,fill:'none',stroke:o.stroke,'stroke-width':o.w}); };
+Sketch.prototype.arrow=function(x1,y1,x2,y2,o){ this.line(x1,y1,x2,y2,o); const a=Math.atan2(y2-y1,x2-x1); this.line(x2,y2,x2-12*Math.cos(a-0.5),y2-12*Math.sin(a-0.5),o); this.line(x2,y2,x2-12*Math.cos(a+0.5),y2-12*Math.sin(a+0.5),o); };
+
+// One example concept (a list of waiting work beside the fleet), drawn in either style.
+// style 'marker': words, one accent colour, hachure fill.  style 'pencil': grey, squiggles for words.
+function drawConcept(svg, style, variant, ox, oy, scale){
+  const g=document.createElementNS('http://www.w3.org/2000/svg','g'); g.setAttribute('transform',`translate(${ox||0},${oy||0}) scale(${scale||1})`); svg.appendChild(g);
+  const pencil=style==='pencil';
+  const s=new Sketch(g, pencil?{stroke:'#555',w:1.3,jit:2.2}:{stroke:'#1e1e1e',w:2.4,jit:1.4});
+  const accent=pencil?'#555':'#1971c2';
+  const T=(x,y,str,len,o)=>{ if(pencil) s.squiggle(x,y-6,len); else s.text(x,y,str,o); };
+  s.rect(10,10,520,340);                       // the window
+  s.line(10,46,530,46);                         // title bar
+  T(24,36,'Fleet',60,{size:24});
+  if(variant==='below'){
+    for(let i=0;i<3;i++){ s.rect(26,62+i*44,488,34); T(40,86+i*44,['Xavier — designing','Forge — sweeping','Sage — idle'][i],170); }
+    s.line(10,200,530,200,{stroke:accent});
+    T(24,228,'Waiting for a design (3)',190,{size:22,fill:accent});
+    for(let i=0;i<3;i++){ T(40,260+i*28,['• sketch step for UX','• dependabot review','• web console finish'][i],150,{size:20}); }
+  } else if(variant==='drawer'){
+    for(let i=0;i<5;i++){ s.rect(26,62+i*54,300,42); T(40,90+i*54,['Xavier — designing','Forge — sweeping','Sage — idle','Moira — asking','Cypher — idle'][i],170); }
+    s.rect(346,46,184,304,{stroke:accent});
+    if(!pencil) s.hachure(346,46,184,30,accent,8);
+    T(358,70,'Waiting (3)',90,{size:22,fill:pencil?'#555':'#fff'});
+    for(let i=0;i<3;i++){ s.rect(358,92+i*50,160,38); T(368,117+i*50,['sketch step','dependabot','finish key'][i],100,{size:20}); }
+    s.arrow(330,30,370,30,{stroke:accent}); T(380,36,'slides in',60,{size:18,fill:accent});
+  } else { // beside
+    for(let i=0;i<5;i++){ s.rect(26,62+i*54,300,42); T(40,90+i*54,['Xavier — designing','Forge — sweeping','Sage — idle','Moira — asking','Cypher — idle'][i],170); }
+    s.line(342,46,342,350);
+    T(356,76,'Waiting (3)',90,{size:22,fill:accent});
+    for(let i=0;i<3;i++){ s.rect(356,92+i*58,160,44); T(366,120+i*58,['sketch step','dependabot','finish key'][i],100,{size:20}); }
+    if(!pencil) s.hachure(356,92,160,44,accent,8);
+    s.circle(500,114,10,{stroke:accent});
+  }
+  // margin notes, both styles keep these in words
+  return s;
+}
+</script></head><body><header><h1>Concept sketches before the detailed drawing — agreed with the navigator (cb-icwi)</h1><p>Switched on by <code>ux_sketches on</code>. The example idea throughout is the same made-up one: a list of waiting work next to the fleet.</p></header><main>
+<h2>1. What a sketch looks like: marker on a whiteboard</h2><p>Real words, one blue accent, hatched fill for what matters, red notes in the margin.</p>
+<svg id="s1" viewBox="0 0 760 380" width="760"></svg>
+<h2>2. A round of sketches: one sheet, two to four ideas side by side</h2><p>Each idea carries a letter and one line on what it costs. Asked as "Which idea do we build on?", with "None of these — sketch again" as the last choice.</p>
+<svg id="s2" viewBox="0 0 1200 330" width="1200"></svg>
+<h2>3. Skipping the sketches for a small piece of work: its own question, first</h2>
+<div class="term">I'm the design agent for <b>Cerebro</b>. …
+
+Today's piece of work is the most urgent one waiting for a design:
+
+<b>Rename the "Stop" key's label</b>
+
+…two or three sentences…
+
+This one looks small, so I'd go straight to the detailed drawings rather than sketch the idea first.
+<div class="box"><b>Sketches first?</b>
+This piece of work looks small: one label changes. Skip the rough sketches and go straight to the detailed drawings?
+<span class="sel">❯ 1. Straight to the drawings (Recommended)</span>
+     The idea is already clear; sketching it adds a round.
+  2. Sketch it first
+     Rough sketches of the idea before any detailed drawing.</div></div>
+<h2>4. What is kept beside the detailed drawing: the whole final sheet, agreed idea circled</h2>
+<svg id="s4" viewBox="0 0 1200 340" width="1200"></svg>
+</main>
+<script>
+(function(){const svg=document.getElementById('s1'); drawConcept(svg,'marker','beside',0,0,1); const n=new Sketch(svg,{stroke:'#c92a2a',w:1.8}); n.arrow(640,120,530,120); n.text(600,105,'the new bit',{size:22,fill:'#c92a2a'}); n.text(560,200,'click one →',{size:22,fill:'#c92a2a'}); n.text(560,226,'it opens below',{size:22,fill:'#c92a2a'});})();
+const C=[['beside','A — list beside the fleet','fleet rows get narrower'],['below','B — list below the fleet','fewer rows fit'],['drawer','C — slides in on a key','hidden until asked for']];
+['s2','s4'].forEach(id=>{const svg=document.getElementById(id); C.forEach((v,i)=>{ drawConcept(svg,'marker',v[0],i*400+5,10,0.7); const s=new Sketch(svg); s.text(i*400+10,290,v[1],{size:24}); s.text(i*400+10,315,v[2],{size:20,fill:'#666'}); }); if(id==='s4'){const n=new Sketch(svg,{stroke:'#c92a2a',w:2.5}); n.rect(0,2,392,326,{stroke:'#c92a2a'}); n.text(250,335,'agreed',{size:24,fill:'#c92a2a'});}});
+</script></body></html>

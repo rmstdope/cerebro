@@ -62,19 +62,19 @@ const IDEAS = [
 document.title = TITLE + ' — sketches';
 document.getElementById('title').textContent = TITLE;
 (function(){
-  const svg = document.getElementById('sheet'), cell = 430, left = 30, scale = 0.7, h = 375;
+  const svg = document.getElementById('sheet'), cell = 430, left = 30, scale = 0.7, h = 385;
   svg.setAttribute('viewBox', `0 0 ${IDEAS.length * cell + left} ${h}`);
   svg.setAttribute('width', IDEAS.length * cell + left);
   IDEAS.forEach((idea, i) => {
     const x = left + i * cell;
     const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-    g.setAttribute('transform', `translate(${x},20) scale(${scale})`);
+    g.setAttribute('transform', `translate(${x},28) scale(${scale})`);
     svg.appendChild(g);
     idea.draw(new Sketch(g));
     const s = new Sketch(svg);
-    s.text(x + 5, 300, `${idea.letter} — ${idea.name}`, {size: 24});
-    s.text(x + 5, 325, idea.cost, {size: 20, fill: '#666'});
-    if (AGREED === idea.letter){ s.ring(x + 190, 176, 214, 176); s.text(x + 330, 368, 'agreed', {size: 26, fill: RED}); }
+    s.text(x + 5, 308, `${idea.letter} — ${idea.name}`, {size: 24});
+    s.text(x + 5, 333, idea.cost, {size: 20, fill: '#666'});
+    if (AGREED === idea.letter){ s.ring(x + 190, 184, 214, 176); s.text(x + 330, 378, 'agreed', {size: 26, fill: RED}); }
   });
 })();
 </script></body></html>

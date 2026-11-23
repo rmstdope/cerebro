@@ -288,7 +288,9 @@ captions, and you replace only the ideas.
 **The sheet's question** is "Which idea do we build on?", with the sheet's `file://` link in the
 question text and in each option's description, as for every drawing. The options are the ideas,
 `A: <short name>` and so on, and the last is always `None of these — sketch again`, which brings a
-fresh sheet of two to four. A reply like "B, but with …" brings a revised sheet, still of two to
+fresh sheet of two to four. The question tool holds four options, so a sheet of four ideas asks the
+same question, with the same five options, as a prose question in the message that carries the
+link (*Interview, don't ask*). A reply like "B, but with …" brings a revised sheet, still of two to
 four. There is no limit on rounds: the session stays on sketches until one idea is agreed.
 
 **Only an agreed idea leads on.** *The interview* then runs as it does today, inside the agreed
@@ -297,7 +299,8 @@ layout, and never asks about the layout again.
 **What is kept**: the final sheet, every idea of the last round, is committed to `docs/ui/` as
 `<id>-sketches.html` beside the chosen detailed drawing, in the same pull request (*Anything you
 commit…*), with the agreed idea circled in red and marked `agreed` in handwriting (set `AGREED` in
-the sheet). *The mockup* in the record names both paths.
+the sheet). *The mockup* in the record names both paths. That mark is the one difference from
+what the designer saw that still counts as a matching `docs/` diff for merging it yourself.
 
 **Work that came back** (*A piece of work that came back*): when the note says the idea itself is
 wrong, the layout or the flow, open on a new sheet before any detailed drawing changes; when only
@@ -337,7 +340,9 @@ your own wording are yours. Else ask what a post-ship fix costs; still unclear, 
 
 ## Recording it
 
-**Commit the drawing first**, per *Anything you commit…*, so the record names a path on main. Then
+**Commit the drawing first**, per *Anything you commit…*, so the record names a path on main.
+With sketches on and an idea agreed, the kept sheet goes in the same commit and *The mockup* names
+both paths; work whose sketches were skipped names the drawing alone (*Sketching the idea first*). Then
 write the record to a file, in this order:
 
 ```markdown

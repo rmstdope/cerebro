@@ -231,6 +231,9 @@ Each of these answers one question in one place. Add a caller, never a second co
   `agents.conf`, passes `hooks/` through `agent-hooks-env` and `--settings`. For a UX agent with
   `--bead` it puts `scripts/ux-brief`'s startup brief in the prompt, which `agree-experience` reads
   instead of its startup reads.
+- `scripts/ux-snap` — a headless look at a drawing or a URL at desktop and phone width: PNGs plus
+  overflow, broken-image and console-error findings (`scripts/ux-snap.cjs` renders). Its test is
+  `tests/ux-snap-render`, run by `tests/web-console-ui`, the leg with a browser.
 - `scripts/agent-state` — the only writer of a state file; `scripts/end-pass` is its one caller
   for ending a pass; `scripts/agent-alive` is the predicate.
 - `scripts/stage-candidates`, `scripts/assignable-beads`, `scripts/bugfix-candidates`,

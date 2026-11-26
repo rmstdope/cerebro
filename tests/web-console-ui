@@ -40,6 +40,12 @@ else
   pnpm exec playwright install chromium
 fi
 
+echo "-- ux-snap"
+# scripts/ux-snap against a real headless Chromium (cb-6bgn). It runs here and not as a tests/*.sh
+# suite because this leg is the one with a browser: the UI's Playwright and the Chromium just
+# installed above, so nothing is downloaded twice.
+CEREBRO_UX_SNAP_MODULES="$ui" bash "$repo_root/tests/ux-snap-render"
+
 echo "-- build cerebro-web"
 # Built ahead, so the suite's webServer start is a launch and not a cold compile against its timeout.
 (cd "$repo_root" && cargo build -p cerebro-web --locked)

@@ -126,6 +126,18 @@ or another's.
   link keeps showing what was being compared. A drawing shown again after the work came back or
   was resumed gets a pair the same way. **Pages are never deleted**, when the work is filed or
   ever: they stay in the navigator's claude.ai gallery, and links in past chats keep working.
+- **Look at every drawing yourself before you show it**, in one call and without Chrome or a
+  web server:
+
+  ```bash
+  .cerebro/cerebro/scripts/ux-snap --out <scratchpad>/snap <drawing>.html [<drawing>.html ...]
+  ```
+
+  It renders each at desktop and phone width (`--widths` to change them) and prints one line per
+  render with the PNG's path, `ok` or its findings (`overflow:`, `broken image:`, `console
+  error:`); exit 3 means a finding. Read every PNG it names in one call, and fix each finding
+  before the drawing goes to the designer. It takes a URL too, for the app as it stands. Use
+  Chrome only for what it cannot reach: a click, a login, a typed value.
 - **Say to open them before answering.** Re-state the link pairs on every round.
 - **An answer that engages only with your prose, or comes back faster than a look would take**,
   gets one "did you see it?".

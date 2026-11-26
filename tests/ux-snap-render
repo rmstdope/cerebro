@@ -71,6 +71,12 @@ cat >"$work/noisy.html" <<'HTML'
 <script>console.error("drawing says no"); throw new Error("drawing threw");</script></body>
 HTML
 
+cat >"$work/nometa.html" <<'HTML'
+<!doctype html><meta charset="utf-8"><title>nometa</title><body><p>No viewport meta: a phone lays this out 980px wide.</p></body>
+HTML
+
+cp "$work/clean.html" "$work/50%#odd.html"
+
 # --- usage -----------------------------------------------------------------------------------
 run no_target
 expect_rc no_target 2 && ok "no target is a usage error"
@@ -133,7 +139,11 @@ fi
 # --- a broken image --------------------------------------------------------------------------
 run broken --widths 1280 --out "$work/o-broken" "$work/broken.html"
 if expect_rc broken 3; then
-  if grep -q 'broken image:.*missing.png' <<<"$out"; then ok "a missing image is reported"; else fail "broken: no broken image line: $out"; fi
+  if grep -q 'broken image:.*missing.png' <<<"$out" && grep -q '@1280 .* 1 finding(s)$' <<<"$out"; then
+    ok "a missing image is reported once, not again as a console error"
+  else
+    fail "broken: wanted exactly one finding, a broken image line: $out"
+  fi
 fi
 
 # --- console errors --------------------------------------------------------------------------
@@ -155,6 +165,48 @@ if expect_rc url 3; then
   else
     fail "url: wanted the URL's ok line and a 2-render 1-finding summary: $out"
   fi
+fi
+
+# --- a name with characters a URL reserves ---------------------------------------------------
+run odd --widths 390 --out "$work/o-odd" "$work/50%#odd.html" "$work/clean.html"
+if expect_rc odd 0; then
+  if [[ $(grep -c ' ok$' <<<"$out") -eq 2 ]]; then
+    ok "a file named with % and # renders, and so does the target after it"
+  else
+    fail "odd: wanted two ok lines: $out"
+  fi
+fi
+
+# --- a target that does not load -------------------------------------------------------------
+run absent --widths 390 --out "$work/o-absent" "file://$work/absent.html"
+if expect_rc absent 3; then
+  if grep -q '@390  no PNG  1 finding(s)$' <<<"$out" && grep -q 'load failed:' <<<"$out" &&
+    [[ -z "$(find "$work/o-absent" -name '*.png')" ]]; then
+    ok "a target that does not load says no PNG and load failed, and writes none"
+  else
+    fail "absent: wanted a no PNG line and load failed: $out"
+  fi
+fi
+
+# --- a phone lays out a page with no viewport meta wide --------------------------------------
+run nometa --out "$work/o-nometa" "$work/nometa.html"
+if expect_rc nometa 3; then
+  if grep -q '@1280 .* ok$' <<<"$out" && grep -A3 '@390 ' <<<"$out" | grep -q 'overflow: page lays out 980px wide on a 390px screen'; then
+    ok "a page with no viewport meta overflows a phone, and not a desktop"
+  else
+    fail "nometa: wanted ok at 1280 and a 980px overflow at 390: $out"
+  fi
+fi
+
+# --- a relative CEREBRO_UX_SNAP_MODULES ------------------------------------------------------
+rc=0
+(cd "$(dirname "$CEREBRO_UX_SNAP_MODULES")" &&
+  CEREBRO_UX_SNAP_MODULES="$(basename "$CEREBRO_UX_SNAP_MODULES")" \
+    "$snap" --widths 390 --out "$work/o-rel" "$work/clean.html") >"$work/rel.out" 2>"$work/rel.err" || rc=$?
+if [[ $rc -eq 0 ]]; then
+  ok "a relative CEREBRO_UX_SNAP_MODULES resolves"
+else
+  fail "relative modules: exit $rc; stderr: $(cat "$work/rel.err")"
 fi
 
 if [[ $failures -ne 0 ]]; then

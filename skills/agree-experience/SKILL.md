@@ -135,7 +135,7 @@ or another's.
 
   It renders each at desktop and phone width (`--widths` to change them) and prints one line per
   render with the PNG's path, `ok` or its findings (`overflow:`, `broken image:`, `console
-  error:`); exit 3 means a finding. Read every PNG it names in one call, and fix each finding
+  error:`, `load failed:`, whose line says `no PNG`); exit 3 means a finding. Read every PNG it names in one call, and fix each finding
   before the drawing goes to the designer. It takes a URL too, for the app as it stands. Use
   Chrome only for what it cannot reach: a click, a login, a typed value.
 - **Say to open them before answering.** Re-state the link pairs on every round.

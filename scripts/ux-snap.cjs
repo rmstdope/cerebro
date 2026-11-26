@@ -3,6 +3,8 @@
 //     node ux-snap.cjs <modules-dir> <out-dir> <widths> <url>...
 //
 // exit 0 clean, 3 at least one finding, 4 Playwright's browser is not installed, 1 anything else.
+// A target that would not load is a finding (`load failed:'), and its line says `no PNG' in place
+// of a path, so a caller never Reads a file that was not written.
 // CommonJS so Playwright can be resolved from a directory that is not this file's own.
 "use strict";
 
@@ -27,14 +29,22 @@ function loadChromium() {
 }
 
 function slug(url) {
-  const base = decodeURIComponent(url.replace(/[?#].*$/, "").replace(/\/+$/, "")).split("/").pop() || "page";
+  let base = url.replace(/[?#].*$/, "").replace(/\/+$/, "").split("/").pop() || "page";
+  try {
+    base = decodeURIComponent(base);
+  } catch (e) {
+    // a name that is not valid percent-encoding is used as it is
+  }
   return base.replace(/\.[a-z0-9]+$/i, "").replace(/[^a-zA-Z0-9_-]+/g, "-").slice(0, 60) || "page";
 }
 
-// In the page: what passes the right edge, and which images did not load.
-function inspectPage() {
-  const vw = window.innerWidth;
-  const sw = document.documentElement.scrollWidth;
+// In the page: what passes the right edge of the screen, and which images did not load.
+// `screen' is the width asked for, not innerWidth: a phone render is mobile, and a mobile layout
+// viewport grows to fit what overflows it (980px for a page with no viewport meta), so innerWidth
+// would hide exactly what the phone width is there to show.
+function inspectPage(screen) {
+  const vw = screen;
+  const sw = Math.max(document.documentElement.scrollWidth, window.innerWidth);
   const name = (el) => {
     let s = el.tagName.toLowerCase();
     if (el.id) s += "#" + el.id;
@@ -60,14 +70,16 @@ function inspectPage() {
 
 async function renderOne(browser, url, width, index) {
   const height = width <= PHONE_MAX ? 844 : 800;
-  const context = await browser.newContext({ viewport: { width, height } });
+  const consoleErrors = [];
+  const phone = width <= PHONE_MAX;
+  const context = await browser.newContext({ viewport: { width, height }, isMobile: phone, hasTouch: phone });
   const page = await context.newPage();
   const findings = [];
   const brokenUrls = new Set();
   page.on("console", (msg) => {
-    if (msg.type() === "error") findings.push(`console error: ${msg.text()}`);
+    if (msg.type() === "error") consoleErrors.push({ text: msg.text(), url: msg.location().url });
   });
-  page.on("pageerror", (err) => findings.push(`console error: uncaught ${err.message}`));
+  page.on("pageerror", (err) => consoleErrors.push({ text: `uncaught ${err.message}`, url: "" }));
   page.on("requestfailed", (req) => {
     if (req.resourceType() === "image") brokenUrls.add(req.url());
   });
@@ -75,19 +87,26 @@ async function renderOne(browser, url, width, index) {
     if (res.request().resourceType() === "image" && res.status() >= 400) brokenUrls.add(res.url());
   });
 
-  const png = path.join(outDir, `${index}-${slug(url)}-${width}.png`);
+  let png = path.join(outDir, `${index}-${slug(url)}-${width}.png`);
   try {
     await page.goto(url, { waitUntil: "load", timeout: 30000 });
     await page.waitForLoadState("networkidle", { timeout: 3000 }).catch(() => {});
-    const seen = await page.evaluate(inspectPage);
+    const seen = await page.evaluate(inspectPage, width);
     if (seen.sw > seen.vw) {
       const who = seen.wide.map((w) => `${w.name} ${w.width}px`).join(", ") || "no single element";
-      findings.push(`overflow: page is ${seen.sw}px wide at ${seen.vw}px (widest: ${who})`);
+      findings.push(`overflow: page lays out ${seen.sw}px wide on a ${seen.vw}px screen (widest: ${who})`);
     }
     for (const src of seen.broken) brokenUrls.add(src);
     await page.screenshot({ path: png, fullPage: true });
   } catch (err) {
     findings.push(`load failed: ${String(err.message || err).split("\n")[0]}`);
+    png = null;
+  }
+  // Chromium also logs every failed image as "Failed to load resource"; the broken image line
+  // already says it, with the file's name.
+  for (const e of consoleErrors) {
+    if (/^Failed to load resource/.test(e.text) && brokenUrls.has(e.url)) continue;
+    findings.push(`console error: ${e.text}`);
   }
   for (const src of brokenUrls) findings.push(`broken image: ${src}`);
   await context.close();
@@ -122,7 +141,7 @@ async function main() {
         renders += 1;
         total += findings.length;
         const verdict = findings.length === 0 ? "ok" : `${findings.length} finding(s)`;
-        console.log(`${url} @${width}  ${png}  ${verdict}`);
+        console.log(`${url} @${width}  ${png || "no PNG"}  ${verdict}`);
         for (const f of findings) console.log(`    ${f}`);
       }
     }

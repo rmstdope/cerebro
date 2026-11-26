@@ -30,8 +30,9 @@ for a in "$@"; do
   case "$a" in -C|--actor) skip=1 ;; *) args+=("$a") ;; esac
 done
 case "${args[0]}" in
-  dolt)     exit "${BD_PULL_EXIT:-0}" ;;
+  dolt)     sleep "${BD_PULL_SLEEP:-0}"; exit "${BD_PULL_EXIT:-0}" ;;
   show)     [ "${BD_SHOW_EXIT:-0}" = 0 ] || exit "$BD_SHOW_EXIT"
+            [ "${args[1]}" != "${BD_SHOW_FAIL_ID:-}" ] || exit 1
             cat "$STUB_DIR/show-${args[1]}.json" ;;
   children) [ "${BD_CHILDREN_EXIT:-0}" = 0 ] || exit "$BD_CHILDREN_EXIT"
             cat "$STUB_DIR/children.json" ;;
@@ -39,6 +40,17 @@ esac
 exit 0
 STUB
 chmod +x "$stub/bd"
+# A stub `git' in its own directory, put on PATH only by the case that needs it: the drawings read
+# fails, every other git call is the real one.
+gitstub="$work_dir/gitstub"
+mkdir -p "$gitstub"
+real_git="$(command -v git)"
+cat > "$gitstub/git" <<STUB
+#!/usr/bin/env bash
+case "\$*" in *"--diff-filter=A"*) exit 128 ;; esac
+exec "$real_git" "\$@"
+STUB
+chmod +x "$gitstub/git"
 export STUB_DIR="$stub"
 export PATH="$stub:$PATH"
 
@@ -61,7 +73,9 @@ reset() {
            description: "Every drawing a designer is shown can be opened anywhere."}]' \
     > "$stub/show-cb-epic.json"
   jq -n '[{id: "cb-a", title: "Show the phone link", status: "open"},
-          {id: "cb-b", title: "Stack the sketches", status: "closed"}]' > "$stub/children.json"
+          {id: "cb-b", title: "Stack the sketches", status: "closed"},
+          {id: "cb-epic.9", title: "set-state audit record", status: "closed", issue_type: "event"}]' \
+    > "$stub/children.json"
 }
 
 run_brief() { (cd "$consumer" && .cerebro/cerebro/scripts/ux-brief "$@"); }
@@ -88,6 +102,12 @@ for want in "## Startup brief" "cb-a" "Show the phone link" "Today a drawing ope
   grep -qF -- "$want" <<<"$out" || fail "ux-brief: the brief carries '$want', got: $out"
 done
 grep -qF -- "- cb-a " <<<"$out" && fail "ux-brief: the bead itself is not listed among its siblings, got: $out"
+grep -qF "cb-epic.9" <<<"$out" && fail "ux-brief: an event under the epic is no sibling, got: $out"
+grep -qF "> ## Sent back to the UX stage" <<<"$out" || fail "ux-brief: the notes are quoted, got: $out"
+grep -q "^## Sent back" <<<"$out" && fail "ux-brief: a heading in the notes is not left as one of the brief's, got: $out"
+grep -qF "> Today a drawing opens only on the computer." <<<"$out" || fail "ux-brief: the description is quoted, got: $out"
+grep -qF "> Every drawing a designer is shown can be opened anywhere." <<<"$out" \
+  || fail "ux-brief: the parent's description is quoted, got: $out"
 grep -qF "cb-gone.html" <<<"$out" && fail "ux-brief: a drawing no longer on disk is not listed, got: $out"
 new_line="$(grep -n "docs/ui/cb-new.html" <<<"$out" | cut -d: -f1)"
 old_line="$(grep -n "docs/ui/cb-old.html" <<<"$out" | cut -d: -f1)"
@@ -143,6 +163,14 @@ grep -qi "pull failed" <<<"$out" || fail "ux-brief: a failed pull is said in the
 [[ -e "$state/Beast.state.json" ]] || fail "ux-brief: a failed pull still writes the state"
 pass "a failed board pull is said in the brief and is still exit 0"
 
+reset
+started=$SECONDS
+out="$(BD_PULL_SLEEP=20 CEREBRO_UX_BRIEF_PULL_SECONDS=1 run_brief Beast cb-a --pid 4242 2>/dev/null)" \
+  || fail "ux-brief: a hung pull does not decide the exit status"
+[[ $((SECONDS - started)) -lt 10 ]] || fail "ux-brief: a hung pull is cut off at its bound, took $((SECONDS - started))s"
+grep -qi "pull failed" <<<"$out" || fail "ux-brief: a hung pull is said as a failed pull, got: $out"
+pass "a hung board pull is cut off at its bound and said as a failed pull"
+
 # --- the family and the drawings, degraded -------------------------------------------------------
 
 reset
@@ -158,6 +186,19 @@ out="$(BD_CHILDREN_EXIT=1 run_brief Beast cb-a --pid 4242 2>/dev/null)" \
   || fail "ux-brief: a failed family read does not decide the exit status"
 grep -qi "could not read" <<<"$out" || fail "ux-brief: a failed family read says so, got: $out"
 pass "a failed family read is said in the brief and is still exit 0"
+
+reset
+out="$(BD_SHOW_FAIL_ID=cb-epic run_brief Beast cb-a --pid 4242 2>/dev/null)" \
+  || fail "ux-brief: a failed parent read does not decide the exit status"
+grep -qF "Parent cb-epic: could not read it." <<<"$out" || fail "ux-brief: a failed parent read says so, got: $out"
+pass "a failed parent read is said in the brief and is still exit 0"
+
+reset
+out="$(PATH="$gitstub:$PATH" run_brief Beast cb-a --pid 4242 2>/dev/null)" \
+  || fail "ux-brief: a failed drawings read does not decide the exit status"
+grep -qF "Could not read docs/ui/ from git." <<<"$out" || fail "ux-brief: a failed drawings read says so, got: $out"
+grep -qi "none yet" <<<"$out" && fail "ux-brief: a failed drawings read is not 'none yet', got: $out"
+pass "a failed drawings read is said in the brief, not as none yet"
 
 reset
 printf 'ux_sketches off\n' > "$consumer/.cerebro/project.conf"

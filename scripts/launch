@@ -363,12 +363,15 @@ Your bead is $bead; it is already $taken you."
   # cb-9tnf: a UX agent's startup - the board pull, the claim check, the working state, the bead's
   # family, the project keys and the newest drawings - is done once here by `ux-brief' and rides in
   # the prompt, so the session's first request already holds it. `$$' is the pid the agent CLI keeps
-  # across the `exec' below. A brief that cannot be made never refuses the start: the skill confirms
+  # across the `exec' below, and the state it writes removes the handover before the session exists.
+# A brief that cannot be made never refuses the start: the skill confirms
   # the bead itself when the prompt says so. By POLICY, as assign-bead decides, not by role name.
   if [[ "$policy" == ux ]]; then
     brief_status=0
     brief="$("$here/ux-brief" "$name" "$bead" --pid $$)" || brief_status=$?
-    if [[ $brief_status -ne 0 && $brief_status -ne 3 ]]; then
+    # Over 100 KB the brief is dropped for the fallback: Linux refuses one argv string over 128 KiB
+    # (MAX_ARG_STRLEN), and the exec below would fail with the state already written.
+    if [[ $brief_status -ne 0 && $brief_status -ne 3 ]] || [[ ${#brief} -gt 100000 ]]; then
       brief="The startup brief could not be made; confirm your bead as agree-experience says."
     fi
     instruction="$instruction

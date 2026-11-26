@@ -1636,6 +1636,11 @@ out="$(BRIEF_EXIT=1 BRIEF_OUT="" run_launcher launch "$planning_name" --bead cb-
   || fail "launch --bead: a brief that could not be made still starts the session"
 grep -qF "The startup brief could not be made; confirm your bead as agree-experience says." <<<"$out" \
   || fail "launch --bead: a failed brief puts the fallback line in the prompt, got: $out"
+out="$(BRIEF_OUT="$(head -c 100001 /dev/zero | tr '\0' x)" run_launcher launch "$planning_name" --bead cb-x 2>/dev/null)" \
+  || fail "launch --bead: an oversized brief still starts the session"
+grep -qF "The startup brief could not be made; confirm your bead as agree-experience says." <<<"$out" \
+  || fail "launch --bead: an oversized brief is replaced by the fallback line"
+grep -q "xxxxxxxxxx" <<<"$out" && fail "launch --bead: an oversized brief is not put in the prompt"
 pass "a ux brief that fails or says not-yours never refuses the launch"
 
 rm -f "$brief_log"

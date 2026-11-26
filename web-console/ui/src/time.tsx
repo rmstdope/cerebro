@@ -253,12 +253,14 @@ function activityLines(phase: TimePhase, detailFrom: string | null, roomy: boole
 
 function PointingBox({ node, whole, waiting, style }: { node: Node; whole: number; waiting: boolean; style: CSSProperties }) {
   const share = whole ? Math.round(total(node) / whole * 100) : 0;
+  // Only the agents that have a tile: without the waiting time, one that only waited has none.
+  const shown = node.children.filter(item => total(item) > 0);
   const hint = node.kind === "role" ? "Click to see its agents" : node.kind === "agent" ? "Click to see its phases" : node.kind === "other" ? "Click to see them" : undefined;
   return <div role="tooltip" style={style} className="pointer-events-none absolute z-20 w-56 rounded-md bg-zinc-900 px-3 py-2 text-xs leading-relaxed text-white shadow-lg">
     <div className="font-semibold break-words">{node.label}</div>
     <div>{hours(total(node))} h · {share}% of all time</div>
     {waiting && <div>{hours(node.working)} h working · {hours(node.waiting)} h waiting on you</div>}
-    {node.kind === "role" && <div>{node.children.length} agents · {node.sessions ?? 0} sessions</div>}
+    {node.kind === "role" && <div>{shown.length} agents · {shown.reduce((sum, item) => sum + (item.sessions ?? 0), 0)} sessions</div>}
     {node.kind === "agent" && <div>{node.sessions ?? 0} sessions</div>}
     {hint && <div className="opacity-70">{hint}</div>}
   </div>;
@@ -342,8 +344,12 @@ export function TimeTab({ keys }: { keys: boolean }) {
   const touchEnd = () => clearTimeout(pressTimer.current);
   const click = (node: Node) => () => { if (pressed.current) { pressed.current = false; return; } down(node); };
 
-  const empty = report && here && tiles.length === 0;
-  const emptyWords = shownPeriod === "all"
+  const empty = !!report && !!here && tiles.length === 0;
+  // With the box unticked, a level can be empty only because all its time was waiting on you.
+  const onlyWaiting = empty && !waiting && total(walk(tree(report, true), path).at(-1)!) > 0;
+  const emptyWords = onlyWaiting
+    ? [shownPeriod === "all" ? "Only time waiting on you has been recorded." : `Only time waiting on you in the last ${lastWords[shownPeriod ?? period]}.`, "Tick Waiting on you to see it."]
+    : shownPeriod === "all"
     ? ["Nothing has been recorded for this project yet. Time shows here once an agent has run."]
     : [`No agent ran in the last ${lastWords[shownPeriod ?? period]}.`, "Pick a longer period above."];
 
@@ -387,7 +393,7 @@ export function TimeTab({ keys }: { keys: boolean }) {
             className={cn("flex w-full items-center gap-2 px-2.5 py-2 text-left text-[13px]", index === selected && "bg-muted")}>
             <span className="w-24 shrink-0 truncate">{node.label}</span>
             <span className="flex min-w-0 flex-1">
-              <span className="h-3.5 rounded-l-sm" style={{ width: `${node.working / scale * 100}%`, background: node.colour }} />
+              <span className={cn("h-3.5 rounded-l-sm", node.waiting === 0 && "rounded-r-sm")} style={{ width: `${node.working / scale * 100}%`, background: node.colour }} />
               {node.waiting > 0 && <span className="band h-3.5 rounded-r-sm" style={{ width: `${node.waiting / scale * 100}%`, background: hatch }} />}
             </span>
             <span className="shrink-0 tabular-nums">{hours(total(node))} h</span>

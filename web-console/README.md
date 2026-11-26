@@ -30,10 +30,11 @@ a bead waiting for human input, is named in a banner above both tabs.
 **Time** shows where the fleet's time went, as tiles whose area is time. They show all roles first, then a
 role's agents, then an agent's phases, and each phase lists what the agent was doing in it. The
 path above the tiles goes back up, and so do `Esc` and `Backspace`. The arrow keys move the
-selection and `Enter` goes in. The period is 24 hours, 7 days, 30 days or all. Time spent `asking`, waiting
-on the navigator, counts only while **Waiting on you** is ticked, which it is not at first: then it
-is the hatched band along each tile's bottom, and without it the tiles are sized by working time
-alone. The period, the box and the level are remembered in `localStorage`. Below 600 px the tiles become a list of bars. The page reads
+selection and `Enter` goes in. The period is 24 hours, 7 days, 30 days or all. Time spent
+`asking`, waiting on the navigator, counts only while **Waiting on you** is ticked, which it is
+not at first: then it is the hatched band along each tile's bottom, and without it the tiles are
+sized by working time alone, and a period with nothing else says to tick it. The period, the box
+and the level are remembered in `localStorage`. Below 600 px the tiles become a list of bars. The page reads
 `GET /api/time?period=24h|7d|30d|all` once a minute. That answers from
 `.cerebro/state/transitions.jsonl` (each agent's state and phase), the `start`, `end`, `exit` and
 `retire` events of `decisions*.jsonl` (each session's role and end) and the sessions' transcripts.

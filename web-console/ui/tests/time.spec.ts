@@ -253,18 +253,55 @@ test("shows a list of bars below 600 px", async ({ page }) => {
 
 test("moves between tiles with the keyboard", async ({ page }) => {
   await serve(page, () => report(fleet()));
-  await openTime(page);
-  await expect(tile(page, "producer, 41 h")).toHaveAttribute("aria-current", "true");
+  await openTime(page, false);
+  await expect(tile(page, "producer, 32 h")).toHaveAttribute("aria-current", "true");
 
   await page.keyboard.press("ArrowRight");
-  await expect(tile(page, "producer, 41 h")).not.toHaveAttribute("aria-current", "true");
+  await expect(tile(page, "producer, 32 h")).not.toHaveAttribute("aria-current", "true");
   await page.keyboard.press("ArrowLeft");
-  await expect(tile(page, "producer, 41 h")).toHaveAttribute("aria-current", "true");
+  await expect(tile(page, "producer, 32 h")).toHaveAttribute("aria-current", "true");
   await page.keyboard.press("Enter");
   await expect(page.getByRole("navigation", { name: "Path" })).toHaveText("All roles›producer");
   await page.keyboard.press("Escape");
   await expect(page.getByRole("navigation", { name: "Path" })).toHaveText("All roles");
-  await expect(tile(page, "producer, 41 h")).toHaveAttribute("aria-current", "true");
+  await expect(tile(page, "producer, 32 h")).toHaveAttribute("aria-current", "true");
+});
+
+test("the arrows and Enter still move the tiles from the focused checkbox", async ({ page }) => {
+  await serve(page, () => report(fleet()));
+  await openTime(page);
+  await expect(waitingBox(page)).toBeFocused();
+
+  await page.keyboard.press("ArrowRight");
+  await expect(tile(page, "producer, 41 h")).not.toHaveAttribute("aria-current", "true");
+  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("navigation", { name: "Path" })).toHaveText("All roles›producer");
+  await expect(waitingBox(page)).toBeChecked();
+});
+
+test("says when a period holds nothing but time waiting on you", async ({ page }) => {
+  const asker = role("orchestrator", [agent("Cerebro", 1, [phase("triage", 0, 5)]), agent("Cerebro-2", 1, [phase("triage", 0, 1)])]);
+  await serve(page, () => report([asker]));
+  await openTime(page, false);
+  await page.getByRole("radio", { name: "24 hours" }).click();
+  await expect(page.getByText("Only time waiting on you in the last 24 hours.")).toBeVisible();
+  await expect(page.getByText("Tick Waiting on you to see it.")).toBeVisible();
+  await page.getByRole("radio", { name: "All" }).click();
+  await expect(page.getByText("Only time waiting on you has been recorded.")).toBeVisible();
+
+  await waitingBox(page).check();
+  await expect(tile(page, /^orchestrator, 6 h/)).toBeVisible();
+  await tile(page, /^orchestrator,/).hover();
+  await expect(page.getByRole("tooltip")).toContainText("2 agents · 2 sessions");
+});
+
+test("a role's pointing box counts only the agents it shows", async ({ page }) => {
+  const mixed = role("verifier", [agent("Psylocke", 1, [phase("verify", 0, 3)]), agent("Jean", 2, [phase("verify", 4)])]);
+  await serve(page, () => report([...fleet().filter(item => item.name !== "verifier"), mixed]));
+  await openTime(page, false);
+  await tile(page, /^verifier,/).hover();
+  await expect(page.getByRole("tooltip")).toContainText("1 agents · 2 sessions");
 });
 
 test("remembers the period and the level across a reload", async ({ page }) => {

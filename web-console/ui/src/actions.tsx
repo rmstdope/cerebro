@@ -189,8 +189,8 @@ export function Palette({ open, agents, selected, supervised, onClose, onAct }: 
 }
 
 /// Whether a keystroke is somebody typing - into a field, or into a session's screen - rather
-/// than a key for the page.
-/// Whether keys pressed at TARGET are text going into it. A checkbox or radio button takes none.
+/// than a key for the page. A checkbox takes no keys of its own but Space, so the page's keys
+/// still work from one.
 export const typingInto = (target: EventTarget | null) =>
   target instanceof HTMLElement && (target.isContentEditable || ["TEXTAREA", "SELECT"].includes(target.tagName)
-    || (target instanceof HTMLInputElement && !["checkbox", "radio"].includes(target.type)) || target.closest(".xterm") !== null);
+    || (target instanceof HTMLInputElement && target.type !== "checkbox") || target.closest(".xterm") !== null);

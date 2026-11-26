@@ -6,7 +6,8 @@
 
 # brief_bounded <seconds> <command> [args...]: run it with its output discarded, killed at the bound
 # (status 124). A brief runs inside `launch', before the session's pane shows anything, so a hung
-# remote has to read as a failed command rather than a blank row.
+# remote has to read as a failed command rather than a blank row. Each brief names its own bound:
+# CEREBRO_UX_BRIEF_PULL_SECONDS (`ux-brief') and CEREBRO_BRIEF_PULL_SECONDS (`producer-brief').
 brief_bounded() {
   local secs="$1" child ticks=0
   shift

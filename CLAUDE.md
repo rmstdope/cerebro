@@ -228,7 +228,9 @@ Each of these answers one question in one place. Add a caller, never a second co
 - `scripts/project-conf`, `scripts/app-paths` (which fails rather than guesses),
   `scripts/agents-conf`, `scripts/agent-cli` — the project's declarations.
 - `scripts/launch <Name>` — the only way a session is started; runs `launch-preflight`, reads
-  `agents.conf`, passes `hooks/` through `agent-hooks-env` and `--settings`.
+  `agents.conf`, passes `hooks/` through `agent-hooks-env` and `--settings`. For a UX agent with
+  `--bead` it puts `scripts/ux-brief`'s startup brief in the prompt, which `agree-experience` reads
+  instead of its startup reads.
 - `scripts/agent-state` — the only writer of a state file; `scripts/end-pass` is its one caller
   for ending a pass; `scripts/agent-alive` is the predicate.
 - `scripts/stage-candidates`, `scripts/assignable-beads`, `scripts/bugfix-candidates`,

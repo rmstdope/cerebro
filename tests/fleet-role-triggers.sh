@@ -228,7 +228,9 @@ set -u
 root="$CEREBRO_CONSUMER_SHARED_ROOT"
 scripts="$root/.cerebro/cerebro/scripts"
 name="$BEADS_ACTOR"
-bead="$(head -n 1 "$root/.cerebro/state/$name.handover" 2>/dev/null || true)"
+# The bead from the prompt's own sentence, not the handover file: a UX agent's first state write is
+# made by `ux-brief' before exec (cb-9tnf), and that write is what removes the handover.
+bead="$(printf '%s\n' "$@" | sed -n 's/^Your bead is \([^;]*\);.*/\1/p' | sed -n 1p)"
 printf '%s %s %s %s\n' "$(date +%s)" "$name" "${bead:-none}" "$$" >> "$FIXTURE/sessions"
 if [ -n "$bead" ]; then
   "$scripts/agent-state" "$name" working --bead "$bead" --phase pass --pid $$

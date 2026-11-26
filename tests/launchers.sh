@@ -1583,6 +1583,16 @@ printf '%s\n' "\$*" >> "$assign_log"
 exit "\${ASSIGN_EXIT:-0}"
 STUB
 chmod +x "$fixture_scripts/assign-bead"
+# cb-9tnf: a stub `ux-brief' the same way - logs its argv, prints $BRIEF_OUT, exits $BRIEF_EXIT.
+brief_log="$stub_dir/brief.log"
+mv "$fixture_scripts/ux-brief" "$stub_dir/ux-brief.real"
+cat > "$fixture_scripts/ux-brief" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$brief_log"
+printf '%s\n' "\${BRIEF_OUT:-## Startup brief (stub)}"
+exit "\${BRIEF_EXIT:-0}"
+STUB
+chmod +x "$fixture_scripts/ux-brief"
 
 rm -f "$assign_log"
 out="$(run_launcher launch "$bead_name" --bead cb-x 2>/dev/null)" \
@@ -1604,6 +1614,43 @@ grep -qF "Your bead is cb-x; it is already assigned to you." <<<"$out" \
 grep -qF "already claimed" <<<"$out" && fail "launch --bead: a planning role is not told its bead is claimed"
 pass "a planning role launched with --bead is told the bead is assigned"
 
+# cb-9tnf: a UX agent's bead arrives with its startup brief already in the prompt, after the bead
+# sentence; the brief is made with the launcher's own pid, which the agent CLI keeps across exec.
+rm -f "$brief_log"
+out="$(run_launcher launch "$planning_name" --bead cb-x 2>/dev/null)" \
+  || fail "launch --bead: a ux launch with a brief starts the session"
+read -r b_name b_bead b_flag b_pid < "$brief_log" || fail "launch --bead: a ux launch calls ux-brief"
+[[ "$b_name $b_bead $b_flag" == "$planning_name cb-x --pid" && "$b_pid" =~ ^[0-9]+$ ]] \
+  || fail "launch --bead: ux-brief is called with the name, the bead and a pid, got: $(cat "$brief_log")"
+sentence_line="$(grep -m1 -n "Your bead is cb-x" <<<"$out" | cut -d: -f1)"
+brief_line="$(grep -m1 -n "## Startup brief (stub)" <<<"$out" | cut -d: -f1)"
+[[ -n "$sentence_line" && -n "$brief_line" && $sentence_line -lt $brief_line ]] \
+  || fail "launch --bead: the brief follows the bead sentence in the prompt, got: $out"
+pass "a ux launch with --bead carries ux-brief's output in the prompt after the bead sentence"
+
+out="$(BRIEF_EXIT=3 BRIEF_OUT="Your bead cb-x is no longer yours" run_launcher launch "$planning_name" --bead cb-x 2>/dev/null)" \
+  || fail "launch --bead: a brief that says the bead is not yours still starts the session"
+grep -qF "Your bead cb-x is no longer yours" <<<"$out" \
+  || fail "launch --bead: a not-yours brief is carried in the prompt, got: $out"
+out="$(BRIEF_EXIT=1 BRIEF_OUT="" run_launcher launch "$planning_name" --bead cb-x 2>/dev/null)" \
+  || fail "launch --bead: a brief that could not be made still starts the session"
+grep -qF "The startup brief could not be made; confirm your bead as agree-experience says." <<<"$out" \
+  || fail "launch --bead: a failed brief puts the fallback line in the prompt, got: $out"
+out="$(BRIEF_OUT="$(head -c 100001 /dev/zero | tr '\0' x)" run_launcher launch "$planning_name" --bead cb-x 2>/dev/null)" \
+  || fail "launch --bead: an oversized brief still starts the session"
+grep -qF "The startup brief could not be made; confirm your bead as agree-experience says." <<<"$out" \
+  || fail "launch --bead: an oversized brief is replaced by the fallback line"
+grep -q "xxxxxxxxxx" <<<"$out" && fail "launch --bead: an oversized brief is not put in the prompt"
+pass "a ux brief that fails or says not-yours never refuses the launch"
+
+rm -f "$brief_log"
+run_launcher launch "$bead_name" --bead cb-x >/dev/null 2>&1 || fail "launch --bead: an implementer still starts"
+[[ ! -e "$brief_log" ]] || fail "launch --bead: an implementer's launch calls no ux-brief"
+rm -f "$brief_log"
+run_launcher launch "$planning_name" >/dev/null 2>&1 || fail "launch: a ux agent without --bead still starts"
+[[ ! -e "$brief_log" ]] || fail "launch: a ux launch without --bead calls no ux-brief"
+pass "only a ux launch with --bead makes a brief"
+
 rm -f "$assign_log"
 status=0
 out="$(ASSIGN_EXIT=3 run_launcher launch "$bead_name" --bead cb-x 2>/dev/null)" || status=$?
@@ -1623,5 +1670,6 @@ run_launcher launch "$bead_name" >/dev/null 2>&1 || fail "launch without --bead 
 pass "launch without --bead does not call assign-bead"
 
 mv -f "$stub_dir/assign-bead.real" "$fixture_scripts/assign-bead"
+mv -f "$stub_dir/ux-brief.real" "$fixture_scripts/ux-brief"
 
 suite_passed

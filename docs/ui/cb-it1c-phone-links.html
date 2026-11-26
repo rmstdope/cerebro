@@ -1,0 +1,32 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Layout A — two labelled lines</title><style>body{margin:0;background:#f4f4f1;font-family:system-ui,sans-serif;color:#222}
+header{padding:14px 16px;background:#fff;border-bottom:1px solid #ddd}h1{font-size:18px;margin:0}header p{margin:4px 0 0;font-size:13px;color:#555}
+main{max-width:900px;margin:0 auto;padding:16px;display:flex;flex-direction:column;gap:22px}
+h2{font-size:15px;margin:0 0 8px}.note{font-size:13px;color:#666;margin:6px 0 0}
+.row{display:flex;flex-wrap:wrap;gap:18px}
+.phone{width:320px;max-width:100%;border:10px solid #222;border-radius:28px;background:#fff;overflow:hidden}
+.bar{background:#efefef;padding:8px 12px;font-size:13px;font-weight:600}
+.msg{padding:10px 12px;font-size:14px;line-height:1.45}
+.opt{margin:8px 0}.opt b{display:block}
+.k{color:#777;font-size:12px}.fl{color:#888;font-family:ui-monospace,monospace;font-size:11.5px;word-break:break-all}
+a{color:#1971c2}.pl{font-family:ui-monospace,monospace;font-size:12px;word-break:break-all}
+.dlg{margin:10px 12px 14px;border:1px solid #ccc;border-radius:10px;padding:10px;font-size:13px;background:#fafafa}
+.dlg .o{border:1px solid #ddd;border-radius:8px;padding:6px 8px;margin-top:6px;background:#fff}
+.term{flex:1;min-width:280px;background:#1e1e1e;color:#ddd;font-family:ui-monospace,monospace;font-size:12px;padding:12px;border-radius:6px;white-space:pre-wrap;word-break:break-all;line-height:1.5}
+.term .b{color:#6cb6ff}.term .d{color:#888}.err{color:#c92a2a}</style></head><body>
+<header><h1>Layout A — two labelled lines</h1><p>Each drawing gets its name, then one labelled line per device.</p></header><main>
+<section><h2>1. On the phone: the message and the question</h2><div class="row"><div class="phone"><div class="bar">Remote session · Xavier</div><div class="msg">Here are the two drawings — open both before you answer.
+<div class="opt"><b>Option A — sidebar</b><span class="k">On your phone:</span> <a class="pl">https://claude.ai/code/artifact/7f3c…</a><br><span class="k">On the computer:</span> <span class="fl">file:///Users/…/scratchpad/cb-1234-sidebar-a.html</span></div><div class="opt"><b>Option B — panel</b><span class="k">On your phone:</span> <a class="pl">https://claude.ai/code/artifact/7f3c…</a><br><span class="k">On the computer:</span> <span class="fl">file:///Users/…/scratchpad/cb-1234-sidebar-a.html</span></div></div>
+<div class="dlg"><b>Which layout do we build?</b> Open both first:<br><div class="opt"><b>Option A — sidebar</b><span class="k">On your phone:</span> <a class="pl">https://claude.ai/code/artifact/7f3c…</a><br><span class="k">On the computer:</span> <span class="fl">file:///Users/…/scratchpad/cb-1234-sidebar-a.html</span></div><div class="opt"><b>Option B — panel</b><span class="k">On your phone:</span> <a class="pl">https://claude.ai/code/artifact/7f3c…</a><br><span class="k">On the computer:</span> <span class="fl">file:///Users/…/scratchpad/cb-1234-sidebar-a.html</span></div><div class="o">A: sidebar</div><div class="o">B: panel</div></div></div></div>
+<p class="note">Every drawing gets its private link. The links appear in the message and again inside the question, so the question can be answered on its own.</p></section>
+<section><h2>2. On the computer: the same message</h2><div class="row"><div class="term">Option A — sidebar
+  On your phone:   <span class="b">https://claude.ai/code/artifact/7f3c…</span>
+  On the computer: <span class="b">file:///Users/…/scratchpad/cb-1234-sidebar-a.html</span>
+Option B — panel
+  On your phone:   <span class="b">https://claude.ai/code/artifact/7f3c…</span>
+  On the computer: <span class="b">file:///Users/…/scratchpad/cb-1234-sidebar-a.html</span></div></div>
+<p class="note">The file link is still there and still opens on the computer. The phone link sits beside it.</p></section>
+<section><h2>3. When a phone link couldn't be made</h2><div class="row"><div class="phone"><div class="bar">Remote session · Xavier</div><div class="msg"><div class="opt"><b>Option A — sidebar</b><span class="k">On your phone:</span> <a class="pl">https://claude.ai/code/artifact/7f3c…</a><br><span class="k">On the computer:</span> <span class="fl">file:///Users/…/scratchpad/cb-1234-sidebar-a.html</span></div><div class="opt"><b>Option B — panel</b><span class="k">On your phone:</span> <span class="err">Couldn't make a phone link for this drawing — open it on the computer.</span><br><span class="k">On the computer:</span> <span class="fl">file:///Users/…/scratchpad/cb-1234-sidebar-a.html</span></div></div></div><div class="term">Option B — panel
+  On your phone:   <span class="err">Couldn't make a phone link for this drawing — open it on the computer.</span>
+  On the computer: <span class="b">file:///Users/…/scratchpad/cb-1234-sidebar-a.html</span></div></div>
+<p class="note">The drawing is still offered with its file link, and the session goes on. Only the phone link is missing, and the line says so.</p></section>
+</main></body></html>

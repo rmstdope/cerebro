@@ -36,39 +36,15 @@ pid="$4"
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$script_dir/epic-family.sh"
+source "$script_dir/brief-lib.sh"
 root="$("$script_dir/consumer-root" --shared)"
 
-# The pull runs inside `launch', before the session's pane shows anything, so it is bounded: a hung
-# remote reads as a failed pull rather than a blank row (CEREBRO_UX_BRIEF_PULL_SECONDS, default 30).
-bounded() {
-  local secs="$1" child ticks=0
-  shift
-  "$@" >/dev/null 2>&1 &
-  child=$!
-  while kill -0 "$child" 2>/dev/null; do
-    if [[ $ticks -ge $((secs * 5)) ]]; then
-      kill "$child" 2>/dev/null || true
-      wait "$child" 2>/dev/null || true
-      return 124
-    fi
-    sleep 0.2
-    ticks=$((ticks + 1))
-  done
-  wait "$child"
-}
-
 pulled="yes"
-bounded "${CEREBRO_UX_BRIEF_PULL_SECONDS:-30}" bd -C "$root" dolt pull || pulled=""
+brief_bounded "${CEREBRO_UX_BRIEF_PULL_SECONDS:-30}" bd -C "$root" dolt pull || pulled=""
 
-if ! shown="$(bd -C "$root" show "$id" --json)"; then
-  exit 1
-fi
-if ! bead="$(printf '%s' "$shown" | jq -e '(if type=="array" then .[0] else . end) | objects' 2>/dev/null)"; then
-  echo "ux-brief: bd show $id did not print JSON this script can read" >&2
-  exit 1
-fi
+bead="$(brief_bead "$root" "$id")" || exit 1
 
-field() { jq -r --arg k "$1" '.[$k] // "" | if type=="array" then join(", ") else tostring end' <<<"$bead"; }
+field() { brief_field "$bead" "$1"; }
 
 status="$(field status)"
 assignee="$(field assignee)"
@@ -78,10 +54,6 @@ if [[ "$status" != open || "$assignee" != "$name" ]]; then
 fi
 
 "$script_dir/agent-state" "$name" working --bead "$id" --phase ux --pid "$pid" >/dev/null
-
-# The board's free text, quoted: every line behind `> ', so a heading in a bead's notes cannot pass
-# for one of the brief's own, and the whole reads as data rather than as part of the instruction.
-quoted() { if [[ -n "$1" ]]; then printf '%s\n' "$1" | sed 's/^/> /'; else printf '(none)\n'; fi; }
 
 family() {
   local parent="$1" parent_json kids
@@ -95,7 +67,7 @@ family() {
   else
     jq -r '"Parent \(.id) [\(.status // "")]: \(.title // "")"' <<<"$parent_json"
     echo
-    quoted "$(jq -r '.description // ""' <<<"$parent_json")"
+    brief_quoted "$(jq -r '.description // ""' <<<"$parent_json")"
   fi
   echo
   if ! kids="$(epic_family_children "$root" "$parent" 2>/dev/null)" \
@@ -154,15 +126,15 @@ Status $status, assigned to $assignee, priority P$(field priority). Labels: $(l=
 
 #### Description
 
-$(quoted "$(field description)")
+$(brief_quoted "$(field description)")
 
 #### Acceptance
 
-$(quoted "$(field acceptance_criteria)")
+$(brief_quoted "$(field acceptance_criteria)")
 
 #### Notes
 
-$(quoted "$(field notes)")
+$(brief_quoted "$(field notes)")
 
 ### Its family
 

@@ -313,10 +313,8 @@ pub fn marker_agent(text: &str, root: &Path) -> Option<String> {
             let name = &after[..end];
             // The name's own sentence must carry the root: one needle here and the other in some
             // other sentence of the same text is not a session of this fleet.
-            let sentence = fixture_marker_sentence(name, root);
-            if !name.is_empty()
-                && !name.contains(char::is_whitespace)
-                && rest[at..].starts_with(sentence.trim_end_matches('.'))
+            let rooted = format!("{}{}/", name_needle(name), root.to_string_lossy().trim_end_matches('/'));
+            if !name.is_empty() && !name.contains(char::is_whitespace) && rest[at..].starts_with(&rooted)
             {
                 return Some(name.to_string());
             }

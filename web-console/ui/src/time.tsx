@@ -187,11 +187,6 @@ function useNarrow() {
 /// The size of the element the returned ref is given, kept as it resizes.
 function useSize<T extends HTMLElement>() {
   const [element, ref] = useState<T | null>(null);
-  // The tiles take the keyboard when the tab opens, as the tab's first stop.
-  const focused = useRef(false);
-  useEffect(() => {
-    if (element && !focused.current) { focused.current = true; element.focus({ preventScroll: true }); }
-  }, [element]);
   const [size, setSize] = useState({ w: 0, h: 0 });
   useLayoutEffect(() => {
     if (!element) return;
@@ -201,7 +196,7 @@ function useSize<T extends HTMLElement>() {
     observer.observe(element);
     return () => observer.disconnect();
   }, [element]);
-  return [ref, size] as const;
+  return [ref, size, element] as const;
 }
 
 /// Where an arrow key takes the selection among RECTS: the nearest tile whose centre lies that way.
@@ -267,7 +262,12 @@ export function TimeTab({ keys }: { keys: boolean }) {
   const [selectedName, setSelectedName] = useState<string>();
   const [pointed, setPointed] = useState<string>();
   const [keyed, setKeyed] = useState(false);
-  const [mapRef, size] = useSize<HTMLElement>();
+  const [mapRef, size, tilesElement] = useSize<HTMLElement>();
+  // The tiles take the keyboard when the tab opens, as the tab's first stop, and only then.
+  const focused = useRef(false);
+  useEffect(() => {
+    if (tilesElement && !focused.current) { focused.current = true; tilesElement.focus({ preventScroll: true }); }
+  }, [tilesElement]);
   const pressTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const pressed = useRef(false);
 

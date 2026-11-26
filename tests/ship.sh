@@ -244,6 +244,7 @@ refused() {
 fresh; handed_board; swept_now; board_set '.[0].assignee = "Storm"'; refused "somebody else's bead" "not in progress for Rogue"
 fresh; handed_board; swept_now; pr_set '.headRefOid = "0000000000000000000000000000000000000000"'; refused "a head nobody reviewed" "head is"
 fresh; handed_board; swept_now; pr_set '.state = "CLOSED"'; refused "a closed pull request" "CLOSED"
+fresh; handed_board; swept_now; pr_set '.isDraft = true'; refused "a draft pull request" "draft"
 fresh; handed_board; swept_now; echo "navigator_gates merge" >> "$consumer/.cerebro/project.conf"; refused "a merge gate" "merge gate"
 pass "the hand-over refuses another's bead, an unreviewed head, a closed pull request and a declared merge gate"
 
@@ -284,6 +285,8 @@ rm "$stub/push-fails" "$stub/pushed" 2>/dev/null || true; sweep
 [[ -e "$stub/pushed" ]] || fail "the next sweep did not push again"
 pass "a failed board push is said and pushed by the next sweep"
 
+overdue() { board_set '.[0].metadata.ship_at = 1600000000'; }
+
 # --- waiting --------------------------------------------------------------------------------------
 
 waits() {
@@ -313,6 +316,30 @@ pass "unreadable checks or pull request, and a refused merge, are said and retri
 fresh; : > "$stub/list-fails"; run_ship --sweep
 [[ $status -eq 1 ]] || fail "an unreadable board exited $status"
 pass "an unreadable board fails the sweep"
+
+# --- a fault that never clears ends with the navigator ---------------------------------------------
+
+forever() {
+  sweep
+  [[ "$out" == "parked cb-x #7 "*"$2"* ]] || fail "$1, six hours on: said $out / $err"
+  [[ "$(bead .assignee)" == "" && "$(bead '.labels | index("human") != null')" == true ]] || fail "$1: not the navigator's"
+}
+fresh; overdue; : > "$stub/view-fails"; forever "an unreadable pull request" "gh pr view"
+fresh; overdue; checks BROKEN; forever "unreadable checks" "gh pr checks"
+fresh; overdue; git -C "$origin" update-ref -d refs/pull/7/head; forever "a head git cannot fetch" "git fetch"
+fresh; overdue; pr_set '.mergeStateStatus = "BEHIND"'; : > "$stub/update-branch-fails"; forever "a catch-up refused" "behind"
+fresh; overdue; pr_set '.state = "MERGED"'; : > "$stub/close-fails"; forever "a close refused" "bd close"
+fresh; board_set 'del(.[0].metadata.ship_pr)'; sweep
+[[ "$(bead '.labels | index("human") != null')" == true && "$(bead .assignee)" == "" ]] || fail "a bead naming no pull request: $out"
+pass "six hours of the same fault, or a bead naming no pull request, goes to the navigator"
+
+# --- one bead's trouble leaves the others to be swept ----------------------------------------------
+
+fresh
+board_set '(.[0] | .id = "cb-a" | .metadata.ship_pr = "9" | .metadata.ship_at = "soon") as $bad | [$bad] + .'
+sweep
+[[ "$out" == *"cb-a #9"*$'\n'"merged cb-x #7"* ]] || fail "the second bead was not swept after the first failed: $out"
+pass "every held bead is swept, whatever became of the one before it"
 
 # --- catching up, and the covered head ------------------------------------------------------------
 
@@ -387,12 +414,27 @@ parked() {
 }
 fresh; pr_set '.state = "CLOSED"'; parked "a closed pull request" "closed without merging"
 fresh; echo "navigator_gates merge" >> "$consumer/.cerebro/project.conf"; parked "a merge gate" "merge gate"
-overdue() { board_set '.[0].metadata.ship_at = 1600000000'; }
 fresh; overdue; checks '[{"name":"Bash","bucket":"pending","link":"","completedAt":""}]'; parked "a check pending for six hours" "6 hours"
 fresh; overdue; MERGE_MODE=refused; export MERGE_MODE; parked "a merge refused for six hours" "6 hours" merge-tried; unset MERGE_MODE
 fresh; checks "$failing"; board_set '.[0].notes = "## Sent back from shipping\na\n## Sent back from shipping\nb\n## Sent back from shipping\nc" | .[0].metadata.ship_rerun_at = "2000-01-01T00:00:00Z"'
 parked "a fourth return" "fourth"
 pass "a closed pull request, a merge gate, six hours of waiting and a fourth return go to the navigator"
+
+fresh; pr_set '.mergeable = "CONFLICTING"'
+board_set '.[0].notes = "## Sent back from shipping\na\n## Sent back from shipping\nb\n## Sent back from shipping\nc\n## Parked by shipping\nd"'
+returned "the first return after the navigator unparked it" "conflicts"
+pass "a park by shipping starts the three-attempt budget again"
+
+for held in BLOCKED DRAFT; do
+  fresh; pr_set ".mergeStateStatus = \"$held\""; waits "a pull request GitHub reports $held"
+  overdue; sweep
+  [[ "$out" == "parked cb-x #7 "*"$held"* ]] || fail "$held for six hours: $out"
+done
+pass "a blocked or draft pull request waits quietly, then goes to the navigator"
+
+fresh; checks "$failing"; board_set '.[0].metadata.ship_rerun_at = "2020-06-01T00:00:00Z"'
+returned "a re-run that never started" "never showed"
+pass "a re-run that shows nothing for half an hour sends the bead back"
 
 # --- a hand-back whose unclaim failed is finished by the next sweep -------------------------------
 

@@ -74,7 +74,8 @@ request**, not on a new one:
 - **Work on its branch, in your own tree**: `gh pr checkout <n>` inside the tree, then commit and
   `git push` there. Dependabot stops rebasing a pull request once somebody else has pushed to it.
 - **A flaky test is a defect too.** If the failure is a test that fails without the update, fix the
-  test on the same branch and say so in the bug log.
+  test on the same branch and say so in the bug log. If you pushed nothing, Dependabot may still
+  rebase the pull request after your hand-over; `ship` then sends the bead back for that new head.
 - **Hand that pull request to `ship`** (`produce-bead` *Shipping*) after the review: it merges it
   under a subject that names the bead, and closes the bead. Where you merge it yourself
   (*Merging*), after the review and green checks, give a subject that names the bead, since

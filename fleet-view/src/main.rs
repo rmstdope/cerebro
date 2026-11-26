@@ -6735,6 +6735,19 @@ mod main_tests {
     }
 
     #[test]
+    fn a_tick_asks_for_the_ship_sweep_only_while_supervising() {
+        let now = Instant::now();
+        let mut app = App::with_supervision(supervising());
+        dispatch(AppAction::None, &mut app, &test_workers(), &Utc::now);
+        assert!(!app.ship_due(now + app::SHIP_INTERVAL), "one is in flight");
+
+        let mut app = App::new();
+        dispatch(AppAction::None, &mut app, &test_workers(), &Utc::now);
+        app.set_supervision(supervising());
+        assert!(app.ship_due(Instant::now()), "a read-only view asked for nothing");
+    }
+
+    #[test]
     fn a_ship_sweep_that_would_not_run_is_logged() {
         let dir = tempfile::tempdir().unwrap();
         let mut logger = logging(dir.path());

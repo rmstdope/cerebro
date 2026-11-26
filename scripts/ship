@@ -26,7 +26,8 @@
 #   green, or no checks     squash-merged, held to that head; then closed, tidied and pushed
 # The head the review covers is `ship_head`, or one reaching it through merge commits that bring in
 # the default branch and change nothing else. Anything that has waited six hours since the hand-over,
-# and a fourth return of one bead, goes to the navigator instead.
+# (waiting or failing alike), a bead naming no pull request and a fourth return of one bead since
+# its last park go to the navigator instead.
 #
 # `returned` gives the bead back to the board with a dated note, for a producer to resume or the
 # bugfixer to take (`return_from_ship`); `parked` puts it in the navigator's queue
@@ -55,6 +56,7 @@ holder="ship"
 heartbeat_seconds=600     # a hand-over needs a sweep this recent
 settle_seconds=120        # a head this young has not had its checks registered yet
 ceiling_seconds=21600     # six hours, then the navigator
+rerun_seconds=1800        # a re-run showing nothing this long never started
 return_budget=3
 
 mode=""
@@ -108,10 +110,12 @@ if [[ "$mode" == hand ]]; then
     echo "ship: no fleet view has swept in ten minutes, so nobody would ship #$number; merge it yourself" >&2
     exit 3
   fi
-  view="$(gh pr view "$number" --json state,headRefOid)" || refuse "gh pr view $number failed"
+  view="$(gh pr view "$number" --json state,headRefOid,isDraft)" || refuse "gh pr view $number failed"
   pr_state="$(jq -r .state <<<"$view")"
   pr_head="$(jq -r .headRefOid <<<"$view")"
   [[ "$pr_state" == OPEN ]] || refuse "pull request #$number is $pr_state, not open"
+  [[ "$(jq -r '.isDraft // false' <<<"$view")" != true ]] \
+    || refuse "pull request #$number is a draft; mark it ready first"
   [[ "$pr_head" == "$head" ]] || refuse "pull request #$number's head is $pr_head, not the reviewed $head"
   route_flags_for hand_to_ship || refuse "the hand_to_ship hand-off is not in the label policy"
   bd --actor "$name" -C "$root" update "$id" "${route_flags[@]}" \
@@ -143,11 +147,13 @@ meta() { jq -r --arg key "$1" '.metadata[$key] // "" | tostring' <<<"$bead"; }
 
 # hand_back <return_from_ship|park_from_ship> <why> - the note, the route and the claim given back.
 hand_back() {
-  local transition="$1" why="$2" word=returned heading="## Sent back from shipping" extra=() now
+  local transition="$1" why="$2" on="" word=returned heading="## Sent back from shipping" extra=() now
   now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   if [[ "$transition" == return_from_ship ]]; then
     local returns
-    returns="$(jq -r '[(.notes // "") | scan("## Sent back from shipping")] | length' <<<"$bead")"
+    # Counted since the last park: the navigator unparking a bead gives it the budget again.
+    returns="$(jq -r '(.notes // "") | split("## Parked by shipping") | (last // "")
+      | [scan("## Sent back from shipping")] | length' <<<"$bead")"
     if (( returns >= return_budget )); then
       transition=park_from_ship
       why="a fourth return, past the three-attempt budget: $why"
@@ -158,11 +164,12 @@ hand_back() {
     heading="## Parked by shipping"
     extra=(--set-metadata "paused_at=$now")
   fi
+  [[ -z "$branch" ]] || on=", branch \`$branch\`,"
   route_flags_for "$transition" || { failed "no $transition hand-off in the label policy"; return 0; }
   if ! bd --actor "$holder" -C "$root" update "$id" "${route_flags[@]}" ${extra[@]+"${extra[@]}"} \
        --append-notes "$heading
 
-$now: pull request #$number, branch \`$branch\`, was not merged: $why." \
+$now: pull request #$number$on was not merged: $why." \
        --if-assignee "$holder" >/dev/null; then
     failed "bd update refused the hand-back"
     return 0
@@ -177,10 +184,21 @@ $now: pull request #$number, branch \`$branch\`, was not merged: $why." \
 
 age() { echo $(( $(date +%s) - $(meta ship_at) )); }
 
+overdue() { (( $(age) >= ceiling_seconds )); }
+
 # Nothing to do yet: silent, until it has been six hours.
 wait_for() {
-  if (( $(age) >= ceiling_seconds )); then
+  if overdue; then
     hand_back park_from_ship "6 hours after the hand-over it is still $1"
+  fi
+}
+
+# A step that failed: said and retried by the next sweep, until it has been six hours.
+retry_later() {
+  if overdue; then
+    hand_back park_from_ship "6 hours after the hand-over: $(printf '%s' "$1" | tr '\n' ' ')"
+  else
+    failed "$1"
   fi
 }
 
@@ -233,7 +251,7 @@ tidy() {
 
 finish() {
   if ! close_with_parents; then
-    failed "merged, but bd close refused; the next sweep closes it"
+    retry_later "merged, but bd close refused"
     return 0
   fi
   say merged
@@ -248,7 +266,7 @@ advance() {
   local pr_state head reviewed checks verdict rerun_at stale runs run newest merge_status flags=()
   if ! pr="$(gh pr view "$number" --json state,headRefOid,headRefName,title,mergeable,mergeStateStatus,reviewDecision 2>"$scratch/err")" \
      || ! jq -e '.state' >/dev/null 2>&1 <<<"$pr"; then
-    failed "gh pr view: $(cat "$scratch/err")"
+    retry_later "gh pr view: $(cat "$scratch/err")"
     return 0
   fi
   pr_state="$(jq -r .state <<<"$pr")"
@@ -261,7 +279,7 @@ advance() {
     return 0
   fi
   if ! git -C "$root" fetch -q origin "$default" "refs/pull/$number/head" 2>"$scratch/err"; then
-    failed "git fetch: $(cat "$scratch/err")"
+    retry_later "git fetch: $(cat "$scratch/err")"
     return 0
   fi
   if ! git -C "$root" cat-file -e "$head^{commit}" 2>/dev/null; then
@@ -286,7 +304,7 @@ advance() {
   if (( $(date +%s) - newest < settle_seconds )); then return 0; fi
 
   if ! checks="$(pr_checks "$number" "$scratch/err")"; then
-    failed "gh pr checks: $(cat "$scratch/err")"
+    retry_later "gh pr checks: $(cat "$scratch/err")"
     return 0
   fi
   verdict="$(pr_checks_verdict "$checks")"
@@ -298,7 +316,15 @@ advance() {
         # A failure that finished before the re-run was asked for is the old one still showing.
         stale="$(jq -r --arg at "$rerun_at" \
           'any(.[]; (.bucket == "fail" or .bucket == "cancel") and (.completedAt // "") <= $at)' <<<"$checks")"
-        if [[ "$stale" == true ]]; then wait_for "waiting on the re-run"; return 0; fi
+        if [[ "$stale" == true ]]; then
+          if jq -en --arg at "$rerun_at" --argjson limit "$rerun_seconds" \
+               'now - ($at | fromdateiso8601) >= $limit' >/dev/null; then
+            hand_back return_from_ship "red, and the re-run never showed: $(pr_red_names "$checks")"
+          else
+            wait_for "waiting on the re-run"
+          fi
+          return 0
+        fi
         hand_back return_from_ship "red after a re-run: $(pr_red_names "$checks")"
         return 0
       fi
@@ -327,8 +353,13 @@ advance() {
   esac
 
   merge_status="$(jq -r '.mergeStateStatus // ""' <<<"$pr")"
+  if [[ "$merge_status" == BLOCKED || "$merge_status" == DRAFT ]]; then
+    # GitHub would refuse the merge: a required check or review is missing, or it is a draft.
+    wait_for "held by GitHub ($merge_status)"
+    return 0
+  fi
   if [[ "$merge_status" == BEHIND ]]; then
-    if (( $(age) >= ceiling_seconds )); then
+    if overdue; then
       wait_for "behind $default"
     elif gh api -X PUT "repos/{owner}/{repo}/pulls/$number/update-branch" -f "expected_head_sha=$head" \
            >/dev/null 2>"$scratch/err"; then
@@ -350,10 +381,8 @@ advance() {
   fi
   if pr_merge "$number" "$scratch/err" "${flags[@]}"; then
     finish
-  elif (( $(age) >= ceiling_seconds )); then
-    wait_for "refused by GitHub: $(head -n 1 "$scratch/err")"
   else
-    failed "merge refused: $(head -n 1 "$scratch/err")"
+    retry_later "merge refused: $(head -n 1 "$scratch/err")"
   fi
   return 0
 }
@@ -373,10 +402,12 @@ while IFS= read -r bead; do
     continue
   fi
   if ! [[ "$number" =~ ^[0-9]+$ && "$(meta ship_at)" =~ ^[0-9]+$ ]]; then
-    failed "the bead names no pull request to ship"
+    # No later sweep could do better.
+    hand_back park_from_ship "the bead names no pull request to ship" </dev/null
     continue
   fi
-  advance
+  # No command run for one bead may read the list of the others.
+  advance </dev/null
 done < <(jq -c --arg ship "$holder" '.[] | select(.assignee == $ship and .status == "in_progress")' <<<"$board")
 
 if $wrote || [[ -e "$state/ship-unpushed" ]]; then

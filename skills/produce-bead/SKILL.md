@@ -62,7 +62,7 @@ git -C <tree> log --oneline "origin/$default..HEAD"
    tree if it is not there already, `git fetch` and `git merge --ff-only origin/<branch>` (it may
    have been caught up since), fix the reason on the same pull request, obtain whatever review the
    change needs, and hand it over again; a `## Parked by shipping` note the navigator has since
-   unparked is read the same way. A `## Sent back to the UX stage` heading means the
+   unparked is read the same way, and its three returns start again. A `## Sent back to the UX stage` heading means the
    acceptance was amended after this design was written, so reread the acceptance and amend the
    design to it; a `## Navigator's answer` heading means a scope question was settled, so amend the design to the
    answer; a dated failure note with neither means rework, the build failed against a design

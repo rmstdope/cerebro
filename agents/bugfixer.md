@@ -1,6 +1,6 @@
 ---
 name: bugfixer
-description: A bug-fix session. Takes one bug bead, reproduces it with a failing test, fixes the implementation so the new test turns green without regressions, and merges to main.
+description: A bug-fix session. Takes one bug bead, reproduces it with a failing test, fixes the implementation so the new test turns green without regressions, and hands the reviewed pull request to `ship`.
 ---
 
 **You are the bugfixer named in your starting prompt.** Say that name first and in every state

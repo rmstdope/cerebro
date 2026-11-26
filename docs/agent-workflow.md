@@ -53,8 +53,8 @@ project's roster declares as many producers as it wants.
 | **Cypher** | `reviewer` | Opus / high | Reviews pull requests that came from outside the fleet |
 | **Forge** | `architect` | Opus / xhigh | Reads the shape of the codebase and files what it is costing |
 | **Sage** | `qa` | the default line | Reads the tests and CI as a whole, keeps the requirements and test architecture agreed with you, and files what they are costing |
-| **Bishop** | `bugfixer` | Sonnet | Takes `bugfix` beads, reproduces with a failing test, fixes, and merges |
-| your producers | `producer` | Sonnet | One UX-agreed bead each: plan it, design its tests, build it test-first, and merge it |
+| **Bishop** | `bugfixer` | Sonnet | Takes `bugfix` beads, reproduces with a failing test, fixes, and hands it to `ship` |
+| your producers | `producer` | Sonnet | One UX-agreed bead each: plan it, design its tests, build it test-first, and hand it to `ship` |
 
 `scripts/roster` is the one declaration of that list — name, role and kind, one line each. Everything
 else derives from it: the fleet view, the launcher, and the state files.
@@ -291,8 +291,9 @@ on the board by `ship`, labelled `shipping`) waits for the checks, updates a bra
 behind, re-runs a failed job once, merges on green only the head the review covers, closes the bead
 and its parents and tidies the tree. A second red, a conflict, requested changes or a commit the
 review did not cover sends the bead back to a builder with a *Sent back from shipping* note. A
-closed pull request, a fourth return, the `merge` gate or six hours unmerged puts it in your queue
-with a *Parked by shipping* note. Nothing is drawn for it: `decisions.jsonl` has one `ship` line per
+closed pull request, a fourth return, the `merge` gate or six hours unmerged, whether waiting or
+failing, puts it in your queue with a *Parked by shipping* note. Unparking it gives the bead its
+three returns again. Nothing is drawn for it: `decisions.jsonl` has one `ship` line per
 act, `errors.jsonl` the failures. With no view sweeping for ten minutes the builder merges its own
 pull request; a view left running from before this shipped counts as none, so restart it. By hand:
 `.cerebro/cerebro/scripts/ship --sweep`.
@@ -354,7 +355,7 @@ open Dependabot pull request whose CI passed is merged, majors included and with
 when the project declares `dependabot_merge review`, reviewed by a sub-agent first and merged only
 with no findings, otherwise handed to you as a bead, cb-au3o), and
 each whose CI failed becomes one P4 `bugfix` bead naming it, filed without a re-run, for you to rank;
-the bugfixer then fixes that pull request's branch and merges it. When Dependabot replaces a pull
+the bugfixer then fixes that pull request's branch and hands it to `ship`. When Dependabot replaces a pull
 request, the bead follows the replacement.
 
 It is called Cerebro because it finds the mutants and points them at the work. Since the fleet view

@@ -18,9 +18,10 @@ test**, since a bug bead has no plan, and your posted review says so in place of
 (the review packet carries the claim as the bead's description and your bug log in its notes, so
 log the bug before you make the packet);
 *Shipping*, with *Red CI*, *Merging* and *Finishing* (the parent walk included) where it sends
-you to them; *The retrospective*; and *The navigator's gates*, where your `plan` gate puts the reproduction test and the fix you intend to the
-navigator before you touch the implementation, and `review` and `merge` read as written. You write
-no `design` and add no `planned`: the reproduction test is the plan.
+you to them; *The retrospective*; and *The navigator's gates*, where your `plan` gate puts the
+reproduction test and the fix you intend to the navigator before you touch the implementation, and
+`review` and `merge` read as written. You write no `design` and add no `planned`: the reproduction
+test is the plan.
 
 *The startup brief* of `produce-bead` is yours too: the bead, what shipped for it, your worktree,
 the traps and the gates are in your prompt and are not read again, and its fallback is what you do
@@ -76,7 +77,8 @@ request**, not on a new one:
   test on the same branch and say so in the bug log.
 - **Hand that pull request to `ship`** (`produce-bead` *Shipping*) after the review: it merges it
   under a subject that names the bead, and closes the bead. Where you merge it yourself
-  (*Merging*), after the review and green checks, give a subject that names the bead, since Dependabot's title does not and `bead-delivery.sh` and
+  (*Merging*), after the review and green checks, give a subject that names the bead, since
+  Dependabot's title does not and `bead-delivery.sh` and
   `git log --grep "(<id>):"` find a delivery only by it:
   `gh pr merge <n> --squash --delete-branch --subject "fix(<id>): <the pull request's title> (#<n>)"`.
   Then close the bead. If Dependabot replaced it meanwhile, the sweep has moved the bead onto the

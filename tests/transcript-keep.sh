@@ -110,7 +110,7 @@ for payload in "" "not json" '{"session_id":"s3"}' '{"session_id":"../x","transc
   set -e
   [[ $rc -eq 0 ]] || fail "hook-on-garbage-stdin-is-silent-and-zero: exit $rc for [$payload]"
   [[ -z "$out" ]] || fail "hook-on-garbage-stdin-is-silent-and-zero: stdout for [$payload]: $out"
-  if [[ -d "$(kept "$tmp")" ]] && find "$(kept "$tmp")" -name '*.jsonl' | grep -q .; then
+  if [[ -d "$(kept "$tmp")" && -n "$(find "$(kept "$tmp")" -name '*.jsonl')" ]]; then
     fail "hook-on-garbage-stdin-is-silent-and-zero: kept a transcript for [$payload]"
   fi
 done

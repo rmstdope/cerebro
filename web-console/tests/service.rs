@@ -1397,7 +1397,7 @@ async fn time_reports_a_fixture_consumer() {
     std::fs::write(
         kept.join("s1.jsonl"),
         [
-            event(125, "user", serde_json::json!(cerebro_tui::marker_sentence("Storm", root.path()))),
+            event(125, "user", serde_json::json!(cerebro_tui::fixture_marker_sentence("Storm", root.path()))),
             event(110, "assistant", serde_json::json!([{"type": "tool_use", "name": "Edit", "input": {}}])),
             event(70, "user", serde_json::json!([{"type": "tool_result"}])),
         ]

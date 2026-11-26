@@ -280,11 +280,18 @@ fn root_needle(root: &Path) -> String {
 
 /// The whole marker sentence for NAME at ROOT, composed from the two needles above.
 ///
-/// For fixtures, and deliberately built rather than typed: `scripts/marker-readers` holds every
-/// file that spells the sentence to being a declared reader, and this crate's one declared
-/// spelling is the needles in this file. A fixture elsewhere in the crate, or in the web console's
-/// tests, asks for the sentence here instead of writing another copy of it.
-pub fn marker_sentence(name: &str, root: &Path) -> String {
+/// Test-only, and deliberately built rather than typed: `scripts/marker-readers` holds every file
+/// that spells the sentence to being a declared reader, and this crate's one declared spelling is
+/// the needles in this file. A fixture elsewhere in the crate asks for the sentence here instead
+/// of writing a fourth copy of it.
+#[cfg(test)]
+pub(crate) fn marker_sentence(name: &str, root: &Path) -> String {
+    fixture_marker_sentence(name, root)
+}
+
+/// The same sentence for fixtures outside this crate (the web console's tests), so they compose
+/// it from these needles rather than typing another copy of it.
+pub fn fixture_marker_sentence(name: &str, root: &Path) -> String {
     format!(
         "{}{}/.",
         name_needle(name),

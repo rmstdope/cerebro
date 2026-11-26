@@ -714,7 +714,7 @@ mod tests {
     #[test]
     fn parse_transcript_names_the_agent_from_the_marker() {
         let root = Path::new("/r/cerebro");
-        let marker = cerebro_tui::marker_sentence("Storm", root);
+        let marker = cerebro_tui::fixture_marker_sentence("Storm", root);
         let lines = [
             json!({"type": "attachment", "timestamp": "2026-11-20T09:59:00Z"}),
             json!({"type": "user", "timestamp": "2026-11-20T10:00:00Z", "message": {"content": marker}}),

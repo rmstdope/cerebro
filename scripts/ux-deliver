@@ -95,6 +95,8 @@ for spec in ${mockups[@]+"${mockups[@]}"}; do
   targets+=("$target")
 done
 record="$(cat "$acceptance")"
+# `gh` finds its repository from the working directory; every path above is already absolute.
+cd "$root"
 
 assignee_of() {
   local shown

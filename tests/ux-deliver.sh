@@ -132,8 +132,12 @@ checks() {
   printf '%s\n' "$@" > "$stub/checks"
 }
 
+# The script commits as whoever runs it; a CI runner has no git identity of its own, so the suite
+# lends it the test identity `git_q` uses.
 deliver() {
   (cd "$consumer" && STUB_DIR="$stub" PATH="$stub:$PATH" UX_DELIVER_POLL=0 \
+    GIT_AUTHOR_NAME=test GIT_AUTHOR_EMAIL=test@example.com \
+    GIT_COMMITTER_NAME=test GIT_COMMITTER_EMAIL=test@example.com \
     bash .cerebro/cerebro/scripts/ux-deliver "$@")
 }
 

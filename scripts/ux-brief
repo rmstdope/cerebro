@@ -1,0 +1,158 @@
+#!/usr/bin/env bash
+#
+# A UX session's startup, done once before the session exists (cb-9tnf):
+#
+#     .cerebro/cerebro/scripts/ux-brief <Name> <id> --pid <pid>
+#
+#   exit 0  the bead is NAME's (open, assignee NAME): the state file now says `working`, bead <id>,
+#           phase `ux`, and the brief is on stdout
+#   exit 1  `bd show` failed or printed nothing this script can read; nothing on stdout, no state
+#   exit 2  usage
+#   exit 3  the bead is not NAME's; one line on stdout saying so, and no state written
+#
+# `scripts/launch <Name> --bead <id>` is its caller, for a `ux` role, after `assign-bead` and
+# before the agent CLI is exec'd, so `--pid` is the launcher's own pid - the one the CLI keeps
+# across `exec'. The brief rides in the opening prompt, so the session's first request already
+# holds what every UX pass used to spend about eight requests reading: the board pull, the bead
+# and the claim check, the working state, the parent and its siblings, the project keys the role
+# reads, the newest drawings and the sketch template. `skills/agree-experience` reads the brief
+# instead of running those steps.
+#
+# The pull and the family and drawings reads are advisory: each failure is said in the brief and
+# none decides the exit status (.cerebro/traps.md, first entry). A failed read is never printed as
+# an empty answer - "could not read the family" is not "no siblings".
+
+set -euo pipefail
+
+usage() {
+  echo "usage: ux-brief <Name> <id> --pid <pid>" >&2
+  exit 2
+}
+
+[[ $# -eq 4 && -n "$1" && -n "$2" && "$3" == "--pid" && "$4" =~ ^[0-9]+$ ]] || usage
+name="$1"
+id="$2"
+pid="$4"
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+root="$("$script_dir/consumer-root" --shared)"
+
+pulled="yes"
+bd -C "$root" dolt pull >/dev/null 2>&1 || pulled=""
+
+if ! shown="$(bd -C "$root" show "$id" --json)"; then
+  exit 1
+fi
+if ! bead="$(printf '%s' "$shown" | jq -e '(if type=="array" then .[0] else . end) | objects' 2>/dev/null)"; then
+  echo "ux-brief: bd show $id did not print JSON this script can read" >&2
+  exit 1
+fi
+
+field() { jq -r --arg k "$1" '.[$k] // "" | if type=="array" then join(", ") else tostring end' <<<"$bead"; }
+
+status="$(field status)"
+assignee="$(field assignee)"
+if [[ "$status" != open || "$assignee" != "$name" ]]; then
+  echo "Your bead $id is no longer yours (it is ${status:-unknown}, assigned to ${assignee:-nobody}): write nothing and end the pass."
+  exit 3
+fi
+
+"$script_dir/agent-state" "$name" working --bead "$id" --phase ux --pid "$pid" >/dev/null
+
+or_none() { if [[ -n "$1" ]]; then printf '%s\n' "$1"; else printf '(none)\n'; fi; }
+
+family() {
+  local parent="$1" parent_json kids
+  if [[ -z "$parent" ]]; then
+    echo "No parent: it stands alone."
+    return 0
+  fi
+  if ! parent_json="$(bd -C "$root" show "$parent" --json 2>/dev/null \
+        | jq -e '(if type=="array" then .[0] else . end) | objects' 2>/dev/null)"; then
+    echo "Parent $parent: could not read it."
+  else
+    jq -r '"Parent \(.id) [\(.status // "")]: \(.title // "")\n\n\(.description // "")"' <<<"$parent_json"
+  fi
+  echo
+  if ! kids="$(bd -C "$root" children "$parent" --json 2>/dev/null \
+        | jq -er --arg self "$id" 'arrays | map(select(.id != $self)) | map("- \(.id) [\(.status // "")]: \(.title // "")") | join("\n")' 2>/dev/null)"; then
+    echo "Siblings: could not read them."
+  elif [[ -z "$kids" ]]; then
+    echo "Siblings: none."
+  else
+    printf 'Siblings:\n%s\n' "$kids"
+  fi
+}
+
+drawings() {
+  local added path n=0 out=""
+  if ! added="$(git -C "$root" log --diff-filter=A --name-only --format= -- docs/ui 2>/dev/null)"; then
+    echo "Could not read docs/ui/ from git."
+    return 0
+  fi
+  while IFS= read -r path; do
+    if [[ -z "$path" || ! -e "$root/$path" ]]; then continue; fi
+    if [[ "$out" == *"- $path"$'\n'* ]]; then continue; fi
+    out+="- $path"$'\n'
+    n=$((n + 1))
+    if [[ $n -ge 8 ]]; then break; fi
+  done <<<"$added"
+  if [[ -z "$out" ]]; then
+    echo "None yet in docs/ui/."
+  else
+    printf 'Newest first, by when each was added:\n%s' "$out"
+  fi
+}
+
+# project-conf never fails on absence; its stderr notes are for a person at a prompt, not a brief.
+conf() {
+  local v
+  v="$("$script_dir/project-conf" "$1" 2>/dev/null)" || v=""
+  if [[ -n "$v" ]]; then printf '%s' "$v"; else printf '(not declared)'; fi
+}
+
+sketches="$("$script_dir/project-conf" ux_sketches on 2>/dev/null)" || sketches=on
+[[ "$sketches" == on ]] || sketches=off
+
+cat <<EOF
+## Startup brief
+
+Made by scripts/ux-brief at launch. The board is pulled, the bead is confirmed yours, and your state
+file already says working on $id, phase ux: do not repeat these reads.
+EOF
+[[ -n "$pulled" ]] || printf '\nThe board pull failed: this is the local board, which may be behind.\n'
+cat <<EOF
+
+### The piece of work: $id — $(field title)
+
+Status $status, assigned to $assignee, priority P$(field priority). Labels: $(or_none "$(field labels)")
+
+#### Description
+
+$(or_none "$(field description)")
+
+#### Acceptance
+
+$(or_none "$(field acceptance_criteria)")
+
+#### Notes
+
+$(or_none "$(field notes)")
+
+### Its family
+
+$(family "$(field parent)")
+
+### The project
+
+project_name $(conf project_name)
+audience_noun $(conf audience_noun)
+ux_sketches $sketches
+app_paths $(conf app_paths)
+
+### Drawings
+
+$(drawings)
+
+Sketch template: .cerebro/cerebro/templates/ux-sketch-sheet.html
+EOF

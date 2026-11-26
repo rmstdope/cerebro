@@ -981,6 +981,54 @@ pub fn read_history(
 /// for its reason: a `jq` walk over logs that grow without limit, and not a network call.
 const HEALTH_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// How long one `scripts/ship --sweep` may take. Five minutes: it makes a few `gh` calls per bead
+/// being shipped and waits on nothing, and a sweep killed here is resumed by the next one.
+const SHIP_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// One act of the ship sweep, as its line says it: `<outcome> <bead> #<pr> [<reason>]`, or
+/// `failed board push: <reason>` for the one failure that is no bead's.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ShipAct {
+    pub outcome: String,
+    pub bead: Option<String>,
+    pub pr: Option<u64>,
+    pub reason: Option<String>,
+}
+
+impl ShipAct {
+    fn parse(line: &str) -> Self {
+        let (outcome, rest) = line.split_once(' ').unwrap_or((line, ""));
+        let mut words = rest.splitn(3, ' ');
+        let bead = words.next().unwrap_or("");
+        let pr = words.next().and_then(|word| word.strip_prefix('#')).and_then(|n| n.parse().ok());
+        // A line naming no pull request is not about a bead: all of it is the reason.
+        let (bead, reason) = match pr {
+            Some(_) => (Some(bead), words.next().unwrap_or("")),
+            None => (None, rest),
+        };
+        Self {
+            outcome: outcome.to_string(),
+            bead: bead.map(str::to_string),
+            pr,
+            reason: (!reason.is_empty()).then(|| reason.to_string()),
+        }
+    }
+}
+
+/// `scripts/ship --sweep`: every bead handed to it taken one step (cb-tbrh). It writes the board
+/// and GitHub, so only a supervising view asks for it. Run in the shared root.
+///
+/// A failure is an error, never no acts: an empty answer says nothing needed doing.
+pub fn read_ship(paths: &ReaderPaths, commands: &dyn CommandRunner) -> Result<Vec<ShipAct>, ReadError> {
+    let program = paths.scripts_dir.join("ship");
+    let stdout = commands.run(&program, &["--sweep"], Some(&paths.shared_root), SHIP_TIMEOUT)?;
+    Ok(String::from_utf8_lossy(&stdout)
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(ShipAct::parse)
+        .collect())
+}
+
 /// `scripts/fleet-health --json` - the whole four-section report over its own default window
 /// (cb-xhu.4.2). No `--since`: the view always runs the script's default.
 ///
@@ -1208,6 +1256,44 @@ mod tests {
             shared_root: root.join("shared"),
             scripts_dir: root.join("scripts"),
         }
+    }
+
+    #[test]
+    fn read_ship_runs_the_sweep_in_the_shared_root_and_reads_each_act() {
+        let paths = paths_at(Path::new("/repo"));
+        let fake = FakeCommands::always(
+            "merged cb-a #7\nreturned cb-b #8 red after a re-run: Bash suites\nfailed board push: bd dolt push failed\n\n",
+        );
+        let acts = read_ship(&paths, &fake).unwrap();
+        assert_eq!(
+            acts,
+            vec![
+                ShipAct { outcome: "merged".into(), bead: Some("cb-a".into()), pr: Some(7), reason: None },
+                ShipAct {
+                    outcome: "returned".into(),
+                    bead: Some("cb-b".into()),
+                    pr: Some(8),
+                    reason: Some("red after a re-run: Bash suites".into()),
+                },
+                ShipAct {
+                    outcome: "failed".into(),
+                    bead: None,
+                    pr: None,
+                    reason: Some("board push: bd dolt push failed".into()),
+                },
+            ]
+        );
+        let calls = fake.calls();
+        assert_eq!(calls[0].program, Path::new("/repo/scripts/ship"));
+        assert_eq!(calls[0].args, ["--sweep"]);
+        assert_eq!(calls[0].cwd.as_deref(), Some(Path::new("/repo/shared")));
+        assert_eq!(calls[0].timeout, SHIP_TIMEOUT);
+    }
+
+    #[test]
+    fn a_ship_sweep_that_fails_is_never_an_empty_answer() {
+        let fake = FakeCommands::failing(|| exit(1, "ship: the board could not be read"));
+        assert!(read_ship(&paths_at(Path::new("/repo")), &fake).is_err());
     }
 
     fn exit(status: i32, stderr: &str) -> ReadError {

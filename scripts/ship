@@ -1,0 +1,442 @@
+#!/usr/bin/env bash
+#
+# Ship a reviewed pull request with no model behind it (cb-tbrh). A builder whose review is answered
+# hands the pull request over and ends its pass; the supervising fleet view then runs the sweep on a
+# cadence. Run from anywhere inside the consumer.
+#
+#     ship <Name> <id> <pr> <head>    hand over pull request <pr>, reviewed at <head>
+#     ship --sweep                    advance every handed bead by one step, waiting on nothing
+#
+# THE HAND-OVER gives <Name>'s claim on <id> to `ship`: label `shipping`, metadata `ship_pr`,
+# `ship_head` and `ship_at`, in one write guarded on <Name>, then the board pushed. It refuses (1)
+# a bead not in progress for <Name>, a project declaring the `merge` navigator gate (the merge is the
+# navigator's there), and a pull request that is not open at <head>. It exits 3, writing nothing,
+# when no sweep has run in ten minutes: nobody would ship it, so the builder merges it itself. Run
+# again with the same arguments, it only pushes the board.
+#
+# THE SWEEP stamps `.cerebro/state/ship-swept` and then takes each in-progress bead assigned to
+# `ship` one step, in this order:
+#   merged already          the bead is closed, and each parent whose last child that was
+#   closed unmerged, or a `merge` gate declared                                   -> parked
+#   a head the review does not cover, changes requested, or conflicts with main   -> returned
+#   a head younger than two minutes, a pending check, unknown mergeability        -> waits
+#   a red check             re-run once, when every red one is a GitHub Actions run; otherwise,
+#                           or red again                                          -> returned
+#   behind main             `update-branch`, at the head just read
+#   green, or no checks     squash-merged, held to that head; then closed, tidied and pushed
+# The head the review covers is `ship_head`, or one reaching it through merge commits that bring in
+# the default branch and change nothing else. These go to the navigator instead: a bead that has
+# waited or kept failing for six hours since the hand-over, a merged one whose close has been refused
+# for six hours, one naming no pull request, and a fourth return of one bead since its last park.
+#
+# `returned` gives the bead back to the board with a dated note, for a producer to resume or the
+# bugfixer to take (`return_from_ship`); `parked` puts it in the navigator's queue
+# (`park_from_ship`). The merge, the checks' verdict and "GitHub must say MERGED" are
+# `scripts/pr-ship.sh`, shared with `ux-deliver`.
+#
+# One stdout line per act: `<merged|updated|reran|returned|parked|failed> <id> #<n> [why]`. A bead
+# still waiting prints nothing. Exit 0, or 1 when the board cannot be read at all: one bead's
+# failure is its `failed` line, retried by the next sweep. Malformed calls exit 2.
+
+set -euo pipefail
+
+usage() {
+  echo "usage: ship <Name> <id> <pr> <head> | ship --sweep" >&2
+  exit 2
+}
+
+refuse() {
+  echo "ship: $1" >&2
+  exit 1
+}
+
+# The assignee that holds a bead being shipped. No roster may use it.
+holder="ship"
+# The twins of these two live nowhere else: the view only decides how often to ask.
+heartbeat_seconds=600     # a hand-over needs a sweep this recent
+settle_seconds=120        # a head this young has not had its checks registered yet
+ceiling_seconds=21600     # six hours, then the navigator
+rerun_seconds=1800        # a re-run showing nothing this long never started
+return_budget=3
+
+mode=""
+if [[ $# -eq 1 && "$1" == --sweep ]]; then
+  mode=sweep
+elif [[ $# -eq 4 && -n "$1" && -n "$2" && "$1" != -* && "$3" =~ ^[0-9]+$ && "$4" =~ ^[0-9a-f]{40}$ ]]; then
+  mode=hand; name="$1"; id="$2"; number="$3"; head="$4"
+else
+  usage
+fi
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$script_dir/candidate-label-policy.sh"
+source "$script_dir/pr-ship.sh"
+source "$script_dir/worktree-safety.sh"
+root="$("$script_dir/consumer-root" --shared)"
+root="$(cd "$root" && pwd -P)"
+state="$root/.cerebro/state"
+mkdir -p "$state"
+# `gh` finds its repository from the working directory.
+cd "$root"
+
+merge_gated() {
+  local gates
+  gates="$("$script_dir/project-conf" navigator_gates 2>/dev/null || true)"
+  [[ " $gates " == *" merge "* ]]
+}
+
+push_board() {
+  bd -C "$root" dolt push >/dev/null 2>&1
+}
+
+# --- the hand-over ---------------------------------------------------------------------------------
+
+if [[ "$mode" == hand ]]; then
+  [[ "$name" != "$holder" ]] || usage
+  shown="$(bd -C "$root" show "$id" --json)" || refuse "bd show $id failed"
+  fields="$(printf '%s' "$shown" | jq -r '(if type == "array" then .[0] else . end)
+      | [.status // "", .assignee // "", (.metadata.ship_pr // "" | tostring), .metadata.ship_head // ""]
+      | join("\u001f")')" || refuse "bd show $id did not print JSON this script can read"
+  IFS=$'\x1f' read -r status assignee held_pr held_head <<<"$fields"
+  if [[ "$status" == in_progress && "$assignee" == "$holder" && "$held_pr" == "$number" && "$held_head" == "$head" ]]; then
+    push_board || refuse "bd dolt push failed; run the same command again to push it"
+    echo "ship: $id is already handed over; board pushed"
+    exit 0
+  fi
+  [[ "$status" == in_progress && "$assignee" == "$name" ]] || refuse "$id is not in progress for $name"
+  ! merge_gated || refuse "this project declares the merge gate; the merge is the navigator's"
+  swept="$(cat "$state/ship-swept" 2>/dev/null || true)"
+  if ! [[ "$swept" =~ ^[0-9]+$ ]] || (( $(date +%s) - swept > heartbeat_seconds )); then
+    echo "ship: no fleet view has swept in ten minutes, so nobody would ship #$number; merge it yourself" >&2
+    exit 3
+  fi
+  view="$(gh pr view "$number" --json state,headRefOid,isDraft)" || refuse "gh pr view $number failed"
+  pr_state="$(jq -r .state <<<"$view")"
+  pr_head="$(jq -r .headRefOid <<<"$view")"
+  [[ "$pr_state" == OPEN ]] || refuse "pull request #$number is $pr_state, not open"
+  [[ "$(jq -r '.isDraft // false' <<<"$view")" != true ]] \
+    || refuse "pull request #$number is a draft; mark it ready first"
+  [[ "$pr_head" == "$head" ]] || refuse "pull request #$number's head is $pr_head, not the reviewed $head"
+  route_flags_for hand_to_ship || refuse "the hand_to_ship hand-off is not in the label policy"
+  bd --actor "$name" -C "$root" update "$id" "${route_flags[@]}" \
+    --set-metadata "ship_pr=$number" --set-metadata "ship_head=$head" \
+    --set-metadata "ship_at=$(date +%s)" --unset-metadata ship_rerun_at --unset-metadata ship_close_failed_at \
+    --assignee "$holder" --if-assignee "$name" >/dev/null || refuse "bd update $id refused; nothing handed over"
+  push_board || refuse "bd dolt push failed; run the same command again to push it"
+  echo "ship: $id handed over; #$number merges when its checks are green"
+  exit 0
+fi
+
+# --- the sweep -------------------------------------------------------------------------------------
+
+date +%s > "$state/ship-swept"
+if ! board="$(bd -C "$root" list --status in_progress --assignee "$holder" --json -n 0)" \
+   || ! jq -e 'type == "array"' >/dev/null 2>&1 <<<"$board"; then
+  refuse "the board could not be read"
+fi
+default="$("$script_dir/default-branch")" || refuse "the default branch could not be read"
+scratch="$(mktemp -d)"
+trap 'rm -rf "$scratch"' EXIT
+wrote=false
+
+# Everything below works on one bead, in these globals: id, number, bead (its JSON), pr (the pull
+# request's JSON, once read), branch.
+say() { printf '%s %s #%s%s\n' "$1" "$id" "$number" "${2:+ $2}"; }
+failed() { say failed "$(printf '%s' "$1" | tr '\n' ' ')"; }
+meta() { jq -r --arg key "$1" '.metadata[$key] // "" | tostring' <<<"$bead"; }
+
+# hand_back <return_from_ship|park_from_ship> <why> [<what happened>] - the note, the route and the
+# claim given back. The note says the pull request was not merged unless <what happened> says else.
+hand_back() {
+  local transition="$1" why="$2" what="${3:-}" on="" word=returned heading="## Sent back from shipping" extra=() now
+  now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  if [[ "$transition" == return_from_ship ]]; then
+    local returns
+    # Counted since the last park: the navigator unparking a bead gives it the budget again.
+    returns="$(jq -r '(.notes // "") | split("## Parked by shipping") | (last // "")
+      | [scan("## Sent back from shipping")] | length' <<<"$bead")"
+    if (( returns >= return_budget )); then
+      transition=park_from_ship
+      why="a fourth return, past the three-attempt budget: $why"
+    fi
+  fi
+  if [[ "$transition" == park_from_ship ]]; then
+    word=parked
+    heading="## Parked by shipping"
+    extra=(--set-metadata "paused_at=$now")
+  fi
+  [[ -z "$branch" ]] || on=", branch \`$branch\`,"
+  [[ -n "$what" ]] || what="pull request #$number$on was not merged"
+  route_flags_for "$transition" || { failed "no $transition hand-off in the label policy"; return 0; }
+  if ! bd --actor "$holder" -C "$root" update "$id" "${route_flags[@]}" ${extra[@]+"${extra[@]}"} \
+       --append-notes "$heading
+
+$now: $what: $why." \
+       --if-assignee "$holder" >/dev/null; then
+    failed "bd update refused the hand-back"
+    return 0
+  fi
+  wrote=true
+  if ! bd --actor "$holder" -C "$root" unclaim "$id" --if-assignee "$holder" >/dev/null; then
+    failed "bd unclaim refused; the next sweep gives it back"
+    return 0
+  fi
+  say "$word" "$why"
+}
+
+age() { echo $(( $(date +%s) - $(meta ship_at) )); }
+
+overdue() { (( $(age) >= ceiling_seconds )); }
+
+# Nothing to do yet: silent, until it has been six hours.
+wait_for() {
+  if overdue; then
+    hand_back park_from_ship "6 hours after the hand-over it is still $1"
+  fi
+}
+
+# A step that failed: said and retried by the next sweep, until it has been six hours.
+retry_later() {
+  if overdue; then
+    hand_back park_from_ship "6 hours after the hand-over: $(printf '%s' "$1" | tr '\n' ' ')"
+  else
+    failed "$1"
+  fi
+}
+
+# covered <head> <reviewed>: is <head> the reviewed commit, or that commit with the default branch
+# merged into it and nothing else changed? A hand-edited merge has a tree git would not have made.
+covered() {
+  local at="$1" reviewed="$2" step parents first second rest tree
+  for (( step = 0; step < 20; step++ )); do
+    [[ "$at" != "$reviewed" ]] || return 0
+    parents="$(git -C "$root" rev-list --parents -n 1 "$at")" || return 1
+    read -r _ first second rest <<<"$parents"
+    [[ -n "$first" && -n "$second" && -z "$rest" ]] || return 1
+    git -C "$root" merge-base --is-ancestor "$second" "origin/$default" || return 1
+    tree="$(git -C "$root" merge-tree --write-tree "$first" "$second")" || return 1
+    [[ "$tree" == "$(git -C "$root" rev-parse "$at^{tree}")" ]] || return 1
+    at="$first"
+  done
+  return 1
+}
+
+# Close the bead, then every parent whose last open child that was.
+close_with_parents() {
+  local current="$id" parent open
+  bd --actor "$holder" -C "$root" close "$id" --reason "Delivered in PR #$number" >/dev/null || return 1
+  wrote=true
+  while :; do
+    parent="$(bd -C "$root" show "$current" --json \
+      | jq -r '(if type == "array" then .[0] else . end) | .parent // empty')" || return 0
+    [[ -n "$parent" ]] || return 0
+    open="$(bd -C "$root" children "$parent" --json | jq '[.[] | select(.status != "closed")] | length')" || return 0
+    [[ "$open" == 0 ]] || return 0
+    bd --actor "$holder" -C "$root" close "$parent" \
+      --reason "All children closed; last was $current, delivered in PR #$number" >/dev/null || return 0
+    current="$parent"
+  done
+}
+
+# The builder's tree, once nothing in it can be lost. A tree the view still records for its owner is
+# the view's to tidy (`release-bead --worktree`).
+tidy() {
+  local tree="$root/.cerebro/worktrees/$id" merged_check
+  [[ -d "$tree" && ! -f "$state/worktrees/$id" ]] || return 0
+  git -C "$root" fetch -q origin "$default" || return 0
+  merged_check="$("$script_dir/project-conf" merged_check gh 2>/dev/null || echo gh)"
+  if [[ -z "$(cerebro_worktree_keep_reason "$tree" "$default" "${merged_check:-gh}" 1440)" ]]; then
+    cerebro_worktree_remove "$root" "$tree" || true
+  fi
+  return 0
+}
+
+# A merge whose close is refused. Nothing is lost by trying again, so the six hours run from the
+# first refusal, not from the hand-over, and the note says it merged: nobody must build it again.
+close_refused() {
+  local since why="merged, but bd close refused"
+  since="$(meta ship_close_failed_at)"
+  if ! [[ "$since" =~ ^[0-9]+$ ]]; then
+    if bd --actor "$holder" -C "$root" update "$id" --set-metadata "ship_close_failed_at=$(date +%s)" \
+         --if-assignee "$holder" >/dev/null; then
+      wrote=true
+    fi
+  elif (( $(date +%s) - since >= ceiling_seconds )); then
+    hand_back park_from_ship "$why for six hours; close it by hand" \
+      "pull request #$number was merged and its bead is not closed"
+    return 0
+  fi
+  failed "$why; the next sweep closes it"
+}
+
+finish() {
+  if ! close_with_parents; then
+    close_refused
+    return 0
+  fi
+  say merged
+  if [[ -n "$(git -C "$root" ls-remote --heads origin "$branch" 2>/dev/null || true)" ]]; then
+    git -C "$root" push -q origin --delete "$branch" >/dev/null 2>&1 || true
+  fi
+  tidy || true
+}
+
+# One bead, one step. Called plainly, so every command that may fail says what it does then.
+advance() {
+  local pr_state head reviewed checks verdict rerun_at stale runs run newest merge_status flags=()
+  if ! pr="$(gh pr view "$number" --json state,headRefOid,headRefName,title,mergeable,mergeStateStatus,reviewDecision 2>"$scratch/err")" \
+     || ! jq -e '.state' >/dev/null 2>&1 <<<"$pr"; then
+    retry_later "gh pr view: $(cat "$scratch/err")"
+    return 0
+  fi
+  pr_state="$(jq -r .state <<<"$pr")"
+  head="$(jq -r .headRefOid <<<"$pr")"
+  branch="$(jq -r .headRefName <<<"$pr")"
+  if [[ "$pr_state" == MERGED ]]; then finish; return 0; fi
+  if [[ "$pr_state" != OPEN ]]; then hand_back park_from_ship "it was closed without merging"; return 0; fi
+  if merge_gated; then
+    hand_back park_from_ship "this project declares the merge gate, so the merge is yours"
+    return 0
+  fi
+  if ! git -C "$root" fetch -q origin "$default" "refs/pull/$number/head" 2>"$scratch/err"; then
+    retry_later "git fetch: $(cat "$scratch/err")"
+    return 0
+  fi
+  if ! git -C "$root" cat-file -e "$head^{commit}" 2>/dev/null; then
+    wait_for "at a head git cannot fetch"
+    return 0
+  fi
+  reviewed="$(meta ship_head)"
+  if ! covered "$head" "$reviewed"; then
+    hand_back return_from_ship "its head $head is not covered by the review of $reviewed"
+    return 0
+  fi
+  if [[ "$(jq -r '.reviewDecision // ""' <<<"$pr")" == CHANGES_REQUESTED ]]; then
+    hand_back return_from_ship "a review has changes requested"
+    return 0
+  fi
+  if [[ "$(jq -r .mergeable <<<"$pr")" == CONFLICTING ]]; then
+    hand_back return_from_ship "it conflicts with $default"
+    return 0
+  fi
+  newest="$(git -C "$root" show -s --format=%ct "$head")"
+  if (( $(meta ship_at) > newest )); then newest="$(meta ship_at)"; fi
+  if (( $(date +%s) - newest < settle_seconds )); then return 0; fi
+
+  if ! checks="$(pr_checks "$number" "$scratch/err")"; then
+    retry_later "gh pr checks: $(cat "$scratch/err")"
+    return 0
+  fi
+  verdict="$(pr_checks_verdict "$checks")"
+  case "$verdict" in
+    pending|pending-red) wait_for "waiting on its checks"; return 0 ;;
+    red)
+      rerun_at="$(meta ship_rerun_at)"
+      if [[ -n "$rerun_at" ]]; then
+        # A failure that finished before the re-run was asked for is the old one still showing.
+        stale="$(jq -r --arg at "$rerun_at" \
+          'any(.[]; (.bucket == "fail" or .bucket == "cancel") and (.completedAt // "") <= $at)' <<<"$checks")"
+        if [[ "$stale" == true ]]; then
+          if jq -en --arg at "$rerun_at" --argjson limit "$rerun_seconds" \
+               'now - ($at | fromdateiso8601) >= $limit' >/dev/null; then
+            hand_back return_from_ship "red, and the re-run never showed: $(pr_red_names "$checks")"
+          else
+            wait_for "waiting on the re-run"
+          fi
+          return 0
+        fi
+        hand_back return_from_ship "red after a re-run: $(pr_red_names "$checks")"
+        return 0
+      fi
+      # The run of each red check, or `none` for one that is no GitHub Actions run.
+      runs="$(jq -r '[.[] | select(.bucket == "fail" or .bucket == "cancel")
+          | ((.link // "") | capture("/actions/runs/(?<run>[0-9]+)").run) // "none"] | unique | .[]' <<<"$checks")"
+      if grep -qx none <<<"$runs"; then
+        hand_back return_from_ship "red, with no run to re-run: $(pr_red_names "$checks")"
+        return 0
+      fi
+      # Recorded first: a sweep killed between the two must not re-run for ever.
+      if ! bd --actor "$holder" -C "$root" update "$id" \
+           --set-metadata "ship_rerun_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" --if-assignee "$holder" >/dev/null; then
+        failed "bd update refused; not re-run"
+        return 0
+      fi
+      wrote=true
+      for run in $runs; do
+        if ! gh run rerun "$run" --failed >/dev/null 2>"$scratch/err"; then
+          hand_back return_from_ship "red, and run $run could not be re-run: $(pr_red_names "$checks")"
+          return 0
+        fi
+      done
+      say reran "$(pr_red_names "$checks")"
+      return 0 ;;
+  esac
+
+  merge_status="$(jq -r '.mergeStateStatus // ""' <<<"$pr")"
+  if [[ "$merge_status" == BLOCKED || "$merge_status" == DRAFT ]]; then
+    # GitHub would refuse the merge: a required check or review is missing, or it is a draft.
+    wait_for "held by GitHub ($merge_status)"
+    return 0
+  fi
+  if [[ "$merge_status" == BEHIND ]]; then
+    if overdue; then
+      wait_for "behind $default"
+    elif gh api -X PUT "repos/{owner}/{repo}/pulls/$number/update-branch" -f "expected_head_sha=$head" \
+           >/dev/null 2>"$scratch/err"; then
+      say updated
+    else
+      failed "update-branch: $(cat "$scratch/err")"
+    fi
+    return 0
+  fi
+  if [[ "$(jq -r .mergeable <<<"$pr")" != MERGEABLE ]]; then
+    wait_for "of unknown mergeability"
+    return 0
+  fi
+
+  flags=(--match-head-commit "$head")
+  if [[ -n "$(meta dependabot_pr)" ]]; then
+    # Dependabot's title names no bead, and delivery is found by it (`bead-delivery.sh`).
+    flags+=(--subject "fix($id): $(jq -r .title <<<"$pr") (#$number)")
+  fi
+  if pr_merge "$number" "$scratch/err" "${flags[@]}"; then
+    finish
+  else
+    retry_later "merge refused: $(head -n 1 "$scratch/err")"
+  fi
+  return 0
+}
+
+while IFS= read -r bead; do
+  [[ -n "$bead" ]] || continue
+  id="$(jq -r .id <<<"$bead")"
+  number="$(meta ship_pr)"
+  branch=""
+  if ! jq -e --arg ship "$ship_label" '(.labels // []) | index($ship) != null' >/dev/null <<<"$bead"; then
+    # A hand-back that wrote its route and could not give the claim back.
+    if bd --actor "$holder" -C "$root" unclaim "$id" --if-assignee "$holder" >/dev/null; then
+      wrote=true
+    else
+      failed "bd unclaim refused; the next sweep gives it back"
+    fi
+    continue
+  fi
+  if ! [[ "$number" =~ ^[0-9]+$ && "$(meta ship_at)" =~ ^[0-9]+$ ]]; then
+    # No later sweep could do better.
+    hand_back park_from_ship "the hand-over left no usable ship_pr and ship_at" \
+      "this bead could not be shipped" </dev/null
+    continue
+  fi
+  # No command run for one bead may read the list of the others.
+  advance </dev/null
+done < <(jq -c --arg ship "$holder" '.[] | select(.assignee == $ship and .status == "in_progress")' <<<"$board")
+
+if $wrote || [[ -e "$state/ship-unpushed" ]]; then
+  if push_board; then
+    rm -f "$state/ship-unpushed"
+  else
+    : > "$state/ship-unpushed"
+    echo "failed board push: bd dolt push failed; the next sweep pushes again"
+  fi
+fi
+exit 0

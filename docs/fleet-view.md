@@ -418,6 +418,11 @@ pure half with plain data:
   Since cb-10d.3 worktree tidies have a worker of their own too, `TidyWorker`, and deliberately not
   the write worker: a tree removal deletes a build directory and fetches, and on the write worker it
   would hold the priority keys behind it on every pass.
+  Since cb-tbrh the ship sweep has a worker as well, `ShipWorker`: `scripts/ship --sweep` every
+  `SHIP_INTERVAL` (a minute) on a five-minute bound, asked only while the view supervises, since it
+  merges pull requests and writes the board. Each act is a `ship` line in `decisions.jsonl`, each
+  failure also one in `errors.jsonl`; nothing is drawn, and `g` does not force it. The script holds
+  every rule (`docs/agent-workflow.md`, *Shipping*); the view holds the clock.
 - `ui.rs` — pure over `App` plus an injected `DateTime<Utc>`. It never reads a file, runs a
   program or asks the clock, which is what makes its `TestBackend` cases assertions about the
   screen rather than about the machine. Widths are **terminal cells** (`unicode-width`), never

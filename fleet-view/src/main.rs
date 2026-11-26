@@ -41,8 +41,7 @@ use ratatui::Terminal;
 
 use cerebro_tui::app::{
     self, App, AppAction, DetailWorker, FleetWorker, GhWorker, HealthWorker, HistoryWorker,
-    SweepWorker,
-    TidyWorker, WorkWorker, WriteWorker,
+    ShipWorker, SweepWorker, TidyWorker, WorkWorker, WriteWorker,
 };
 use cerebro_tui::lifecycle;
 use cerebro_tui::log::{self, Logger};
@@ -345,8 +344,11 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
     // A TENTH thread for worktree tidies, and not the write worker: a tree removal deletes a build
     // directory and fetches, and would hold the priority keys behind it (cb-10d.3).
     let tidy_worker = TidyWorker::spawn(paths.clone(), commands.clone());
+    // An ELEVENTH for the ship sweep, which merges over the network (cb-tbrh).
+    let ship_worker = ShipWorker::spawn(paths.clone(), commands.clone());
     let workers = Workers {
         tidy: tidy_worker,
+        ship: ship_worker,
         fleet: fleet_worker,
         work: work_worker,
         detail: detail_worker,
@@ -1269,6 +1271,51 @@ fn settle_tidy(app: &mut App, logger: &mut Logger, answer: &app::TidyAnswer, now
     app.finish_tidy(answer, now);
 }
 
+/// Settle one ship sweep (cb-tbrh): a `ship` decision line per act, and an `errors.jsonl` line
+/// under `ship` for each act that failed and for a sweep that would not run. Nothing is drawn: a
+/// bead being shipped is read off the board like any other.
+fn settle_ship(
+    app: &mut App,
+    logger: &mut Logger,
+    result: Result<Vec<readers::ShipAct>, readers::ReadError>,
+    now: DateTime<Utc>,
+) {
+    app.finish_ship();
+    let acts = match result {
+        Ok(acts) => acts,
+        Err(error) => {
+            logger.error("ship", &error.log_message(), now);
+            return;
+        }
+    };
+    if acts.iter().all(|act| act.outcome != "failed") {
+        logger.clear_error("ship");
+    }
+    let text = |value: &Option<String>| {
+        value.as_deref().map_or(serde_json::Value::Null, serde_json::Value::from)
+    };
+    for act in acts {
+        if act.outcome == "failed" {
+            let subject = match (&act.bead, act.pr) {
+                (Some(bead), Some(pr)) => format!("{bead} #{pr}: "),
+                _ => String::new(),
+            };
+            let reason = act.reason.as_deref().unwrap_or_default();
+            logger.error("ship", &format!("{subject}{reason}"), now);
+        }
+        logger.write(
+            log::Event::Ship,
+            now,
+            &[
+                ("bead", text(&act.bead)),
+                ("pr", act.pr.map_or(serde_json::Value::Null, serde_json::Value::from)),
+                ("outcome", serde_json::Value::from(act.outcome.as_str())),
+                ("reason", text(&act.reason)),
+            ],
+        );
+    }
+}
+
 /// Give back every bead this view handed a session that went away without reporting, and every
 /// orphaned handover file a previous view left behind (cb-10d.1).
 ///
@@ -1801,6 +1848,7 @@ struct Workers {
     health: HealthWorker,
     write: WriteWorker,
     tidy: TidyWorker,
+    ship: ShipWorker,
 }
 
 /// The whole loop, generic over its terminal and its event source so the cases below can drive it
@@ -2042,6 +2090,9 @@ where
         // session.
         if workers.write.is_dead() {
             app.abandon_outstanding_writes();
+        }
+        if let Some(result) = workers.ship.poll() {
+            settle_ship(app, &mut state.logger, result, clock());
         }
         // History fails apart from the two panes as well: a script that would not run says
         // nothing about the fleet or the board, and its only sign on screen is the red word
@@ -2815,6 +2866,15 @@ fn dispatch(
         && !workers.sweep.request()
     {
         app.finish_sweep_refresh(Err(worker_gone("sweep reader")), clock());
+    }
+    // The ship sweep runs on its own clock alone, and only while this view supervises: `g` asks
+    // for reads, and this one merges (cb-tbrh).
+    if app.ship_due(now) {
+        app.begin_ship(now);
+        if !workers.ship.request() {
+            // A dead worker answers nothing; the slot is freed so the next tick says so again.
+            app.finish_ship();
+        }
     }
     // `g` re-asks History too, the `gh` line's shape exactly: nothing forces one out of band, so
     // there is no `AppAction` of its own.
@@ -3604,6 +3664,7 @@ mod main_tests {
             health: health_worker(),
             write: write_worker(),
             tidy: tidy_worker(),
+            ship: ShipWorker::spawn(nowhere().0, Arc::new(RealCommands)),
         }
     }
 
@@ -6639,6 +6700,69 @@ mod main_tests {
         assert_eq!(closed.len(), 1, "{closed:?}");
         assert!(closed[0].contains(r#""reason":null"#), "{}", closed[0]);
         assert_eq!(app.notice, None, "neither is said");
+    }
+
+    #[test]
+    fn a_ship_sweep_writes_a_ship_line_per_act_and_logs_each_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut logger = logging(dir.path());
+        let now = Utc::now();
+        let mut app = App::with_supervision(supervising());
+        app.begin_ship(Instant::now());
+        let acts = vec![
+            readers::ShipAct { outcome: "merged".into(), bead: Some("cb-a".into()), pr: Some(7), reason: None },
+            readers::ShipAct {
+                outcome: "failed".into(),
+                bead: Some("cb-b".into()),
+                pr: Some(8),
+                reason: Some("merge refused: X".into()),
+            },
+        ];
+        settle_ship(&mut app, &mut logger, Ok(acts), now);
+        let lines = log_lines(dir.path(), "decisions");
+        assert_eq!(lines.len(), 2, "one per act: {lines:?}");
+        let line = &lines[0];
+        assert!(line.contains(r#""event":"ship""#), "{line}");
+        assert!(line.contains(r#""bead":"cb-a""#), "{line}");
+        assert!(line.contains(r#""outcome":"merged""#), "{line}");
+        assert!(line.contains(r#""pr":7"#), "{line}");
+        let errors = log_lines(dir.path(), "errors");
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].contains(r#""context":"ship""#), "{}", errors[0]);
+        assert!(errors[0].contains("cb-b #8: merge refused: X"), "{}", errors[0]);
+        assert!(app.ship_due(Instant::now() + app::SHIP_INTERVAL), "the slot is free again");
+        assert_eq!(app.notice, None, "nothing is drawn");
+    }
+
+    #[test]
+    fn a_tick_asks_for_the_ship_sweep_only_while_supervising() {
+        let now = Instant::now();
+        let mut app = App::with_supervision(supervising());
+        dispatch(AppAction::None, &mut app, &test_workers(), &Utc::now);
+        assert!(!app.ship_due(now + app::SHIP_INTERVAL), "one is in flight");
+
+        let mut app = App::new();
+        dispatch(AppAction::None, &mut app, &test_workers(), &Utc::now);
+        app.set_supervision(supervising());
+        assert!(app.ship_due(Instant::now()), "a read-only view asked for nothing");
+    }
+
+    #[test]
+    fn a_ship_sweep_that_would_not_run_is_logged() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut logger = logging(dir.path());
+        let mut app = App::with_supervision(supervising());
+        app.begin_ship(Instant::now());
+        let error = readers::ReadError::Exit {
+            source: "ship --sweep".into(),
+            status: Some(1),
+            stderr: "ship: the board could not be read".into(),
+        };
+        settle_ship(&mut app, &mut logger, Err(error), Utc::now());
+        let errors = log_lines(dir.path(), "errors");
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].contains(r#""context":"ship""#), "{}", errors[0]);
+        assert!(app.ship_due(Instant::now() + app::SHIP_INTERVAL), "the slot is free again");
     }
 
     #[test]

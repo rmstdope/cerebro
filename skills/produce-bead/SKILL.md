@@ -56,7 +56,13 @@ git -C <tree> log --oneline "origin/$default..HEAD"
    **A bead that already has a `design` is a producer's returned plan, never redesigned from
    nothing**, whether or not `planned` is still on it (every park removes `planned`; a crash does
    not). Check what shipped first, so an increment main already carries is skipped rather than
-   redone. Then take the notes, newest first: a `## Sent back to the UX stage` heading means the
+   redone. Then take the notes, newest first: a `## Sent back from shipping` heading means `ship`
+   did not merge the pull request it names, for the reason it gives (a red check, a conflict,
+   requested changes, a head the review did not cover): check that pull request's branch out in your
+   tree if it is not there already, `git fetch` and `git merge --ff-only origin/<branch>` (it may
+   have been caught up since), fix the reason on the same pull request, obtain whatever review the
+   change needs, and hand it over again; a `## Parked by shipping` note the navigator has since
+   unparked is read the same way, and its three returns start again. A `## Sent back to the UX stage` heading means the
    acceptance was amended after this design was written, so reread the acceptance and amend the
    design to it; a `## Navigator's answer` heading means a scope question was settled, so amend the design to the
    answer; a dated failure note with neither means rework, the build failed against a design
@@ -75,11 +81,12 @@ git -C <tree> log --oneline "origin/$default..HEAD"
    `ci`, `rebase`, and `merge` as the phase changes; heartbeat before long work.
 4. Run the fast gate (*Building*), open the pull request, obtain and address one independent, full
    review of the complete diff and bead (*The review loop*), then the navigator's review if the
-   `review` gate is declared, wait for CI (*Waiting, without ending your run*; *Red CI*), write
-   *The retrospective* if one is due, merge through the pull request and never otherwise
-   (*Merging*), or hand the merge to the navigator if the `merge` gate is declared, close the bead
-   and its parent when you were the last child (*Finishing*), and run `end-pass` last. A bead you
-   cannot finish goes back through *Handing back*.
+   `review` gate is declared, write *The retrospective* if one is due, hand the pull request to
+   `ship` (*Shipping*) and run `end-pass` last: you do not wait for CI or merge. Under the `merge`
+   gate the merge is handed to the navigator instead. Only where *Shipping* says so do you wait for
+   CI (*Waiting, without ending your run*; *Red CI*), merge through the pull request and never
+   otherwise (*Merging*) and close the bead yourself (*Finishing*). A bead you cannot finish goes
+   back through *Handing back*.
 
 ## The plan
 
@@ -158,7 +165,7 @@ navigator answers when present. An empty declaration is today's fleet: no gate, 
   state="$(jq -r .state <<<"$r")"; last="$(jq -r .id <<<"$r")"
   ```
 
-  `APPROVED` continues to `ci`. `CHANGES_REQUESTED` is a round of findings: every comment gets a
+  `APPROVED` continues to *The retrospective* and *Shipping*. `CHANGES_REQUESTED` is a round of findings: every comment gets a
   change or a posted reply, as the sub-agent's did, then the sub-agent reads the delta if the
   change warrants it, and the gate is asked again with `last` at the review just handled, so only
   the navigator's next verdict ends the wait. The navigator's comments are answered on the pull
@@ -335,10 +342,43 @@ findings nor an explicit no-findings verdict is unusable: retry that head up to 
 heartbeating between; after three, leave the PR open, record the attempts in the notes, hand back
 with `human`, and end the pass.
 
-Once every finding is answered, write `ci` and wait per *Waiting, without ending your run*, after
-*Merging*'s mergeability check if anything was pushed since the PR opened.
+Once every finding is answered, go to *Shipping*, by way of the `review` gate if it is declared
+and *The retrospective*.
+
+## Shipping
+
+**You hand the pull request over and end your pass; `scripts/ship` merges it.** It has no model
+behind it: the supervising fleet view runs it every minute, and it waits for the checks, catches
+the branch up, re-runs a failed job once, merges on green only the head your review covers, closes
+the bead and its parents and tidies your tree. A red it cannot clear, a conflict or a request for
+changes sends the bead back to a builder with the reason in its notes.
+
+Hand over when every finding is answered, any retrospective is committed and pushed,
+`git status --porcelain` prints nothing, and `<sha>` — the head on the pull request now — is one
+your review and answers cover: the reviewed head, or a later one you judged to need no follow-up
+review. Never a head you did not push or did not judge.
+
+```bash
+.cerebro/cerebro/scripts/agent-state <name> working --bead <id> --phase merge --pid $PPID
+.cerebro/cerebro/scripts/ship <name> <id> <n> <sha>
+```
+
+- **Exit 0**: the bead is `ship`'s now. Touch it no further: no CI wait, no merge, no close. Say
+  which pull request you handed over and run `.cerebro/cerebro/scripts/end-pass <name> --pid
+  $PPID`.
+- **Exit 3**: no fleet view is shipping. Merge it yourself: write `ci`, wait per *Waiting, without
+  ending your run*, and follow *Red CI*, *Merging* and *Finishing*.
+- **Exit 1**: read the refusal. Fix what it names and run it again (a push that failed is retried
+  by the same command); what you cannot fix is *Handing back*.
+- **The `merge` gate** is the navigator's merge (*The navigator's gates*); `ship` refuses there.
+- **A pull request of the cerebro submodule** is not `ship`'s: merge it yourself, and hand over the
+  consumer's `chore: bump cerebro` pull request.
 
 ## Red CI
+
+This section and *Merging* are yours only where *Shipping* sends you here, or the bead came back
+red from `ship`: each `## Sent back from shipping` note for a red check is a fix attempt already
+spent, and `ship` itself parks the bead for the navigator instead of returning it a fourth time.
 
 **Three fix attempts and two bare re-runs, for the whole bead.** A pushed fix spends a fix attempt;
 a re-run of the same head spends a re-run. Read the failure before believing it; re-run a suspected
@@ -435,7 +475,8 @@ and ends the same way, `end-pass` last.
 
 ## The retrospective
 
-Only you saw the run. **When the review is answered and CI is green, before you merge**, ask: did
+Only you saw the run. **When the review is answered, before you hand the pull request over** (or,
+where you merge yourself, when CI is green and before you merge), ask: did
 anything happen that I did not expect? Worth recording: a failure nothing prepared you for; green
 locally and red in CI; a tool not behaving as documented; a rule you could not follow; time lost
 to something avoidable. Not worth it: a normal bead, a RED that was meant to be red, an answered
@@ -461,11 +502,13 @@ README copy is lost with the worktree. The README is the format: **What happened
 "not established"), **Cost**, **Prevent by** (a file, a section, a step or a check; "be careful"
 is not a prevention), **Seen before**. Be specific enough to act on. **Record; do not fix**:
 changing the rules, the skills or CI is the navigator's, and Forge reads these files to propose
-it. A retrospective is a commit after the review, so it always needs CI on the new head (write
-`ci`, wait per *Waiting, without ending your run*); whether it also warrants a follow-up review is
-your call, as with any post-review change, and a `docs/`-only commit rarely does.
+it. A retrospective is a commit after the review, so the head you hand over (or wait on CI for) is the
+new one; whether it also warrants a follow-up review is your call, as with any post-review change,
+and a `docs/`-only commit rarely does.
 
 ## Finishing
+
+For a bead you merged yourself; `ship` does this for one you handed over.
 
 ```bash
 bd close <id> --reason "Delivered in PR #NN"
@@ -540,7 +583,8 @@ Every write names your bead and pid:
 `.cerebro/cerebro/scripts/agent-state <name> working --bead <id> --phase <phase> --pid $PPID`.
 The phases, in order, are `design`, `build`, `gate`, `review`, `ci`, `rebase` and `merge`; a
 question is `asking` with the same bead and phase, and a navigator's gate is `asking` with
-`plan-gate`, `review-gate` or `merge-gate` (*The navigator's gates*). `merge` covers the retrospective, the merge,
-the close and the cleanup; a retrospective goes back through `ci` first, and through `review`
-too when it warrants one. Delivered, parked or handed back:
+`plan-gate`, `review-gate` or `merge-gate` (*The navigator's gates*). `merge` covers the retrospective, the hand-over
+to `ship` and, where you merge yourself, the merge, the close and the cleanup; there a
+retrospective goes back through `ci` first, and through `review` too when it warrants one. Handed
+over, delivered, parked or handed back:
 `.cerebro/cerebro/scripts/end-pass <name> --pid $PPID`, last.

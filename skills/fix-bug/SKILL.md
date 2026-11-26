@@ -17,10 +17,11 @@ loop*, where the reviewer reads the diff against **the bead's bug claim and your
 test**, since a bug bead has no plan, and your posted review says so in place of "the plan"
 (the review packet carries the claim as the bead's description and your bug log in its notes, so
 log the bug before you make the packet);
-*Red CI*; *Merging*; *The retrospective*; *Finishing*, the parent walk included; and *The
-navigator's gates*, where your `plan` gate puts the reproduction test and the fix you intend to the
-navigator before you touch the implementation, and `review` and `merge` read as written. You write
-no `design` and add no `planned`: the reproduction test is the plan.
+*Shipping*, with *Red CI*, *Merging* and *Finishing* (the parent walk included) where it sends
+you to them; *The retrospective*; and *The navigator's gates*, where your `plan` gate puts the
+reproduction test and the fix you intend to the navigator before you touch the implementation, and
+`review` and `merge` read as written. You write no `design` and add no `planned`: the reproduction
+test is the plan.
 
 *The startup brief* of `produce-bead` is yours too: the bead, what shipped for it, your worktree,
 the traps and the gates are in your prompt and are not read again, and its fallback is what you do
@@ -56,9 +57,11 @@ when it could not be made. Read the traps it carries before you touch the code.
    fast gate `produce-bead` *Building* names.
 6. **Log the bug on the bead before you open the pull request**, so the reviewer reads it and the
    verifier later decides from it how to check the fix by hand (below).
-7. **Merge only through the pull request, after review and green checks** (`produce-bead`
-   *Merging*), then close the bead, close its parent if you were the last child, and end the pass.
-   A bead is never closed without its bug log.
+7. **Hand the reviewed pull request to `ship` and end the pass** (`produce-bead` *Shipping*): it
+   merges through the pull request on green checks and closes the bead. Where *Shipping* has you
+   merge yourself, merge only after review and green checks (*Merging*), then close the bead and
+   its parent if you were the last child. A bead is never handed over or closed without its bug
+   log.
 
 ## A bead that names a Dependabot pull request
 
@@ -71,9 +74,12 @@ request**, not on a new one:
 - **Work on its branch, in your own tree**: `gh pr checkout <n>` inside the tree, then commit and
   `git push` there. Dependabot stops rebasing a pull request once somebody else has pushed to it.
 - **A flaky test is a defect too.** If the failure is a test that fails without the update, fix the
-  test on the same branch and say so in the bug log.
-- **Merge that pull request** through `produce-bead` *Merging*, after the review and green checks,
-  with a subject that names the bead, since Dependabot's title does not and `bead-delivery.sh` and
+  test on the same branch and say so in the bug log. If you pushed nothing, Dependabot may still
+  rebase the pull request after your hand-over; `ship` then sends the bead back for that new head.
+- **Hand that pull request to `ship`** (`produce-bead` *Shipping*) after the review: it merges it
+  under a subject that names the bead, and closes the bead. Where you merge it yourself
+  (*Merging*), after the review and green checks, give a subject that names the bead, since
+  Dependabot's title does not and `bead-delivery.sh` and
   `git log --grep "(<id>):"` find a delivery only by it:
   `gh pr merge <n> --squash --delete-branch --subject "fix(<id>): <the pull request's title> (#<n>)"`.
   Then close the bead. If Dependabot replaced it meanwhile, the sweep has moved the bead onto the

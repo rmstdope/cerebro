@@ -300,6 +300,34 @@ for labels in '[]' '["needs-ui-decision"]' '["plan:revise","verification:failed"
 done
 pass "agree_experience by hand: a bead the UX stage records goes to the producer queue alone"
 
+# --- ship: a bead being shipped is in no queue; returned, its builder's; parked, nobody's -----------
+
+for case in 'task|["ux:agreed","planned"]|producer' 'task|["ux:none","planned"]|producer' 'bug|["bugfix"]|bugfixer'; do
+  IFS='|' read -r type labels queue <<<"$case"
+  board='[{"id":"cb-x","status":"in_progress","assignee":"Storm","priority":1,"issue_type":"'"$type"'","labels":'"$labels"'}]'
+  with_board "$board"
+  apply_route cb-x hand_to_ship --assignee ship --if-assignee Storm
+  got="$(offered_by cb-x)"
+  [[ -z "$got" ]] || fail "a $type handed to ship is offered by [$got]; it is ship's"
+  jq -e '.[0].labels | index("shipping")' "$stub/board.json" >/dev/null || fail "hand_to_ship added no shipping label"
+  apply_route cb-x return_from_ship --if-assignee ship
+  bd_env bd unclaim cb-x --if-assignee ship || fail "the return's guarded unclaim refused ship's claim"
+  got="$(offered_by cb-x)"
+  [[ "$got" == "$queue" ]] || fail "a $type ship returns is offered by [$got], not by the $queue queue alone"
+  jq -e '.[0].labels | index("shipping") | not' "$stub/board.json" >/dev/null || fail "a return left shipping on"
+
+  with_board "$board"
+  apply_route cb-x hand_to_ship --assignee ship --if-assignee Storm
+  apply_route cb-x park_from_ship --if-assignee ship
+  bd_env bd unclaim cb-x --if-assignee ship || fail "the park's guarded unclaim refused ship's claim"
+  got="$(offered_by cb-x)"
+  [[ -z "$got" ]] || fail "a $type ship parks is offered by [$got]; it is the navigator's"
+  unpark cb-x
+  got="$(offered_by cb-x)"
+  [[ "$got" == "$queue" ]] || fail "a ship park the navigator unparks is offered by [$got], not by the $queue queue alone"
+done
+pass "hand_to_ship, return_from_ship, park_from_ship: no queue while shipping, then the builder's or the navigator's"
+
 # --- several transitions in one call: every one's flags; one unknown name refuses them all ----------
 
 if out="$(bd_env bash -c 'source "$1/candidate-label-policy.sh"; route_flags_for unpark send_to_xu; s=$?; echo "${#route_flags[@]}"; exit $s' _ "$scripts" 2>/dev/null)"; then

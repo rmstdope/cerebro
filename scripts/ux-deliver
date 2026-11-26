@@ -76,6 +76,7 @@ no_checks_grace=120
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$script_dir/candidate-label-policy.sh"
+source "$script_dir/pr-ship.sh"
 root="$("$script_dir/consumer-root" --shared)"
 
 # --- check -----------------------------------------------------------------------------------------
@@ -199,18 +200,12 @@ if ((${#sources[@]})) && [[ $already_recorded -eq 0 ]]; then
     created="$(jq -r '.createdAt | fromdateiso8601' <<<"$pr")"
     deadline=$(( $(date +%s) + wait_seconds ))
     while :; do
-      answer="$(gh pr checks "$number" --json name,bucket 2>"$scratch/checks.err" || true)"
-      if [[ -z "$answer" ]] && grep -q "no checks reported" "$scratch/checks.err"; then
-        answer='[]'
-      fi
-      jq -e 'type == "array"' <<<"$answer" >/dev/null 2>&1 \
+      answer="$(pr_checks "$number" "$scratch/checks.err")" \
         || refuse ci "gh pr checks $number gave no answer: $(cat "$scratch/checks.err")"
-      red="$(jq -r '[.[] | select(.bucket == "fail" or .bucket == "cancel") | .name] | join(", ")' <<<"$answer")"
-      [[ -z "$red" ]] || refuse ci "pull request #$number is red ($red); it is not merged"
-      if jq -e 'length > 0 and all(.[]; .bucket == "pass" or .bucket == "skipping")' <<<"$answer" >/dev/null; then
-        break
-      fi
-      if [[ "$answer" == '[]' && $(( $(date +%s) - created )) -ge $no_checks_grace ]]; then
+      verdict="$(pr_checks_verdict "$answer")"
+      [[ "$verdict" != *red ]] || refuse ci "pull request #$number is red ($(pr_red_names "$answer")); it is not merged"
+      [[ "$verdict" != green ]] || break
+      if [[ "$verdict" == none && $(( $(date +%s) - created )) -ge $no_checks_grace ]]; then
         say "no checks reported on #$number"
         break
       fi
@@ -222,11 +217,10 @@ if ((${#sources[@]})) && [[ $already_recorded -eq 0 ]]; then
     done
 
     # merge
-    gh pr merge "$number" --squash --delete-branch >/dev/null 2>"$scratch/merge.err" || true
-    state="$(gh pr view "$number" --json state --jq .state)" || refuse merge "gh pr view $number failed after the merge"
-    if [[ "$state" != MERGED ]]; then
-      refuse merge "pull request #$number is not merged: $(cat "$scratch/merge.err" 2>/dev/null || true)"
-    fi
+    merged=0
+    pr_merge "$number" "$scratch/merge.err" --delete-branch || merged=$?
+    [[ $merged -ne 2 ]] || refuse merge "gh pr view $number failed after the merge"
+    [[ $merged -eq 0 ]] || refuse merge "pull request #$number is not merged: $(cat "$scratch/merge.err" 2>/dev/null || true)"
     if [[ -n "$(git -C "$root" ls-remote --heads origin "$branch" 2>/dev/null || true)" ]]; then
       git -C "$root" push -q origin --delete "$branch" >/dev/null 2>&1 || true
     fi

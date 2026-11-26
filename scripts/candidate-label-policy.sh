@@ -2,7 +2,7 @@
 # move one between roles.
 #
 # SOURCED, NEVER EXECUTED, by the scripts that read a queue (`stage-candidates`,
-# `assignable-beads`, `bugfix-candidates`, `second-look-beads`), the fleet view's sweeps
+# `assignable-beads`, `bugfix-candidates`, `second-look-beads`), `ship`, the fleet view's sweeps
 # (`sweep-paused.sh`, `sweep-verdicts.sh`) and the scripts that write a route (`producer-park`,
 # `reopen-failed`, `verifier-pass-epic-family`), and by the skill snippets that hand a bead on by
 # hand (produce-bead's parks and hand-backs, the verifier's verdict, Cerebro's unpark and send-back,
@@ -47,6 +47,8 @@ stale_verdict_label="verdict:stale"
 verifier_only_label="second-look"
 # A bug: the bugfixer's alone, set at filing and never removed.
 bugfix_label="bugfix"
+# A reviewed pull request `scripts/ship` is merging: in progress, held by `ship`, nobody's queue.
+ship_label="shipping"
 
 # route_flags_for <transition>... - sets the array `route_flags` to the `bd update` flags of one or
 # more named hand-offs, in order (`route_flags_for unpark send_to_ux`). The flags are the whole label
@@ -74,6 +76,12 @@ bugfix_label="bugfix"
 #   agree_experience      from the UX stage to a producer: the experience is recorded. `ux:agreed` on,
 #                         `needs-ui-decision` and `plan:revise` off, so a bead that came back to UX
 #                         leaves the UX queue for good. `ux-deliver`.
+#   hand_to_ship          from a builder to `scripts/ship`: `shipping` on and nothing else; the
+#                         caller reassigns the claim to `ship`. `ship <Name> <id> …`.
+#   return_from_ship      from `ship` back to a builder: `shipping` off, so the labels under it send
+#                         a producer or the bugfixer to resume it. `ship --sweep`.
+#   park_from_ship        from `ship` to the navigator: `shipping` off, `human` on, the plan kept.
+#                         `ship --sweep`.
 #   unpark                the navigator's answer to any park: `human` and `pause:kept` off, nothing
 #                         else, so the labels the park left decide where it goes. Cerebro's unpark,
 #                         and before `send_to_ux` its send-back.
@@ -108,6 +116,12 @@ route_flags_for() {
       agree_experience)
         route_flags+=(--add-label "$stage_label" --remove-label "$ui_question_label"
                       --remove-label "$plan_revise_label") ;;
+      hand_to_ship)
+        route_flags+=(--add-label "$ship_label") ;;
+      return_from_ship)
+        route_flags+=(--remove-label "$ship_label") ;;
+      park_from_ship)
+        route_flags+=(--remove-label "$ship_label" --add-label "$human_label") ;;
       unpark)
         route_flags+=(--remove-label "$human_label" --remove-label "$kept_pause_label") ;;
       *)

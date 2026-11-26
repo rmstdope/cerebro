@@ -29,9 +29,11 @@ pub const STALE_VERDICT_LABEL: &str = "verdict:stale";
 pub const VERIFIER_ONLY_LABEL: &str = "second-look";
 /// A bug: the bugfixer's alone (`bugfix_label`).
 pub const BUGFIX_LABEL: &str = "bugfix";
+/// A reviewed pull request `scripts/ship` is merging (`ship_label`).
+pub const SHIP_LABEL: &str = "shipping";
 
 /// Each policy variable and the const that twins it, for the contract test.
-pub const POLICY: [(&str, &str); 10] = [
+pub const POLICY: [(&str, &str); 11] = [
     ("stage_label", STAGE_LABEL),
     ("skip_label", SKIP_LABEL),
     ("plan_label", PLAN_LABEL),
@@ -42,4 +44,5 @@ pub const POLICY: [(&str, &str); 10] = [
     ("stale_verdict_label", STALE_VERDICT_LABEL),
     ("verifier_only_label", VERIFIER_ONLY_LABEL),
     ("bugfix_label", BUGFIX_LABEL),
+    ("ship_label", SHIP_LABEL),
 ];

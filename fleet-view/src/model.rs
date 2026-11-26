@@ -280,17 +280,40 @@ fn root_needle(root: &Path) -> String {
 
 /// The whole marker sentence for NAME at ROOT, composed from the two needles above.
 ///
-/// Test-only, and deliberately built rather than typed: `scripts/marker-readers` holds every file
-/// that spells the sentence to being a declared reader, and this crate's one declared spelling is
-/// the needles in this file. A fixture elsewhere in the crate asks for the sentence here instead
-/// of writing a fourth copy of it.
-#[cfg(test)]
-pub(crate) fn marker_sentence(name: &str, root: &Path) -> String {
+/// For fixtures, and deliberately built rather than typed: `scripts/marker-readers` holds every
+/// file that spells the sentence to being a declared reader, and this crate's one declared
+/// spelling is the needles in this file. A fixture elsewhere in the crate, or in the web console's
+/// tests, asks for the sentence here instead of writing another copy of it.
+pub fn marker_sentence(name: &str, root: &Path) -> String {
     format!(
         "{}{}/.",
         name_needle(name),
         root.to_string_lossy().trim_end_matches('/')
     )
+}
+
+/// The agent whose marker sentence TEXT carries, rooted at ROOT: the name between the name
+/// needle's two halves, accepted only where `session_liveness` proves it. A transcript names its
+/// session this way and no other, so this is how a reader learns whose transcript it holds.
+pub fn marker_agent(text: &str, root: &Path) -> Option<String> {
+    let normalized = normalize_marker_spelling(text);
+    let needle = name_needle("\0");
+    let (opening, closing) = needle.split_once('\0')?;
+    let mut rest = normalized.as_str();
+    while let Some(at) = rest.find(opening) {
+        let after = &rest[at + opening.len()..];
+        if let Some(end) = after.find(closing) {
+            let name = &after[..end];
+            if !name.is_empty()
+                && !name.contains(char::is_whitespace)
+                && session_liveness(&normalized, name, root) == SessionLiveness::Proven
+            {
+                return Some(name.to_string());
+            }
+        }
+        rest = after;
+    }
+    None
 }
 
 /// Tri-state liveness for one process's command-line field as NAME's session of the fleet at
@@ -1636,6 +1659,17 @@ mod tests {
             session_liveness(escaped, "Rogue", Path::new("/Users/x/repos/cerebro-hud")),
             SessionLiveness::Proven
         );
+    }
+
+    #[test]
+    fn marker_agent_needs_this_root() {
+        let root = Path::new("/Users/x/repos/cerebro");
+        let text = format!("hello\n{} This sentence is how it proves it.", marker_sentence("Storm", root));
+        assert_eq!(marker_agent(&text, root).as_deref(), Some("Storm"));
+        assert_eq!(marker_agent(&text, Path::new("/Users/x/repos/cerebro-hud")), None);
+        assert_eq!(marker_agent("no marker here", root), None);
+        let spaced = marker_sentence("Storm", root).replace(' ', "\\ ");
+        assert_eq!(marker_agent(&spaced, root).as_deref(), Some("Storm"));
     }
 
     #[test]

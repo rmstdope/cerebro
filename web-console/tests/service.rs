@@ -1353,3 +1353,95 @@ async fn only_this_console_may_rank_a_plain_bead_within_p0_to_p4() {
         assert!(board.calls().is_empty(), "nothing ran for {id} {body}");
     }
 }
+
+/// The Time tab's read over a consumer at ROOT, with its kept transcripts in KEPT.
+async fn time(root: &std::path::Path, kept: &std::path::Path, query: &str) -> (StatusCode, serde_json::Value) {
+    let response = service_at(root)
+        .with_transcript_dirs(vec![kept.to_path_buf()])
+        .router()
+        .oneshot(get(&format!("/api/time{query}")))
+        .await
+        .unwrap();
+    let status = response.status();
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    (status, serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null))
+}
+
+fn ago(minutes: i64) -> String {
+    (chrono::Utc::now() - chrono::Duration::minutes(minutes)).to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+}
+
+#[tokio::test]
+async fn time_reports_a_fixture_consumer() {
+    let root = tempfile::tempdir().unwrap();
+    let state = root.path().join(".cerebro/state");
+    std::fs::create_dir_all(&state).unwrap();
+    let line = |minutes: i64, to: &str, phase: &str| {
+        serde_json::json!({"ts": ago(minutes), "agent": "Storm", "to": to, "phase": phase}).to_string()
+    };
+    std::fs::write(
+        state.join("transitions.jsonl"),
+        [line(120, "working", "build"), line(60, "asking", "build"), line(30, "waiting", "")].join("\n"),
+    )
+    .unwrap();
+    std::fs::write(
+        state.join("decisions.1.jsonl"),
+        serde_json::json!({"event": "start", "ts": ago(121), "agent": "Storm", "role": "producer"}).to_string(),
+    )
+    .unwrap();
+    let kept = root.path().join("kept");
+    std::fs::create_dir_all(&kept).unwrap();
+    let event = |minutes: i64, kind: &str, content: serde_json::Value| {
+        serde_json::json!({"type": kind, "timestamp": ago(minutes), "message": {"content": content}}).to_string()
+    };
+    std::fs::write(
+        kept.join("s1.jsonl"),
+        [
+            event(125, "user", serde_json::json!(cerebro_tui::marker_sentence("Storm", root.path()))),
+            event(110, "assistant", serde_json::json!([{"type": "tool_use", "name": "Edit", "input": {}}])),
+            event(70, "user", serde_json::json!([{"type": "tool_result"}])),
+        ]
+        .join("\n"),
+    )
+    .unwrap();
+
+    let (status, report) = time(root.path(), &kept, "?period=24h").await;
+
+    assert_eq!(status, StatusCode::OK, "{report}");
+    let role = &report["roles"][0];
+    assert_eq!(role["name"], "producer");
+    assert_eq!(role["agents"][0]["name"], "Storm");
+    let build = &role["agents"][0]["phases"][0];
+    assert_eq!(build["name"], "build");
+    assert_eq!(build["working"].as_f64().unwrap().round(), 3600.0);
+    assert_eq!(build["waiting"].as_f64().unwrap().round(), 1800.0);
+    assert_eq!(build["activities"][0]["name"], "editing code");
+    assert_eq!(build["activities"][0]["seconds"].as_f64().unwrap().round(), 2400.0);
+    assert!(report["detail_from"].is_string());
+}
+
+#[tokio::test]
+async fn time_refuses_an_unknown_period() {
+    let root = tempfile::tempdir().unwrap();
+    let (status, body) = time(root.path(), root.path(), "?period=week").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(body["error"].is_string());
+}
+
+#[tokio::test]
+async fn time_with_no_records_is_an_empty_report() {
+    let root = tempfile::tempdir().unwrap();
+    let (status, report) = time(root.path(), &root.path().join("none"), "").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(report["roles"], serde_json::json!([]));
+    assert!(report["detail_from"].is_null());
+}
+
+#[tokio::test]
+async fn time_with_an_unreadable_log_is_a_502() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(root.path().join(".cerebro/state/transitions.jsonl")).unwrap();
+    let (status, body) = time(root.path(), root.path(), "?period=all").await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    assert!(body["error"].as_str().unwrap().contains("transitions.jsonl"));
+}

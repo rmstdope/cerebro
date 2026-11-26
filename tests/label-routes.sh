@@ -328,6 +328,46 @@ for case in 'task|["ux:agreed","planned"]|producer' 'task|["ux:none","planned"]|
 done
 pass "hand_to_ship, return_from_ship, park_from_ship: no queue while shipping, then the builder's or the navigator's"
 
+# --- a drawing on its way to main: nobody's until merged, then the producer's (cb-8pdv) -------------
+
+drawing_label=mockup:shipping
+handed() {
+  with_board '[{"id":"cb-x","status":"open","assignee":"Xavier","priority":1,"issue_type":"task","labels":'"$1"'}]'
+  apply_route cb-x hand_drawing_to_ship --assignee ship --if-assignee Xavier
+}
+has_label() { jq -e --arg l "$1" '.[0].labels | index($l) != null' "$stub/board.json" >/dev/null; }
+
+for labels in '[]' '["ux:agreed","planned"]' '["plan:revise","verification:failed"]'; do
+  handed "$labels"
+  got="$(offered_by cb-x)"
+  [[ -z "$got" ]] || fail "a $labels bead whose drawing is shipping is offered by [$got]; it is ship's"
+  has_label "$drawing_label" || fail "hand_drawing_to_ship added no $drawing_label"
+  apply_route cb-x "unpark agree_experience" --assignee "" --if-assignee ship
+  got="$(offered_by cb-x)"
+  [[ "$got" == "producer" ]] || fail "a $labels bead whose drawing merged is offered by [$got], not by the producer queue alone"
+  ! has_label "$drawing_label" || fail "the record left $drawing_label on"
+done
+pass "hand_drawing_to_ship: no queue until merged; recorded, the producer's alone"
+
+for labels in '[]' '["needs-ui-decision"]' '["plan:revise","verification:failed"]'; do
+  handed "$labels"
+  apply_route cb-x park_drawing --assignee "" --if-assignee ship
+  got="$(offered_by cb-x)"
+  [[ -z "$got" ]] || fail "a parked drawing on $labels is offered by [$got]; it is the navigator's"
+  has_label "$drawing_label" || fail "a parked drawing lost $drawing_label, so a merge could not finish it"
+  apply_route cb-x unpark
+  got="$(offered_by cb-x)"
+  [[ "$got" == "ux" ]] || fail "a parked drawing on $labels the navigator unparks is offered by [$got], not by the UX queue alone"
+done
+pass "park_drawing: the navigator's; unparked unmerged, the UX queue's"
+
+for transition in park_for_ui_decision send_to_ux revise_plan agree_experience; do
+  with_board '[{"id":"cb-x","status":"open","assignee":"","priority":1,"issue_type":"task","labels":["mockup:shipping"]}]'
+  apply_route cb-x "$transition"
+  ! has_label "$drawing_label" || fail "$transition left a pending drawing on the bead"
+done
+pass "a newer UX decision cancels a pending drawing"
+
 # --- several transitions in one call: every one's flags; one unknown name refuses them all ----------
 
 if out="$(bd_env bash -c 'source "$1/candidate-label-policy.sh"; route_flags_for unpark send_to_xu; s=$?; echo "${#route_flags[@]}"; exit $s' _ "$scripts" 2>/dev/null)"; then

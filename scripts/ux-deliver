@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 #
 # The UX stage's delivery tail, as one call (cb-7b1h). Once the designer has agreed the experience
-# and the record is written to a file, this commits the chosen drawings, merges their pull request,
-# records the acceptance, hands the bead to a producer and removes the mockup worktree:
+# and the record is written to a file, this commits the chosen drawings, opens their pull request and
+# hands it to `scripts/ship`, so nobody waits on its checks (cb-8pdv); the bead reaches a producer
+# only once the drawings are on the default branch. With no fleet view shipping it merges them
+# itself, records the acceptance and hands the bead to a producer. Either way it removes the mockup
+# worktree:
 #
 #     .cerebro/cerebro/scripts/ux-deliver <Name> --bead <id> --acceptance <file> \
 #       [--mockup <file>[=<name>]]... [--wait <seconds>]
@@ -10,27 +13,33 @@
 #   --mockup <file>[=<name>]  a drawing for docs/ui/, under its own basename or <name> (a plain file
 #                             name). Repeated for a kept sketch sheet. None at all is invisible work:
 #                             no worktree and no pull request, only the record.
-#   --wait <seconds>          how long this call waits on the pull request's checks (default 480, so
-#                             one call stays inside an agent's ten-minute tool limit).
+#   --wait <seconds>          with no fleet view shipping, how long this call waits on the pull
+#                             request's checks (default 480, so one call stays inside an agent's
+#                             ten-minute tool limit).
 #
 # In order, each step named on stderr when it refuses:
 #   check     the bead is assigned to <Name>, the record is not empty, every drawing exists
 #   worktree  `.cerebro/worktrees/<id>-mockup` on branch `<id>-mockup`, made by prepare-worktree, or
-#             reused when it is already there on that branch
+#             reused when it is already there on that branch. It starts from the default branch, or
+#             from `origin/<id>-mockup` when that branch's pull request is open
 #   commit    the drawings into docs/ui/ as `docs(<id>): mockup`; the branch may change docs/ alone,
 #             since that is the only pull request a UX agent merges without a review
 #   push, pr  pushed, and one pull request for the branch, reused when one exists
+#   handover  `ship --drawing`: the acceptance written, `mockup:shipping` and no stage label, the bead
+#             assigned to `ship`, the board pushed. The supervising view's sweep merges the pull
+#             request and only then marks the bead agreed. Then cleanup, and the call is done. When
+#             nobody is sweeping (ship's exit 3) the three steps below run here instead:
 #   ci        its checks: any failed or cancelled check refuses; pending ones are waited on
 #   merge     squash-merged; GitHub must then say MERGED, whatever the merge call printed
 #   record    the acceptance and the `agree_experience` hand-off, in one write guarded on <Name>,
 #             then the board pushed. Never before the merge.
 #   cleanup   the worktree and its local branch removed
 #
-# Exit status: 0 delivered; 1 refused at a step; 2 a malformed call; 3 checks still pending when the
+# Exit status: 0 handed over or delivered; 1 refused at a step; 2 a malformed call; 3 checks still pending when the
 # wait ran out. 3 is not a failure: run the same command again, and it continues from where it
 # stopped: the tree, the commit and an open pull request are reused; drawings already on the default
-# branch byte for byte skip to record; a bead already carrying exactly this record is only pushed
-# and cleaned up. An earlier round's merged or closed pull request, from a bead that came back to UX,
+# branch byte for byte skip to record; a bead already carrying exactly this record, recorded or
+# held by `ship`, is only pushed and cleaned up. An earlier round's merged or closed pull request, from a bead that came back to UX,
 # is never reused, and its leftover branch is overwritten.
 #
 # `end-pass` is not here: it takes the agent's own pid, which a script cannot see.
@@ -110,13 +119,22 @@ assignee_of() {
 # A bead already unassigned, agreed and carrying exactly this record is this call's own earlier
 # write whose board push failed: the re-run pushes and cleans up rather than refusing it.
 already_recorded=0
+handed_over=0
 shown="$(bd -C "$root" show "$id" --json)" || refuse check "bd show $id failed"
 owner="$(printf '%s' "$shown" | jq -r '(if type == "array" then .[0] else . end) | .assignee // ""')" \
   || refuse check "bd show $id did not print JSON this script can read"
+# Whether the bead is unassigned or `ship`'s (<assignee> <label>) and carries exactly this record.
+carries_record() {
+  [[ "$owner" == "$1" ]] && printf '%s' "$shown" | jq -e --arg label "$2" --arg record "$record" \
+    '(if type == "array" then .[0] else . end)
+     | ((.labels // []) | index($label)) != null and (.acceptance_criteria // "") == $record' >/dev/null
+}
 if [[ "$owner" != "$name" ]]; then
-  if [[ -z "$owner" ]] && printf '%s' "$shown" | jq -e --arg stage "$stage_label" --arg record "$record" \
-       '(if type == "array" then .[0] else . end)
-        | ((.labels // []) | index($stage)) != null and (.acceptance_criteria // "") == $record' >/dev/null; then
+  if carries_record ship "$drawing_label"; then
+    handed_over=1
+    already_recorded=1
+    say "$id is already handed to ship with this acceptance; pushing the board and cleaning up"
+  elif carries_record "" "$stage_label"; then
     already_recorded=1
     say "$id is already recorded with this acceptance; pushing the board and cleaning up"
   else
@@ -134,6 +152,7 @@ if ((${#sources[@]})) && [[ $already_recorded -eq 0 ]]; then
   default="$("$script_dir/default-branch")" || refuse worktree "the default branch could not be read"
   scratch="$(mktemp -d)"
   trap 'rm -rf "$scratch"' EXIT
+  printf '%s\n' "$record" > "$scratch/record"
   # The pull request this delivery owns is an open one for the branch. A merged or closed one on the
   # same branch name is an earlier round's, from a bead that came back to UX, and is never reused.
   pr_json() {
@@ -159,8 +178,15 @@ if ((${#sources[@]})) && [[ $already_recorded -eq 0 ]]; then
       [[ "$on" == "$branch" ]] || refuse worktree "$tree_rel is on '${on}', not $branch"
       say "reusing $tree_rel"
     else
+      from="origin/$default"
+      # An open pull request whose tree is gone (handed over before, or pruned): its branch is
+      # continued, since a tree made from the default branch could not push to it.
+      if [[ -n "$pr" ]]; then
+        git -C "$root" fetch -q origin "$branch" || refuse worktree "git fetch origin $branch failed"
+        from="origin/$branch"
+      fi
       (cd "$root" && "$script_dir/prepare-worktree" --path "$tree_rel" --branch "$branch" \
-         --from "origin/$default" >/dev/null) || refuse worktree "prepare-worktree failed"
+         --from "$from" >/dev/null) || refuse worktree "prepare-worktree failed"
     fi
 
     # commit
@@ -196,6 +222,19 @@ if ((${#sources[@]})) && [[ $already_recorded -eq 0 ]]; then
     number="$(jq -r .number <<<"$pr")"
     say "pull request #$number"
 
+    # handover
+    pushed_head="$(git -C "$tree" rev-parse HEAD)"
+    handover=0
+    "$script_dir/ship" --drawing "$name" "$id" "$number" "$pushed_head" "$scratch/record" \
+      >/dev/null 2>"$scratch/ship.err" || handover=$?
+    case $handover in
+      0) handed_over=1; say "handed #$number to ship; it merges when its checks are green" ;;
+      3) say "no fleet view is shipping; waiting on the checks here" ;;
+      *) refuse handover "$(tail -n 1 "$scratch/ship.err")" ;;
+    esac
+  fi
+
+  if [[ $on_main -eq 0 && $handed_over -eq 0 ]]; then
     # ci
     created="$(jq -r '.createdAt | fromdateiso8601' <<<"$pr")"
     deadline=$(( $(date +%s) + wait_seconds ))
@@ -225,22 +264,24 @@ if ((${#sources[@]})) && [[ $already_recorded -eq 0 ]]; then
       git -C "$root" push -q origin --delete "$branch" >/dev/null 2>&1 || true
     fi
     say "merged #$number"
-  else
+  elif [[ $on_main -eq 1 ]]; then
     say "the drawings are already on $default"
   fi
 fi
 
 # --- record ----------------------------------------------------------------------------------------
 
-if [[ $already_recorded -eq 0 ]]; then
+if [[ $already_recorded -eq 0 && $handed_over -eq 0 ]]; then
   owner="$(assignee_of)" || refuse record "bd show $id failed"
   [[ "$owner" == "$name" ]] || refuse record "$id is now assigned to '${owner}', not $name; nothing recorded"
   route_flags_for agree_experience || refuse record "the agree_experience hand-off is not in the label policy"
   bd -C "$root" update "$id" --acceptance "$record" "${route_flags[@]}" --assignee "" --if-assignee "$name" \
     >/dev/null || refuse record "bd update $id refused"
 fi
-bd -C "$root" dolt push >/dev/null || refuse record "bd dolt push failed; run the same command again to push it"
-say "recorded $id"
+step=record
+[[ $handed_over -eq 0 ]] || step=handover
+bd -C "$root" dolt push >/dev/null || refuse "$step" "bd dolt push failed; run the same command again to push it"
+[[ $handed_over -eq 1 ]] || say "recorded $id"
 
 # --- cleanup ---------------------------------------------------------------------------------------
 
@@ -251,4 +292,8 @@ git -C "$root" worktree prune
 if git -C "$root" rev-parse --verify -q "refs/heads/$branch" >/dev/null; then
   git -C "$root" branch -q -D "$branch" || refuse cleanup "git branch -D $branch failed"
 fi
-say "delivered $id"
+if [[ $handed_over -eq 1 ]]; then
+  say "handed over $id; a producer gets it once the drawings are merged"
+else
+  say "delivered $id"
+fi

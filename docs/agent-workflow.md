@@ -298,6 +298,14 @@ act, `errors.jsonl` the failures. With no view sweeping for ten minutes the buil
 pull request; a view left running from before this shipped counts as none, so restart it. By hand:
 `.cerebro/cerebro/scripts/ship --sweep`.
 
+A UX session does not wait either (cb-8pdv): `ux-deliver` opens the drawing's pull request and hands
+it to `ship`. The bead stays open, held by `ship`, labelled `mockup:shipping`, and gets `ux:agreed`
+only once the sweep has merged the drawing, so no producer starts before it is on the default branch.
+One that cannot be merged (red after a re-run, a conflict, requested changes, closed, six hours)
+comes to your queue: merge the pull request and the next sweep passes the bead to a producer, or
+unpark it unmerged and a UX agent delivers the drawing again. The `merge` gate does not apply to a
+drawing. With no view sweeping, `ux-deliver` waits for the checks and merges in the session.
+
 ### How involved you are
 
 By default a producer decides everything technical about a bead on its own: the architecture,

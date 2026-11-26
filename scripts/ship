@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 #
-# Ship a reviewed pull request with no model behind it (cb-tbrh). A builder whose review is answered
-# hands the pull request over and ends its pass; the supervising fleet view then runs the sweep on a
-# cadence. Run from anywhere inside the consumer.
+# Ship a pull request with no model behind it (cb-tbrh). A builder whose review is answered, or a
+# UX agent whose drawing is agreed (cb-8pdv), hands the pull request over and ends its pass; the
+# supervising fleet view then runs the sweep on a cadence. Run from anywhere inside the consumer.
 #
 #     ship <Name> <id> <pr> <head>    hand over pull request <pr>, reviewed at <head>
+#     ship --drawing <Name> <id> <pr> <head> <record file>
+#                                     hand over the UX stage's drawing pull request (`ux-deliver`)
 #     ship --sweep                    advance every handed bead by one step, waiting on nothing
 #
 # THE HAND-OVER gives <Name>'s claim on <id> to `ship`: label `shipping`, metadata `ship_pr`,
@@ -13,6 +15,11 @@
 # navigator's there), and a pull request that is not open at <head>. It exits 3, writing nothing,
 # when no sweep has run in ten minutes: nobody would ship it, so the builder merges it itself. Run
 # again with the same arguments, it only pushes the board.
+#
+# A DRAWING'S HAND-OVER is for a bead open and assigned to <Name>: the record becomes its acceptance,
+# it gets `mockup:shipping` and no stage label (`hand_drawing_to_ship`), the same three metadata, and
+# the assignee `ship`; it stays open. The same refusals, exit 3 and repeat as above, less the `merge`
+# gate, which is the navigator's say over builders' merges and not over drawings.
 #
 # THE SWEEP stamps `.cerebro/state/ship-swept` and then takes each in-progress bead assigned to
 # `ship` one step, in this order:
@@ -29,6 +36,14 @@
 # waited or kept failing for six hours since the hand-over, a merged one whose close has been refused
 # for six hours, one naming no pull request, and a fourth return of one bead since its last park.
 #
+# A DRAWING (open, `mockup:shipping`) takes the same steps with two differences. Merged, its bead is
+# not closed: it gets `ux:agreed` and loses its assignee (`agree_experience`), so a producer is first
+# offered it once the drawing is on the default branch. And every hand-back is a park
+# (`park_drawing`): there is no builder to return it to, and a UX session needs a designer, who
+# cannot fix CI. A drawing's bead nobody holds, parked or since unparked, is recorded the same way
+# once its pull request reads merged, and is otherwise left alone; one a UX agent holds is that
+# agent's.
+#
 # `returned` gives the bead back to the board with a dated note, for a producer to resume or the
 # bugfixer to take (`return_from_ship`); `parked` puts it in the navigator's queue
 # (`park_from_ship`). The merge, the checks' verdict and "GitHub must say MERGED" are
@@ -41,7 +56,7 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: ship <Name> <id> <pr> <head> | ship --sweep" >&2
+  echo "usage: ship <Name> <id> <pr> <head> | ship --drawing <Name> <id> <pr> <head> <record> | ship --sweep" >&2
   exit 2
 }
 
@@ -60,12 +75,19 @@ rerun_seconds=1800        # a re-run showing nothing this long never started
 return_budget=3
 
 mode=""
+drawing=false
+record_file=""
 if [[ $# -eq 1 && "$1" == --sweep ]]; then
   mode=sweep
-elif [[ $# -eq 4 && -n "$1" && -n "$2" && "$1" != -* && "$3" =~ ^[0-9]+$ && "$4" =~ ^[0-9a-f]{40}$ ]]; then
-  mode=hand; name="$1"; id="$2"; number="$3"; head="$4"
 else
-  usage
+  if [[ "${1:-}" == --drawing ]]; then
+    [[ $# -eq 6 && -n "$6" ]] || usage
+    drawing=true
+    record_file="$6"
+    set -- "$2" "$3" "$4" "$5"
+  fi
+  [[ $# -eq 4 && -n "$1" && -n "$2" && "$1" != -* && "$3" =~ ^[0-9]+$ && "$4" =~ ^[0-9a-f]{40}$ ]] || usage
+  mode=hand; name="$1"; id="$2"; number="$3"; head="$4"
 fi
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -76,6 +98,12 @@ root="$("$script_dir/consumer-root" --shared)"
 root="$(cd "$root" && pwd -P)"
 state="$root/.cerebro/state"
 mkdir -p "$state"
+# The record is read before the `cd`, so a relative path means what the caller meant.
+record=""
+if [[ -n "$record_file" ]]; then
+  [[ -s "$record_file" ]] || refuse "the record $record_file is missing or empty"
+  record="$(cat "$record_file")"
+fi
 # `gh` finds its repository from the working directory.
 cd "$root"
 
@@ -98,13 +126,19 @@ if [[ "$mode" == hand ]]; then
       | [.status // "", .assignee // "", (.metadata.ship_pr // "" | tostring), .metadata.ship_head // ""]
       | join("\u001f")')" || refuse "bd show $id did not print JSON this script can read"
   IFS=$'\x1f' read -r status assignee held_pr held_head <<<"$fields"
-  if [[ "$status" == in_progress && "$assignee" == "$holder" && "$held_pr" == "$number" && "$held_head" == "$head" ]]; then
+  held_status=in_progress
+  if $drawing; then held_status=open; fi
+  if [[ "$status" == "$held_status" && "$assignee" == "$holder" && "$held_pr" == "$number" && "$held_head" == "$head" ]]; then
     push_board || refuse "bd dolt push failed; run the same command again to push it"
     echo "ship: $id is already handed over; board pushed"
     exit 0
   fi
-  [[ "$status" == in_progress && "$assignee" == "$name" ]] || refuse "$id is not in progress for $name"
-  ! merge_gated || refuse "this project declares the merge gate; the merge is the navigator's"
+  if $drawing; then
+    [[ "$status" == open && "$assignee" == "$name" ]] || refuse "$id is not open and assigned to $name"
+  else
+    [[ "$status" == in_progress && "$assignee" == "$name" ]] || refuse "$id is not in progress for $name"
+    ! merge_gated || refuse "this project declares the merge gate; the merge is the navigator's"
+  fi
   swept="$(cat "$state/ship-swept" 2>/dev/null || true)"
   if ! [[ "$swept" =~ ^[0-9]+$ ]] || (( $(date +%s) - swept > heartbeat_seconds )); then
     echo "ship: no fleet view has swept in ten minutes, so nobody would ship #$number; merge it yourself" >&2
@@ -117,8 +151,14 @@ if [[ "$mode" == hand ]]; then
   [[ "$(jq -r '.isDraft // false' <<<"$view")" != true ]] \
     || refuse "pull request #$number is a draft; mark it ready first"
   [[ "$pr_head" == "$head" ]] || refuse "pull request #$number's head is $pr_head, not the reviewed $head"
-  route_flags_for hand_to_ship || refuse "the hand_to_ship hand-off is not in the label policy"
-  bd --actor "$name" -C "$root" update "$id" "${route_flags[@]}" \
+  transition=hand_to_ship
+  extra=()
+  if $drawing; then
+    transition=hand_drawing_to_ship
+    extra=(--acceptance "$record")
+  fi
+  route_flags_for "$transition" || refuse "the $transition hand-off is not in the label policy"
+  bd --actor "$name" -C "$root" update "$id" "${route_flags[@]}" ${extra[@]+"${extra[@]}"} \
     --set-metadata "ship_pr=$number" --set-metadata "ship_head=$head" \
     --set-metadata "ship_at=$(date +%s)" --unset-metadata ship_rerun_at --unset-metadata ship_close_failed_at \
     --assignee "$holder" --if-assignee "$name" >/dev/null || refuse "bd update $id refused; nothing handed over"
@@ -131,7 +171,9 @@ fi
 
 date +%s > "$state/ship-swept"
 if ! board="$(bd -C "$root" list --status in_progress --assignee "$holder" --json -n 0)" \
-   || ! jq -e 'type == "array"' >/dev/null 2>&1 <<<"$board"; then
+   || ! jq -e 'type == "array"' >/dev/null 2>&1 <<<"$board" \
+   || ! drawings="$(bd -C "$root" list --status open --label "$drawing_label" --json -n 0)" \
+   || ! jq -e 'type == "array"' >/dev/null 2>&1 <<<"$drawings"; then
   refuse "the board could not be read"
 fi
 default="$("$script_dir/default-branch")" || refuse "the default branch could not be read"
@@ -140,7 +182,7 @@ trap 'rm -rf "$scratch"' EXIT
 wrote=false
 
 # Everything below works on one bead, in these globals: id, number, bead (its JSON), pr (the pull
-# request's JSON, once read), branch.
+# request's JSON, once read), branch, and drawing (a UX stage's drawing rather than a build).
 say() { printf '%s %s #%s%s\n' "$1" "$id" "$number" "${2:+ $2}"; }
 failed() { say failed "$(printf '%s' "$1" | tr '\n' ' ')"; }
 meta() { jq -r --arg key "$1" '.metadata[$key] // "" | tostring' <<<"$bead"; }
@@ -167,17 +209,26 @@ hand_back() {
   fi
   [[ -z "$branch" ]] || on=", branch \`$branch\`,"
   [[ -n "$what" ]] || what="pull request #$number$on was not merged"
+  if $drawing; then
+    # Nobody to return a drawing to; the claim goes in the same write, and the label stays so that
+    # merging the pull request still records the bead.
+    transition=park_drawing
+    word=parked
+    heading="## Parked by shipping"
+    extra=(--set-metadata "paused_at=$now" --assignee "")
+    why="$why. The experience is recorded: merge the pull request and the bead goes to a producer, or unpark it unmerged and a UX agent delivers the drawing again"
+  fi
   route_flags_for "$transition" || { failed "no $transition hand-off in the label policy"; return 0; }
   if ! bd --actor "$holder" -C "$root" update "$id" "${route_flags[@]}" ${extra[@]+"${extra[@]}"} \
        --append-notes "$heading
 
-$now: $what: $why." \
+$now: $what: ${why%.}." \
        --if-assignee "$holder" >/dev/null; then
     failed "bd update refused the hand-back"
     return 0
   fi
   wrote=true
-  if ! bd --actor "$holder" -C "$root" unclaim "$id" --if-assignee "$holder" >/dev/null; then
+  if ! $drawing && ! bd --actor "$holder" -C "$root" unclaim "$id" --if-assignee "$holder" >/dev/null; then
     failed "bd unclaim refused; the next sweep gives it back"
     return 0
   fi
@@ -269,15 +320,38 @@ close_refused() {
   failed "$why; the next sweep closes it"
 }
 
+delete_remote_branch() {
+  if [[ -n "$branch" && -n "$(git -C "$root" ls-remote --heads origin "$branch" 2>/dev/null || true)" ]]; then
+    git -C "$root" push -q origin --delete "$branch" >/dev/null 2>&1 || true
+  fi
+  return 0
+}
+
+# A merged drawing's bead is not closed: the experience is on main now, so it is a producer's. A
+# write somebody else's assignment refuses is theirs to finish.
+record_drawing() {
+  route_flags_for unpark agree_experience || { failed "no agree_experience hand-off in the label policy"; return 0; }
+  if ! bd --actor "$holder" -C "$root" update "$id" "${route_flags[@]}" --assignee "" \
+       --if-assignee "$(jq -r '.assignee // ""' <<<"$bead")" >/dev/null; then
+    failed "merged, but bd update refused the record; the next sweep records it"
+    return 0
+  fi
+  wrote=true
+  say merged
+  delete_remote_branch
+}
+
 finish() {
+  if $drawing; then
+    record_drawing
+    return 0
+  fi
   if ! close_with_parents; then
     close_refused
     return 0
   fi
   say merged
-  if [[ -n "$(git -C "$root" ls-remote --heads origin "$branch" 2>/dev/null || true)" ]]; then
-    git -C "$root" push -q origin --delete "$branch" >/dev/null 2>&1 || true
-  fi
+  delete_remote_branch
   tidy || true
 }
 
@@ -294,7 +368,7 @@ advance() {
   branch="$(jq -r .headRefName <<<"$pr")"
   if [[ "$pr_state" == MERGED ]]; then finish; return 0; fi
   if [[ "$pr_state" != OPEN ]]; then hand_back park_from_ship "it was closed without merging"; return 0; fi
-  if merge_gated; then
+  if ! $drawing && merge_gated; then
     hand_back park_from_ship "this project declares the merge gate, so the merge is yours"
     return 0
   fi
@@ -407,6 +481,28 @@ advance() {
   return 0
 }
 
+# unusable_hand_over - whether this bead names a pull request and a time, parking it when it does
+# not, since no later sweep could do better.
+unusable_hand_over() {
+  [[ "$number" =~ ^[0-9]+$ && "$(meta ship_at)" =~ ^[0-9]+$ ]] && return 1
+  hand_back park_from_ship "the hand-over left no usable ship_pr and ship_at" \
+    "this bead could not be shipped" </dev/null
+  return 0
+}
+
+# A drawing nobody holds: recorded once merged, and otherwise left to whoever it waits for.
+record_if_merged() {
+  [[ "$number" =~ ^[0-9]+$ ]] || return 0
+  if ! pr="$(gh pr view "$number" --json state,headRefName 2>"$scratch/err")" \
+     || ! jq -e '.state' >/dev/null 2>&1 <<<"$pr"; then
+    failed "gh pr view: $(cat "$scratch/err")"
+    return 0
+  fi
+  [[ "$(jq -r .state <<<"$pr")" == MERGED ]] || return 0
+  branch="$(jq -r '.headRefName // ""' <<<"$pr")"
+  record_drawing
+}
+
 while IFS= read -r bead; do
   [[ -n "$bead" ]] || continue
   id="$(jq -r .id <<<"$bead")"
@@ -421,15 +517,25 @@ while IFS= read -r bead; do
     fi
     continue
   fi
-  if ! [[ "$number" =~ ^[0-9]+$ && "$(meta ship_at)" =~ ^[0-9]+$ ]]; then
-    # No later sweep could do better.
-    hand_back park_from_ship "the hand-over left no usable ship_pr and ship_at" \
-      "this bead could not be shipped" </dev/null
-    continue
-  fi
+  if unusable_hand_over; then continue; fi
   # No command run for one bead may read the list of the others.
   advance </dev/null
 done < <(jq -c --arg ship "$holder" '.[] | select(.assignee == $ship and .status == "in_progress")' <<<"$board")
+
+drawing=true
+while IFS= read -r bead; do
+  [[ -n "$bead" ]] || continue
+  id="$(jq -r .id <<<"$bead")"
+  number="$(meta ship_pr)"
+  branch=""
+  case "$(jq -r '.assignee // ""' <<<"$bead")" in
+    "$holder")
+      if unusable_hand_over; then continue; fi
+      advance </dev/null ;;
+    "") record_if_merged </dev/null ;;
+  esac
+done < <(jq -c --arg label "$drawing_label" \
+  '.[] | select(.status == "open" and ((.labels // []) | index($label) != null))' <<<"$drawings")
 
 if $wrote || [[ -e "$state/ship-unpushed" ]]; then
   if push_board; then

@@ -211,6 +211,17 @@ you only once the orchestrator removed `human`. **Read that note first and resum
 the open question it names, opening on it rather than the full introduction; never re-ask the answered. `needs-ui-decision` is yours to remove; *Recording it* does. A note
 that names an open sheet of sketches reopens on that sheet (*Sketching the idea first*).
 
+## A drawing that could not be saved after you filed it
+
+It carries `mockup:shipping`, the recorded experience and a `## Parked by shipping` notes heading,
+and no agreed label: the drawing's pull request could not be merged, and somebody unmarked the work
+without merging it. **Nothing is re-asked and nothing is shown**: the agreement stands. Write the
+bead's acceptance, unchanged, to the record file, fetch each drawing *The mockup* names from the
+branch (`git show origin/<id>-mockup:docs/ui/<name>` into the scratchpad, after
+`git fetch origin <id>-mockup`), and run *Recording it*'s `ux-deliver` call again with them. If the
+note's reason is one a second delivery cannot cure (a conflict, a pull request closed on purpose),
+park the work (*When nobody answers*) with that reason in the note.
+
 ## A piece of work with children, and one with none
 
 You are given a bead with no children, since an epic with children never reaches this stage
@@ -434,15 +445,19 @@ bd dolt pull
 
 Another `--mockup` for each further page worth keeping (the states); the sketches one only with
 sketches on and an idea agreed. It commits the drawings from its
-own worktree (never `cd` into it), merges their `docs/`-only pull request once its checks are
-green, with no review, and **only after that merge** records the acceptance and marks it agreed
-(which also clears `needs-ui-decision` and `plan:revise`). Read its exit status:
+own worktree (never `cd` into it), opens their `docs/`-only pull request and, with no review, hands it
+to `scripts/ship` with your record: **you wait on no checks**. The fleet view merges it once they
+are green and **only after that merge** is the work marked agreed (which also clears
+`needs-ui-decision` and `plan:revise`) and offered to a builder; one it cannot merge goes to the
+team's queue. With no fleet view shipping, the same call waits, merges and records itself. Read its
+exit status:
 
 - `0`: filed.
-- `3`: the checks are still running. Run **the same command** again; it carries on where it
+- `3` (no fleet view shipping): the checks are still running. Run **the same command** again; it carries on where it
   stopped. Never read the checks or debug CI yourself.
 - `1`: it refused, and its last stderr line names the step (`ux-deliver: <step>: <why>`). Nothing
-  was recorded unless the step is `cleanup`. At `record`, run the same command once more first:
+  was recorded unless the step is `cleanup`, or `handover` saying the board push failed. At
+  `record` or `handover`, run the same command once more first:
   a board push that failed is retried, and the call recognises its own record. Otherwise, or if
   it refuses again, go to *When something fails*.
 
@@ -494,9 +509,9 @@ Three parts, in order: their language, the detail dim beneath, **the full record
 
 | What failed | What you say |
 |---|---|
-| `ux-deliver` refused at `record` (the update or the push) | the shared task list wouldn't accept the update |
+| `ux-deliver` refused at `record` or `handover` (the update or the push) | the shared task list wouldn't accept the update |
 | `ux-deliver` refused at `worktree`, `commit`, `push`, `pr`, `ci` or `merge` | the drawing couldn't be saved |
-| `ux-deliver` refused at `check` or `record` because the work is assigned to somebody else | somebody else is already working on this piece of work |
+| `ux-deliver` refused at `check`, `handover` or `record` because the work is assigned to somebody else | somebody else is already working on this piece of work |
 
 A refusal at `cleanup` came after the record was filed: say nothing to the designer about it, and
 remove the tree yourself as *Ending a pass* says.

@@ -234,9 +234,10 @@ Each of these answers one question in one place. Add a caller, never a second co
 - `scripts/review-model` — which `agents.conf` line a pull request's review sub-agent runs on, and
   how small a diff the declared `reviewer-small` line takes.
 - `scripts/launch <Name>` — the only way a session is started; runs `launch-preflight`, reads
-  `agents.conf`, passes `hooks/` through `agent-hooks-env` and `--settings`. For a UX agent with
-  `--bead` it puts `scripts/ux-brief`'s startup brief in the prompt, which `agree-experience` reads
-  instead of its startup reads.
+  `agents.conf`, passes `hooks/` through `agent-hooks-env` and `--settings`. With `--bead` it puts
+  a startup brief in the prompt, which the skill reads instead of its startup reads:
+  `scripts/ux-brief` for a UX agent (`agree-experience`), `scripts/producer-brief` for a producer
+  or the bugfixer (`produce-bead`, `fix-bug`). `scripts/brief-lib.sh` is what the two share.
 - `scripts/ux-sheet` — the frame of a detailed drawing: a short spec becomes one tabbed page from
   `templates/ux-sheet.html`. Its tests are `tests/ux-sheet.sh` and, in a browser,
   `tests/ux-sheet-render`.

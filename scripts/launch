@@ -18,8 +18,9 @@
 # it writes no files — the one exception is the skill and agent symlinks under .claude/, which
 # `launch-preflight` re-syncs right before exec (ah-cuc), refusing with one line rather than exiting
 # silently if the agent CLI is not on PATH or the submodule never brought the role's agent file in
-# (ah-bri). A bead handed with `--bead' is claimed or assigned through `assign-bead', and a UX
-# agent's first state file and startup brief are written through `ux-brief' (cb-9tnf).
+# (ah-bri). A bead handed with `--bead' is claimed or assigned through `assign-bead', and the
+# session's startup brief is made by `ux-brief' (cb-9tnf), which also writes a UX agent's first
+# state file, or by `producer-brief' (cb-pe3y).
 #
 # Since cb-d59.2 this file spells no provider flag at all: which CLI a session runs on, and every
 # argv token between the binary and the caller's own arguments, is `scripts/agent-cli`'s answer.
@@ -360,19 +361,29 @@ if [[ -n "$bead" ]]; then
   instruction="$instruction
 
 Your bead is $bead; it is already $taken you."
-  # cb-9tnf: a UX agent's startup - the board pull, the claim check, the working state, the bead's
-  # family, the project keys and the newest drawings - is done once here by `ux-brief' and rides in
-  # the prompt, so the session's first request already holds it. `$$' is the pid the agent CLI keeps
-  # across the `exec' below, and the state it writes removes the handover before the session exists.
-# A brief that cannot be made never refuses the start: the skill confirms
-  # the bead itself when the prompt says so. By POLICY, as assign-bead decides, not by role name.
-  if [[ "$policy" == ux ]]; then
+  # A session's startup reads are done once here and ride in the prompt, so its first request
+  # already holds them: `ux-brief' for a UX agent (cb-9tnf), `producer-brief' for a producer or the
+  # bugfixer (cb-pe3y). By POLICY, as assign-bead decides, not by role name. `$$' is the pid the
+  # agent CLI keeps across the `exec' below; the state `ux-brief' writes with it removes the
+  # handover before the session exists, and `producer-brief' writes none (its header says why).
+  # A brief that cannot be made never refuses the start: the skill does the reads itself when the
+  # prompt says so.
+  brief_command=()
+  case "$policy" in
+    ux)
+      brief_command=("$here/ux-brief" "$name" "$bead" --pid $$)
+      brief_fallback="confirm your bead as agree-experience says." ;;
+    producer|bugfixer)
+      brief_command=("$here/producer-brief" "$name" "$bead")
+      brief_fallback="do your startup reads as produce-bead says." ;;
+  esac
+  if [[ ${#brief_command[@]} -gt 0 ]]; then
     brief_status=0
-    brief="$("$here/ux-brief" "$name" "$bead" --pid $$)" || brief_status=$?
+    brief="$("${brief_command[@]}")" || brief_status=$?
     # Over 100 KB the brief is dropped for the fallback: Linux refuses one argv string over 128 KiB
-    # (MAX_ARG_STRLEN), and the exec below would fail with the state already written.
+    # (MAX_ARG_STRLEN), and the exec below would fail.
     if [[ $brief_status -ne 0 && $brief_status -ne 3 ]] || [[ ${#brief} -gt 100000 ]]; then
-      brief="The startup brief could not be made; confirm your bead as agree-experience says."
+      brief="The startup brief could not be made; $brief_fallback"
     fi
     instruction="$instruction
 

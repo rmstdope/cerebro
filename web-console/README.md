@@ -41,9 +41,9 @@ The transcripts are read from `.cerebro/state/transcripts/` and from Claude Code
 One unbroken `working` stretch counts for at most 8 hours, since a longer one is a session that
 died without its end being recorded. What an agent did inside a phase is known only from the first
 transcript on, and the page says so for a period that reaches further back. A read that fails is a
-502 carrying why, and the page keeps the tiles it last read. A service with no `/api/time` - one started before the
-Time tab existed - is said as such, with the restart that mends it: retrying cannot. Any `/api` path
-the service does not have is a 404, never the page itself.
+502 carrying why, and the page keeps the tiles it last read. A service with no `/api/time`, one
+started before the Time tab existed, cannot be mended by retrying: the page says so and names the
+restart that mends it. Any `/api` path the service does not have is a 404, never the page itself.
 
 The UI is React with Tailwind v4 and shadcn/ui on Base UI; the generated components live in
 `ui/src/components/ui/` and are ours to edit (`pnpm dlx shadcn@latest add <name>` adds another).

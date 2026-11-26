@@ -418,9 +418,10 @@ async fn an_unknown_api_path_is_not_found_rather_than_the_application_shell() {
     std::fs::write(assets.path().join("index.html"), "browser shell").unwrap();
     let router = service(assets.path().to_path_buf()).router();
 
-    for uri in ["/api/no-such-report", "/api/no/such/path?period=7d", "/api"] {
+    for uri in ["/api/no-such-report", "/api/no/such/path?period=7d", "/api", "/api/"] {
         let response = router.clone().oneshot(get(uri)).await.unwrap();
         assert_eq!(response.status(), StatusCode::NOT_FOUND, "{uri}");
+        assert_eq!(response.headers()["content-type"], "application/json", "{uri}");
         assert_ne!(
             to_bytes(response.into_body(), usize::MAX).await.unwrap(),
             "browser shell",

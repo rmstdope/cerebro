@@ -146,11 +146,12 @@ const savedPath = (): string[] => {
   try { const value = JSON.parse(storage.get("cerebro-time-path") ?? "[]"); return Array.isArray(value) ? value.filter(item => typeof item === "string") : []; } catch { return []; }
 };
 
-/// The report for PERIOD, read now and once a minute. A failed read keeps what was last read; a
-/// new period keeps the old report on screen until its own arrives.
 /// A read fails as `outdated` when the service has no /api/time at all: a newer one answers 404,
 /// one built before the Time tab answers with the page itself. Retrying cannot mend either.
 type Failure = false | "read" | "outdated";
+
+/// The report for PERIOD, read now and once a minute. A failed read keeps what was last read; a
+/// new period keeps the old report on screen until its own arrives.
 function useTimeReport(period: Period) {
   const [report, setReport] = useState<TimeReport>();
   const [failed, setFailed] = useState<Failure>(false);

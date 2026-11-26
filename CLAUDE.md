@@ -237,8 +237,9 @@ Each of these answers one question in one place. Add a caller, never a second co
   (the fleet view skips P4 for the UX queue itself; the second look has no priority). `scripts/assign-bead` claims or
   assigns and `scripts/release-bead --ended` takes back what a gone session still held; the other
   writers of a bead's route are `scripts/producer-park` (a producer's return to UX or the
-  navigator), `scripts/reopen-failed` (a failed verification) and
-  `scripts/verifier-pass-epic-family` (a passed family). These queues and writers take their
+  navigator), `scripts/reopen-failed` (a failed verification),
+  `scripts/verifier-pass-epic-family` (a passed family) and `scripts/ux-deliver` (the UX stage's
+  record, after its drawing's pull request merged). These queues and writers take their
   labels from `scripts/candidate-label-policy.sh`, where each hand-off between roles is a named
   transition (`route_flags_for`) the writers apply; `tests/label-routes.sh` runs every transition
   and proves the bead lands in exactly the queue meant to take it. `sweep-paused.sh` and

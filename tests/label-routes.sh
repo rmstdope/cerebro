@@ -286,6 +286,20 @@ for labels in '["ux:agreed","planned","verification:failed"]' '["ux:none","plann
 done
 pass "hand_to_verifier by hand: the verifier's alone, and off her list once she records a verdict"
 
+# --- the UX stage's record (`ux-deliver`): the producer's, whatever way the bead reached UX ---------
+#
+# A fresh bead, one a producer sent back, and one a failed verification sent back all land in the
+# producer queue alone: a `needs-ui-decision` or `plan:revise` left behind keeps the bead a UX
+# candidate for ever.
+
+for labels in '[]' '["needs-ui-decision"]' '["plan:revise","verification:failed"]'; do
+  with_board '[{"id":"cb-x","status":"open","assignee":"Xavier","priority":1,"issue_type":"task","labels":'"$labels"'}]'
+  apply_route cb-x agree_experience --assignee "" --if-assignee Xavier
+  got="$(offered_by cb-x)"
+  [[ "$got" == "producer" ]] || fail "a $labels bead recorded by the UX stage is offered by [$got], not by the producer queue alone"
+done
+pass "agree_experience by hand: a bead the UX stage records goes to the producer queue alone"
+
 # --- several transitions in one call: every one's flags; one unknown name refuses them all ----------
 
 if out="$(bd_env bash -c 'source "$1/candidate-label-policy.sh"; route_flags_for unpark send_to_xu; s=$?; echo "${#route_flags[@]}"; exit $s' _ "$scripts" 2>/dev/null)"; then

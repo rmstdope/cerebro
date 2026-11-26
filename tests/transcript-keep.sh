@@ -129,7 +129,7 @@ cmp -s "$pd/mine.jsonl" "$(kept "$tmp")/mine.jsonl" || fail "backfill: this root
 [[ ! -e "$(kept "$tmp")/sibling.jsonl" ]] || fail "backfill: kept a sibling root's session"
 [[ ! -e "$(kept "$tmp")/plain.jsonl" ]] || fail "backfill: kept a non-fleet session"
 [[ -f "$(kept "$tmp")/.backfilled" ]] || fail "backfill: .backfilled not written"
-grep -q "transcript-keep: 1 fleet transcripts kept" <<<"$out" || fail "backfill: count line missing: $out"
+grep -q "transcript-keep: 1 fleet transcripts kept in .*, 0 could not be copied" <<<"$out" || fail "backfill: count line missing: $out"
 pass "backfill-keeps-only-this-roots-fleet-sessions"
 
 # --- hook-backfills-once ---
@@ -145,5 +145,55 @@ make_session "$pd" later "$root"
 run_hook "$tmp" "$config" "$(hook_payload now "$pd/now.jsonl")" >/dev/null
 [[ ! -e "$(kept "$tmp")/later.jsonl" ]] || fail "hook-backfills-once: backfilled a second time"
 pass "hook-backfills-once"
+
+# --- hook-refreshes-another-kept-session ---
+# A session killed mid-turn gets no Stop of its own; another session's turn end catches it up.
+tmp="$(new_fixture)"; root="$(fixture_root "$tmp")"; config="$work_dir/$(fixture_name cfg)"
+pd="$(project_dir "$config" "$root")"; mkdir -p "$pd"
+make_session "$pd" killed "$root"; make_session "$pd" alive "$root"
+run_hook "$tmp" "$config" "$(hook_payload killed "$pd/killed.jsonl")" >/dev/null
+touch -t 202001010000 "$(kept "$tmp")/killed.jsonl"
+printf '{"type":"assistant","message":{"content":"the turn that never ended"}}\n' >> "$pd/killed.jsonl"
+run_hook "$tmp" "$config" "$(hook_payload alive "$pd/alive.jsonl")" >/dev/null
+cmp -s "$pd/killed.jsonl" "$(kept "$tmp")/killed.jsonl" \
+  || fail "hook-refreshes-another-kept-session: killed session's copy not refreshed"
+pass "hook-refreshes-another-kept-session"
+
+# --- hook-sweeps-old-temp-files ---
+mkdir -p "$(kept "$tmp")/killed"
+: > "$(kept "$tmp")/.keep.old1"; : > "$(kept "$tmp")/killed/.keep.old2"; : > "$(kept "$tmp")/.keep.new"
+touch -t 202001010000 "$(kept "$tmp")/.keep.old1" "$(kept "$tmp")/killed/.keep.old2"
+run_hook "$tmp" "$config" "$(hook_payload alive "$pd/alive.jsonl")" >/dev/null
+[[ ! -e "$(kept "$tmp")/.keep.old1" && ! -e "$(kept "$tmp")/killed/.keep.old2" ]] \
+  || fail "hook-sweeps-old-temp-files: an old temp file survived"
+[[ -e "$(kept "$tmp")/.keep.new" ]] || fail "hook-sweeps-old-temp-files: swept a fresh temp file"
+pass "hook-sweeps-old-temp-files"
+
+# --- hook-whose-copy-fails-is-silent-and-zero ---
+# Root ignores the mode bits, so the case means nothing there.
+if [[ "$(id -u)" != 0 ]]; then
+  make_session "$pd" blocked "$root"
+  chmod 555 "$(kept "$tmp")"
+  set +e
+  out="$(run_hook "$tmp" "$config" "$(hook_payload blocked "$pd/blocked.jsonl")")"
+  rc=$?
+  set -e
+  chmod 755 "$(kept "$tmp")"
+  [[ $rc -eq 0 ]] || fail "hook-whose-copy-fails-is-silent-and-zero: exit $rc"
+  [[ -z "$out" ]] || fail "hook-whose-copy-fails-is-silent-and-zero: wrote to stdout: $out"
+  pass "hook-whose-copy-fails-is-silent-and-zero"
+fi
+
+# --- backfill-ignores-a-marker-quoted-after-the-first-prompt ---
+tmp="$(new_fixture)"; root="$(fixture_root "$tmp")"; config="$work_dir/$(fixture_name cfg)"
+pd="$(project_dir "$config" "$root")"; mkdir -p "$pd"
+printf '{"type":"user","isMeta":true,"message":{"content":"caveat"}}\n' > "$pd/fleet.jsonl"
+printf '{"type":"user","message":{"content":"%s"}}\n' "$(cerebro_marker_sentence Cyclops "$root")" >> "$pd/fleet.jsonl"
+printf '{"type":"user","message":{"content":"/clear"}}\n' > "$pd/quoting.jsonl"
+printf '{"type":"user","message":{"content":"%s"}}\n' "$(cerebro_marker_sentence Cyclops "$root")" >> "$pd/quoting.jsonl"
+(cd "$tmp" && CLAUDE_CONFIG_DIR="$config" "$tmp/.cerebro/cerebro/scripts/transcript-keep" --backfill) >/dev/null
+[[ -f "$(kept "$tmp")/fleet.jsonl" ]] || fail "backfill-ignores-quoted: a fleet session behind a meta line was not kept"
+[[ ! -e "$(kept "$tmp")/quoting.jsonl" ]] || fail "backfill-ignores-quoted: kept a session that only quotes the marker"
+pass "backfill-ignores-a-marker-quoted-after-the-first-prompt"
 
 suite_passed

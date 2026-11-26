@@ -215,21 +215,27 @@ fn activity_of_command(command: &str) -> &'static str {
 }
 
 /// The transcript in TEXT, if it is a fleet session rooted at ROOT: its agent, from the marker
-/// sentence, and an event for each of its own (not a sub-agent's) user and assistant lines.
+/// sentence in its opening prompt, and an event for each of its own (not a sub-agent's) user and assistant lines.
 pub fn parse_transcript(text: &str, root: &Path) -> Option<Transcript> {
     let mut agent = None;
+    let mut prompted = false;
     let mut events = Vec::new();
     for line in text.lines() {
         let is_user = line.contains("\"type\":\"user\"");
         if !is_user && !line.contains("\"type\":\"assistant\"") {
             continue;
         }
-        if agent.is_none() && is_user {
-            agent = cerebro_tui::marker_agent(line, root);
-        }
         let Ok(value) = serde_json::from_str::<Value>(line) else { continue };
         if value["isSidechain"].as_bool() == Some(true) {
             continue;
+        }
+        // The marker is read from the session's opening prompt alone: a tool result is a `user`
+        // line too, and one quoting another session's marker names nobody.
+        if is_user && !prompted {
+            if let Some(prompt) = value["message"]["content"].as_str() {
+                prompted = true;
+                agent = cerebro_tui::marker_agent(prompt, root);
+            }
         }
         let Some(ts) = timestamp(&value["timestamp"]) else { continue };
         let activity = match value["type"].as_str() {
@@ -457,6 +463,16 @@ impl<T> FileCache<T> {
         self.entries.lock().unwrap().insert(path.to_path_buf(), (key.0, key.1, Arc::clone(&value)));
         Ok(Some(value))
     }
+
+    /// Forget every file but SEEN: a transcript Claude Code deleted, or a log that rotated away.
+    fn keep_only(&self, seen: &std::collections::HashSet<PathBuf>) {
+        self.entries.lock().unwrap().retain(|path, _| seen.contains(path));
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.entries.lock().unwrap().len()
+    }
 }
 
 #[derive(Default)]
@@ -465,8 +481,9 @@ pub struct TimeCaches {
     transcripts: FileCache<Option<Arc<Transcript>>>,
 }
 
-/// The `*.jsonl` files directly in DIR, or none when it does not exist.
-fn jsonl_files(dir: &Path) -> Result<Vec<PathBuf>, String> {
+/// The `*.jsonl` files directly in DIR, each with its length, or none when DIR does not exist. A
+/// file that vanishes while it is listed is skipped; any other failure is an error.
+fn jsonl_files(dir: &Path) -> Result<Vec<(PathBuf, u64)>, String> {
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -475,8 +492,14 @@ fn jsonl_files(dir: &Path) -> Result<Vec<PathBuf>, String> {
     let mut files = Vec::new();
     for entry in entries {
         let path = entry.map_err(|error| format!("{}: {error}", dir.display()))?.path();
-        if path.extension().is_some_and(|ext| ext == "jsonl") && path.is_file() {
-            files.push(path);
+        if !path.extension().is_some_and(|ext| ext == "jsonl") {
+            continue;
+        }
+        match std::fs::metadata(&path) {
+            Ok(metadata) if metadata.is_file() => files.push((path, metadata.len())),
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("{}: {error}", path.display())),
         }
     }
     files.sort();
@@ -494,20 +517,21 @@ pub fn read_records(shared_root: &Path, transcript_dirs: &[PathBuf], caches: &Ti
         Err(error) => return Err(format!("{}: {error}", transitions_path.display())),
     };
     let mut marks = Vec::new();
-    for path in jsonl_files(&state)? {
+    let mut seen = std::collections::HashSet::new();
+    for (path, _) in jsonl_files(&state)? {
         let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("");
         if name.starts_with("decisions") {
             if let Some(parsed) = caches.marks.get(&path, parse_marks)? {
                 marks.extend(parsed.iter().cloned());
             }
+            seen.insert(path);
         }
     }
     // One session can be in more than one directory (Claude Code's own and the consumer's kept
     // copy); the larger file is the more complete.
     let mut by_session: BTreeMap<String, (u64, PathBuf)> = BTreeMap::new();
     for dir in transcript_dirs {
-        for path in jsonl_files(dir)? {
-            let len = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+        for (path, len) in jsonl_files(dir)? {
             let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
             if by_session.get(&stem).is_none_or(|(kept, _)| len > *kept) {
                 by_session.insert(stem, (len, path));
@@ -521,7 +545,10 @@ pub fn read_records(shared_root: &Path, transcript_dirs: &[PathBuf], caches: &Ti
                 transcripts.push(Arc::clone(transcript));
             }
         }
+        seen.insert(path.clone());
     }
+    caches.marks.keep_only(&seen);
+    caches.transcripts.keep_only(&seen);
     Ok(Records { transitions, marks, transcripts })
 }
 
@@ -731,6 +758,66 @@ mod tests {
             [(at("10:00"), "thinking"), (at("10:01"), "editing code"), (at("10:03"), "thinking")]
         );
         assert_eq!(parse_transcript(&text, Path::new("/r/cerebro-hud")), None);
+    }
+
+    #[test]
+    fn a_marker_quoted_in_a_tool_result_names_nobody() {
+        let root = Path::new("/r/cerebro");
+        let quoted = cerebro_tui::fixture_marker_sentence("Cyclops", root);
+        let lines = [
+            json!({"type": "user", "timestamp": "2026-11-20T10:00:00Z", "message": {"content": "the navigator's own prompt"}}),
+            json!({"type": "user", "timestamp": "2026-11-20T10:01:00Z",
+                   "message": {"content": [{"type": "tool_result", "content": quoted}]}}),
+        ];
+        let text = lines.iter().map(Value::to_string).collect::<Vec<_>>().join("\n");
+        assert_eq!(parse_transcript(&text, root), None);
+    }
+
+    fn transcript_file(dir: &Path, stem: &str, agent: &str, root: &Path, extra_events: usize) {
+        std::fs::create_dir_all(dir).unwrap();
+        let mut lines = vec![json!({"type": "user", "timestamp": "2026-11-20T10:00:00Z",
+                                    "message": {"content": cerebro_tui::fixture_marker_sentence(agent, root)}})];
+        for minute in 0..extra_events {
+            lines.push(json!({"type": "assistant", "timestamp": format!("2026-11-20T10:{:02}:30Z", minute),
+                              "message": {"content": [{"type": "tool_use", "name": "Read", "input": {}}]}}));
+        }
+        std::fs::write(dir.join(format!("{stem}.jsonl")), lines.iter().map(Value::to_string).collect::<Vec<_>>().join("\n")).unwrap();
+    }
+
+    #[test]
+    fn read_records_keeps_the_larger_copy_of_a_session() {
+        let root = tempfile::tempdir().unwrap();
+        let (kept, live) = (root.path().join("kept"), root.path().join("live"));
+        transcript_file(&kept, "s1", "Storm", root.path(), 1);
+        transcript_file(&live, "s1", "Storm", root.path(), 3);
+        transcript_file(&live, "s2", "Rogue", root.path(), 0);
+        let records = read_records(root.path(), &[kept, live], &TimeCaches::default()).unwrap();
+        let mut got: Vec<(String, usize)> = records.transcripts.iter().map(|t| (t.agent.clone(), t.events.len())).collect();
+        got.sort();
+        assert_eq!(got, [("Rogue".to_string(), 1), ("Storm".to_string(), 4)]);
+    }
+
+    #[test]
+    fn the_cache_reparses_a_changed_file_and_forgets_a_gone_one() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("kept");
+        let caches = TimeCaches::default();
+        transcript_file(&dir, "s1", "Storm", root.path(), 1);
+        assert_eq!(read_records(root.path(), &[dir.clone()], &caches).unwrap().transcripts[0].events.len(), 2);
+        transcript_file(&dir, "s1", "Storm", root.path(), 5);
+        assert_eq!(read_records(root.path(), &[dir.clone()], &caches).unwrap().transcripts[0].events.len(), 6);
+        std::fs::remove_file(dir.join("s1.jsonl")).unwrap();
+        assert!(read_records(root.path(), &[dir], &caches).unwrap().transcripts.is_empty());
+        assert_eq!(caches.transcripts.len(), 0, "a file that has gone leaves the cache");
+    }
+
+    #[test]
+    fn an_unreadable_transcript_dir_is_an_error() {
+        let root = tempfile::tempdir().unwrap();
+        let not_a_dir = root.path().join("kept");
+        std::fs::write(&not_a_dir, "").unwrap();
+        let error = read_records(root.path(), &[not_a_dir], &TimeCaches::default()).unwrap_err();
+        assert!(error.contains("kept"), "{error}");
     }
 
     #[test]

@@ -300,7 +300,7 @@ pub fn fixture_marker_sentence(name: &str, root: &Path) -> String {
 }
 
 /// The agent whose marker sentence TEXT carries, rooted at ROOT: the name between the name
-/// needle's two halves, accepted only where `session_liveness` proves it. A transcript names its
+/// needle's two halves, accepted only where that same sentence goes on to root it at ROOT. A transcript names its
 /// session this way and no other, so this is how a reader learns whose transcript it holds.
 pub fn marker_agent(text: &str, root: &Path) -> Option<String> {
     let normalized = normalize_marker_spelling(text);
@@ -311,9 +311,12 @@ pub fn marker_agent(text: &str, root: &Path) -> Option<String> {
         let after = &rest[at + opening.len()..];
         if let Some(end) = after.find(closing) {
             let name = &after[..end];
+            // The name's own sentence must carry the root: one needle here and the other in some
+            // other sentence of the same text is not a session of this fleet.
+            let sentence = fixture_marker_sentence(name, root);
             if !name.is_empty()
                 && !name.contains(char::is_whitespace)
-                && session_liveness(&normalized, name, root) == SessionLiveness::Proven
+                && rest[at..].starts_with(sentence.trim_end_matches('.'))
             {
                 return Some(name.to_string());
             }
@@ -1677,6 +1680,12 @@ mod tests {
         assert_eq!(marker_agent("no marker here", root), None);
         let spaced = marker_sentence("Storm", root).replace(' ', "\\ ");
         assert_eq!(marker_agent(&spaced, root).as_deref(), Some("Storm"));
+        let split = format!(
+            "{} and elsewhere {}",
+            marker_sentence("Storm", Path::new("/Users/x/repos/other")),
+            marker_sentence("Beast", root)
+        );
+        assert_eq!(marker_agent(&split, root).as_deref(), Some("Beast"), "a name is rooted by its own sentence");
     }
 
     #[test]

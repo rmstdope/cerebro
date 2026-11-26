@@ -237,3 +237,40 @@ test("updates every minute without moving the reader", async ({ page }) => {
   await expect(tile(page, /^build, 15 h/)).toBeVisible();
   await expect(page.getByRole("navigation", { name: "Path" })).toHaveText("All roles›producer›Cyclops");
 });
+
+test("Enter on a focused period or path control does that control's work", async ({ page }) => {
+  await serve(page, () => report(fleet()));
+  await openTime(page);
+  await tile(page, "producer, 41 h").click();
+
+  await page.getByRole("radio", { name: "30 days" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("radio", { name: "30 days" })).toBeChecked();
+  await expect(page.getByRole("navigation", { name: "Path" })).toHaveText("All roles›producer");
+
+  await page.getByRole("navigation", { name: "Path" }).getByRole("button", { name: "All roles" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("navigation", { name: "Path" })).toHaveText("All roles");
+});
+
+test("pulses grey tiles while the first read runs, and keeps the old ones while a new period loads", async ({ page }) => {
+  let release = () => {};
+  const held = new Promise<void>(resolve => { release = resolve; });
+  await page.route(/\/api\/time(\?|$)/, async route => {
+    const period = new URL(route.request().url()).searchParams.get("period");
+    if (period === "7d") await held;
+    if (period === "30d") return; // never answered: the old tiles must stay
+    return route.fulfill({ json: report(fleet()) });
+  });
+  await openTime(page);
+
+  await expect(map(page)).toHaveAttribute("aria-busy", "true");
+  await expect(map(page).getByRole("button")).toHaveCount(0);
+  release();
+  await expect(tile(page, "producer, 41 h")).toBeVisible();
+  await expect(map(page)).not.toHaveAttribute("aria-busy", "true");
+
+  await page.getByRole("radio", { name: "30 days" }).click();
+  await expect(page.getByRole("radio", { name: "30 days" })).toBeChecked();
+  await expect(tile(page, "producer, 41 h")).toBeVisible();
+});

@@ -187,6 +187,11 @@ function useNarrow() {
 /// The size of the element the returned ref is given, kept as it resizes.
 function useSize<T extends HTMLElement>() {
   const [element, ref] = useState<T | null>(null);
+  // The tiles take the keyboard when the tab opens, as the tab's first stop.
+  const focused = useRef(false);
+  useEffect(() => {
+    if (element && !focused.current) { focused.current = true; element.focus({ preventScroll: true }); }
+  }, [element]);
   const [size, setSize] = useState({ w: 0, h: 0 });
   useLayoutEffect(() => {
     if (!element) return;
@@ -262,7 +267,7 @@ export function TimeTab({ keys }: { keys: boolean }) {
   const [selectedName, setSelectedName] = useState<string>();
   const [pointed, setPointed] = useState<string>();
   const [keyed, setKeyed] = useState(false);
-  const [mapRef, size] = useSize<HTMLDivElement>();
+  const [mapRef, size] = useSize<HTMLElement>();
   const pressTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const pressed = useRef(false);
 
@@ -294,7 +299,15 @@ export function TimeTab({ keys }: { keys: boolean }) {
       if (!keys || event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey || typingInto(event.target)) return;
       if (event.key === "Escape" || event.key === "Backspace") { event.preventDefault(); up(); return; }
       if (!tiles.length) return;
-      if (event.key === "Enter") { event.preventDefault(); down(tiles[selected]); return; }
+      if (event.key === "Enter") {
+        // A focused period button or path link does its own work; Enter goes into a tile only
+        // from the tiles or from nothing in particular.
+        const target = event.target instanceof Element ? event.target : null;
+        if (target?.closest("button, a, input, select, textarea") && !target.closest("[data-time-tiles]")) return;
+        event.preventDefault();
+        down(tiles[selected]);
+        return;
+      }
       if (!event.key.startsWith("Arrow")) return;
       event.preventDefault();
       const next = narrow
@@ -347,7 +360,7 @@ export function TimeTab({ keys }: { keys: boolean }) {
     {empty ? <div className="flex h-52 flex-col items-center justify-center rounded-lg border-2 border-dashed text-center text-sm text-muted-foreground">
       {emptyWords.map(line => <span key={line}>{line}</span>)}
     </div>
-    : narrow ? <ul aria-label="Time list" className={cn("rounded-lg border", failed && "opacity-60")}>
+    : narrow ? <ul ref={mapRef} tabIndex={-1} aria-label="Time list" data-time-tiles aria-busy={!report && !failed} className={cn("rounded-lg border outline-none", failed && "opacity-60")}>
       {!report && !failed && [0, 1, 2].map(index => <li key={index} className="h-10 animate-pulse border-t bg-muted first:border-t-0" />)}
       {tiles.map((node, index) => {
         const scale = tiles.length ? total(tiles[0]) : 1;
@@ -366,7 +379,7 @@ export function TimeTab({ keys }: { keys: boolean }) {
         </li>;
       })}
     </ul>
-    : <div ref={mapRef} role="group" aria-label="Time map" className={cn("relative min-h-80 flex-1", failed && "opacity-60")}>
+    : <div ref={mapRef} tabIndex={-1} role="group" aria-label="Time map" data-time-tiles aria-busy={!report && !failed} className={cn("relative min-h-80 flex-1 outline-none", failed && "opacity-60")}>
       {!report && !failed && [[0, 48], [48, 30], [78, 22]].map(([left, width]) => <div key={left} className="absolute top-0 h-full animate-pulse rounded-md border-2 border-background bg-muted" style={{ left: `${left}%`, width: `${width}%` }} />)}
       {tiles.map((node, index) => {
         const rect = rects[index];

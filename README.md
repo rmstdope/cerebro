@@ -137,6 +137,34 @@ pass, runs the sweeps and prunes worktrees. A second window open on the same che
 that and acts on none of it, and says so in its header. Building it needs Rust and Cargo (see Prerequisites); the first
 run in a fresh checkout compiles the workspace, so give it a minute before deciding it has hung.
 
+## The web console
+
+The same fleet and board in a browser: each agent's live session, which you can type into, and the
+board's lanes. It needs Rust and [pnpm](https://pnpm.io/installation). It draws what a fleet view
+publishes, so keep `cerebro-tui` running: the Start, Finish and Kill buttons work only while a
+fleet view holds the lease, and the page says **Read-only** when none does.
+
+In this repository, build the page once (and again after the UI changes), then run the service:
+
+```bash
+pnpm --dir web-console/ui install
+pnpm --dir web-console/ui build
+cargo run -p cerebro-web
+```
+
+Open <http://127.0.0.1:7171>. `CEREBRO_WEB_ADDRESS` sets another address; the service binds only
+to this machine.
+
+In a consumer, the service does not yet find the built page, so serve the page with Vite instead.
+Run these from the consumer root in two terminals, then open <http://127.0.0.1:5173>:
+
+```bash
+cargo run --manifest-path .cerebro/cerebro/Cargo.toml -p cerebro-web
+pnpm --dir .cerebro/cerebro/web-console/ui install && pnpm --dir .cerebro/cerebro/web-console/ui dev
+```
+
+What the page does, and the API behind it, is `web-console/README.md`.
+
 ## Launchers
 
 Each agent is started by a script of its own, run from the consumer repository root:

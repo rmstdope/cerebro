@@ -14,9 +14,10 @@ is nothing to launch, and this skill is never reached. What changes is who looks
 verdict reaches the navigator as a recommendation with evidence rather than as a question about
 what they saw.
 
-**Every question here is the three-action sandwich** of the verifier's state contract:
-`agent-state Psylocke asking --bead <id> --phase verify --pid $PPID`, the question, then `working`
-before anything else. Write `working --bead <id> --phase verify` the moment you start the declared
+**Every question here follows the verifier's state contract.** One through the question tool is
+the hook's, with the bead and phase you are in. One in prose is the three-action sandwich:
+`agent-state Psylocke asking --bead <id> --phase <prepare|verify> --pid $PPID` with the phase you
+are in, the question, then `working` before anything else. Write `working --bead <id> --phase verify` the moment you start the declared
 server; everything before that is `prepare`.
 
 ## Prepare

@@ -11,8 +11,9 @@
 # rule with the reason spelled out. She still asks under `working' and still leaves `asking' behind
 # for an hour after the navigator answered, because the two writes sit either side of the one moment
 # in a session where attention is on the human rather than the bookkeeping. Prose was the wrong tool:
-# this is a mechanical fact about a tool call, so a hook states it mechanically and the agent's own
-# writes become a belt-and-braces second copy rather than the only one.
+# this is a mechanical fact about a tool call, so a hook states it mechanically. Since cb-cmhz the
+# contract leaves a tool question to this hook alone; an agent writes `asking' itself only for a
+# question the hook cannot see (in prose) or one that must show another phase (a navigator's gate).
 #
 # WHAT IT NEEDS. `CEREBRO_AGENT_NAME', exported by `scripts/launch' via `agent-hooks-env'. Without
 # it there is no way to know whose file this is, so the script exits 0 and does nothing - which is
@@ -93,8 +94,8 @@ write_state() {
 
 case "$mode" in
   begin)
-    # Already asking - the agent wrote it itself, which is the documented behaviour and not a case
-    # to overwrite: writing a sidecar now would record `asking' as the state to go back to, and
+    # Already asking - the agent wrote it itself (a gate's phase, or an older copy of the contract),
+    # and that is not a case to overwrite: writing a sidecar now would record `asking' as the state to go back to, and
     # `end' would restore the very thing it exists to clear.
     #
     # Any sidecar lying here is therefore from an *earlier* question, left by a session that died

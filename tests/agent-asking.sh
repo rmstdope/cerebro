@@ -87,7 +87,7 @@ rm -rf "$tmp"
 pass "begin-records-idle-and-end-brings-it-back-as-working"
 
 # --- begin-on-a-file-already-asking-writes-no-sidecar ---
-# The agent wrote `asking` itself, which is the documented belt-and-braces copy. A sidecar written
+# The agent wrote `asking` itself, as it still does for a navigator's gate. A sidecar written
 # now would record `asking` as the state to go back to, and `end` would restore the very thing it
 # exists to clear.
 tmp="$(new_fixture)"

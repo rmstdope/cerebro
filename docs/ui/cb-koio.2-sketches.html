@@ -1,0 +1,91 @@
+<!doctype html>
+<!--
+  A starter sheet for one round of concept sketches (skills/agree-experience, "Sketching the idea
+  first"; the agreed look is docs/ui/cb-icwi-concept-sketches.html). Copy it to the scratchpad as
+  <id>-sketches-<round>.html, set TITLE and IDEAS, and replace each idea's draw function. Two to
+  four ideas, never one and never more. Set AGREED to the agreed idea's letter only for the copy
+  kept in docs/ui/: it circles that idea in red and writes "agreed" beside it.
+
+  The look is marker on a whiteboard: wobbly doubled strokes, a handwriting typeface, real words on
+  the screen, one blue accent plus hatched fill for what the idea is about, red notes and arrows in
+  the margin. Rectangles and words only; no styling, no exact sizes.
+-->
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sketches, round 1 · Where the fleet's time went</title>
+<link href="https://fonts.googleapis.com/css2?family=Caveat:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  body{margin:0;background:#fdfcf8;font-family:system-ui,sans-serif;color:#222}
+  header{padding:14px 20px;border-bottom:1px solid #ddd;background:#fff}
+  h1{margin:0;font-size:18px} p{margin:4px 0 0;font-size:13px;color:#555}
+  /* One idea above the other, each at full width, so a sheet reads on a narrow screen (cb-395b). */
+  main{padding:20px;max-width:900px;margin:0 auto;display:flex;flex-direction:column;gap:24px}
+  svg{display:block;width:100%;height:auto;background:#fffef9;border:1px solid #e6e2d6;border-radius:4px}
+</style>
+<script>
+// The hand-drawn helper. Every stroke is drawn twice with a little jitter; the seed is fixed so a
+// sheet looks the same each time it is opened.
+const BLUE = '#1971c2', RED = '#c92a2a', INK = '#1e1e1e';
+function Sketch(svg, o){ this.svg = svg; this.o = Object.assign({stroke: INK, w: 2.4, jit: 1.4, double: true, font: "'Caveat', cursive"}, o || {}); this.seed = 7; }
+Sketch.prototype.r = function(){ this.seed = (this.seed * 9301 + 49297) % 233280; return this.seed / 233280 - 0.5; };
+Sketch.prototype.add = function(tag, attrs, text){ const e = document.createElementNS('http://www.w3.org/2000/svg', tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (text) e.textContent = text; this.svg.appendChild(e); return e; };
+Sketch.prototype.line = function(x1, y1, x2, y2, o){ o = Object.assign({}, this.o, o || {}); for (let p = 0; p < (o.double ? 2 : 1); p++){ const j = o.jit, mx = (x1 + x2) / 2 + this.r() * j * 2, my = (y1 + y2) / 2 + this.r() * j * 2; this.add('path', {d: `M${x1 + this.r() * j},${y1 + this.r() * j} Q${mx},${my} ${x2 + this.r() * j},${y2 + this.r() * j}`, fill: 'none', stroke: o.stroke, 'stroke-width': o.w * (p ? 0.7 : 1), 'stroke-linecap': 'round', opacity: p ? 0.6 : 1}); } };
+Sketch.prototype.rect = function(x, y, w, h, o){ this.line(x, y, x + w, y, o); this.line(x + w, y, x + w, y + h, o); this.line(x + w, y + h, x, y + h, o); this.line(x, y + h, x, y, o); };
+Sketch.prototype.hachure = function(x, y, w, h, color, gap){ gap = gap || 8; for (let i = -h; i < w; i += gap){ const ax = Math.max(x, x + i), ay = y + Math.max(0, -i), bx = Math.min(x + w, x + i + h), by = y + Math.min(h, w - i); this.line(ax, ay, bx, by, {stroke: color || BLUE, w: 1.3, double: false, jit: 0.8}); } };
+Sketch.prototype.text = function(x, y, s, o){ o = Object.assign({size: 22, fill: this.o.stroke, anchor: 'start'}, o || {}); this.add('text', {x, y, 'font-family': this.o.font, 'font-size': o.size, fill: o.fill, 'text-anchor': o.anchor}, s); };
+Sketch.prototype.arrow = function(x1, y1, x2, y2, o){ this.line(x1, y1, x2, y2, o); const a = Math.atan2(y2 - y1, x2 - x1); this.line(x2, y2, x2 - 12 * Math.cos(a - 0.5), y2 - 12 * Math.sin(a - 0.5), o); this.line(x2, y2, x2 - 12 * Math.cos(a + 0.5), y2 - 12 * Math.sin(a + 0.5), o); };
+Sketch.prototype.note = function(x, y, s){ this.text(x, y, s, {fill: RED}); };
+// A loose hand-drawn loop, squarish so it takes in a box's corners: the kept sheet's mark on the agreed idea.
+Sketch.prototype.ring = function(cx, cy, rx, ry){ const f = t => Math.sign(t) * Math.pow(Math.abs(t), 0.3); let d = ''; for (let a = 0; a <= 6.75; a += 0.12){ const k = 1 + this.r() * 0.025 + (a > 6.3 ? 0.04 : 0); d += (a ? ' L' : 'M') + (cx + rx * k * f(Math.cos(a))) + ',' + (cy + ry * k * f(Math.sin(a))); } this.add('path', {d, fill: 'none', stroke: RED, 'stroke-width': 3, 'stroke-linecap': 'round', 'stroke-linejoin': 'round'}); };
+</script></head><body>
+<header><h1 id="title"></h1><p>Rough sketches of the idea. Which idea do we build on?</p></header>
+<main id="sheet"></main>
+<script>
+// ---- Edit from here --------------------------------------------------------------------------
+const TITLE = 'Where the fleet\'s time went';
+const AGREED = 'C';
+const IDEAS = [
+  {letter: 'A', name: 'a table of bars, role then agent', cost: 'easy to compare totals; when things happened is lost', draw(s){
+    s.rect(10, 10, 520, 340); s.line(10, 46, 530, 46); s.text(24, 36, 'Fleet   Work   Time', {size: 22}); s.line(150,40,200,40,{stroke:BLUE});
+    s.text(24, 72, 'Last 7 days ▾', {size: 20}); s.note(300, 72, 'full detail since 27 Oct');
+    const rows=[['producer',300,60],['  Cyclops',180,30],['  Storm',120,30],['ux',140,90],['orchestrator',200,20],['verifier',90,70]];
+    rows.forEach((r,i)=>{ const y=92+i*40; s.text(24,y+22,r[0],{size:20}); s.rect(150,y+4,r[1],24); s.hachure(150,y+4,r[1]*0.5,24,BLUE,6); s.rect(150+r[1]+6,y+4,r[2],24); s.hachure(150+r[1]+6,y+4,r[2],24,'#999',4); });
+    s.note(330, 340, 'grey = waiting on you');
+  }},
+  {letter: 'B', name: 'a timeline, one lane per agent', cost: 'shows when and what got stuck; totals are a side column', draw(s){
+    s.rect(10, 10, 520, 340); s.line(10, 46, 530, 46); s.text(24, 36, 'Fleet   Work   Time', {size: 22}); s.line(150,40,200,40,{stroke:BLUE});
+    s.text(24, 72, 'Mon   Tue   Wed   Thu   Fri', {size: 18});
+    const lanes=['Cerebro','Beast','Cyclops','Storm','Psylocke'];
+    lanes.forEach((n,i)=>{ const y=88+i*44; s.text(24,y+24,n,{size:20}); s.line(110,y+32,440,y+32,{w:1,double:false});
+      for(let k=0;k<4;k++){ const x=115+k*80+((i*37)%30); s.rect(x,y+10,40,20); if(k%2) s.hachure(x,y+10,40,20,BLUE,6); else s.hachure(x,y+10,40,20,'#999',4);} s.text(450,y+26,(9-i)+'h',{size:20}); });
+    s.note(300, 330, '← hover a block: what it was doing');
+  }},
+  {letter: 'C', name: 'tiles you click into', cost: 'big picture at a glance; one level shown at a time', draw(s){
+    s.rect(10, 10, 520, 340); s.line(10, 46, 530, 46); s.text(24, 36, 'Fleet   Work   Time', {size: 22}); s.line(150,40,200,40,{stroke:BLUE});
+    s.text(24, 72, 'All roles  ›', {size: 20});
+    s.rect(24, 86, 260, 250); s.hachure(24,86,260,250,BLUE,10); s.text(40, 120, 'producer  41h', {size: 24});
+    s.rect(294, 86, 220, 120); s.text(306, 116, 'ux  12h', {size: 22});
+    s.rect(294, 216, 120, 120); s.text(304, 246, 'orchestr.', {size: 20});
+    s.rect(424, 216, 90, 120); s.text(432, 246, 'verifier', {size: 18});
+    s.note(60, 200, 'click → its agents'); s.note(60, 226, 'click → activities');
+  }},
+];
+// ---- to here ---------------------------------------------------------------------------------
+document.getElementById('title').textContent = TITLE;
+(function(){
+  // Each idea gets its own SVG, stacked down the page.
+  const sheet = document.getElementById('sheet'), x = 30, scale = 0.7, w = 460, h = 390;
+  IDEAS.forEach(idea => {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+    sheet.appendChild(svg);
+    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    g.setAttribute('transform', `translate(${x},28) scale(${scale})`);
+    svg.appendChild(g);
+    idea.draw(new Sketch(g));
+    const s = new Sketch(svg);
+    s.text(x + 5, 308, `${idea.letter} — ${idea.name}`, {size: 24});
+    s.text(x + 5, 333, idea.cost, {size: 20, fill: '#666'});
+    if (AGREED === idea.letter){ s.ring(x + 190, 184, 214, 176); s.text(x + 330, 378, 'agreed', {size: 26, fill: RED}); }
+  });
+})();
+</script></body></html>

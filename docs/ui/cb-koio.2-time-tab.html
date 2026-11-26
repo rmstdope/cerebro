@@ -1,0 +1,47 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Option B — waiting inside each tile · Where the fleet's time went</title><style>
+body{margin:0;background:#f4f4f5;font-family:system-ui,-apple-system,sans-serif;color:#18181b}
+.note{max-width:980px;margin:16px auto 0;padding:0 16px;font-size:13px;color:#52525b}
+.frame{max-width:980px;margin:12px auto 28px;background:#fff;border:1px solid #e4e4e7;border-radius:10px;overflow:hidden}
+.top{display:flex;gap:18px;align-items:center;padding:10px 16px;border-bottom:1px solid #e4e4e7;font-size:14px}
+.top b{font-weight:600}.tab{color:#71717a}.tab.on{color:#18181b;border-bottom:2px solid #7c3aed;padding-bottom:4px}
+.bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:12px 16px}
+.crumb{font-size:15px}.crumb a{color:#7c3aed;text-decoration:none}
+.seg{margin-left:auto;display:flex;border:1px solid #d4d4d8;border-radius:6px;overflow:hidden;font-size:13px}
+.seg span{padding:5px 10px;border-left:1px solid #d4d4d8}.seg span:first-child{border-left:0}.seg .on{background:#18181b;color:#fff}
+.banner{margin:0 16px 10px;padding:8px 12px;background:#fffbeb;border:1px solid #fcd34d;border-radius:6px;font-size:13px}
+.sum{padding:0 16px 10px;font-size:13px;color:#52525b}
+.map{position:relative;margin:0 16px 16px;height:420px}
+.t{position:absolute;box-sizing:border-box;border:2px solid #fff;border-radius:6px;padding:8px 10px;color:#fff;overflow:hidden;cursor:pointer}
+.t .n{font-weight:600;font-size:15px}.t .h{font-size:13px;opacity:.9}
+.w{background:repeating-linear-gradient(45deg,#a1a1aa 0 6px,#d4d4d8 6px 12px);color:#18181b}
+.strip{position:absolute;left:0;right:0;bottom:0;background:repeating-linear-gradient(45deg,#a1a1aa 0 6px,#d4d4d8 6px 12px);color:#18181b;font-size:12px;padding:2px 8px}
+.c1{background:#6d28d9}.c2{background:#2563eb}.c3{background:#0891b2}.c4{background:#059669}.c5{background:#d97706}.c6{background:#db2777}.c7{background:#4b5563}
+h2{max-width:980px;margin:18px auto 0;padding:0 16px;font-size:15px}
+</style></head><body>
+<p class="note">Option B: every tile includes the time it spent waiting on you, shown as a grey band along its bottom edge. There is no separate tile.</p>
+<h2>The first screen: all roles</h2>
+<div class="frame"><div class="top"><b>Cerebro</b><span class="tab">Fleet</span><span class="tab">Work</span><span class="tab on">Time</span></div>
+<div class="bar"><div class="crumb">All roles</div><div class="seg"><span>24 hours</span><span class="on">7 days</span><span>30 days</span><span>All</span></div></div>
+<div class="banner">Full detail from 27 Oct. Before that, only which phase each agent was in is known.</div>
+<div class="sum">111 h in all · 18 h of it waiting on you (grey)</div><div class="map">
+<div class="t c1" style="left:0%;top:0%;width:48%;height:100%"><div class="n">producer</div><div class="h">41 h</div><div class="strip">9 h waiting on you</div></div>
+<div class="t c2" style="left:48%;top:0%;width:28%;height:58%"><div class="n">orchestrator</div><div class="h">22 h</div><div class="strip">4 h waiting on you</div></div>
+<div class="t c3" style="left:76%;top:0%;width:24%;height:58%"><div class="n">ux</div><div class="h">12 h</div><div class="strip">3 h waiting on you</div></div>
+<div class="t c4" style="left:48%;top:58%;width:18%;height:42%"><div class="n">bugfixer</div><div class="h">5 h</div><div class="strip">1 h waiting on you</div></div>
+<div class="t c5" style="left:66%;top:58%;width:14%;height:42%"><div class="n">verifier</div><div class="h">6 h</div><div class="strip">1 h waiting on you</div></div>
+<div class="t c6" style="left:80%;top:58%;width:10%;height:42%"><div class="n">qa</div><div class="h">4 h</div><div class="strip">0 h waiting on you</div></div>
+<div class="t c7" style="left:90%;top:58%;width:10%;height:42%"><div class="n">architect</div><div class="h">3 h</div><div class="strip">0 h waiting on you</div></div>
+</div></div>
+<h2>After clicking producer, then Cyclops</h2>
+<div class="frame"><div class="top"><b>Cerebro</b><span class="tab">Fleet</span><span class="tab">Work</span><span class="tab on">Time</span></div>
+<div class="bar"><div class="crumb"><a href="#">All roles</a> › <a href="#">producer</a> › Cyclops</div><div class="seg"><span>24 hours</span><span class="on">7 days</span><span>30 days</span><span>All</span></div></div>
+<div class="banner">Full detail from 27 Oct. Before that, only which phase each agent was in is known.</div>
+<div class="sum">29 h in all · 3 h of it waiting on you (grey)</div><div class="map">
+<div class="t c1" style="left:0%;top:0%;width:22%;height:100%"><div class="n">plan</div><div class="h">4 h</div><div class="strip">1 h waiting on you</div></div>
+<div class="t c2" style="left:22%;top:0%;width:40%;height:100%"><div class="n">build</div><div class="h">11 h</div><div class="h">· editing code 6 h</div><div class="h">· running tests 4 h</div><div class="h">· reading 1 h</div></div>
+<div class="t c3" style="left:62%;top:0%;width:20%;height:55%"><div class="n">waiting on CI</div><div class="h">5 h</div></div>
+<div class="t c4" style="left:82%;top:0%;width:18%;height:55%"><div class="n">review</div><div class="h">3 h</div><div class="strip">2 h waiting on you</div></div>
+<div class="t c5" style="left:62%;top:55%;width:24%;height:45%"><div class="n">merge</div><div class="h">2 h</div></div>
+<div class="t c7" style="left:86%;top:55%;width:14%;height:45%"><div class="n">rebase</div><div class="h">1 h</div></div>
+</div></div>
+</body></html>

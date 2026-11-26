@@ -108,8 +108,9 @@ or another's.
   piece of work in the product's words (`Option A — sidebar · Opening drawings from a phone`,
   `Sketches, round 1 · Opening drawings from a phone`), and publish the file with your `Artifact`
   tool, with the icon word `sketch` and no `url`. Pages start private; publish nothing else about
-  them. Publish the drawing as it is: its look is what is being agreed, so never restyle it for
-  the page.
+  them. Publish the drawing as it is, straight from its `file_path`: no `quickstart`, no type and
+  no design pass, since its look is what is being agreed, and its `<title>` stays exactly as
+  agreed whatever the tool's page guidance says about titles.
 - **When no phone link can be made** (the CLI has no `Artifact` tool, nothing is connected, the
   publish failed or was refused), that drawing's phone line reads, in place of the link:
 
@@ -304,7 +305,8 @@ on to the sheet. Neither ends the session. Work you do not judge small gets no q
 
 **A round is one sheet**: one page, one link pair (*Interview, don't ask*), with **two to four**
 ideas one above the other, each at full width. Never one: if you can think of only one, draw an
-honest second, such as the closest thing to today's screen. Never more than four: an idea cut from a round is not shown.
+honest second, such as the closest thing to today's screen. Never more than four: an idea cut
+from a round is not shown.
 Each idea is captioned with a letter and a short name ("A — list beside the fleet") and has one
 line under it saying what it costs ("fleet rows get narrower"). Recommend one, as with any
 variants.
@@ -322,7 +324,8 @@ question text and in each option's description, as for every drawing. The option
 fresh sheet of two to four. The question tool holds four options, so a sheet of four ideas asks the
 same question, with the same five options, as a prose question in the message that carries the
 link (*Interview, don't ask*). A reply like "B, but with …" brings a revised sheet, still of two to
-four. There is no limit on rounds: the session stays on sketches until one idea is agreed.
+four, and a revised sheet is the next round: a new file, so a new page. There is no limit on
+rounds: the session stays on sketches until one idea is agreed.
 
 **Only an agreed idea leads on.** *The interview* then runs as it does today, inside the agreed
 layout, and never asks about the layout again.

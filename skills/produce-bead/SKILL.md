@@ -222,8 +222,8 @@ git diff --name-only -z "origin/$(.cerebro/cerebro/scripts/default-branch)...HEA
 ```
 
 Run the brief's `gate_fast`, the fast gate to run before the PR (`gate_full` is everything the
-project has). The plan's *Validation* names the workload (`disk-preflight --workload rust` or `non-rust`); the
-fleet view ran that preflight before your tree was made. If the classification says `rust` where
+project has). The plan's *Validation* names the workload (`disk-preflight --workload rust` or
+`non-rust`); the fleet view ran that preflight before your tree was made. If the classification says `rust` where
 the plan said `non-rust`, run `.cerebro/cerebro/scripts/disk-preflight --workload rust` yourself
 before the gate, since the Rust build tree is what fills a disk. The brief marks a detected,
 undeclared gate; heed it. With no gate at all the launcher would have refused you, so an empty

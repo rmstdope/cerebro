@@ -464,7 +464,9 @@ One session, interactive, and it works a PR at a time:
 - **It reviews on five questions**: does the change do what it says, does it fit the architecture,
   are the regression tests enough (would they have failed before the change), what does it cost the
   application and the CI, and the rest a reviewer owes a project — dependencies, secrets, error
-  handling, docs, scope.
+  handling, docs, scope. They are the same five a producer's review sub-agent applies, written
+  once in `agents/review-subagent.md`; that file is the sub-agent's whole definition, so it does
+  not carry Cypher's session into every review the fleet runs on itself.
 - **It shows you every user-visible change, running.** Same discipline as Psylocke: prepare
   everything first, warm the build, check the port, ask whether you are ready, brief you, launch, and
   record your verdict in your words. A PR that touches nothing the audience sees skips this in one line.

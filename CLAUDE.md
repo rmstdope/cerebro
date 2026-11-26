@@ -123,10 +123,14 @@ were tuned against — read it before changing any role. Which names run which r
 | `bugfixer`      | `agents/bugfixer.md`    | `fix-bug`            | reproduces one bug bead with a test, fixes and merges |
 | `orchestrator`  | `agents/orchestrator.md`| `write-bead`         | ranks, files beads, stops producers  |
 | `verifier`      | `agents/verifier.md`    | `verify-bead` (when `verification_skill` names it) | verifies merged beads with the navigator|
-| `reviewer`      | `agents/reviewer.md`    | —                    | reviews external PRs; review sub-agent  |
+| `reviewer`      | `agents/reviewer.md`    | —                    | reviews external PRs                    |
 | `user-feedback` | `agents/user-feedback.md`| —                   | owns GitHub issues                      |
 | `architect`     | `agents/architect.md`   | —                    | files refactoring beads, never fixes    |
 | `qa`            | `agents/qa.md`          | —                    | files testing beads, never fixes; keeps the requirements and test architecture |
+
+`agents/review-subagent.md` is no role: it is the review sub-agent a producer, the bugfixer and
+Cerebro spawn on one pull request, on the `reviewer` line of `agents.conf`, and it holds the five
+review questions Cypher reads too.
 
 `skills/beads-workflow` is the substrate every role reads. `skills/project-definition` is loaded
 by no role; the navigator runs it by hand once in a blank consumer.
@@ -136,7 +140,7 @@ by no role; the navigator runs it by hand once in a blank consumer.
 Load-bearing across files: a change to one must keep the others consistent with it.
 
 - **Wait by blocking inside a tool call, never by ending a turn.** The one exception is a
-  `reviewer` sub-agent the session spawned, whose result is delivered.
+  `review-subagent` the session spawned, whose result is delivered.
 - **The state file is the contract.** `.cerebro/state/<name>.state.json` carries one of
   `idle`/`working`/`asking`/`waiting`, plus `phase`, `phase_since` and `turn_ended`; every agent
   writes it through `scripts/agent-state` and the fleet view acts on it. `waiting` is every agent's
@@ -151,7 +155,7 @@ Load-bearing across files: a change to one must keep the others consistent with 
 - **Nothing merges red or with unresolved review findings.** Producers obtain the review their
   changes need before delivery. The one merge without a review is a green Dependabot pull request,
   merged by Cerebro through `scripts/dependabot-sweep` (cb-hpwc), unless the consumer declares
-  `dependabot_merge review`, when Cerebro has a `reviewer` sub-agent read it first and merges it
+  `dependabot_merge review`, when Cerebro has a `review-subagent` read it first and merges it
   only with no findings (cb-au3o); a red one becomes a `bugfix` bead.
 - **Agents never decide the shape of what a user sees**; `ux` settles the detail inside a shape
   the navigator has agreed, and what its record leaves open a producer decides and writes into

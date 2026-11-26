@@ -15,7 +15,7 @@
 # only when <sha> is the pull request's head, so a gate result never speaks for a head it did not
 # run at. The packet holds what every review sub-agent used to fetch for itself: the head sha, the
 # changed files, the diff, and the bead's description, acceptance, plan and notes (a bug bead's
-# claim is its description and its bug log is in the notes). `agents/reviewer.md` says what the
+# claim is its description and its bug log is in the notes). `agents/review-subagent.md` says what the
 # sub-agent does with it: it fetches none of it again, and re-runs a test only when a finding says
 # why. Nothing here writes anything.
 #

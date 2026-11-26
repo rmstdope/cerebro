@@ -270,7 +270,9 @@ re-runs a test only when a finding says why. **Paste its output whole, never edi
 is what the sub-agent trusts, so nothing is cut from it, abridged or annotated, and anything you
 would add to it is your reasoning. Exit 3 means the head is not the sha you gated, or moved while
 the packet was made: run the fast gate at the head, then make the packet again. Exit 1 is a
-failed read: retry it, and count it like an unusable review below. **Never your reasoning.** Its checklist is its own
+failed read: retry it, and count it like an unusable review below.
+
+**Never your reasoning.** Its checklist is its own
 definition, `.cerebro/cerebro/agents/review-subagent.md`, which the type loads: never paste it, or
 `agents/reviewer.md`, into the prompt. A session registers its agent types when it starts, so one
 started before that file reached its checkout cannot spawn the type: spawn a general-purpose

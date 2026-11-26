@@ -23,6 +23,9 @@ bd close <id> --reason "Delivered in PR #NN"
 bd dolt push                   # back the bead database up to the remote
 ```
 
+A producer or bugfixer started on a bead has the pull and the `show` in its startup brief
+(`produce-bead`, *The startup brief*) and does not run them again at the start.
+
 The fleet view gives each producer its bead through `scripts/assign-bead`, which claims it as
 that agent before the session starts, choosing from:
 

@@ -103,8 +103,22 @@ assignee_of() {
   shown="$(bd -C "$root" show "$id" --json)" || return 1
   printf '%s' "$shown" | jq -r '(if type == "array" then .[0] else . end) | .assignee // ""'
 }
-owner="$(assignee_of)" || refuse check "bd show $id failed"
-[[ "$owner" == "$name" ]] || refuse check "$id is assigned to '${owner}', not $name"
+# A bead already unassigned, agreed and carrying exactly this record is this call's own earlier
+# write whose board push failed: the re-run pushes and cleans up rather than refusing it.
+already_recorded=0
+shown="$(bd -C "$root" show "$id" --json)" || refuse check "bd show $id failed"
+owner="$(printf '%s' "$shown" | jq -r '(if type == "array" then .[0] else . end) | .assignee // ""')" \
+  || refuse check "bd show $id did not print JSON this script can read"
+if [[ "$owner" != "$name" ]]; then
+  if [[ -z "$owner" ]] && printf '%s' "$shown" | jq -e --arg stage "$stage_label" --arg record "$record" \
+       '(if type == "array" then .[0] else . end)
+        | ((.labels // []) | index($stage)) != null and (.acceptance_criteria // "") == $record' >/dev/null; then
+    already_recorded=1
+    say "$id is already recorded with this acceptance; pushing the board and cleaning up"
+  else
+    refuse check "$id is assigned to '${owner}', not $name"
+  fi
+fi
 
 # --- the drawing's pull request --------------------------------------------------------------------
 
@@ -112,20 +126,29 @@ branch="$id-mockup"
 tree_rel=".cerebro/worktrees/$id-mockup"
 tree="$root/$tree_rel"
 
-if ((${#sources[@]})); then
+if ((${#sources[@]})) && [[ $already_recorded -eq 0 ]]; then
   default="$("$script_dir/default-branch")" || refuse worktree "the default branch could not be read"
   scratch="$(mktemp -d)"
   trap 'rm -rf "$scratch"' EXIT
-  pr_state() {
-    jq -r '.state // ""' <<<"${pr:-null}"
-  }
+  # The pull request this delivery owns is an open one for the branch. A merged or closed one on the
+  # same branch name is an earlier round's, from a bead that came back to UX, and is never reused.
   pr_json() {
-    gh pr list --head "$branch" --state all --json number,state,createdAt,url --limit 1 \
+    gh pr list --head "$branch" --state open --json number,state,createdAt,url --limit 1 \
       | jq -c '.[0] // empty'
   }
-  pr="$(pr_json)" || refuse pr "gh pr list failed"
+  # Already delivered when every drawing is on the default branch byte for byte: a re-run after the
+  # merge goes straight to the record, and a second round's new drawing never matches the first's.
+  git -C "$root" fetch -q origin "$default" || refuse worktree "git fetch origin $default failed"
+  on_main=1
+  for i in "${!sources[@]}"; do
+    if ! git -C "$root" show "origin/$default:docs/ui/${targets[$i]}" > "$scratch/on-main" 2>/dev/null \
+       || ! cmp -s "$scratch/on-main" "${sources[$i]}"; then
+      on_main=0
+    fi
+  done
 
-  if [[ "$(pr_state)" != MERGED ]]; then
+  if [[ $on_main -eq 0 ]]; then
+    pr="$(pr_json)" || refuse pr "gh pr list failed"
     # worktree
     if [[ -e "$tree" ]]; then
       on="$(git -C "$tree" branch --show-current 2>/dev/null || true)"
@@ -194,8 +217,8 @@ if ((${#sources[@]})); then
 
     # merge
     gh pr merge "$number" --squash --delete-branch >/dev/null 2>"$scratch/merge.err" || true
-    pr="$(pr_json)" || refuse merge "gh pr list failed after the merge"
-    if [[ "$(pr_state)" != MERGED ]]; then
+    state="$(gh pr view "$number" --json state --jq .state)" || refuse merge "gh pr view $number failed after the merge"
+    if [[ "$state" != MERGED ]]; then
       refuse merge "pull request #$number is not merged: $(cat "$scratch/merge.err" 2>/dev/null || true)"
     fi
     if [[ -n "$(git -C "$root" ls-remote --heads origin "$branch" 2>/dev/null || true)" ]]; then
@@ -203,18 +226,20 @@ if ((${#sources[@]})); then
     fi
     say "merged #$number"
   else
-    say "pull request #$(jq -r .number <<<"$pr") is already merged"
+    say "the drawings are already on $default"
   fi
 fi
 
 # --- record ----------------------------------------------------------------------------------------
 
-owner="$(assignee_of)" || refuse record "bd show $id failed"
-[[ "$owner" == "$name" ]] || refuse record "$id is now assigned to '${owner}', not $name; nothing recorded"
-route_flags_for agree_experience || refuse record "the agree_experience hand-off is not in the label policy"
-bd -C "$root" update "$id" --acceptance "$record" "${route_flags[@]}" --assignee "" --if-assignee "$name" \
-  >/dev/null || refuse record "bd update $id refused"
-bd -C "$root" dolt push >/dev/null || refuse record "bd dolt push failed"
+if [[ $already_recorded -eq 0 ]]; then
+  owner="$(assignee_of)" || refuse record "bd show $id failed"
+  [[ "$owner" == "$name" ]] || refuse record "$id is now assigned to '${owner}', not $name; nothing recorded"
+  route_flags_for agree_experience || refuse record "the agree_experience hand-off is not in the label policy"
+  bd -C "$root" update "$id" --acceptance "$record" "${route_flags[@]}" --assignee "" --if-assignee "$name" \
+    >/dev/null || refuse record "bd update $id refused"
+fi
+bd -C "$root" dolt push >/dev/null || refuse record "bd dolt push failed; run the same command again to push it"
 say "recorded $id"
 
 # --- cleanup ---------------------------------------------------------------------------------------

@@ -392,7 +392,9 @@ marks it agreed, hands it on (the label policy's `agree_experience` hand-off, wh
 - `3`: the checks are still running. Run **the same command** again; it carries on where it
   stopped. Never read the checks or debug CI yourself.
 - `1`: it refused, and its last stderr line names the step (`ux-deliver: <step>: <why>`). Nothing
-  was recorded unless the step is `cleanup`. Go to *When something fails*.
+  was recorded unless the step is `cleanup`. At `record`, run the same command once more first:
+  a board push that failed is retried, and the call recognises its own record. Otherwise, or if
+  it refuses again, go to *When something fails*.
 
 Close with this (italics: the work in the product's words, never the filed title):
 

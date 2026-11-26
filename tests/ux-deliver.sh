@@ -25,17 +25,24 @@ cat > "$stub/gh" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >> "$STUB_DIR/gh.log"
-pr="$STUB_DIR/pr.json"
+prs="$STUB_DIR/prs.json"
+[[ -e "$prs" ]] || echo '[]' > "$prs"
+edit() { jq "$@" "$prs" > "$prs.tmp" && mv "$prs.tmp" "$prs"; }
 case "$1 $2" in
   "pr list")
-    if [[ -e "$pr" ]]; then jq -c '[.]' "$pr"; else echo '[]'; fi ;;
+    # As gh does: newest first, and only the state asked for.
+    state="$(sed -n 's/.*--state \([a-z]*\).*/\1/p' <<<"$*")"
+    jq -c --arg s "$state" 'reverse | map(select($s == "all" or (.state | ascii_downcase) == $s))' "$prs" ;;
+  "pr view")
+    jq -r --argjson n "$3" '.[] | select(.number == $n) | .state' "$prs" ;;
   "pr create")
     [[ -e "$STUB_DIR/create-fails" ]] && { echo "gh: pull request create failed" >&2; exit 1; }
-    jq -n --arg at "${PR_CREATED_AT:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}" \
-      '{number: 7, state: "OPEN", createdAt: $at, url: "https://github.com/o/r/pull/7", head: "cb-x-mockup"}' > "$pr"
-    echo "https://github.com/o/r/pull/7" ;;
-  "pr view")
-    jq -c . "$pr" ;;
+    n=$(( 7 + $(jq length "$prs") ))
+    edit --argjson n "$n" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      --arg sha "$(git rev-parse origin/cb-x-mockup)" \
+      '. + [{number: $n, state: "OPEN", createdAt: $at, url: "https://github.com/o/r/pull/\($n)",
+             headRefName: "cb-x-mockup", headRefOid: $sha}]'
+    echo "https://github.com/o/r/pull/$n" ;;
   "pr checks")
     # One answer per poll, the last one repeated: a JSON array, or NONE for "no checks reported".
     queue="$STUB_DIR/checks"
@@ -48,12 +55,12 @@ case "$1 $2" in
     if jq -e 'any(.[]; .bucket == "fail")' <<<"$answer" >/dev/null; then exit 1; fi ;;
   "pr merge")
     # What the merge would land: the branch as pushed, read from the remote-tracking ref.
-    git ls-tree -r --name-only "origin/$(jq -r .head "$pr")" > "$STUB_DIR/merged-files"
-    git log -1 --format=%s "origin/$(jq -r .head "$pr")" > "$STUB_DIR/merged-subject"
+    git ls-tree -r --name-only origin/cb-x-mockup > "$STUB_DIR/merged-files"
+    git log -1 --format=%s origin/cb-x-mockup > "$STUB_DIR/merged-subject"
+    merged() { edit --argjson n "$3" 'map(if .number == $n then .state = "MERGED" else . end)'; }
     case "${MERGE_MODE:-ok}" in
-      ok) jq '.state = "MERGED"' "$pr" > "$pr.tmp" && mv "$pr.tmp" "$pr" ;;
-      merged-but-fails) jq '.state = "MERGED"' "$pr" > "$pr.tmp" && mv "$pr.tmp" "$pr"
-                        echo "failed to delete local branch" >&2; exit 1 ;;
+      ok) merged "$@" ;;
+      merged-but-fails) merged "$@"; echo "failed to delete local branch" >&2; exit 1 ;;
       refused) echo "X Pull request is not mergeable" >&2; exit 1 ;;
     esac ;;
   *) echo "ux-deliver stub: unexpected gh $*" >&2; exit 1 ;;
@@ -86,7 +93,7 @@ case "$sub" in
     filter='.'; if_assignee=""; guarded=false
     while [[ $# -gt 0 ]]; do
       case "$1" in
-        --acceptance) printf '%s' "$2" > "$STUB_DIR/acceptance"; filter="$filter | .acceptance = \$acc"; shift 2 ;;
+        --acceptance) printf '%s' "$2" > "$STUB_DIR/acceptance"; filter="$filter | .acceptance_criteria = \$acc"; shift 2 ;;
         --add-label) filter="$filter | .labels = (((.labels // []) - [\"$2\"]) + [\"$2\"])"; shift 2 ;;
         --remove-label) filter="$filter | .labels = ((.labels // []) - [\"$2\"])"; shift 2 ;;
         --assignee) filter="$filter | .assignee = \"$2\""; shift 2 ;;
@@ -97,7 +104,9 @@ case "$sub" in
     if $guarded && [[ "$(jq -r '.assignee // ""' "$bead")" != "$if_assignee" ]]; then exit 13; fi
     acc="$(cat "$STUB_DIR/acceptance" 2>/dev/null || true)"
     jq --arg acc "$acc" "$filter" "$bead" > "$bead.tmp" && mv "$bead.tmp" "$bead" ;;
-  dolt) echo push >> "$STUB_DIR/pushed" ;;
+  dolt)
+    [[ -e "$STUB_DIR/push-fails" ]] && { echo "bd: dolt push: remote unreachable" >&2; exit 1; }
+    echo push >> "$STUB_DIR/pushed" ;;
   *) echo "ux-deliver stub: unexpected bd $sub" >&2; exit 1 ;;
 esac
 STUB
@@ -107,7 +116,7 @@ chmod +x "$stub/bd"
 case_n=0
 fresh() {
   case_n=$((case_n + 1))
-  rm -f "$stub"/*.log "$stub/pr.json" "$stub/pushed" "$stub/acceptance" "$stub/create-fails" \
+  rm -f "$stub"/*.log "$stub/prs.json" "$stub/push-fails" "$stub/pushed" "$stub/acceptance" "$stub/create-fails" \
         "$stub/update-fails" "$stub/checks" "$stub/flip-after-show" "$stub/merged-files" "$stub/merged-subject"
   consumer="$(consumer_new "c$case_n" --origin --copy)"
   printf '%s' '{"id":"cb-x","status":"open","assignee":"Xavier","labels":["needs-ui-decision"]}' > "$stub/bead.json"
@@ -141,7 +150,7 @@ with_mockups() {
 }
 
 labels() { jq -c '.labels' "$stub/bead.json"; }
-recorded() { [[ "$(jq -r '.acceptance // ""' "$stub/bead.json")" == *"A list beside the fleet."* ]]; }
+recorded() { [[ "$(jq -r '.acceptance_criteria // ""' "$stub/bead.json")" == *"A list beside the fleet."* ]]; }
 tree="" ; tree_of() { tree="$consumer/.cerebro/worktrees/cb-x-mockup"; }
 
 # --- usage ----------------------------------------------------------------------------------------
@@ -253,10 +262,66 @@ fresh
 checks NONE
 with_mockups --wait 0
 [[ $status -eq 3 ]] || fail "no checks on a new pull request is still pending, got $status: $err"
-jq '.createdAt = "2020-01-01T00:00:00Z"' "$stub/pr.json" > "$stub/pr.tmp" && mv "$stub/pr.tmp" "$stub/pr.json"
+jq 'map(.createdAt = "2020-01-01T00:00:00Z")' "$stub/prs.json" > "$stub/prs.tmp" && mv "$stub/prs.tmp" "$stub/prs.json"
 with_mockups --wait 0
 [[ $status -eq 0 ]] || fail "no checks long after the pull request opened is not red, got $status: $err"
 pass "treats no checks as pending until the grace has passed, then as green"
+
+# --- a second round through UX: the earlier round's pull requests are not this one ------------------
+#
+# A bead that came back to UX has the same `<id>-mockup` branch name as its first round, whose pull
+# request is long merged (cb-hezw-mockup has two). Reusing it would skip the new drawing and record a
+# path that is not on main; a closed one would refuse at merge for ever.
+
+fresh
+printf '%s' '[{"number":3,"state":"MERGED","createdAt":"2020-01-01T00:00:00Z","url":"u","headRefName":"cb-x-mockup","headRefOid":"0000000000000000000000000000000000000001"},
+             {"number":4,"state":"CLOSED","createdAt":"2020-01-02T00:00:00Z","url":"u","headRefName":"cb-x-mockup","headRefOid":"0000000000000000000000000000000000000002"}]' \
+  > "$stub/prs.json"
+with_mockups
+[[ $status -eq 0 ]] || fail "a second round delivers, got $status: $err"
+grep -q "^pr create" "$stub/gh.log" || fail "a second round opens its own pull request: $(cat "$stub/gh.log")"
+grep -q "^pr merge 9 " "$stub/gh.log" || fail "it merges its own pull request, not an earlier round's: $(cat "$stub/gh.log")"
+grep -qx "docs/ui/cb-x-list.html" "$stub/merged-files" || fail "the new drawing is what merges"
+recorded || fail "the second round is recorded"
+pass "a second round through UX opens and merges its own pull request, ignoring earlier merged or closed ones"
+
+# --- the drawings already on main: a re-run after the merge goes straight to the record -------------
+
+fresh
+up="$work_dir/c$case_n-up"
+mkdir -p "$up/docs/ui"
+cp "$work_dir/cb-x-list-a.html" "$up/docs/ui/cb-x-list.html"
+cp "$work_dir/cb-x-sketches-2.html" "$up/docs/ui/cb-x-sketches.html"
+git_q -C "$up" add docs && git_q -C "$up" commit -q -m "docs(cb-x): mockup" && git_q -C "$up" push -q origin main
+with_mockups
+[[ $status -eq 0 ]] || fail "drawings already on main deliver, got $status: $err"
+! grep -qE "^pr (create|merge)" "$stub/gh.log" 2>/dev/null || fail "drawings already on main open and merge nothing: $(cat "$stub/gh.log")"
+recorded || fail "drawings already on main are recorded"
+pass "goes straight to the record when the drawings are already on the default branch"
+
+# --- the board push failed: the same command again finishes the job ---------------------------------
+#
+# The guarded write has unassigned the bead by the time the push runs, so a re-run must recognise
+# its own record rather than refuse the bead as somebody else's.
+
+fresh
+touch "$stub/push-fails"
+with_mockups
+[[ $status -eq 1 && "$err" == *"ux-deliver: record:"* ]] || fail "a failed board push refuses at record, got $status: $err"
+rm "$stub/push-fails"
+with_mockups
+[[ $status -eq 0 ]] || fail "the re-run after a failed push delivers, got $status: $err"
+[[ -e "$stub/pushed" ]] || fail "the re-run pushes the board"
+tree_of
+[[ ! -e "$tree" ]] || fail "the re-run removes the worktree"
+[[ "$(grep -c "^pr merge" "$stub/gh.log")" -eq 1 ]] || fail "the re-run merges nothing again"
+pass "a re-run after a failed board push pushes it and cleans up, recognising its own record"
+
+fresh
+printf '%s' '{"id":"cb-x","status":"open","assignee":"","labels":["ux:agreed"],"acceptance_criteria":"an older record"}' > "$stub/bead.json"
+with_mockups
+[[ $status -eq 1 && "$err" == *"ux-deliver: check:"* ]] || fail "an unassigned bead with a different record is refused at check, got $status: $err"
+pass "a bead somebody else recorded is still refused at check"
 
 # --- the merge: GitHub's word decides -----------------------------------------------------------------
 

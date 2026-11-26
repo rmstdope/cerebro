@@ -126,7 +126,7 @@ while [[ $i -lt $total ]]; do
       case "$kind:${BASH_REMATCH[1]}" in
         option:cost | state:note) costs[n]="${BASH_REMATCH[2]}" ;;
         option:recommended) reasons[n]="${BASH_REMATCH[2]}" ;;
-        *) refuse "line $((i + 1)): '${BASH_REMATCH[1]}:' does not belong to a $kind" ;;
+        *) refuse "line $((i + 1)): '${BASH_REMATCH[1]}:' does not belong under '=== $kind:'" ;;
       esac
       i=$((i + 1))
     done

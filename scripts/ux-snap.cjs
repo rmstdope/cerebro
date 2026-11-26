@@ -103,6 +103,7 @@ async function renderOne(browser, url, width, index) {
   };
   const stem = path.join(outDir, `${index}-${slug(url)}-${width}`);
   let findings = [];
+  let current = null;
   try {
     await page.goto(url, { waitUntil: "load", timeout: 30000 });
     await page.waitForLoadState("networkidle", { timeout: 3000 }).catch(() => {});
@@ -110,6 +111,7 @@ async function renderOne(browser, url, width, index) {
       [...document.querySelectorAll(".ux-tabs > [data-ux-tab]")].map((t) => t.dataset.uxTab),
     );
     for (const tab of tabs.length > 1 ? tabs : [null]) {
+      current = tab;
       if (tab !== null) {
         await page.evaluate((k) => document.querySelector(`.ux-tabs > [data-ux-tab="${k}"]`).click(), tab);
       }
@@ -128,7 +130,7 @@ async function renderOne(browser, url, width, index) {
   } catch (err) {
     findings.push(`load failed: ${String(err.message || err).split("\n")[0]}`);
     drain(findings);
-    shots.push({ tab: null, png: null, findings });
+    shots.push({ tab: current, png: null, findings });
   }
   await context.close();
   return shots;

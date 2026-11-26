@@ -85,7 +85,10 @@ async function main() {
     await page.focus("#field");
     await page.keyboard.press("ArrowRight");
     assert.deepEqual(await state(page), only("A"));
-    ok("the arrows work with nothing focused, and a drawing's text field keeps its own");
+    await page.focus("#control");
+    await page.keyboard.press("ArrowRight");
+    assert.deepEqual(await state(page), only("A"));
+    ok("the arrows work with nothing focused, and a drawing's own controls keep theirs");
 
     await page.click('.ux-tab[data-ux-tab="C"]');
     await page.reload();

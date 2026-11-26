@@ -23,7 +23,7 @@ heading: Which layout do we build on?
 <style>section{display:block} h2{font-size:40px} button{background:#000}</style>
 === option: tiles sized by time
 cost: Every role is one tile.
-<p>the drawing of A</p><input id="field" value="text">
+<p>the drawing of A</p><input id="field" value="text"><button id="control">mock</button>
 === option: bars, longest first
 cost: Easier to compare.
 recommended: the usual way.

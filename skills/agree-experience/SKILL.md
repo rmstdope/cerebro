@@ -413,17 +413,17 @@ were skipped names the drawing alone (*Sketching the idea first*).
 ## The mockup
 ```
 
-**Show nothing and ask nothing.** Then deliver it, in one call from the consumer root, with a
-Bash timeout of ten minutes:
-
-The detailed page you hand over for an options question is its kept copy: every option stays, the
-chosen one is tagged `Agreed` and the page opens on it. Make it from the same spec, and pass that
-file; a states or tabless page is handed over as it was shown.
+**First, the kept copy.** The detailed page you hand over for an options question is its kept
+copy: every option stays, the chosen one is tagged `Agreed` and the page opens on it. Make it from
+the same spec, and pass that file; a states or tabless page is handed over as it was shown.
 
 ```bash
 .cerebro/cerebro/scripts/ux-sheet <scratchpad>/<bead-id>-<name>.sheet \
   --agreed <letter> --out <scratchpad>/<bead-id>-<name>-agreed.html
 ```
+
+**Show nothing and ask nothing.** Then deliver it, in one call from the consumer root, with a
+Bash timeout of ten minutes:
 
 ```bash
 bd dolt pull

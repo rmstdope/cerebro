@@ -64,8 +64,8 @@
   document.addEventListener('keydown', function(e){
     var step = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
     if (!step || e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
-    // A text field a drawing carries keeps its own arrows.
-    if (e.target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
+    // A control a drawing carries (a field, a button, a slider) keeps its own arrows.
+    if (e.target.closest && e.target.closest('.ux-draw')) return;
     e.preventDefault();
     var focused = tabs.indexOf(document.activeElement) >= 0;
     var i = (selected() + step + tabs.length) % tabs.length;

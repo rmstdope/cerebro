@@ -73,7 +73,7 @@ printf 'work: W\r\nheading: H\r\n=== option: one\r\ncost: c\r\nrecommended: r\r\
 run crlf.sheet
 [[ $rc -eq 0 ]] || fail "crlf: exit $rc: $err"
 lacks crlf.html $'\r' "crlf: carriage returns are dropped"
-has crlf.html "y" "crlf: a last line with no newline is kept"
+[[ "$(grep -cx 'y' crlf.html)" -eq 1 ]] || fail "crlf: a last line with no newline is kept"
 pass "a reason already prefixed, CRLF and a missing final newline are all taken as meant"
 
 # --- out, the file URL -------------------------------------------------------------------------

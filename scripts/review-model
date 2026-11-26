@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# Which `.cerebro/agents.conf' line the review sub-agent of one pull request runs on:
+#
+#     review-model <pr-number>
+#
+#     stdout  EXACTLY ONE LINE, in `scripts/agents-conf's own shapes (hit, miss or refused)
+#     stderr  why, in one sentence, whenever a `reviewer-small' line is declared, after `gh's own
+#             message when the size read failed
+#     exit    agents-conf's own (0, or 3 for a refused line); 2 for usage
+#
+# A project that declares a `reviewer-small' line has pull requests of at most SMALL_DIFF_LINES
+# changed lines (additions plus deletions) reviewed on it. Every other pull request, and every
+# project without the line, gets the `reviewer' lookup. Only a line keyed `reviewer-small' counts:
+# the `default' line agents-conf falls back to declares nothing about small diffs.
+#
+# A size that cannot be read takes the `reviewer' line: a failed read is never a small diff.
+#
+# The threshold is what was measured (cb-5uqs): up to 226 changed lines Sonnet 5.5 found what
+# Opus 5.5 blocked on bar one prose gap, and past 400 it missed two blocking defects.
+#
+# `gh' is asked from the caller's directory, so run this where `gh pr diff <n>' answers.
+set -euo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+SMALL_DIFF_LINES=200
+
+usage() {
+  echo "usage: review-model <pr-number>" >&2
+  exit 2
+}
+
+[[ $# -eq 1 && "$1" =~ ^[0-9]+$ ]] || usage
+pr="$1"
+
+say() { echo "review-model: $1" >&2 || true; }
+
+small_status=0
+small="$("$here/agents-conf" --role reviewer-small)" || small_status=$?
+case "$small" in
+  $'hit\treviewer-small\t'* | $'refused\tagents.conf ("reviewer-small"): '*) ;;
+  *) exec "$here/agents-conf" --role reviewer ;;
+esac
+
+lines=""
+if answer="$(gh pr view "$pr" --json additions,deletions)"; then
+  lines="$(jq -r '(.additions | numbers) + (.deletions | numbers)' <<<"$answer" 2>/dev/null)" || lines=""
+fi
+
+if [[ ! "$lines" =~ ^[0-9]+$ ]]; then
+  say "could not read the size of #$pr: the reviewer line"
+elif ((lines <= SMALL_DIFF_LINES)); then
+  say "#$pr has $lines changed lines, at most $SMALL_DIFF_LINES: the reviewer-small line"
+  printf '%s\n' "$small"
+  exit "$small_status"
+else
+  say "#$pr has $lines changed lines, more than $SMALL_DIFF_LINES: the reviewer line"
+fi
+
+exec "$here/agents-conf" --role reviewer

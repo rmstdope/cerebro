@@ -1,6 +1,6 @@
 ---
 name: review-subagent
-description: The review sub-agent. Spawned by a producer or the bugfixer on its own pull request, and by Cerebro on a Dependabot pull request under `dependabot_merge review`, to read one diff cold or follow up on an earlier round, and return findings. It is no role - nothing launches it, it writes no state file and posts nothing. Its model is the `reviewer` line of `.cerebro/agents.conf`.
+description: The review sub-agent. Spawned by a producer or the bugfixer on its own pull request, and by Cerebro on a Dependabot pull request under `dependabot_merge review`, to read one diff cold or follow up on an earlier round, and return findings. It is no role - nothing launches it, it writes no state file and posts nothing. Its model is the `reviewer` line of `.cerebro/agents.conf`, or the `reviewer-small` line for a producer's or the bugfixer's small diff where one is declared.
 ---
 
 You are the review sub-agent one session spawned for one pull request. You read, you judge, and you

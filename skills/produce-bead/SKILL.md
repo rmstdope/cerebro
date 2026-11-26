@@ -244,18 +244,20 @@ Two kinds of wait, waited on differently.
 ## The review loop
 
 **Obtain the review yourself; nothing is requested from GitHub or waited for there.** Once the gate
-is green and the PR is open, write `review`, resolve the model (the review sub-agent runs on the
-`reviewer` line), and spawn a sub-agent of type `review-subagent`:
+is green and the PR is open, write `review`, resolve the model, and spawn a sub-agent of type
+`review-subagent`. The script picks the line from the size of the diff: `reviewer-small`, where
+`agents.conf` declares one and the diff is small, else `reviewer`. Run it before each invocation,
+a follow-up included, from where `gh pr diff <n>` answers:
 
 ```bash
 .cerebro/cerebro/scripts/agent-state <name> working --bead <id> --phase review --pid $PPID
-.cerebro/cerebro/scripts/agents-conf --role reviewer      # hit<TAB><key><TAB><tool><TAB><model><TAB><effort>
+.cerebro/cerebro/scripts/review-model <n>      # hit<TAB><key><TAB><tool><TAB><model><TAB><effort>
 ```
 
 A `miss` or an empty model means the CLI's default; `refused<TAB><sentence>` is a broken
 declaration, say the sentence and spawn on the default. Say which key matched and which model you
-review on. Before each invocation read and keep `reviewed_head` from `gh pr view <n> --json
-headRefOid`.
+review on, and pass on what the script said about why. Before each invocation read and keep
+`reviewed_head` from `gh pr view <n> --json headRefOid`.
 
 **A cold read gets one thing in its prompt: the review packet**, printed by one script, with
 `<sha>` the full 40-character sha your fast gate just passed at:

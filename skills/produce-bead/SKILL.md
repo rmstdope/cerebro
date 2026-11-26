@@ -237,15 +237,15 @@ Two kinds of wait, waited on differently.
 
   Never by ending your turn, and never by a background task: nothing wakes you, and a turn ended
   against CI sits until somebody types.
-- **The `reviewer` sub-agent you spawned.** Its result is delivered, so do not sleep on it. Letting
+- **The `review-subagent` you spawned.** Its result is delivered, so do not sleep on it. Letting
   the turn end meanwhile is fine; ending your pass is not: your state stays `working --phase
   review`, and you never write `waiting` with a review outstanding.
 
 ## The review loop
 
 **Obtain the review yourself; nothing is requested from GitHub or waited for there.** Once the gate
-is green and the PR is open, write `review`, resolve the model, and spawn a sub-agent of type
-`reviewer`:
+is green and the PR is open, write `review`, resolve the model (the review sub-agent runs on the
+`reviewer` line), and spawn a sub-agent of type `review-subagent`:
 
 ```bash
 .cerebro/cerebro/scripts/agent-state <name> working --bead <id> --phase review --pid $PPID
@@ -257,9 +257,12 @@ declaration, say the sentence and spawn on the default. Say which key matched an
 review on. Before each invocation read and keep `reviewed_head` from `gh pr view <n> --json
 headRefOid`.
 
-**A cold read gets three things, and only these**: the diff (`gh pr diff <n>`), the bead
-(`bd show <id> --json`, the plan included), and `.cerebro/cerebro/agents/reviewer.md` as its
-checklist. **Never your reasoning.** `reviewer.md` tells the sub-agent which of it applies.
+**A cold read gets two things, and only these**: the diff (`gh pr diff <n>`) and the bead
+(`bd show <id> --json`, the plan included). **Never your reasoning.** Its checklist is its own
+definition, `.cerebro/cerebro/agents/review-subagent.md`, which the type loads: never paste it, or
+`agents/reviewer.md`, into the prompt. A session registers its agent types when it starts, so one
+started before that file reached its checkout cannot spawn the type: spawn a general-purpose
+sub-agent instead, told to read that file first and take it as its whole definition.
 
 **A follow-up review**, only when your answers warrant one, gets the two shas (the previous
 `reviewed_head` and the head now, so it takes the diff itself), the findings that round raised and

@@ -235,8 +235,9 @@ list — which is a default rather than a rule: nothing in the launcher or the f
 what an X-Man is, and a project whose builders are named for itself works exactly the same way.
 
 Each takes a bead that is ready to produce, in the worktree the fleet view prepared for it, writes
-its build and test design, works test-first, opens a PR, spawns a reviewer sub-agent and answers
-what it finds, waits for CI and merges through the pull request.
+its build and test design, works test-first, opens a PR, spawns a review sub-agent
+(`agents/review-subagent.md`) and answers what it finds, waits for CI and merges through the pull
+request.
 Then it reports itself `waiting` and **that session ends**: the fleet view keeps its buffer and
 starts a fresh one under the same name when there is another UX-agreed bead. They run on Sonnet,
 each with its own context.
@@ -464,7 +465,9 @@ One session, interactive, and it works a PR at a time:
 - **It reviews on five questions**: does the change do what it says, does it fit the architecture,
   are the regression tests enough (would they have failed before the change), what does it cost the
   application and the CI, and the rest a reviewer owes a project — dependencies, secrets, error
-  handling, docs, scope.
+  handling, docs, scope. They are the same five a producer's review sub-agent applies, written
+  once in `agents/review-subagent.md`; that file is the sub-agent's whole definition, so it does
+  not carry Cypher's session into every review the fleet runs on itself.
 - **It shows you every user-visible change, running.** Same discipline as Psylocke: prepare
   everything first, warm the build, check the port, ask whether you are ready, brief you, launch, and
   record your verdict in your words. A PR that touches nothing the audience sees skips this in one line.

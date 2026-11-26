@@ -260,7 +260,9 @@ headRefOid`.
 **A cold read gets two things, and only these**: the diff (`gh pr diff <n>`) and the bead
 (`bd show <id> --json`, the plan included). **Never your reasoning.** Its checklist is its own
 definition, `.cerebro/cerebro/agents/review-subagent.md`, which the type loads: never paste it, or
-`agents/reviewer.md`, into the prompt.
+`agents/reviewer.md`, into the prompt. A session registers its agent types when it starts, so one
+started before that file reached its checkout cannot spawn the type: spawn a general-purpose
+sub-agent instead, told to read that file first and take it as its whole definition.
 
 **A follow-up review**, only when your answers warrant one, gets the two shas (the previous
 `reviewed_head` and the head now, so it takes the diff itself), the findings that round raised and

@@ -235,7 +235,7 @@ list — which is a default rather than a rule: nothing in the launcher or the f
 what an X-Man is, and a project whose builders are named for itself works exactly the same way.
 
 Each takes a bead that is ready to produce, in the worktree the fleet view prepared for it, writes
-its build and test design, works test-first, opens a PR, spawns a reviewer sub-agent and answers
+its build and test design, works test-first, opens a PR, spawns a review sub-agent (`agents/review-subagent.md`) and answers
 what it finds, waits for CI and merges through the pull request.
 Then it reports itself `waiting` and **that session ends**: the fleet view keeps its buffer and
 starts a fresh one under the same name when there is another UX-agreed bead. They run on Sonnet,

@@ -129,8 +129,8 @@ were tuned against — read it before changing any role. Which names run which r
 | `qa`            | `agents/qa.md`          | —                    | files testing beads, never fixes; keeps the requirements and test architecture |
 
 `agents/review-subagent.md` is no role: it is the review sub-agent a producer, the bugfixer and
-Cerebro spawn on one pull request, on the `reviewer` line of `agents.conf`, and it holds the five
-review questions Cypher reads too.
+Cerebro spawn on one pull request, on the `reviewer` line of `agents.conf` (`scripts/review-model`
+may pick another for a small diff), and it holds the five review questions Cypher reads too.
 
 `skills/beads-workflow` is the substrate every role reads. `skills/project-definition` is loaded
 by no role; the navigator runs it by hand once in a blank consumer.
@@ -231,6 +231,8 @@ Each of these answers one question in one place. Add a caller, never a second co
 - `scripts/roster` — the fleet: built-in table, replaced whole by `.cerebro/roster.conf`.
 - `scripts/project-conf`, `scripts/app-paths` (which fails rather than guesses),
   `scripts/agents-conf`, `scripts/agent-cli` — the project's declarations.
+- `scripts/review-model` — which `agents.conf` line a pull request's review sub-agent runs on, and
+  how small a diff the declared `reviewer-small` line takes.
 - `scripts/launch <Name>` — the only way a session is started; runs `launch-preflight`, reads
   `agents.conf`, passes `hooks/` through `agent-hooks-env` and `--settings`. For a UX agent with
   `--bead` it puts `scripts/ux-brief`'s startup brief in the prompt, which `agree-experience` reads

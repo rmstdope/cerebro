@@ -205,6 +205,13 @@ default model and says
 `launch: external model "research" is unavailable; Beast will use Copilot's default model.` See
 [`docs/ui/cb-2fs-external-model.html`](ui/cb-2fs-external-model.html) for the agreed states.
 
+**The review a producer or the bugfixer spawns** runs on the `reviewer` key. Declare a
+`reviewer-small` line as well and a pull request of at most 200 changed lines is reviewed on that
+one instead (`scripts/review-model` decides); without it nothing changes. The threshold is
+measured, for Sonnet beside Opus (cb-5uqs): on diffs up to 226 lines Sonnet reported six of the
+seven findings Opus called blocking or worth fixing first, missing one gap in prose, and past 400
+lines it missed two blocking defects. It cost a little under half as much.
+
 ## Starting UX
 
 UX is started and supervised like the other interactive roles: the fleet view assigns one bead per

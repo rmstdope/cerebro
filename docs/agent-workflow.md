@@ -248,8 +248,8 @@ what an X-Man is, and a project whose builders are named for itself works exactl
 
 Each takes a bead that is ready to produce, in the worktree the fleet view prepared for it, writes
 its build and test design, works test-first, opens a PR, spawns a review sub-agent
-(`agents/review-subagent.md`) and answers what it finds, waits for CI and merges through the pull
-request.
+(`agents/review-subagent.md`) and answers what it finds, and hands the pull request to
+`scripts/ship`, which the fleet view runs: no model waits for CI or merges.
 Then it reports itself `waiting` and **that session ends**: the fleet view keeps its buffer and
 starts a fresh one under the same name when there is another UX-agreed bead. They run on Sonnet,
 each with its own context.
@@ -282,6 +282,20 @@ other open PR stale, and where the branch protection sets `strict` each of them 
 catch-up and a fresh CI run — and CI is
 where the browser suites actually run now, in parallel jobs producers no longer serialize behind
 locally. The orchestrator will say so if you ask for more, once, and then do as it is told.
+
+### Shipping
+
+Once a pull request's review is answered, the builder hands it over and its session ends. The
+supervising fleet view runs `scripts/ship --sweep` every minute, which for each handed bead (held
+on the board by `ship`, labelled `shipping`) waits for the checks, updates a branch GitHub reports
+behind, re-runs a failed job once, merges on green only the head the review covers, closes the bead
+and its parents and tidies the tree. A second red, a conflict, requested changes or a commit the
+review did not cover sends the bead back to a builder with a *Sent back from shipping* note. A
+closed pull request, a fourth return, the `merge` gate or six hours unmerged puts it in your queue
+with a *Parked by shipping* note. Nothing is drawn for it: `decisions.jsonl` has one `ship` line per
+act, `errors.jsonl` the failures. With no view sweeping for ten minutes the builder merges its own
+pull request; a view left running from before this shipped counts as none, so restart it. By hand:
+`.cerebro/cerebro/scripts/ship --sweep`.
 
 ### How involved you are
 
@@ -355,7 +369,8 @@ at all.
 
 It means *finish*, not *stop now* — for a builder mid-bead. Pressing `f` in the fleet view (or asking
 Cerebro) writes a stop flag; for one that has claimed something it is read when the producer
-reports `waiting` — bead merged, closed, worktree gone — and no fresh session starts in its place.
+reports `waiting` — pull request handed over, or bead closed — and no fresh session starts in its
+place.
 So a builder that has just claimed something will be a while yet. That is deliberate: killing one
 mid-bead leaves a claimed bead, a worktree and an open PR for you to unpick by hand. An **idle**
 builder — between beads, nothing claimed — is the one exception: it stops at once, since there is
@@ -376,7 +391,7 @@ If you genuinely want one gone this second, `k` — and then you have that clean
 
 ### What the builders learned
 
-A producer that hit something unexpected writes it up before it merges, as
+A producer that hit something unexpected writes it up before it hands its pull request over, as
 `docs/retrospectives/<bead id>.md`, riding in on that bead's own PR. Only surprises go in — a bead
 that went to plan leaves no file — so everything in that directory cost somebody time:
 
@@ -809,7 +824,8 @@ Honest numbers from building this repository's own harness:
   findings, then decides whether the resulting changes need another review and at what scope.
   Small, self-contained answers do not create a mandatory review loop.
 - **Nothing merges red or with unresolved review findings.** The `main` ruleset enforces the
-  former on the server; producers enforce the latter. A green Dependabot pull request is the one
+  former on the server, and `ship` merges only green; producers enforce the latter before handing
+  over, and `ship` merges no head their review does not cover. A green Dependabot pull request is the one
   merge without a review: Cerebro's sweep merges it, by the navigator's choice (cb-hpwc), unless
   the project declares `dependabot_merge review` (cb-au3o).
 - **Interactive agents cost nothing between passes** — the view ends them, producers included

@@ -119,8 +119,8 @@ were tuned against — read it before changing any role. Which names run which r
 | role            | agent file              | skill                | job                                     |
 |-----------------|-------------------------|----------------------|-----------------------------------------|
 | `ux`            | `agents/ux.md`          | `agree-experience`   | agrees what a person will see           |
-| `producer`      | `agents/producer.md`    | `produce-bead`       | designs, tests, builds, reviews and merges one agreed bead |
-| `bugfixer`      | `agents/bugfixer.md`    | `fix-bug`            | reproduces one bug bead with a test, fixes and merges |
+| `producer`      | `agents/producer.md`    | `produce-bead`       | designs, tests, builds and reviews one agreed bead, and hands it to `ship` |
+| `bugfixer`      | `agents/bugfixer.md`    | `fix-bug`            | reproduces one bug bead with a test, fixes and hands it to `ship` |
 | `orchestrator`  | `agents/orchestrator.md`| `write-bead`         | ranks, files beads, stops producers  |
 | `verifier`      | `agents/verifier.md`    | `verify-bead` (when `verification_skill` names it) | verifies merged beads with the navigator|
 | `reviewer`      | `agents/reviewer.md`    | —                    | reviews external PRs                    |
@@ -157,6 +157,9 @@ Load-bearing across files: a change to one must keep the others consistent with 
   merged by Cerebro through `scripts/dependabot-sweep` (cb-hpwc), unless the consumer declares
   `dependabot_merge review`, when Cerebro has a `review-subagent` read it first and merges it
   only with no findings (cb-au3o); a red one becomes a `bugfix` bead.
+- **A builder's pass ends at the hand-over** (cb-tbrh): `scripts/ship` merges, with no model, only
+  the head the review covers, and the supervising view runs its sweep. A builder merges itself only
+  when `ship` exits 3 (nobody is sweeping) or the pull request is the cerebro submodule's.
 - **Agents never decide the shape of what a user sees**; `ux` settles the detail inside a shape
   the navigator has agreed, and what its record leaves open a producer decides and writes into
   the plan's *Decided by me*, where the navigator can overrule it. The build and its tests are the
@@ -211,7 +214,7 @@ Rules a change must keep:
 - **The lease is a bound loopback listener and nothing else** — no pid file, no heartbeat, no
   timeout. `.cerebro/state/supervisor.json` is diagnosis only.
 - **Only a supervising view writes anything**: session starts and ends, the triage and sweep
-  lines, the worktree tidies, the logs, and the hosted sessions' output logs under
+  lines, the worktree tidies, the ship sweep, the logs, and the hosted sessions' output logs under
   `.cerebro/state/sessions/` (read by `cerebro-web`). Board writes (`x`, the priority keys, `a`) are the navigator's own
   act, run on the one write worker in the order pressed, and are deliberately outside the lease.
 - `ui::draw` reads no file, runs no program and asks no clock, so a `TestBackend` case is an
@@ -269,6 +272,9 @@ Each of these answers one question in one place. Add a caller, never a second co
 - `scripts/sweep-paused.sh`, `sweep-verdicts.sh`, `sweep-epics.sh`, `sweep-assignees.sh` — what
   the fleet view's Sweeps section finds, each held to `tests/lib/sweep-findings.json`;
   `scripts/verifier-epic-candidates` — when an epic family is Psylocke's to sweep.
+- `scripts/ship` — a reviewed pull request from a builder's hand-over to merged and closed, or back
+  on the board; `scripts/pr-ship.sh` — what a pull request's checks say, and a merge believed only
+  when GitHub says MERGED, shared with `ux-deliver`.
 - `scripts/bead-delivery.sh` — whether a bead's work reached the default branch.
 - `scripts/dependabot-sweep` — what happens to an open Dependabot pull request: merged when green
   (or, under `dependabot_merge review`, awaiting review, then `--merge` or `--hand-back`), one

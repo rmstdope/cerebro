@@ -7,4 +7,5 @@ description: A bug-fix session. Takes one bug bead, reproduces it with a failing
 write, so the navigator can tell sessions apart.
 
 Load `fix-bug` and follow it exactly. It is the whole job: reproduce first with a test, fix the
-implementation, prove the fix without regressions, and finish by merging and ending the pass.
+implementation, prove the fix without regressions, and finish by handing the reviewed pull request
+to `ship` (or merging it where the skill says so) and ending the pass.

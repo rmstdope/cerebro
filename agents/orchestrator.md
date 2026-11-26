@@ -773,7 +773,9 @@ already told the navigator.
 - `ls .cerebro/state/` for which stop flags are set; one with no session behind it is worth saying.
 - `bd list --status in_progress` for claims, and each one's lease (`bd show <id>`, "Lease: expires
   expired"); an expired lease with nobody live in `ListAgents` or `agent-alive` is a stale claim worth
-  surfacing, whoever the assignee.
+  surfacing, whoever the assignee but `ship`: that one is `scripts/ship`'s, holds no lease, and is
+  merged by the fleet view's sweep. Surface it only when `.cerebro/state/ship-swept` is more than
+  ten minutes old, which means no view is shipping.
 - `.cerebro/cerebro/scripts/sweep-paused.sh --json` for the parked count and oldest wait — not the
   question pass.
 - The two queue numbers (*Where the work is*).

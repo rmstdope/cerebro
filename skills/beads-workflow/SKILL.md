@@ -17,7 +17,8 @@ bd dolt pull                   # other machines' claims arrive only here
 bd show <id> --json            # scope, acceptance criteria, validation, the plan in `design`
 # the fleet view has already claimed it for you (scripts/assign-bead)
 bd heartbeat <id>              # at every phase gate, and before any long wait
-# build in the worktree the fleet view prepared, and merge, by produce-bead
+# build in the worktree the fleet view prepared, and hand the reviewed PR to `scripts/ship`, which
+# merges and closes it (produce-bead, *Shipping*); where you merge yourself:
 bd close <id> --reason "Delivered in PR #NN"
 # then close the parent if that was its last open child - see "Dependencies and breakdown"
 bd dolt push                   # back the bead database up to the remote
@@ -83,6 +84,8 @@ its header lists.
 | **being designed** | open, assigned to a `ux` agent, not `in_progress` | `scripts/assign-bead` | that agent only; it clears the assignee when its pass ends, or the fleet view does when the session dies |
 | **UX-agreed** | `ux:agreed`, unassigned | the `ux` agent (`agree-experience`) | a producer, through `scripts/assignable-beads`, claimed for it by the fleet view. An unclaimed bead that already has a `design` (with or without `planned`: every park removes the label, a crash does not) is a producer's returned plan and is resumed from that design |
 | **being produced** | `in_progress`, assignee is the producer | `scripts/assign-bead` | that producer only. It writes `design`, adds `planned` while keeping its claim, builds, merges, closes |
+| **being shipped** | `in_progress`, assignee `ship` (no agent), `shipping`, metadata `ship_pr`, `ship_head` | `scripts/ship <Name> <id> <pr> <head>`, by the builder as its pass ends | nobody: the supervising fleet view's `ship --sweep` merges it and closes it. Its claim holds no lease and is not stale |
+| **sent back from shipping** | open, unassigned, `shipping` gone, other labels as before, a `## Sent back from shipping` note | `ship --sweep`: red after one re-run, a conflict, requested changes or an unreviewed head | its builder queue: a producer, resuming from the design, or the bugfixer. A fourth return, a closed pull request, six hours unmerged or the `merge` gate adds `human` instead (`## Parked by shipping`) |
 | **waiting on the navigator** | open, unassigned, `human`, `planned` removed | any role escalating; `scripts/producer-park … scope` (`human` alone, never `needs-ui-decision`); a `ux` agent parking | nobody: `bd human list` and the fleet view's *Waiting on you*. Every candidate script excludes `human`. The fleet view's automatic unpause (blockers all closed) removes `human` alone; the navigator, or Cerebro's unpark, removes `human` and `pause:kept`; neither touches `needs-ui-decision` |
 | **sent back to UX** | `needs-ui-decision`, no stage label, no `human`, a `## Sent back to the UX stage` note; `verification:failed` may still be on it | `scripts/producer-park … ux`, or Cerebro's *Send it back to UX* | a `ux` agent, as an ordinary UX candidate (`stage-candidates ux` admits a failed bead on the `needs-ui-decision`); it amends the record and re-adds `ux:agreed` |
 | **parked on a UI question** | `needs-ui-decision` **and** `human`, no `ux:agreed` | a `ux` agent when nobody answered, or a second return of the same question | as *waiting on the navigator*; the unpark leaves `needs-ui-decision` on, which tells the next `ux` agent to resume from the notes, and that agent removes it when it records |

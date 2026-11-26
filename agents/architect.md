@@ -71,7 +71,9 @@ pid shows you dead; the navigator starts a second session over you.
 **A question through the question tool needs no write of your own.** `hooks/session-state.settings.json`
 (Copilot: `hooks/copilot/`) runs `scripts/agent-asking` around it: the file goes to `asking` with
 your bead and phase as the question opens, and back to what it was when it is answered or
-cancelled. Writing `asking` and `working` around it yourself only repeats the hook.
+cancelled (an `idle` comes back as `working`). Writing `asking` and `working` around it yourself
+only repeats the hook. Under Copilot the hook is read only in a folder Copilot trusts
+(`docs/providers/copilot.md`, M6b); a Copilot session that cannot tell writes both itself.
 
 **Any other question is three actions.** The hook sees only the question tool, so a question asked
 in prose, a wait on a port or a "say when", and a question that must show a phase other than the

@@ -146,23 +146,29 @@ const savedPath = (): string[] => {
   try { const value = JSON.parse(storage.get("cerebro-time-path") ?? "[]"); return Array.isArray(value) ? value.filter(item => typeof item === "string") : []; } catch { return []; }
 };
 
+/// A read fails as `outdated` when the service has no /api/time at all: a newer one answers 404,
+/// one built before the Time tab answers with the page itself. Retrying cannot mend either.
+type Failure = false | "read" | "outdated";
+
 /// The report for PERIOD, read now and once a minute. A failed read keeps what was last read; a
 /// new period keeps the old report on screen until its own arrives.
 function useTimeReport(period: Period) {
   const [report, setReport] = useState<TimeReport>();
-  const [failed, setFailed] = useState(false);
+  const [failed, setFailed] = useState<Failure>(false);
   const [shownPeriod, setShownPeriod] = useState<Period>();
   useEffect(() => {
     let live = true;
     const read = async () => {
+      let failure: Failure = "read";
       try {
         const response = await fetch(`/api/time?period=${period}`);
-        if (!response.ok) throw new Error(response.statusText);
+        if (response.status === 404 || (response.ok && response.headers.get("content-type")?.startsWith("text/html"))) failure = "outdated";
+        if (!response.ok || failure === "outdated") throw new Error(response.statusText);
         const body = await response.json() as TimeReport;
         if (!Array.isArray(body?.roles)) throw new Error("not a time report");
         if (live) { setReport(body); setShownPeriod(period); setFailed(false); }
       } catch {
-        if (live) setFailed(true);
+        if (live) setFailed(failure);
       }
     };
     void read();
@@ -350,7 +356,8 @@ export function TimeTab({ keys }: { keys: boolean }) {
     </div>
 
     {failed && <div role="alert" className="mb-2.5 rounded-md border border-red-300 bg-red-50 px-3 py-2 text-[13px] text-red-950 dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-200">
-      {report ? `Couldn't read the fleet's records just now. Showing what was read at ${clock(report.read_at)}. Trying again every minute.` : "Couldn't read the fleet's records just now. Trying again every minute."}
+      {failed === "outdated" ? "The console's service is older than this page and has no time report. Restart cerebro-web; this tab reads it within a minute."
+        : report ? `Couldn't read the fleet's records just now. Showing what was read at ${clock(report.read_at)}. Trying again every minute.` : "Couldn't read the fleet's records just now. Trying again every minute."}
     </div>}
     {detailGap && report?.detail_from && <div role="note" className="mb-2.5 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-[13px] text-amber-950 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
       Full detail from {dayMonth(report.detail_from)}. Before that, only which phase each agent was in is known.

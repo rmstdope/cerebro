@@ -410,6 +410,26 @@ async fn browser_paths_fall_back_to_the_application_shell() {
     );
 }
 
+/// A page newer than its service asks for an endpoint the service does not have: that is a 404,
+/// never the application shell, which the page would read as a failed read and retry forever.
+#[tokio::test]
+async fn an_unknown_api_path_is_not_found_rather_than_the_application_shell() {
+    let assets = tempfile::tempdir().unwrap();
+    std::fs::write(assets.path().join("index.html"), "browser shell").unwrap();
+    let router = service(assets.path().to_path_buf()).router();
+
+    for uri in ["/api/no-such-report", "/api/no/such/path?period=7d", "/api", "/api/"] {
+        let response = router.clone().oneshot(get(uri)).await.unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{uri}");
+        assert_eq!(response.headers()["content-type"], "application/json", "{uri}");
+        assert_ne!(
+            to_bytes(response.into_body(), usize::MAX).await.unwrap(),
+            "browser shell",
+            "{uri}"
+        );
+    }
+}
+
 fn service_at(shared_root: &std::path::Path) -> ReadOnlyService {
     ReadOnlyService::new(
         ReaderPaths {

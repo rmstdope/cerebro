@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+#
+# What a page made by scripts/ux-sheet does in a real headless Chromium (cb-buko).
+#
+#     CEREBRO_UX_SNAP_MODULES=web-console/ui bash tests/ux-sheet-render
+#
+# NOT `tests/ux-sheet-render.sh': like tests/ux-snap-render it needs a browser, so
+# tests/web-console-ui runs it. What the generator writes and refuses is tests/ux-sheet.sh.
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+: "${CEREBRO_UX_SNAP_MODULES:?set it to a directory Playwright resolves from, e.g. web-console/ui}"
+modules="$(cd "$CEREBRO_UX_SNAP_MODULES" && pwd)"
+
+work="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/ux-sheet-render.XXXXXX")" && pwd -P)"
+trap 'rm -rf "$work"' EXIT
+
+# Four long names, so a phone cannot fit the tabs; A carries a text field and a hostile global rule.
+cat >"$work/four.sheet" <<'SPEC'
+work: Where the fleet's time went
+heading: Which layout do we build on?
+
+<style>section{display:block} h2{font-size:40px} button{background:#000}</style>
+=== option: tiles sized by time
+cost: Every role is one tile.
+<p>the drawing of A</p><input id="field" value="text"><button id="control">mock</button>
+=== option: bars, longest first
+cost: Easier to compare.
+recommended: the usual way.
+<p>the drawing of B</p>
+=== option: a table with numbers
+cost: Exact.
+<p>the drawing of C</p>
+=== option: one line for every role
+cost: Long.
+<p>the drawing of D</p>
+SPEC
+"$repo_root/scripts/ux-sheet" "$work/four.sheet" >/dev/null
+"$repo_root/scripts/ux-sheet" "$work/four.sheet" --agreed D --out "$work/kept.html" >/dev/null
+
+node "$repo_root/tests/lib/ux-sheet-render.cjs" "$modules" "$work/four.html" "$work/kept.html"
+echo "ux-sheet-render: green"

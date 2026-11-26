@@ -14,6 +14,8 @@
 # STDOUT IS THE REPORT, one line per target and width, `<target> @<width>  <png>  ok' or
 # `... <n> finding(s)' with each finding indented beneath it (`overflow:', `broken image:',
 # `console error:'), then `ux-snap: <renders> render(s), <findings> finding(s); PNGs in <dir>'.
+# A tabbed scripts/ux-sheet page shows one tab at a time, so it gets one render and PNG per tab,
+# named in the line: `<target> @<width> [<tab>]  <png>  ok'.
 # A UX agent reads the report and then Reads the PNGs it names, in one call. Everything else goes
 # to stderr.
 #

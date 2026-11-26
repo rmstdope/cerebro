@@ -209,6 +209,21 @@ else
   fail "relative modules: exit $rc; stderr: $(cat "$work/rel.err")"
 fi
 
+# --- a page with tabs: every tab is rendered -------------------------------------------------
+printf 'work: W\nheading: H\n=== option: narrow\ncost: c\nrecommended: r\n<p>a</p>\n=== option: wide\ncost: c\n<div id="table" style="width:700px;height:20px">x</div>\n' >"$work/tabs.sheet"
+"$repo_root/scripts/ux-sheet" "$work/tabs.sheet" >/dev/null
+run tabs --widths 390 --out "$work/o-tabs" "$work/tabs.html"
+if expect_rc tabs 3; then
+  a="$(grep '@390 \[A\] ' <<<"$out" || true)"
+  b="$(grep -A3 '@390 \[B\] ' <<<"$out" || true)"
+  if [[ "$a" == *" ok" && "$b" == *"overflow:"*"div#table"* && $(find "$work/o-tabs" -name '*.png' | wc -l) -eq 2 ]] &&
+    grep -q '^ux-snap: 2 render(s), 1 finding(s)' <<<"$out"; then
+    ok "a tabbed page gives a render and a PNG per tab, and a finding is on its own tab"
+  else
+    fail "tabs: wanted A ok, B overflowing and 2 renders: $out"
+  fi
+fi
+
 if [[ $failures -ne 0 ]]; then
   echo "ux-snap-render: $failures failure(s)" >&2
   exit 1

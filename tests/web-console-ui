@@ -46,6 +46,10 @@ echo "-- ux-snap"
 # installed above, so nothing is downloaded twice.
 CEREBRO_UX_SNAP_MODULES="$ui" bash "$repo_root/tests/ux-snap-render"
 
+echo "-- ux-sheet"
+# The tabs of a scripts/ux-sheet page, in the same browser (cb-buko).
+CEREBRO_UX_SNAP_MODULES="$ui" bash "$repo_root/tests/ux-sheet-render"
+
 echo "-- build cerebro-web"
 # Built ahead, so the suite's webServer start is a launch and not a cold compile against its timeout.
 (cd "$repo_root" && cargo build -p cerebro-web --locked)

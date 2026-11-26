@@ -217,6 +217,11 @@ For small work it asks first whether to skip them. The final sheet is kept in `d
 the drawing, the agreed idea circled. Absent or `off`, a session runs as it always has (cb-icwi,
 an experiment; the look is [`docs/ui/cb-icwi-concept-sketches.html`](ui/cb-icwi-concept-sketches.html)).
 
+A detailed drawing is one page per question, the options behind named tabs that open on A, under a
+shared header; you get one link for it, and the copy kept in `docs/ui/` keeps every tab with your
+choice tagged `Agreed`. The session writes a short spec and `scripts/ux-sheet` makes the page
+(cb-buko; the look is [`docs/ui/cb-buko-tabs.html`](ui/cb-buko-tabs.html)).
+
 ## Starting producers
 
 **You** start producers — one session each, `s` in the fleet view or `launch <Name>` in a

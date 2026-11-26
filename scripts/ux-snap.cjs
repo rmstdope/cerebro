@@ -5,6 +5,7 @@
 // exit 0 clean, 3 at least one finding, 4 Playwright's browser is not installed, 1 anything else.
 // A target that would not load is a finding (`load failed:'), and its line says `no PNG' in place
 // of a path, so a caller never Reads a file that was not written.
+// A page scripts/ux-sheet made shows one tab at a time, so it is rendered once per tab.
 // CommonJS so Playwright can be resolved from a directory that is not this file's own.
 "use strict";
 
@@ -74,7 +75,6 @@ async function renderOne(browser, url, width, index) {
   const phone = width <= PHONE_MAX;
   const context = await browser.newContext({ viewport: { width, height }, isMobile: phone, hasTouch: phone });
   const page = await context.newPage();
-  const findings = [];
   const brokenUrls = new Set();
   page.on("console", (msg) => {
     if (msg.type() === "error") consoleErrors.push({ text: msg.text(), url: msg.location().url });
@@ -87,30 +87,53 @@ async function renderOne(browser, url, width, index) {
     if (res.request().resourceType() === "image" && res.status() >= 400) brokenUrls.add(res.url());
   });
 
-  let png = path.join(outDir, `${index}-${slug(url)}-${width}.png`);
+  const shots = [];
+  const reported = new Set();
+  // What has gone wrong since the last shot. Chromium also logs every failed image as "Failed to
+  // load resource"; the broken image line already says it, with the file's name.
+  const drain = (findings) => {
+    for (const e of consoleErrors.splice(0)) {
+      if (/^Failed to load resource/.test(e.text) && brokenUrls.has(e.url)) continue;
+      findings.push(`console error: ${e.text}`);
+    }
+    for (const src of brokenUrls) {
+      if (!reported.has(src)) findings.push(`broken image: ${src}`);
+      reported.add(src);
+    }
+  };
+  const stem = path.join(outDir, `${index}-${slug(url)}-${width}`);
+  let findings = [];
+  let current = null;
   try {
     await page.goto(url, { waitUntil: "load", timeout: 30000 });
     await page.waitForLoadState("networkidle", { timeout: 3000 }).catch(() => {});
-    const seen = await page.evaluate(inspectPage, width);
-    if (seen.sw > seen.vw) {
-      const who = seen.wide.map((w) => `${w.name} ${w.width}px`).join(", ") || "no single element";
-      findings.push(`overflow: page lays out ${seen.sw}px wide on a ${seen.vw}px screen (widest: ${who})`);
+    const tabs = await page.evaluate(() =>
+      [...document.querySelectorAll(".ux-tabs > [data-ux-tab]")].map((t) => t.dataset.uxTab),
+    );
+    for (const tab of tabs.length > 1 ? tabs : [null]) {
+      current = tab;
+      if (tab !== null) {
+        await page.evaluate((k) => document.querySelector(`.ux-tabs > [data-ux-tab="${k}"]`).click(), tab);
+      }
+      const seen = await page.evaluate(inspectPage, width);
+      if (seen.sw > seen.vw) {
+        const who = seen.wide.map((w) => `${w.name} ${w.width}px`).join(", ") || "no single element";
+        findings.push(`overflow: page lays out ${seen.sw}px wide on a ${seen.vw}px screen (widest: ${who})`);
+      }
+      for (const src of seen.broken) brokenUrls.add(src);
+      const png = tab === null ? `${stem}.png` : `${stem}-${tab}.png`;
+      await page.screenshot({ path: png, fullPage: true });
+      drain(findings);
+      shots.push({ tab, png, findings });
+      findings = [];
     }
-    for (const src of seen.broken) brokenUrls.add(src);
-    await page.screenshot({ path: png, fullPage: true });
   } catch (err) {
     findings.push(`load failed: ${String(err.message || err).split("\n")[0]}`);
-    png = null;
+    drain(findings);
+    shots.push({ tab: current, png: null, findings });
   }
-  // Chromium also logs every failed image as "Failed to load resource"; the broken image line
-  // already says it, with the file's name.
-  for (const e of consoleErrors) {
-    if (/^Failed to load resource/.test(e.text) && brokenUrls.has(e.url)) continue;
-    findings.push(`console error: ${e.text}`);
-  }
-  for (const src of brokenUrls) findings.push(`broken image: ${src}`);
   await context.close();
-  return { png, findings };
+  return shots;
 }
 
 async function main() {
@@ -137,12 +160,14 @@ async function main() {
     for (const url of urls) {
       index += 1;
       for (const width of widths) {
-        const { png, findings } = await renderOne(browser, url, width, index);
-        renders += 1;
-        total += findings.length;
-        const verdict = findings.length === 0 ? "ok" : `${findings.length} finding(s)`;
-        console.log(`${url} @${width}  ${png || "no PNG"}  ${verdict}`);
-        for (const f of findings) console.log(`    ${f}`);
+        for (const { tab, png, findings } of await renderOne(browser, url, width, index)) {
+          renders += 1;
+          total += findings.length;
+          const verdict = findings.length === 0 ? "ok" : `${findings.length} finding(s)`;
+          const which = tab === null ? "" : ` [${tab}]`;
+          console.log(`${url} @${width}${which}  ${png || "no PNG"}  ${verdict}`);
+          for (const f of findings) console.log(`    ${f}`);
+        }
       }
     }
   } finally {

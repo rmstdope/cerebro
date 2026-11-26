@@ -11,7 +11,7 @@ pnpm --dir web-console/ui dev
 Open <http://127.0.0.1:5173>. Vite proxies `/api` requests to the Rust service at
 `http://127.0.0.1:7171`.
 
-The page has two tabs, in a dark and a light theme (the button top right; the first visit follows
+The page has three tabs, in a dark and a light theme (the button top right; the first visit follows
 the system). **Fleet** lists the agents down the side, live ones first, each with a status dot, its
 bead and how long it has been in its phase; the chosen agent's CLI session fills the rest. The up and down arrows move the choice through the list as it is drawn, and the session with it, unless a field or a session's screen has the keyboard. With nobody chosen it shows whoever is asking, else working. **Work** is the board in
 five lanes, searchable, filterable by type and priority, and grouped by epic: a bead's epic is its
@@ -26,6 +26,22 @@ the overview (every fact and its dependencies), each of its texts rendered as ma
 stays text) and the raw JSON, with the arrow keys moving between tabs. It is read on opening through `GET /api/beads/<id>` (a 502 carrying the reason
 when `bd` fails). An agent that is asking, or
 a bead waiting for human input, is named in a banner above both tabs.
+
+**Time** shows where the fleet's time went, as tiles whose area is time. They show all roles first, then a
+role's agents, then an agent's phases, and each phase lists what the agent was doing in it. The
+path above the tiles goes back up, and so do `Esc` and `Backspace`. The arrow keys move the
+selection and `Enter` goes in. The period is 24 hours, 7 days, 30 days or all. It and the level
+are remembered in `localStorage`. Time spent `asking`, waiting on the navigator, is the hatched
+band along each tile's bottom. Below 600 px the tiles become a list of bars. The page reads
+`GET /api/time?period=24h|7d|30d|all` once a minute. That answers from
+`.cerebro/state/transitions.jsonl` (each agent's state and phase), the `start`, `end`, `exit` and
+`retire` events of `decisions*.jsonl` (each session's role and end) and the sessions' transcripts.
+The transcripts are read from `.cerebro/state/transcripts/` and from Claude Code's own
+`~/.claude/projects/<root>/` (`CLAUDE_CONFIG_DIR` moves it). Only `working` and `asking` count.
+One unbroken `working` stretch counts for at most 8 hours, since a longer one is a session that
+died without its end being recorded. What an agent did inside a phase is known only from the first
+transcript on, and the page says so for a period that reaches further back. A read that fails is a
+502 carrying why, and the page keeps the tiles it last read.
 
 The UI is React with Tailwind v4 and shadcn/ui on Base UI; the generated components live in
 `ui/src/components/ui/` and are ours to edit (`pnpm dlx shadcn@latest add <name>` adds another).

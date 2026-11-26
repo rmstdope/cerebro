@@ -8,9 +8,11 @@ import { type Agent, type Work, epicOf, running, since, stateOf, useNow, useSnap
 import { AgentPane, FleetSidebar } from "./fleet";
 import { Palette, offersFor, typingInto, unsupervised, useLifecycle } from "./actions";
 import { BeadDialog, WorkBoard, lanesOf } from "./work";
+import { TimeTab } from "./time";
 import "./index.css";
 
-type Tab = "fleet" | "work";
+type Tab = "fleet" | "work" | "time";
+const tabs: Tab[] = ["fleet", "work", "time"];
 const notice = "This page lets you inspect the fleet and its work. " + unsupervised;
 const controlling = "Start, finish and kill (s, f, k, or ⌘K) are done by the fleet view supervising this checkout. Assign and priority controls stay in the terminal console.";
 
@@ -47,7 +49,7 @@ const firstAgent = (agents: Agent[]) => agents.find(agent => stateOf(agent) === 
   ?? agents.find(agent => stateOf(agent) === "working") ?? agents.find(running) ?? agents[0];
 
 function App() {
-  const [tab, setTab] = useState<Tab>(() => sessionStorage.getItem("cerebro-tab") === "work" ? "work" : "fleet");
+  const [tab, setTab] = useState<Tab>(() => tabs.find(name => name === sessionStorage.getItem("cerebro-tab")) ?? "fleet");
   const fleet = useSnapshot<Agent[]>("/api/fleet");
   const work = useSnapshot<Work>("/api/work");
   const [refreshing, setRefreshing] = useState(false);
@@ -111,7 +113,7 @@ function App() {
       <header className="flex h-14 shrink-0 items-center gap-4 border-b px-5 md:gap-6">
         <h1 className="flex items-center gap-2 text-base font-semibold"><BrainCircuit className="size-5 text-primary" />Cerebro</h1>
         <nav aria-label="Console sections" className="flex items-center gap-1 rounded-lg border bg-muted/50 p-1 text-sm">
-          {(["fleet", "work"] as const).map(name => <button key={name} onClick={() => show(name)} aria-current={tab === name ? "page" : undefined}
+          {tabs.map(name => <button key={name} onClick={() => show(name)} aria-current={tab === name ? "page" : undefined}
             className={cn("rounded-md px-3 py-1 capitalize transition-colors", tab === name ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}>{name}</button>)}
         </nav>
         <div className="ml-auto flex items-center gap-3 text-sm text-muted-foreground">
@@ -163,6 +165,8 @@ function App() {
       {tab === "work" && (!work.snapshot ? <p className="p-5 text-sm text-muted-foreground">Loading work…</p>
         : !board ? <p className="p-5 text-sm">Couldn’t load work. Try refreshing this page.</p>
         : <WorkBoard work={board} agents={agents} onOpen={setOpenBead} onChanged={work.refresh} keys={!palette && !lifecycle.asking && bead === undefined} />)}
+
+      {tab === "time" && <TimeTab keys={!palette && !lifecycle.asking && bead === undefined} />}
 
       {lifecycle.dialog}
       <Palette open={palette} agents={agents} selected={agent?.name} supervised={supervised} onClose={() => setPalette(false)}

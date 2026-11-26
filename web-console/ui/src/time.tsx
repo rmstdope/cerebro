@@ -59,15 +59,18 @@ const dayMonth = (iso: string) => new Date(iso).toLocaleDateString("en-GB", { da
 const clock = (iso: string) => new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
 const total = (node: { working: number; waiting: number }) => node.working + node.waiting;
 
-function tree(report: TimeReport): Node {
+/// The report as tiles. Without WAITING, the time waiting on the navigator counts for nothing: the
+/// tiles are sized by working time alone, and one that only waited is gone.
+function tree(report: TimeReport, waiting: boolean): Node {
+  const kept = (seconds: number) => waiting ? seconds : 0;
   const roles = report.roles.map((role): Node => ({
-    name: role.name, label: role.name, kind: "role", working: role.working, waiting: role.waiting, sessions: role.sessions,
+    name: role.name, label: role.name, kind: "role", working: role.working, waiting: kept(role.waiting), sessions: role.sessions,
     colour: colourOf(roleColours, role.name), childKind: "agents",
     children: role.agents.map((agent): Node => ({
-      name: agent.name, label: agent.name, kind: "agent", working: agent.working, waiting: agent.waiting, sessions: agent.sessions,
+      name: agent.name, label: agent.name, kind: "agent", working: agent.working, waiting: kept(agent.waiting), sessions: agent.sessions,
       colour: colourOf(roleColours, role.name), childKind: "phases",
       children: agent.phases.map((phase): Node => ({
-        name: phase.name, label: phaseLabel(phase.name), kind: "phase", working: phase.working, waiting: phase.waiting,
+        name: phase.name, label: phaseLabel(phase.name), kind: "phase", working: phase.working, waiting: kept(phase.waiting),
         colour: colourOf(phaseColours, phase.name), children: [], phase,
       })),
     })),
@@ -142,6 +145,7 @@ const storage = {
   set(key: string, value: string) { try { localStorage.setItem(key, value); } catch { /* a convenience only */ } },
 };
 const savedPeriod = (): Period => { const value = storage.get("cerebro-time-period"); return periods.some(([key]) => key === value) ? value as Period : "7d"; };
+const savedWaiting = () => storage.get("cerebro-time-waiting") === "1";
 const savedPath = (): string[] => {
   try { const value = JSON.parse(storage.get("cerebro-time-path") ?? "[]"); return Array.isArray(value) ? value.filter(item => typeof item === "string") : []; } catch { return []; }
 };
@@ -247,13 +251,13 @@ function activityLines(phase: TimePhase, detailFrom: string | null, roomy: boole
   return lines;
 }
 
-function PointingBox({ node, whole, style }: { node: Node; whole: number; style: CSSProperties }) {
+function PointingBox({ node, whole, waiting, style }: { node: Node; whole: number; waiting: boolean; style: CSSProperties }) {
   const share = whole ? Math.round(total(node) / whole * 100) : 0;
   const hint = node.kind === "role" ? "Click to see its agents" : node.kind === "agent" ? "Click to see its phases" : node.kind === "other" ? "Click to see them" : undefined;
   return <div role="tooltip" style={style} className="pointer-events-none absolute z-20 w-56 rounded-md bg-zinc-900 px-3 py-2 text-xs leading-relaxed text-white shadow-lg">
     <div className="font-semibold break-words">{node.label}</div>
     <div>{hours(total(node))} h · {share}% of all time</div>
-    <div>{hours(node.working)} h working · {hours(node.waiting)} h waiting on you</div>
+    {waiting && <div>{hours(node.working)} h working · {hours(node.waiting)} h waiting on you</div>}
     {node.kind === "role" && <div>{node.children.length} agents · {node.sessions ?? 0} sessions</div>}
     {node.kind === "agent" && <div>{node.sessions ?? 0} sessions</div>}
     {hint && <div className="opacity-70">{hint}</div>}
@@ -263,6 +267,7 @@ function PointingBox({ node, whole, style }: { node: Node; whole: number; style:
 export function TimeTab({ keys }: { keys: boolean }) {
   const [period, setPeriod] = useState<Period>(savedPeriod);
   const [path, setPath] = useState<string[]>(savedPath);
+  const [waiting, setWaiting] = useState(savedWaiting);
   const { report, failed, shownPeriod } = useTimeReport(period);
   const narrow = useNarrow();
   const [selectedName, setSelectedName] = useState<string>();
@@ -277,7 +282,7 @@ export function TimeTab({ keys }: { keys: boolean }) {
   const pressTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const pressed = useRef(false);
 
-  const root = useMemo(() => report && tree(report), [report]);
+  const root = useMemo(() => report && tree(report, waiting), [report, waiting]);
   const trail = root ? walk(root, path) : [];
   const here = trail[trail.length - 1];
   const tiles = here ? tilesOf(here) : [];
@@ -296,6 +301,7 @@ export function TimeTab({ keys }: { keys: boolean }) {
   const down = (node: Node) => { if (node.kind !== "phase") go([...trail.slice(1).map(item => item.name), node.name]); };
   const up = () => { if (trail.length > 1) go(trail.slice(1, -1).map(item => item.name), here.name); };
   const choosePeriod = (next: Period) => { setPeriod(next); storage.set("cerebro-time-period", next); };
+  const chooseWaiting = (next: boolean) => { setWaiting(next); storage.set("cerebro-time-waiting", next ? "1" : "0"); };
 
   const state = useRef({ keys, tiles, rects, selected, narrow, down, up });
   state.current = { keys, tiles, rects, selected, narrow, down, up };
@@ -307,9 +313,9 @@ export function TimeTab({ keys }: { keys: boolean }) {
       if (!tiles.length) return;
       if (event.key === "Enter") {
         // A focused period button or path link does its own work; Enter goes into a tile only
-        // from the tiles or from nothing in particular.
+        // from the tiles, from nothing in particular or from the checkbox, which has none.
         const target = event.target instanceof Element ? event.target : null;
-        if (target?.closest("button, a, input, select, textarea") && !target.closest("[data-time-tiles]")) return;
+        if (target?.closest("button, a, input:not([type=checkbox]), select, textarea") && !target.closest("[data-time-tiles]")) return;
         event.preventDefault();
         down(tiles[selected]);
         return;
@@ -349,7 +355,11 @@ export function TimeTab({ keys }: { keys: boolean }) {
           : <span key={index}>{index > 0 && <span aria-hidden className="px-1 text-muted-foreground">›</span>}<button type="button" onClick={() => go(trail.slice(1, index + 1).map(item => item.name), trail[index + 1]?.name)}
               className="text-primary hover:underline">{node.kind === "other" ? OTHER : node.label}</button></span>)}
       </nav>
-      <div role="radiogroup" aria-label="Period" className="ml-auto flex overflow-hidden rounded-md border text-[13px]">
+      <label className="ml-auto flex cursor-pointer items-center gap-1.5 text-[13px]">
+        <input type="checkbox" checked={waiting} onChange={event => chooseWaiting(event.target.checked)} className="size-3.5 accent-foreground" />
+        Waiting on you
+      </label>
+      <div role="radiogroup" aria-label="Period" className="flex overflow-hidden rounded-md border text-[13px]">
         {periods.map(([key, label]) => <button key={key} type="button" role="radio" aria-checked={period === key} onClick={() => choosePeriod(key)}
           className={cn("border-l px-2.5 py-1 first:border-l-0", period === key ? "bg-foreground text-background" : "hover:bg-muted")}>{label}</button>)}
       </div>
@@ -362,7 +372,7 @@ export function TimeTab({ keys }: { keys: boolean }) {
     {detailGap && report?.detail_from && <div role="note" className="mb-2.5 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-[13px] text-amber-950 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
       Full detail from {dayMonth(report.detail_from)}. Before that, only which phase each agent was in is known.
     </div>}
-    {here && !empty && <p className="pb-2.5 text-[13px] text-muted-foreground">{hours(total(here))} h in all · {hours(here.waiting)} h of it waiting on you (grey)</p>}
+    {here && !empty && <p className="pb-2.5 text-[13px] text-muted-foreground">{waiting ? `${hours(total(here))} h in all · ${hours(here.waiting)} h of it waiting on you (grey)` : `${hours(here.working)} h working`}</p>}
 
     {empty ? <div className="flex h-52 flex-col items-center justify-center rounded-lg border-2 border-dashed text-center text-sm text-muted-foreground">
       {emptyWords.map(line => <span key={line}>{line}</span>)}
@@ -378,11 +388,11 @@ export function TimeTab({ keys }: { keys: boolean }) {
             <span className="w-24 shrink-0 truncate">{node.label}</span>
             <span className="flex min-w-0 flex-1">
               <span className="h-3.5 rounded-l-sm" style={{ width: `${node.working / scale * 100}%`, background: node.colour }} />
-              <span className="h-3.5 rounded-r-sm" style={{ width: `${node.waiting / scale * 100}%`, background: hatch }} />
+              {node.waiting > 0 && <span className="band h-3.5 rounded-r-sm" style={{ width: `${node.waiting / scale * 100}%`, background: hatch }} />}
             </span>
             <span className="shrink-0 tabular-nums">{hours(total(node))} h</span>
           </button>
-          {pointNode?.name === node.name && <PointingBox node={node} whole={whole} style={{ right: 8, top: "100%" }} />}
+          {pointNode?.name === node.name && <PointingBox node={node} whole={whole} waiting={waiting} style={{ right: 8, top: "100%" }} />}
         </li>;
       })}
     </ul>
@@ -411,7 +421,7 @@ export function TimeTab({ keys }: { keys: boolean }) {
       {pointNode && rects[tiles.indexOf(pointNode)] && (() => {
         const rect = rects[tiles.indexOf(pointNode)];
         const left = Math.min(rect.x + 12, Math.max(0, size.w - 232));
-        return <PointingBox node={pointNode} whole={whole} style={{ left, top: Math.min(rect.y + 40, Math.max(0, size.h - 120)) }} />;
+        return <PointingBox node={pointNode} whole={whole} waiting={waiting} style={{ left, top: Math.min(rect.y + 40, Math.max(0, size.h - 120)) }} />;
       })()}
     </div>}
   </div>;

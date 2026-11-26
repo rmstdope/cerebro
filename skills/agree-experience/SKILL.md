@@ -130,31 +130,17 @@ or another's.
 - **An answer that engages only with your prose, or comes back faster than a look would take**,
   gets one "did you see it?".
 
-The chosen drawing goes to `docs/ui/` in a `docs(<bead>): mockup` pull request from your own
-worktree (below), and the record names its path on main. Once CI is green, check the diff and
-merge it yourself, with no review sub-agent:
-
-```bash
-gh pr merge <n> --squash --delete-branch
-```
-
-That holds only while the diff is confined to `docs/` and matches what the designer saw;
-otherwise it is a normal reviewed pull request under the consumer's root `CLAUDE.md`.
+The chosen drawing goes to `docs/ui/` in a `docs(<bead>): mockup` pull request, and the record
+names its path on main. `ux-deliver` (*Recording it*) makes that pull request, waits for its
+checks and merges it with no review sub-agent, which holds only because the diff is confined to
+`docs/` and matches what the designer saw: the script refuses a branch carrying anything else.
 
 ## Anything you commit, you commit from a worktree of your own
 
-Never branch in the main checkout: it moves someone else's HEAD. The one recipe every role uses:
-
-```bash
-.cerebro/cerebro/scripts/prepare-worktree --path .cerebro/worktrees/<id>-mockup \
-  --branch <id>-mockup --from origin/main
-cd <repo>/.cerebro/worktrees/<id>-mockup
-```
-
-Only under `.cerebro/worktrees/`: `bd` and cargo find their configuration by walking up. The
-`-mockup` suffix keeps the path free for the producer's worktree. Install no dependencies. Once
-merged, remove it from the main checkout, as *Ending a pass* says. Check `pwd` before every git
-command: a shell's directory persists.
+Never branch in the main checkout: it moves someone else's HEAD. `ux-deliver` makes your tree at
+`.cerebro/worktrees/<id>-mockup` on branch `<id>-mockup` (the suffix keeps the path free for the
+producer's), commits from it, and removes it once the drawing is merged; you never `cd` into it.
+Run the script from the consumer root.
 
 The plan headings, *Decided by me* and the build are the producer's; you write five headings in
 `acceptance` and nothing else.
@@ -374,10 +360,10 @@ your own wording are yours. Else ask what a post-ship fix costs; still unclear, 
 
 ## Recording it
 
-**Commit the drawing first**, per *Anything you commit…*, so the record names a path on main.
-With sketches on and an idea agreed, the kept sheet goes in the same commit and *The mockup* names
-both paths; work whose sketches were skipped names the drawing alone (*Sketching the idea first*). Then
-write the record to a file, in this order:
+Write the record to a file, in this order. *The mockup* names the drawing's path on main,
+`docs/ui/<name>`, which is where `ux-deliver` puts it. With sketches on and an idea agreed, the
+kept sheet goes in the same pull request and *The mockup* names both paths; work whose sketches
+were skipped names the drawing alone (*Sketching the idea first*).
 
 ```markdown
 ## The agreed experience
@@ -387,26 +373,26 @@ write the record to a file, in this order:
 ## The mockup
 ```
 
-**Show nothing and ask nothing.** Check it is still yours, immediately before writing:
+**Show nothing and ask nothing.** Then deliver it, in one call from the consumer root, with a
+Bash timeout of ten minutes:
 
 ```bash
 bd dolt pull
-bd show <id> --json | jq -r '(if type=="array" then .[0] else . end).assignee // ""'
+.cerebro/cerebro/scripts/ux-deliver <your-name> --bead <id> --acceptance /tmp/ux-<id>.md \
+  --mockup <scratchpad>/<chosen drawing>.html=<id>-<name>.html \
+  --mockup <scratchpad>/<id>-sketches-<round>.html=<id>-sketches.html
 ```
 
-**Write only if it prints your name.** Otherwise say in one line you lost it and what was agreed,
-give the failure message (*somebody else is already working on this piece of work*), and end the
-pass, worktree removal included.
+The second `--mockup` only with sketches on and an idea agreed. It commits the drawings to
+`docs/ui/`, merges their pull request once its checks pass, and only then records the acceptance,
+marks it agreed, hands it on (the label policy's `agree_experience` hand-off, which also clears
+`needs-ui-decision` and `plan:revise`) and removes the worktree. Read its exit status:
 
-```bash
-bd update <id> --acceptance "$(cat /tmp/ux-<id>.md)"
-bd update <id> --add-label ux:agreed --assignee "" --remove-label needs-ui-decision --remove-label plan:revise
-bd dolt push
-```
-
-**Quoted**: there is no `--acceptance-file` or stdin form, and unquoted it word-splits. The two label
-removals are no-ops on a piece of work that was never parked or never came back from a verification;
-leave them in, since a `plan:revise` that stays keeps the bead a candidate for this stage for ever.
+- `0`: filed.
+- `3`: the checks are still running. Run **the same command** again; it carries on where it
+  stopped. Never read the checks or debug CI yourself.
+- `1`: it refused, and its last stderr line names the step (`ux-deliver: <step>: <why>`). Nothing
+  was recorded unless the step is `cleanup`. Go to *When something fails*.
 
 Close with this (italics: the work in the product's words, never the filed title):
 
@@ -436,7 +422,8 @@ changes.
 None.
 ```
 
-Then the same updates and push; nothing-is-waiting if nothing else waits.
+Then the same `ux-deliver` call with no `--mockup`: no drawing, so no pull request, only the
+record. Nothing-is-waiting if nothing else waits.
 
 ## When something fails
 
@@ -455,9 +442,12 @@ Three parts, in order: their language, the detail dim beneath, **the full record
 
 | What failed | What you say |
 |---|---|
-| `bd update` or `bd dolt push` refused | the shared task list wouldn't accept the update |
-| the drawing could not be committed or merged | the drawing couldn't be saved |
-| the piece of work is assigned to somebody else | somebody else is already working on this piece of work |
+| `ux-deliver` refused at `record` (the update or the push) | the shared task list wouldn't accept the update |
+| `ux-deliver` refused at `worktree`, `commit`, `push`, `pr`, `ci` or `merge` | the drawing couldn't be saved |
+| `ux-deliver` refused at `check` or `record` because the work is assigned to somebody else | somebody else is already working on this piece of work |
+
+A refusal at `cleanup` came after the record was filed: say nothing to the designer about it, and
+remove the tree yourself as *Ending a pass* says.
 
 Nowhere else does a command, path or error reach the designer.
 
@@ -487,8 +477,9 @@ moves through*) says why. A designer still present sees only:
 
 ## Ending a pass
 
-**Remove your worktree first**, from outside it: the session ends about half a minute after
-`end-pass`.
+`ux-deliver` removes your worktree once it has filed. **If one is still there** (it refused,
+or the pass ends without filing), remove it first, from outside it: the session ends about half a
+minute after `end-pass`.
 
 ```bash
 git -C <repo> worktree remove --force .cerebro/worktrees/<id>-mockup

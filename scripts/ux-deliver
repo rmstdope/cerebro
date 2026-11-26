@@ -1,0 +1,227 @@
+#!/usr/bin/env bash
+#
+# The UX stage's delivery tail, as one call (cb-7b1h). Once the designer has agreed the experience
+# and the record is written to a file, this commits the chosen drawings, merges their pull request,
+# records the acceptance, hands the bead to a producer and removes the mockup worktree:
+#
+#     .cerebro/cerebro/scripts/ux-deliver <Name> --bead <id> --acceptance <file> \
+#       [--mockup <file>[=<name>]]... [--wait <seconds>]
+#
+#   --mockup <file>[=<name>]  a drawing for docs/ui/, under its own basename or <name> (a plain file
+#                             name). Repeated for a kept sketch sheet. None at all is invisible work:
+#                             no worktree and no pull request, only the record.
+#   --wait <seconds>          how long this call waits on the pull request's checks (default 480, so
+#                             one call stays inside an agent's ten-minute tool limit).
+#
+# In order, each step named on stderr when it refuses:
+#   check     the bead is assigned to <Name>, the record is not empty, every drawing exists
+#   worktree  `.cerebro/worktrees/<id>-mockup` on branch `<id>-mockup`, made by prepare-worktree, or
+#             reused when it is already there on that branch
+#   commit    the drawings into docs/ui/ as `docs(<id>): mockup`; the branch may change docs/ alone,
+#             since that is the only pull request a UX agent merges without a review
+#   push, pr  pushed, and one pull request for the branch, reused when one exists
+#   ci        its checks: any failed or cancelled check refuses; pending ones are waited on
+#   merge     squash-merged; GitHub must then say MERGED, whatever the merge call printed
+#   record    the acceptance and the `agree_experience` hand-off, in one write guarded on <Name>,
+#             then the board pushed. Never before the merge.
+#   cleanup   the worktree and its local branch removed
+#
+# Exit status: 0 delivered; 1 refused at a step; 2 a malformed call; 3 checks still pending when the
+# wait ran out. 3 is not a failure: run the same command again, and it continues from where it
+# stopped (the tree, the commit and the pull request are all reused; a merged one skips to record).
+#
+# `end-pass` is not here: it takes the agent's own pid, which a script cannot see.
+
+set -euo pipefail
+
+usage() {
+  echo "usage: ux-deliver <Name> --bead <id> --acceptance <file> [--mockup <file>[=<name>]]... [--wait <seconds>]" >&2
+  exit 2
+}
+
+refuse() {
+  echo "ux-deliver: $1: $2" >&2
+  exit 1
+}
+
+say() {
+  echo "ux-deliver: $*"
+}
+
+[[ $# -ge 1 && -n "$1" && "$1" != -* ]] || usage
+name="$1"
+shift
+id=""
+acceptance=""
+wait_seconds=480
+mockups=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --bead) [[ $# -ge 2 && -n "$2" ]] || usage; id="$2"; shift 2 ;;
+    --acceptance) [[ $# -ge 2 && -n "$2" ]] || usage; acceptance="$2"; shift 2 ;;
+    --mockup) [[ $# -ge 2 && -n "$2" ]] || usage; mockups+=("$2"); shift 2 ;;
+    --wait) [[ $# -ge 2 && "$2" =~ ^[0-9]+$ ]] || usage; wait_seconds="$2"; shift 2 ;;
+    *) usage ;;
+  esac
+done
+[[ -n "$id" && -n "$acceptance" ]] || usage
+
+# Seconds between polls of the checks; a test sets it to 0.
+poll="${UX_DELIVER_POLL:-30}"
+# How long after a pull request opens "no checks reported" still means "not registered yet".
+no_checks_grace=120
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$script_dir/candidate-label-policy.sh"
+root="$("$script_dir/consumer-root" --shared)"
+
+# --- check -----------------------------------------------------------------------------------------
+
+[[ -s "$acceptance" ]] || refuse check "the record $acceptance is missing or empty"
+sources=()
+targets=()
+for spec in ${mockups[@]+"${mockups[@]}"}; do
+  if [[ "$spec" == *=* ]]; then
+    src="${spec%%=*}"
+    target="${spec#*=}"
+  else
+    src="$spec"
+    target="$(basename "$spec")"
+  fi
+  [[ -n "$target" && "$target" != */* && "$target" != .* ]] \
+    || refuse check "the drawing's name '$target' must be a plain file name"
+  [[ -f "$src" ]] || refuse check "the drawing $src does not exist"
+  sources+=("$(cd "$(dirname "$src")" && pwd)/$(basename "$src")")
+  targets+=("$target")
+done
+record="$(cat "$acceptance")"
+
+assignee_of() {
+  local shown
+  shown="$(bd -C "$root" show "$id" --json)" || return 1
+  printf '%s' "$shown" | jq -r '(if type == "array" then .[0] else . end) | .assignee // ""'
+}
+owner="$(assignee_of)" || refuse check "bd show $id failed"
+[[ "$owner" == "$name" ]] || refuse check "$id is assigned to '${owner}', not $name"
+
+# --- the drawing's pull request --------------------------------------------------------------------
+
+branch="$id-mockup"
+tree_rel=".cerebro/worktrees/$id-mockup"
+tree="$root/$tree_rel"
+
+if ((${#sources[@]})); then
+  default="$("$script_dir/default-branch")" || refuse worktree "the default branch could not be read"
+  scratch="$(mktemp -d)"
+  trap 'rm -rf "$scratch"' EXIT
+  pr_state() {
+    jq -r '.state // ""' <<<"${pr:-null}"
+  }
+  pr_json() {
+    gh pr list --head "$branch" --state all --json number,state,createdAt,url --limit 1 \
+      | jq -c '.[0] // empty'
+  }
+  pr="$(pr_json)" || refuse pr "gh pr list failed"
+
+  if [[ "$(pr_state)" != MERGED ]]; then
+    # worktree
+    if [[ -e "$tree" ]]; then
+      on="$(git -C "$tree" branch --show-current 2>/dev/null || true)"
+      [[ "$on" == "$branch" ]] || refuse worktree "$tree_rel is on '${on}', not $branch"
+      say "reusing $tree_rel"
+    else
+      (cd "$root" && "$script_dir/prepare-worktree" --path "$tree_rel" --branch "$branch" \
+         --from "origin/$default" >/dev/null) || refuse worktree "prepare-worktree failed"
+    fi
+
+    # commit
+    mkdir -p "$tree/docs/ui"
+    for i in "${!sources[@]}"; do
+      cp "${sources[$i]}" "$tree/docs/ui/${targets[$i]}"
+      git -C "$tree" add "docs/ui/${targets[$i]}"
+    done
+    if ! git -C "$tree" diff --cached --quiet; then
+      git -C "$tree" commit -q -m "docs($id): mockup" || refuse commit "git commit failed"
+    fi
+    stray="$(git -C "$tree" diff --name-only "origin/$default...HEAD" | grep -v '^docs/' || true)"
+    [[ -z "$stray" ]] || refuse commit "the branch changes more than docs/: $(tr '\n' ' ' <<<"$stray")"
+    [[ -n "$(git -C "$tree" diff --name-only "origin/$default...HEAD")" ]] \
+      || refuse commit "the branch carries no change against origin/$default"
+
+    # push
+    git -C "$tree" push -q -u origin HEAD 2>&1 >/dev/null | sed 's/^/  /' >&2 || true
+    [[ "$(git -C "$tree" rev-parse HEAD)" == "$(git -C "$tree" rev-parse "origin/$branch" 2>/dev/null || true)" ]] \
+      || refuse push "git push did not reach origin/$branch"
+
+    # pr
+    if [[ -z "$pr" ]]; then
+      (cd "$tree" && gh pr create --base "$default" --head "$branch" --title "docs($id): mockup" \
+         --body "The agreed drawing for $id, delivered by the UX stage (scripts/ux-deliver)." >/dev/null) \
+        || refuse pr "gh pr create failed"
+      pr="$(pr_json)" || refuse pr "gh pr list failed"
+      [[ -n "$pr" ]] || refuse pr "no pull request found for $branch after creating it"
+    fi
+    number="$(jq -r .number <<<"$pr")"
+    say "pull request #$number"
+
+    # ci
+    created="$(jq -r '.createdAt | fromdateiso8601' <<<"$pr")"
+    deadline=$(( $(date +%s) + wait_seconds ))
+    while :; do
+      answer="$(gh pr checks "$number" --json name,bucket 2>"$scratch/checks.err" || true)"
+      if [[ -z "$answer" ]] && grep -q "no checks reported" "$scratch/checks.err"; then
+        answer='[]'
+      fi
+      jq -e 'type == "array"' <<<"$answer" >/dev/null 2>&1 \
+        || refuse ci "gh pr checks $number gave no answer: $(cat "$scratch/checks.err")"
+      red="$(jq -r '[.[] | select(.bucket == "fail" or .bucket == "cancel") | .name] | join(", ")' <<<"$answer")"
+      [[ -z "$red" ]] || refuse ci "pull request #$number is red ($red); it is not merged"
+      if jq -e 'length > 0 and all(.[]; .bucket == "pass" or .bucket == "skipping")' <<<"$answer" >/dev/null; then
+        break
+      fi
+      if [[ "$answer" == '[]' && $(( $(date +%s) - created )) -ge $no_checks_grace ]]; then
+        say "no checks reported on #$number"
+        break
+      fi
+      if [[ $(date +%s) -ge $deadline ]]; then
+        echo "ux-deliver: ci: checks on #$number still pending; run the same command again" >&2
+        exit 3
+      fi
+      sleep "$poll"
+    done
+
+    # merge
+    gh pr merge "$number" --squash --delete-branch >/dev/null 2>"$scratch/merge.err" || true
+    pr="$(pr_json)" || refuse merge "gh pr list failed after the merge"
+    if [[ "$(pr_state)" != MERGED ]]; then
+      refuse merge "pull request #$number is not merged: $(cat "$scratch/merge.err" 2>/dev/null || true)"
+    fi
+    if [[ -n "$(git -C "$root" ls-remote --heads origin "$branch" 2>/dev/null || true)" ]]; then
+      git -C "$root" push -q origin --delete "$branch" >/dev/null 2>&1 || true
+    fi
+    say "merged #$number"
+  else
+    say "pull request #$(jq -r .number <<<"$pr") is already merged"
+  fi
+fi
+
+# --- record ----------------------------------------------------------------------------------------
+
+owner="$(assignee_of)" || refuse record "bd show $id failed"
+[[ "$owner" == "$name" ]] || refuse record "$id is now assigned to '${owner}', not $name; nothing recorded"
+route_flags_for agree_experience || refuse record "the agree_experience hand-off is not in the label policy"
+bd -C "$root" update "$id" --acceptance "$record" "${route_flags[@]}" --assignee "" --if-assignee "$name" \
+  >/dev/null || refuse record "bd update $id refused"
+bd -C "$root" dolt push >/dev/null || refuse record "bd dolt push failed"
+say "recorded $id"
+
+# --- cleanup ---------------------------------------------------------------------------------------
+
+if [[ -e "$tree" ]]; then
+  git -C "$root" worktree remove --force "$tree_rel" || refuse cleanup "git worktree remove $tree_rel failed"
+fi
+git -C "$root" worktree prune
+if git -C "$root" rev-parse --verify -q "refs/heads/$branch" >/dev/null; then
+  git -C "$root" branch -q -D "$branch" || refuse cleanup "git branch -D $branch failed"
+fi
+say "delivered $id"

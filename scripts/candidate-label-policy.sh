@@ -15,8 +15,8 @@
 # every transition and proves the bead lands in exactly the queue meant to take it (cb-q6yb).
 #
 # NOT YET HERE, and spelling these words for themselves: the snippets that mark a bead without
-# handing it on (agree-experience's record, Cerebro's filing and decline), and Moira's park when the
-# navigator is away (`agents/user-feedback.md`). A word renamed here is renamed there by hand.
+# handing it on (Cerebro's filing and decline), and Moira's park when the navigator is away
+# (`agents/user-feedback.md`). A word renamed here is renamed there by hand.
 #
 # The routing table these words implement is `skills/beads-workflow`, *The lifecycle a bead moves
 # through*; change a word there and here together. Its jq twin is `candidate-label-policy.jq`.
@@ -71,6 +71,9 @@ bugfix_label="bugfix"
 #                         `second-look` on; a fresh verdict takes it back off. produce-bead.
 #   park_for_ui_decision  to the navigator, from the UX stage, when nobody answered: `needs-ui-decision`
 #                         and `human` on; unparked it goes back to the UX queue. `agree-experience`.
+#   agree_experience      from the UX stage to a producer: the experience is recorded. `ux:agreed` on,
+#                         `needs-ui-decision` and `plan:revise` off, so a bead that came back to UX
+#                         leaves the UX queue for good. `ux-deliver`.
 #   unpark                the navigator's answer to any park: `human` and `pause:kept` off, nothing
 #                         else, so the labels the park left decide where it goes. Cerebro's unpark,
 #                         and before `send_to_ux` its send-back.
@@ -102,6 +105,9 @@ route_flags_for() {
         route_flags+=(--remove-label "$plan_label" --add-label "$verifier_only_label") ;;
       park_for_ui_decision)
         route_flags+=(--add-label "$ui_question_label" --add-label "$human_label") ;;
+      agree_experience)
+        route_flags+=(--add-label "$stage_label" --remove-label "$ui_question_label"
+                      --remove-label "$plan_revise_label") ;;
       unpark)
         route_flags+=(--remove-label "$human_label" --remove-label "$kept_pause_label") ;;
       *)

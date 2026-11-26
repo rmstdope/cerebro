@@ -1593,6 +1593,16 @@ printf '%s\n' "\${BRIEF_OUT:-## Startup brief (stub)}"
 exit "\${BRIEF_EXIT:-0}"
 STUB
 chmod +x "$fixture_scripts/ux-brief"
+# cb-pe3y: and a stub `producer-brief', for a builder's.
+builder_log="$stub_dir/builder-brief.log"
+mv "$fixture_scripts/producer-brief" "$stub_dir/producer-brief.real"
+cat > "$fixture_scripts/producer-brief" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$builder_log"
+printf '%s\n' "\${BUILDER_OUT:-## Startup brief (builder stub)}"
+exit "\${BUILDER_EXIT:-0}"
+STUB
+chmod +x "$fixture_scripts/producer-brief"
 
 rm -f "$assign_log"
 out="$(run_launcher launch "$bead_name" --bead cb-x 2>/dev/null)" \
@@ -1643,13 +1653,46 @@ grep -qF "The startup brief could not be made; confirm your bead as agree-experi
 grep -q "xxxxxxxxxx" <<<"$out" && fail "launch --bead: an oversized brief is not put in the prompt"
 pass "a ux brief that fails or says not-yours never refuses the launch"
 
-rm -f "$brief_log"
-run_launcher launch "$bead_name" --bead cb-x >/dev/null 2>&1 || fail "launch --bead: an implementer still starts"
-[[ ! -e "$brief_log" ]] || fail "launch --bead: an implementer's launch calls no ux-brief"
-rm -f "$brief_log"
+# cb-pe3y: a producer's and the bugfixer's bead arrives with `producer-brief's output the same way.
+bugfixer_name="$("$fixture_scripts/roster" --role bugfixer | sed -n 1p)"
+[[ -n "$bugfixer_name" ]] || fail "launch --bead: the fixture roster has no bugfixer"
+for builder in "$bead_name" "$bugfixer_name"; do
+  rm -f "$builder_log" "$brief_log"
+  out="$(run_launcher launch "$builder" --bead cb-x 2>/dev/null)" \
+    || fail "launch --bead: $builder starts with a brief"
+  [[ "$(cat "$builder_log")" == "$builder cb-x" ]] \
+    || fail "launch --bead: producer-brief is called with the name and the bead, got: $(cat "$builder_log" 2>/dev/null)"
+  [[ ! -e "$brief_log" ]] || fail "launch --bead: a builder's launch calls no ux-brief"
+  sentence_line="$(grep -m1 -n "Your bead is cb-x" <<<"$out" | cut -d: -f1)"
+  brief_line="$(grep -m1 -n "## Startup brief (builder stub)" <<<"$out" | cut -d: -f1)"
+  [[ -n "$sentence_line" && -n "$brief_line" && $sentence_line -lt $brief_line ]] \
+    || fail "launch --bead: $builder's brief follows the bead sentence in the prompt, got: $out"
+done
+pass "a builder launched with --bead carries producer-brief's output in the prompt"
+
+out="$(BUILDER_EXIT=3 BUILDER_OUT="Your bead cb-x is no longer yours" run_launcher launch "$bead_name" --bead cb-x 2>/dev/null)" \
+  || fail "launch --bead: a builder brief that says not yours still starts the session"
+grep -qF "Your bead cb-x is no longer yours" <<<"$out" \
+  || fail "launch --bead: a builder's not-yours brief is carried in the prompt, got: $out"
+out="$(BUILDER_EXIT=1 BUILDER_OUT="half a brief" run_launcher launch "$bead_name" --bead cb-x 2>/dev/null)" \
+  || fail "launch --bead: a builder brief that could not be made still starts the session"
+grep -qF "The startup brief could not be made; do your startup reads as produce-bead says." <<<"$out" \
+  || fail "launch --bead: a failed builder brief puts the fallback line in the prompt, got: $out"
+grep -qF "half a brief" <<<"$out" && fail "launch --bead: a failed brief's partial output is not carried"
+out="$(BUILDER_OUT="$(head -c 100001 /dev/zero | tr '\0' x)" run_launcher launch "$bead_name" --bead cb-x 2>/dev/null)" \
+  || fail "launch --bead: an oversized builder brief still starts the session"
+grep -qF "The startup brief could not be made; do your startup reads as produce-bead says." <<<"$out" \
+  || fail "launch --bead: an oversized builder brief is replaced by the fallback line"
+pass "a builder brief that fails or says not-yours never refuses the launch"
+
+rm -f "$builder_log"
+run_launcher launch "$planning_name" --bead cb-x >/dev/null 2>&1 || fail "launch --bead: a ux agent still starts"
+[[ ! -e "$builder_log" ]] || fail "launch --bead: a ux launch calls no producer-brief"
+rm -f "$brief_log" "$builder_log"
 run_launcher launch "$planning_name" >/dev/null 2>&1 || fail "launch: a ux agent without --bead still starts"
-[[ ! -e "$brief_log" ]] || fail "launch: a ux launch without --bead calls no ux-brief"
-pass "only a ux launch with --bead makes a brief"
+run_launcher launch "$bead_name" >/dev/null 2>&1 || fail "launch: a producer without --bead still starts"
+[[ ! -e "$brief_log" && ! -e "$builder_log" ]] || fail "launch: a launch without --bead makes no brief"
+pass "each role's launch makes its own brief, and only with --bead"
 
 rm -f "$assign_log"
 status=0
@@ -1671,5 +1714,6 @@ pass "launch without --bead does not call assign-bead"
 
 mv -f "$stub_dir/assign-bead.real" "$fixture_scripts/assign-bead"
 mv -f "$stub_dir/ux-brief.real" "$fixture_scripts/ux-brief"
+mv -f "$stub_dir/producer-brief.real" "$fixture_scripts/producer-brief"
 
 suite_passed

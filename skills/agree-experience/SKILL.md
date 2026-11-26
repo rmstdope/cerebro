@@ -57,7 +57,7 @@ The moments that are yours:
 
 | Moment | Call |
 |---|---|
-| The piece of work you were given is confirmed yours (*The piece of work you were given*) | `.cerebro/cerebro/scripts/agent-state <your-name> working --bead <id> --phase ux --pid $PPID` |
+| The piece of work you were given is confirmed yours (*The piece of work you were given*) | already written by the startup brief; only without one, `.cerebro/cerebro/scripts/agent-state <your-name> working --bead <id> --phase ux --pid $PPID` |
 | Every question you put to the designer | `.cerebro/cerebro/scripts/agent-state <your-name> asking --bead <id> --phase ux --pid $PPID`, and `working` again as the very first thing you do with the answer |
 | Ending a pass | `.cerebro/cerebro/scripts/end-pass <your-name> --pid $PPID` |
 
@@ -168,7 +168,20 @@ Your bead is <id>; it is already assigned to you.
 ```
 
 The fleet view chose it (highest priority; never unranked, blocked on an unagreed experience, or a
-child of a bead being split) and assigned it. Confirm it:
+child of a bead being split) and assigned it.
+
+**Under that sentence is your startup brief**, headed `## Startup brief`, made at launch by
+`scripts/ux-brief`: the board is pulled, the bead is confirmed yours, your state file already says
+`working` with the bead and phase `ux`, and it holds the bead (description, acceptance, notes,
+labels), its parent and siblings, `project_name`, `audience_noun`, `ux_sketches` and `app_paths`,
+the newest drawings under `docs/ui/` and the sketch template's path. **Read it and repeat none of
+those reads**: no pull, no `bd show` of the bead, its parent or its children, no `project-conf`,
+no listing of `docs/ui/`, no `agent-state`. Read a drawing or the template itself only when you
+use it.
+
+A brief that says the bead is no longer yours: say so in one line, write nothing, end the pass.
+
+Only when the prompt says *The startup brief could not be made*, confirm it yourself:
 
 ```bash
 bd dolt pull
@@ -176,8 +189,9 @@ bd show <id> --json | jq -r '(if type=="array" then .[0] else . end) | "\(.statu
 .cerebro/cerebro/scripts/agent-state <your-name> working --bead <id> --phase ux --pid $PPID
 ```
 
-`open <your-name>` is yours; otherwise say so in one line, write nothing, end the pass. No sentence:
-tell the developer nothing is waiting, unseen by the designer, and end the pass.
+`open <your-name>` is yours; otherwise say so in one line, write nothing, end the pass. Then read
+what the brief would have carried as you need it, `project-conf` included. No sentence: tell the
+developer nothing is waiting, unseen by the designer, and end the pass.
 
 **Never pick, never add a label to hold anything, never take a second piece of work**, P0 included.
 
@@ -235,7 +249,7 @@ Never a word from this repository; use the replacement:
 | the navigator | the team |
 | user | whatever the project calls the people who use it |
 
-Read two of them:
+Two of them are in the brief; without one, read them:
 
 ```bash
 .cerebro/cerebro/scripts/project-conf project_name        # what the product is called
@@ -274,7 +288,7 @@ Rewrite the title in the product's words, never quoted. Offer no choice of work.
 
 ## Sketching the idea first
 
-Read once, at the start of the pass:
+The brief's `ux_sketches` line says it, already `on` or `off`; without a brief, read it once:
 
 ```bash
 .cerebro/cerebro/scripts/project-conf ux_sketches on

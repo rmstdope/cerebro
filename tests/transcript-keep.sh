@@ -196,4 +196,32 @@ printf '{"type":"user","message":{"content":"%s"}}\n' "$(cerebro_marker_sentence
 [[ ! -e "$(kept "$tmp")/quoting.jsonl" ]] || fail "backfill-ignores-quoted: kept a session that only quotes the marker"
 pass "backfill-ignores-a-marker-quoted-after-the-first-prompt"
 
+# --- backfill-skips-a-file-it-cannot-copy ---
+# One unreadable transcript is counted and skipped. It must never stop `.backfilled' being written,
+# or every turn end of every session would rescan and die at the same file.
+if [[ "$(id -u)" != 0 ]]; then
+  tmp="$(new_fixture)"; root="$(fixture_root "$tmp")"; config="$work_dir/$(fixture_name cfg)"
+  pd="$(project_dir "$config" "$root")"; mkdir -p "$pd"
+  make_session "$pd" aaa-bad "$root"; make_session "$pd" zzz-good "$root"; make_session "$pd" now "$root"
+  # Its sub-agent directory cannot be written, so its copy fails part-way.
+  mkdir -p "$(kept "$tmp")/aaa-bad"; chmod 555 "$(kept "$tmp")/aaa-bad"
+  set +e
+  out="$(run_hook "$tmp" "$config" "$(hook_payload now "$pd/now.jsonl")")"
+  rc=$?
+  set -e
+  [[ $rc -eq 0 ]] || { chmod 755 "$(kept "$tmp")/aaa-bad"; fail "backfill-skips-a-file-it-cannot-copy: hook exit $rc"; }
+  [[ -z "$out" ]] || { chmod 755 "$(kept "$tmp")/aaa-bad"; fail "backfill-skips-a-file-it-cannot-copy: hook wrote to stdout: $out"; }
+  [[ -f "$(kept "$tmp")/.backfilled" ]] || { chmod 755 "$(kept "$tmp")/aaa-bad"; fail "backfill-skips-a-file-it-cannot-copy: .backfilled not written"; }
+  [[ -f "$(kept "$tmp")/zzz-good.jsonl" ]] || { chmod 755 "$(kept "$tmp")/aaa-bad"; fail "backfill-skips-a-file-it-cannot-copy: stopped at the bad file"; }
+  set +e
+  out="$(cd "$tmp" && CLAUDE_CONFIG_DIR="$config" "$tmp/.cerebro/cerebro/scripts/transcript-keep" --backfill 2>/dev/null)"
+  rc=$?
+  set -e
+  chmod 755 "$(kept "$tmp")/aaa-bad"
+  [[ $rc -eq 1 ]] || fail "backfill-skips-a-file-it-cannot-copy: manual --backfill exit $rc, wanted 1"
+  grep -q ", 1 could not be copied" <<<"$out" \
+    || fail "backfill-skips-a-file-it-cannot-copy: manual --backfill did not count it: $out"
+  pass "backfill-skips-a-file-it-cannot-copy"
+fi
+
 suite_passed

@@ -20,7 +20,7 @@
 #   .backfilled          written once `--backfill' has run; the hook backfills while it is absent
 #
 # A file is copied only when its source is newer than the copy, through a temp file beside it and a
-# `mv', so an unchanged transcript costs nothing and no reader - nor a hook killed at its timeout -
+# `mv' (the copy carries the source's mtime), so an unchanged transcript costs nothing and no reader - nor a hook killed at its timeout -
 # ever leaves a torn copy. A source Claude Code has deleted leaves its copy exactly as it was. A temp
 # file a killed copy left behind is swept on the next hook call once it is an hour old.
 #
@@ -68,9 +68,11 @@ keep_file() {
   if [[ -e "$dst" && ! "$src" -nt "$dst" ]]; then
     return 0
   fi
-  mkdir -p "$(dirname "$dst")"
-  tmp="$(mktemp "$(dirname "$dst")/.keep.XXXXXX")"
-  if cp -p "$src" "$tmp" && mv -f "$tmp" "$dst"; then
+  mkdir -p "${dst%/*}"
+  tmp="$(mktemp "${dst%/*}/.keep.XXXXXX")"
+  # Plain `cp', then the source's mtime set just before the `mv' rather than by `cp -p': see
+  # `sweep_temps'.
+  if cp "$src" "$tmp" && touch -r "$src" "$tmp" && mv -f "$tmp" "$dst"; then
     return 0
   fi
   rm -f "$tmp"
@@ -80,8 +82,8 @@ keep_file() {
 # keep_session <transcript.jsonl>: the transcript and the `<id>/' directory beside it.
 keep_session() {
   local src="$1" id dir f
-  id="$(basename "$src" .jsonl)"
-  dir="$(dirname "$src")/$id"
+  id="${src##*/}"; id="${id%.jsonl}"
+  dir="${src%/*}/$id"
   keep_file "$src" "$kept_dir/$id.jsonl" || return 1
   if [[ -d "$dir" ]]; then
     while IFS= read -r -d '' f; do
@@ -99,18 +101,22 @@ is_fleet_session() {
   [[ "$prompt" == *"$needle"* ]]
 }
 
-# Every kept session whose source is still here, brought up to date.
+# Every kept session whose transcript has grown since its copy, brought up to date. It runs on every
+# turn end, so it forks nothing per file: a session whose transcript has not moved is one stat, and
+# only one that has (its sub-agents write into it as they finish) walks its directory.
 refresh_kept() {
   local f id
   [[ -d "$project_dir" ]] || return 0
   for f in "$project_dir"/*.jsonl; do
-    id="$(basename "$f" .jsonl)"
-    if [[ -f "$f" && -e "$kept_dir/$id.jsonl" ]]; then
+    id="${f##*/}"; id="${id%.jsonl}"
+    if [[ -e "$kept_dir/$id.jsonl" && "$f" -nt "$kept_dir/$id.jsonl" ]]; then
       keep_session "$f" || true
     fi
   done
 }
 
+# By mtime. `keep_file' gives a temp the source's (possibly old) mtime only in the instant before its
+# `mv', so a temp another session is still copying always looks new here.
 sweep_temps() {
   find "$kept_dir" -name '.keep.*' -type f -mmin +60 -exec rm -f {} + 2>/dev/null || true
 }

@@ -377,7 +377,7 @@ while IFS= read -r bead; do
     continue
   fi
   advance
-done < <(jq -c '.[]' <<<"$board")
+done < <(jq -c --arg ship "$holder" '.[] | select(.assignee == $ship and .status == "in_progress")' <<<"$board")
 
 if $wrote || [[ -e "$state/ship-unpushed" ]]; then
   if push_board; then

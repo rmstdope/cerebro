@@ -90,6 +90,8 @@ case "$sub" in
         *) shift ;;
       esac
     done
+    # A `bd` that ignores the filters, as another suite's stub does.
+    if [[ -e "$STUB_DIR/unfiltered-fails" ]]; then status=""; assignee=""; fi
     jq --arg s "$status" --arg a "$assignee" \
       '[ .[] | select(($s == "" or .status == $s) and ($a == "" or .assignee == $a)) ]' "$board" ;;
   children) jq --arg id "$1" '[ .[] | select(.parent == $id) ]' "$board" ;;
@@ -404,6 +406,9 @@ pass "a hand-back whose unclaim failed is finished by the next sweep"
 
 fresh; board_set '.[0].assignee = "Storm"'; sweep
 [[ -z "$out" && ! -e "$stub/gh.log" ]] || fail "a bead a builder holds was touched: $out"
-pass "only beads held by ship are swept"
+fresh; board_set '.[0] |= (.assignee = "Storm" | del(.labels[2]))'; : > "$stub/unfiltered-fails"; sweep
+[[ -z "$out" && "$(bead .assignee)" == Storm ]] || fail "a listing that ignored the filter moved a builder's bead: $out"
+! grep -q '^-C .* unclaim\|unclaim' "$stub/bd.log" || fail "it tried to unclaim another's bead"
+pass "only beads held by ship are swept, whatever the listing returns"
 
 suite_passed

@@ -84,18 +84,49 @@ or another's.
 - **A chosen variant opens the walk** of the surface listed under *The interview*: the states,
   what closes it, keyboard and focus, the words, a narrow window, what persists.
 - **Mock the states, not the happy path.** Put the empty and error states on the page.
-- **Batch up to four questions** in the question tool. The `file://` links go **inside** the
-  question text and each option's description, or in the same message as a prose question; never
-  in an earlier message (`bd recall planner-mockup-links`: the navigator has flagged this twice).
-- **Every drawing is a full `file://` URL**, one per variant, labelled with the option name,
-  never a bare path:
+- **Batch up to four questions** in the question tool. Each drawing's link pair (below) goes
+  **inside** the question text and each option's description, or in the same message as a prose
+  question; never in an earlier message (`bd recall planner-mockup-links`: the navigator has
+  flagged this twice). A question can then be answered on a phone without scrolling back.
+- **Every drawing is a link pair**: one block per drawing, its name, then a phone line and a
+  computer line, always, at the desk too. Never try to tell whether the navigator is on a phone:
+  they may move from desk to phone partway through. A sketch sheet is one pair under its own
+  name, "Sketches, round <n>". The terminal shows the same lines:
 
   ```
-  Option A — file:///Users/…/scratchpad/<bead-id>-sidebar-a.html
-  Option B — file:///Users/…/scratchpad/<bead-id>-sidebar-b.html
+  Option A — sidebar
+    On your phone:   https://claude.ai/…   (private)
+    On the computer: file:///Users/…/scratchpad/<bead-id>-sidebar-a.html
+  Option B — panel
+    On your phone:   https://claude.ai/…   (private)
+    On the computer: file:///Users/…/scratchpad/<bead-id>-sidebar-b.html
   ```
 
-- **Say to open them before answering.** Re-state the paths on every round.
+  The computer line is the full `file://` URL, never a bare path, exactly as it would be without
+  the phone line. The phone line is a private claude.ai page of the same file: before showing the
+  drawing, set its `<title>` to the drawing's name as the chat shows it, then ` · `, then the
+  piece of work in the product's words (`Option A — sidebar · Opening drawings from a phone`,
+  `Sketches, round 1 · Opening drawings from a phone`), and publish the file with your `Artifact`
+  tool, with the icon word `sketch` and no `url`. Pages start private; publish nothing else about
+  them. Publish the drawing as it is, straight from its `file_path`: no `quickstart`, no type and
+  no design pass, since its look is what is being agreed, and its `<title>` stays exactly as
+  agreed whatever the tool's page guidance says about titles.
+- **When no phone link can be made** (the CLI has no `Artifact` tool, nothing is connected, the
+  publish failed or was refused), that drawing's phone line reads, in place of the link:
+
+  ```
+    On your phone:   Couldn't make a phone link for this drawing — open it on the computer.
+  ```
+
+  The computer line is unchanged, the drawing is still offered, the other drawings show their own
+  links, and the session carries on: never stop, ask or retry in front of the navigator.
+- **A revised drawing is a new file and a new page.** Name each revision afresh
+  (`<bead-id>-sidebar-a-r2.html`; a sheet already carries its round) and publish it without `url`:
+  publishing the same path again would change the page an earlier message links to, and every old
+  link keeps showing what was being compared. A drawing shown again after the work came back or
+  was resumed gets a pair the same way. **Pages are never deleted**, when the work is filed or
+  ever: they stay in the navigator's claude.ai gallery, and links in past chats keep working.
+- **Say to open them before answering.** Re-state the link pairs on every round.
 - **An answer that engages only with your prose, or comes back faster than a look would take**,
   gets one "did you see it?".
 
@@ -272,9 +303,10 @@ then ask this as a question of its own, before anything is drawn:
 "Straight to the drawings" runs *The interview* as it is today from there; "Sketch it first" goes
 on to the sheet. Neither ends the session. Work you do not judge small gets no question.
 
-**A round is one sheet**: one page, one `file://` link, with **two to four** ideas one above the
-other, each at full width. Never one: if you can think of only one, draw an honest second, such as
-the closest thing to today's screen. Never more than four: an idea cut from a round is not shown.
+**A round is one sheet**: one page, one link pair (*Interview, don't ask*), with **two to four**
+ideas one above the other, each at full width. Never one: if you can think of only one, draw an
+honest second, such as the closest thing to today's screen. Never more than four: an idea cut
+from a round is not shown.
 Each idea is captioned with a letter and a short name ("A — list beside the fleet") and has one
 line under it saying what it costs ("fleet rows get narrower"). Recommend one, as with any
 variants.
@@ -286,13 +318,14 @@ styling, no exact sizes. Start from `.cerebro/cerebro/templates/ux-sketch-sheet.
 your scratchpad as `<id>-sketches-<round>.html`: it carries the strokes, the typeface and the
 captions, and you replace only the ideas.
 
-**The sheet's question** is "Which idea do we build on?", with the sheet's `file://` link in the
+**The sheet's question** is "Which idea do we build on?", with the sheet's link pair in the
 question text and in each option's description, as for every drawing. The options are the ideas,
 `A: <short name>` and so on, and the last is always `None of these — sketch again`, which brings a
 fresh sheet of two to four. The question tool holds four options, so a sheet of four ideas asks the
 same question, with the same five options, as a prose question in the message that carries the
 link (*Interview, don't ask*). A reply like "B, but with …" brings a revised sheet, still of two to
-four. There is no limit on rounds: the session stays on sketches until one idea is agreed.
+four, and a revised sheet is the next round: a new file, so a new page. There is no limit on
+rounds: the session stays on sketches until one idea is agreed.
 
 **Only an agreed idea leads on.** *The interview* then runs as it does today, inside the agreed
 layout, and never asks about the layout again.

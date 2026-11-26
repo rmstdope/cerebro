@@ -33,7 +33,7 @@ use crate::lifecycle::LastExit;
 use crate::session::SessionView;
 use crate::readers::{
     read_bead_detail, read_fleet, read_gh, read_health, read_history,
-    read_sweeps, read_work,
+    read_ship, read_sweeps, read_work, ShipAct,
     Commands, Judged, Programs, ReaderPaths, ReadError,
 };
 use crate::sweeps::Finding;
@@ -75,6 +75,11 @@ pub const HISTORY_REFRESH_INTERVAL: Duration = Duration::from_secs(300);
 /// that grow without limit, feeding lines that do not change meaningfully inside five minutes.
 /// Never on the five-second tick.
 pub const HEALTH_REFRESH_INTERVAL: Duration = Duration::from_secs(300);
+
+/// How often the ship sweep runs (cb-tbrh). A minute: each sweep takes every bead one step, so this
+/// is the longest a green pull request waits. `scripts/ship` refuses a hand-over when no sweep ran
+/// in ten minutes, so this stays well under that.
+pub const SHIP_INTERVAL: Duration = Duration::from_secs(60);
 
 /// What a pane has to show, and how sure it is of it.
 ///
@@ -2095,6 +2100,9 @@ pub struct App {
     /// and each of those owns its own offset.
     pub health: Pane<FleetHealth>,
     last_health_request: Option<Instant>,
+    /// The ship sweep's clock and in-flight slot (cb-tbrh). No `Pane`: nothing of it is drawn.
+    last_ship_request: Option<Instant>,
+    ship_in_flight: bool,
 }
 
 /// A question the screen is waiting on. `k` is the only key that asks (the navigator's choice),
@@ -2222,6 +2230,8 @@ impl App {
             last_history_request: None,
             health: Pane::default(),
             last_health_request: None,
+            last_ship_request: None,
+            ship_in_flight: false,
         }
     }
 
@@ -3136,6 +3146,25 @@ impl App {
             self.clear_completed_copy_from(PaneFocus::Work);
             self.reconcile_work_cursor(previous_index, at);
         }
+    }
+
+    /// Whether the ship sweep is due at NOW: only in a view that supervises, since the sweep
+    /// merges and writes the board, and never while one is still running.
+    pub fn ship_due(&self, now: Instant) -> bool {
+        self.supervision.may_supervise()
+            && !self.ship_in_flight
+            && self.last_ship_request.map_or(true, |last| now.duration_since(last) >= SHIP_INTERVAL)
+    }
+
+    /// Claim the ship sweep's slot and stamp the request.
+    pub fn begin_ship(&mut self, at: Instant) {
+        self.ship_in_flight = true;
+        self.last_ship_request = Some(at);
+    }
+
+    /// The sweep answered, however it went.
+    pub fn finish_ship(&mut self) {
+        self.ship_in_flight = false;
     }
 
     /// Whether the health report is due at NOW. Its own clock, for `history_due`'s reason.
@@ -4110,6 +4139,16 @@ impl Worker<Vec<Judged>> {
     }
 }
 
+/// The ship sweep's worker (cb-tbrh): `readers::read_ship` on its own thread, since it merges
+/// pull requests over the network and must hold up neither the screen nor the navigator's keys.
+pub type ShipWorker = Worker<Vec<ShipAct>>;
+
+impl Worker<Vec<ShipAct>> {
+    pub fn spawn(paths: ReaderPaths, commands: Commands) -> Self {
+        Self::spawn_reader(move |()| read_ship(&paths, commands.as_ref()))
+    }
+}
+
 /// History's worker: `read_history` on its own thread.
 ///
 /// A sixth thread rather than a call on the UI thread, for the reason the others exist: it is a
@@ -4439,6 +4478,28 @@ impl<T, Req> Drop for Worker<T, Req> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- cb-tbrh: the ship sweep -----------------------------------------------------------------
+
+    #[test]
+    fn the_ship_sweep_is_asked_once_a_minute_and_one_at_a_time() {
+        let mut app = App::with_supervision(crate::supervisor::SupervisionMode::Supervising);
+        let start = Instant::now();
+        assert!(app.ship_due(start), "nothing has been asked yet");
+        app.begin_ship(start);
+        assert!(!app.ship_due(start + SHIP_INTERVAL), "one is still in flight");
+        app.finish_ship();
+        assert!(!app.ship_due(start + SHIP_INTERVAL - Duration::from_secs(1)));
+        assert!(app.ship_due(start + SHIP_INTERVAL));
+    }
+
+    #[test]
+    fn a_view_that_does_not_supervise_never_ships() {
+        let app = App::with_supervision(crate::supervisor::SupervisionMode::ReadOnly(
+            crate::supervisor::ReadOnlyReason::OwnedBy,
+        ));
+        assert!(!app.ship_due(Instant::now()));
+    }
 
     // ---- cb-10d.3: tidies -----------------------------------------------------------------------
 

@@ -110,6 +110,10 @@ pub enum Event {
     /// `outcome` (`closed` | `kept`), `reason` (the kept reason, or null). Written on the answer,
     /// as `tidy` is.
     Release,
+    /// One act of the ship sweep (cb-tbrh): `outcome` (`merged` | `updated` | `reran` | `returned`
+    /// | `parked` | `failed`), `bead`, `pr` and `reason`. Written on the answer; a `failed` act
+    /// goes to `errors.jsonl` under `ship` as well.
+    Ship,
     Error,
 }
 
@@ -136,6 +140,7 @@ impl Event {
             Self::GiveBack => "give-back",
             Self::Tidy => "tidy",
             Self::Release => "release",
+            Self::Ship => "ship",
             Self::Error => "error",
         }
     }

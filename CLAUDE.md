@@ -238,6 +238,9 @@ Each of these answers one question in one place. Add a caller, never a second co
 - `scripts/ux-snap` — a headless look at a drawing or a URL at desktop and phone width: PNGs plus
   overflow, broken-image and console-error findings (`scripts/ux-snap.cjs` renders). Its test is
   `tests/ux-snap-render`, run by `tests/web-console-ui`, the leg with a browser.
+- `scripts/review-packet` — what a producer's or the bugfixer's cold-read review sub-agent is
+  handed: the diff, the bead and the gate's result at the head, refused when the gate ran at
+  another sha.
 - `scripts/agent-state` — the only writer of a state file; `scripts/end-pass` is its one caller
   for ending a pass; `scripts/agent-alive` is the predicate.
 - `scripts/stage-candidates`, `scripts/assignable-beads`, `scripts/bugfix-candidates`,

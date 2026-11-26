@@ -257,8 +257,22 @@ declaration, say the sentence and spawn on the default. Say which key matched an
 review on. Before each invocation read and keep `reviewed_head` from `gh pr view <n> --json
 headRefOid`.
 
-**A cold read gets two things, and only these**: the diff (`gh pr diff <n>`) and the bead
-(`bd show <id> --json`, the plan included). **Never your reasoning.** Its checklist is its own
+**A cold read gets one thing in its prompt: the review packet**, printed by one script, with
+`<sha>` the full 40-character sha your fast gate just passed at:
+
+```bash
+.cerebro/cerebro/scripts/review-packet <id> <n> --gated <sha>
+```
+
+It carries the head sha, the changed files, the diff, the bead's description, acceptance, plan
+and notes, and the gate's result at that head, so the sub-agent fetches none of it again and
+re-runs a test only when a finding says why. **Paste its output whole, never edited**: the packet
+is what the sub-agent trusts, so nothing is cut from it, abridged or annotated, and anything you
+would add to it is your reasoning. Exit 3 means the head is not the sha you gated, or moved while
+the packet was made: run the fast gate at the head, then make the packet again. Exit 1 is a
+failed read: retry it, and count it like an unusable review below.
+
+**Never your reasoning.** Its checklist is its own
 definition, `.cerebro/cerebro/agents/review-subagent.md`, which the type loads: never paste it, or
 `agents/reviewer.md`, into the prompt. A session registers its agent types when it starts, so one
 started before that file reached its checkout cannot spawn the type: spawn a general-purpose

@@ -4,7 +4,8 @@
 #     review-model <pr-number>
 #
 #     stdout  EXACTLY ONE LINE, in `scripts/agents-conf's own shapes (hit, miss or refused)
-#     stderr  why, in one sentence, whenever a `reviewer-small' line is declared
+#     stderr  why, in one sentence, whenever a `reviewer-small' line is declared, after `gh's own
+#             message when the size read failed
 #     exit    agents-conf's own (0, or 3 for a refused line); 2 for usage
 #
 # A project that declares a `reviewer-small' line has pull requests of at most SMALL_DIFF_LINES

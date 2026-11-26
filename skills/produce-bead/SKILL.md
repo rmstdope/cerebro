@@ -256,8 +256,8 @@ a follow-up included, from where `gh pr diff <n>` answers:
 
 A `miss` or an empty model means the CLI's default; `refused<TAB><sentence>` is a broken
 declaration, say the sentence and spawn on the default. Say which key matched and which model you
-review on. Before each invocation read and keep `reviewed_head` from `gh pr view <n> --json
-headRefOid`.
+review on, and pass on what the script said about why. Before each invocation read and keep
+`reviewed_head` from `gh pr view <n> --json headRefOid`.
 
 **A cold read gets two things, and only these**: the diff (`gh pr diff <n>`) and the bead
 (`bd show <id> --json`, the plan included). **Never your reasoning.** Its checklist is its own

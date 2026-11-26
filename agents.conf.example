@@ -19,8 +19,8 @@ producer     tool=claude  model=sonnet
 planner      tool=claude  model=opus     effort=high
 architect    tool=claude  model=opus     effort=high
 
-# Optional: the review sub-agent runs on this line, instead of the "reviewer" one, for a pull
-# request of at most 200 changed lines (scripts/review-model).
+# Optional: the review sub-agent runs on this line, instead of the "reviewer" one, for a small
+# pull request; scripts/review-model says how small.
 # reviewer-small  tool=claude  model=sonnet  effort=medium
 
 # external model: name, provider, URL, access-key reference, and model

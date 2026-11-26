@@ -1,0 +1,26 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Option A — named tabs along the top · A shared look for design drawings</title><style>body{margin:0;background:#f4f4f5;font-family:system-ui,-apple-system,sans-serif;color:#18181b}
+.explain{max-width:980px;margin:14px auto 0;padding:0 16px;font-size:13px;color:#71717a}
+.page{max-width:980px;margin:10px auto 30px;background:#fff;border:1px solid #e4e4e7;border-radius:10px;overflow:hidden}
+.ph{padding:14px 16px 0}.ph .work{font-size:12px;color:#71717a;text-transform:uppercase;letter-spacing:.04em}
+.ph h1{margin:2px 0 10px;font-size:19px}
+.tabs{display:flex;gap:4px;border-bottom:1px solid #e4e4e7;padding:0 16px;overflow-x:auto}
+.tab{border:0;background:none;font:inherit;font-size:14px;padding:8px 12px;color:#52525b;border-bottom:2px solid transparent;cursor:pointer;white-space:nowrap}
+.tab.on{color:#18181b;border-bottom-color:#7c3aed;font-weight:600}
+.rec{display:inline-block;font-size:11px;background:#ede9fe;color:#5b21b6;border-radius:999px;padding:1px 7px;margin-left:6px;font-weight:600}
+.oh{padding:12px 16px 4px}.oh h2{margin:0;font-size:16px}.cost{margin:3px 0 0;font-size:13px;color:#52525b}
+.why{margin:3px 0 0;font-size:13px;color:#5b21b6}
+.draw{margin:12px 16px 16px;border:1px dashed #d4d4d8;border-radius:8px;min-height:260px;display:flex;align-items:center;justify-content:center;color:#a1a1aa;font-size:14px;background:#fafafa}
+.ctl{display:flex;align-items:center;gap:8px;padding:10px 16px;border-bottom:1px solid #e4e4e7}
+.ctl .l{border:1px solid #d4d4d8;background:#fff;border-radius:6px;font:inherit;font-size:14px;width:34px;height:30px;cursor:pointer}
+.ctl .l.on{background:#18181b;color:#fff;border-color:#18181b}
+.ctl .arr{margin-left:auto;display:flex;gap:6px}.ctl .arr button{border:1px solid #d4d4d8;background:#fff;border-radius:6px;width:34px;height:30px;font-size:16px;cursor:pointer}
+.ctl .pos{font-size:13px;color:#71717a}
+h3{max-width:980px;margin:22px auto 0;padding:0 16px;font-size:14px;color:#3f3f46}
+.narrow{max-width:380px}
+</style></head><body><p class="explain">Each tab carries the option's letter and short name; the recommended one is marked. The page opens on the recommended option. (Tap the tabs: they work.)</p><h3>On the computer</h3><div class="page"><div class="ph"><div class="work">Where the fleet's time went</div><h1>Which layout do we build on?</h1></div>
+<div class="tabs"><button class="tab on">A — tiles sized by time<span class=rec>Recommended</span></button><button class="tab">B — bars, longest first</button><button class="tab">C — a table with numbers</button></div><div class="oh"><h2>A — tiles sized by time<span class=rec>Recommended</span></h2><p class="cost">Every role is one tile; its size is its share of the time.</p><p class=why>Recommended: a treemap is the usual way to show parts of a whole.</p></div>
+<div class="draw">the drawing of option A</div></div><h3>On a phone</h3><div class="page narrow"><div class="ph"><div class="work">Where the fleet's time went</div><h1>Which layout do we build on?</h1></div>
+<div class="tabs"><button class="tab">A — tiles sized by time<span class=rec>Recommended</span></button><button class="tab on">B — bars, longest first</button><button class="tab">C — a table with numbers</button></div><div class="oh"><h2>B — bars, longest first</h2><p class="cost">Easier to compare two roles; the tiny ones are hard to tap on a phone.</p></div>
+<div class="draw">the drawing of option B</div></div><script>
+document.querySelectorAll('.page').forEach(p=>{const bs=[...p.querySelectorAll('.tab,.l')];bs.forEach(b=>b.onclick=()=>{bs.forEach(x=>x.classList.remove('on'));b.classList.add('on');const L=b.textContent[0];p.querySelector('.draw').firstChild.textContent='the drawing of option '+L;})});
+</script></body></html>

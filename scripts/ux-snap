@@ -1,0 +1,192 @@
+#!/usr/bin/env bash
+#
+# Render drawings, or a running app, headless at desktop and phone width, and say what is wrong
+# with each render (cb-6bgn):
+#
+#     .cerebro/cerebro/scripts/ux-snap [--widths 1280,390] [--out <dir>] <file-or-url>...
+#
+#   exit 0  every render is clean
+#   exit 3  at least one render has a finding; a target that would not load is one (`load failed:'),
+#           and its line says `no PNG' where the path would be
+#   exit 2  usage: no target, a width that is not a whole number, a file that does not exist
+#   exit 1  the renderer could not run: no node, no Playwright, the browser would not start
+#
+# STDOUT IS THE REPORT, one line per target and width, `<target> @<width>  <png>  ok' or
+# `... <n> finding(s)' with each finding indented beneath it (`overflow:', `broken image:',
+# `console error:'), then `ux-snap: <renders> render(s), <findings> finding(s); PNGs in <dir>'.
+# A UX agent reads the report and then Reads the PNGs it names, in one call. Everything else goes
+# to stderr.
+#
+# WHY. A UX session used to look at its own drawing through the Chrome extension - tabs, navigate,
+# resize, screenshot, a javascript call to measure - and start `python -m http.server' to serve it:
+# several requests per look, and nothing to look with when the extension was not connected. A file
+# is rendered as a file:// URL, so its relative assets load from disk and no server is needed. Chrome
+# stays for what this cannot reach: a click, a login, a typed value.
+#
+# WHERE PLAYWRIGHT COMES FROM, first hit wins:
+#   1. CEREBRO_UX_SNAP_MODULES, a directory to resolve it from. Explicit, so nothing is installed
+#      into it: no Playwright there is exit 1 naming the directory. tests/ux-snap-render uses it.
+#   2. The current directory: a consumer that already has `playwright' or `@playwright/test'.
+#   3. A per-user cache, ${XDG_CACHE_HOME:-$HOME/.cache}/cerebro/ux-snap/<version>, installed on
+#      first use with npm, and its Chromium with Playwright's own installer when the browser is
+#      missing. The version is the one web-console/ui's lockfile pins; bump both together. It is
+#      installed into a temporary directory and renamed into place, so two first runs at once never
+#      see a half-written one. It is also the fallback when the current directory's Playwright has
+#      no browser installed.
+set -euo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+playwright_version="1.63.0"
+
+usage() {
+  echo "usage: ux-snap [--widths 1280,390] [--out <dir>] <file-or-url>..." >&2
+  exit 2
+}
+
+widths="1280,390"
+out=""
+targets=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --widths)
+      shift
+      [[ $# -gt 0 ]] || usage
+      widths="$1"
+      ;;
+    --out)
+      shift
+      [[ $# -gt 0 ]] || usage
+      out="$1"
+      ;;
+    -h | --help) usage ;;
+    --*)
+      echo "ux-snap: unknown option $1" >&2
+      usage
+      ;;
+    *) targets+=("$1") ;;
+  esac
+  shift
+done
+
+[[ ${#targets[@]} -gt 0 ]] || usage
+
+if ! [[ "$widths" =~ ^[1-9][0-9]*(,[1-9][0-9]*)*$ ]]; then
+  echo "ux-snap: --widths wants whole numbers separated by commas, got '$widths'" >&2
+  exit 2
+fi
+
+# A file becomes an absolute file:// URL; anything with a scheme is passed through as given.
+urls=()
+for t in "${targets[@]}"; do
+  if [[ "$t" =~ ^[a-zA-Z][a-zA-Z0-9+.-]*:// ]]; then
+    urls+=("$t")
+  elif [[ -f "$t" ]]; then
+    urls+=("$t")
+  else
+    echo "ux-snap: no such file: $t" >&2
+    exit 2
+  fi
+done
+
+if ! command -v node >/dev/null 2>&1; then
+  echo "ux-snap: node is not on PATH; install Node.js to render headless" >&2
+  exit 1
+fi
+
+# A file becomes an absolute, percent-encoded file:// URL (a `%' or `#' in a name is a character
+# of the name, not of the URL).
+for i in "${!urls[@]}"; do
+  t="${urls[$i]}"
+  if [[ -f "$t" ]]; then
+    urls[i]="$(node -e 'console.log(require("url").pathToFileURL(require("fs").realpathSync(process.argv[1])).href)' "$t")"
+  fi
+done
+
+# has_playwright <dir>: true when one of the module names resolves from <dir>.
+has_playwright() {
+  node -e '
+    const { createRequire } = require("module");
+    const req = createRequire(require("path").join(process.argv[1], "noop.js"));
+    for (const m of ["playwright", "@playwright/test", "playwright-core"]) {
+      try { req.resolve(m); process.exit(0); } catch (e) {}
+    }
+    process.exit(1);
+  ' "$1" 2>/dev/null
+}
+
+cache="${XDG_CACHE_HOME:-$HOME/.cache}/cerebro/ux-snap/$playwright_version"
+
+# use_cache: point $modules at the per-user cache, installing it first if it is not there.
+use_cache() {
+  modules="$cache"
+  source_of_modules=cache
+  if has_playwright "$modules"; then
+    return 0
+  fi
+  echo "ux-snap: installing playwright@$playwright_version into $cache (once)" >&2
+  mkdir -p "$(dirname "$cache")"
+  local tmp
+  tmp="$(mktemp -d "$(dirname "$cache")/.install.XXXXXX")"
+  if ! npm install --prefix "$tmp" --no-audit --no-fund --silent "playwright@$playwright_version" >&2; then
+    rm -rf "$tmp"
+    echo "ux-snap: npm could not install playwright@$playwright_version into $cache" >&2
+    exit 1
+  fi
+  # rename(2) refuses a non-empty target, so a run that lost the race keeps the winner's install.
+  node -e 'try { require("fs").renameSync(process.argv[1], process.argv[2]) } catch (e) {}' "$tmp" "$cache" || true
+  rm -rf "$tmp" || true
+  if ! has_playwright "$cache"; then
+    echo "ux-snap: no Playwright resolves from $cache after installing it" >&2
+    exit 1
+  fi
+}
+
+if [[ -n "${CEREBRO_UX_SNAP_MODULES:-}" ]]; then
+  if ! modules="$(cd "$CEREBRO_UX_SNAP_MODULES" 2>/dev/null && pwd -P)" || ! has_playwright "$modules"; then
+    echo "ux-snap: no Playwright resolves from CEREBRO_UX_SNAP_MODULES=$CEREBRO_UX_SNAP_MODULES" >&2
+    exit 1
+  fi
+  source_of_modules=explicit
+elif has_playwright "$PWD"; then
+  modules="$PWD"
+  source_of_modules=cwd
+else
+  use_cache
+fi
+
+if [[ -z "$out" ]]; then
+  out="$(mktemp -d "${TMPDIR:-/tmp}/ux-snap.XXXXXX")"
+fi
+mkdir -p "$out"
+out="$(cd "$out" && pwd -P)"
+
+run_engine() {
+  node "$here/ux-snap.cjs" "$modules" "$out" "$widths" "$@"
+}
+
+# The engine's own status is the answer; it exits 4 when the browser executable is missing. The
+# current directory's Playwright without a browser falls back to the cache; the cache's own gets
+# one browser install and one retry; an explicit directory's is exit 1.
+rc=0
+run_engine "${urls[@]}" || rc=$?
+if [[ $rc -eq 4 && $source_of_modules == cwd ]]; then
+  echo "ux-snap: the Playwright here has no browser installed; using the per-user cache" >&2
+  use_cache
+  rc=0
+  run_engine "${urls[@]}" || rc=$?
+fi
+if [[ $rc -eq 4 && $source_of_modules == cache ]]; then
+  echo "ux-snap: installing Playwright's Chromium (once)" >&2
+  if node "$modules/node_modules/playwright/cli.js" install chromium >&2; then
+    rc=0
+    run_engine "${urls[@]}" || rc=$?
+  else
+    echo "ux-snap: Playwright could not install Chromium" >&2
+    exit 1
+  fi
+fi
+if [[ $rc -eq 4 ]]; then
+  echo "ux-snap: Playwright's Chromium is not installed under $modules; run its 'playwright install chromium'" >&2
+  exit 1
+fi
+exit "$rc"

@@ -1,0 +1,216 @@
+#!/usr/bin/env bash
+#
+# scripts/ux-snap against a real headless Chromium (cb-6bgn).
+#
+#     CEREBRO_UX_SNAP_MODULES=web-console/ui bash tests/ux-snap-render
+#
+# NOT `tests/ux-snap-render.sh': scripts/suite-runner runs `tests/*.sh' in the bash job, which has
+# no browser. tests/web-console-ui runs this file after it has installed the UI's Playwright and its
+# Chromium, and points CEREBRO_UX_SNAP_MODULES at that install, so the gate and CI both run it and
+# neither downloads a browser twice.
+#
+# It pins what the agree-experience skill tells a UX agent to read: the exit statuses (0 clean,
+# 3 findings, 2 usage, 1 no engine) and the finding words (overflow, broken image, console error).
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+snap="$repo_root/scripts/ux-snap"
+: "${CEREBRO_UX_SNAP_MODULES:?set it to a directory Playwright resolves from, e.g. web-console/ui}"
+CEREBRO_UX_SNAP_MODULES="$(cd "$CEREBRO_UX_SNAP_MODULES" && pwd)"
+export CEREBRO_UX_SNAP_MODULES
+
+work="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/ux-snap-render.XXXXXX")" && pwd -P)"
+trap 'rm -rf "$work"' EXIT
+
+failures=0
+fail() { echo "FAIL: $*" >&2; failures=$((failures + 1)); }
+ok() { echo "ok - $*"; }
+
+# run <name> <args...>: sets rc, out (stdout) and err (stderr) for the case.
+run() {
+  local name="$1"
+  shift
+  rc=0
+  "$snap" "$@" >"$work/$name.out" 2>"$work/$name.err" || rc=$?
+  out="$(cat "$work/$name.out")"
+  err="$(cat "$work/$name.err")"
+}
+
+expect_rc() {
+  local name="$1" want="$2"
+  if [[ "$rc" -ne "$want" ]]; then
+    fail "$name: exit $rc, wanted $want; stdout: $out; stderr: $err"
+    return 1
+  fi
+}
+
+is_png() { [[ "$(head -c 8 "$1" | od -An -tx1 | tr -d ' \n')" == "89504e470d0a1a0a" ]]; }
+
+# --- fixtures --------------------------------------------------------------------------------
+# A 1x1 PNG beside the drawing, so a clean drawing has an image that loads from disk.
+printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\rIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82' >"$work/dot.png"
+
+cat >"$work/clean.html" <<'HTML'
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width">
+<title>clean</title><body style="margin:0"><h1>Clean</h1><img src="dot.png" alt="dot"></body>
+HTML
+
+cat >"$work/wide.html" <<'HTML'
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width">
+<title>wide</title><body style="margin:0"><div id="table" class="grid" style="width:700px;height:20px">x</div></body>
+HTML
+
+cat >"$work/broken.html" <<'HTML'
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width">
+<title>broken</title><body><img src="missing.png" alt="gone"></body>
+HTML
+
+cat >"$work/noisy.html" <<'HTML'
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width">
+<title>noisy</title><body><p>noisy</p>
+<script>console.error("drawing says no"); throw new Error("drawing threw");</script></body>
+HTML
+
+cat >"$work/nometa.html" <<'HTML'
+<!doctype html><meta charset="utf-8"><title>nometa</title><body><p>No viewport meta: a phone lays this out 980px wide.</p></body>
+HTML
+
+cp "$work/clean.html" "$work/50%#odd.html"
+
+# --- usage -----------------------------------------------------------------------------------
+run no_target
+expect_rc no_target 2 && ok "no target is a usage error"
+
+run missing_file --out "$work/o-missing" "$work/nope.html"
+if expect_rc missing_file 2; then
+  if [[ "$err" == *"nope.html"* ]]; then ok "a missing file is a usage error naming it"; else fail "missing_file: stderr does not name the file: $err"; fi
+fi
+
+run bad_width --widths 1280,phone "$work/clean.html"
+expect_rc bad_width 2 && ok "a width that is not a number is a usage error"
+
+# --- no engine -------------------------------------------------------------------------------
+mkdir -p "$work/empty"
+rc=0
+CEREBRO_UX_SNAP_MODULES="$work/empty" "$snap" --out "$work/o-empty" "$work/clean.html" \
+  >"$work/empty.out" 2>"$work/empty.err" || rc=$?
+err="$(cat "$work/empty.err")"
+if [[ "$rc" -ne 1 ]]; then
+  fail "no Playwright: exit $rc, wanted 1; stderr: $err"
+elif [[ "$err" != *"$work/empty"* ]]; then
+  fail "no Playwright: stderr does not name the directory: $err"
+else
+  ok "no Playwright under an explicit directory is exit 1, naming it, and installs nothing"
+fi
+if [[ -e "$work/empty/node_modules" ]]; then fail "no Playwright: something was installed into the explicit directory"; fi
+
+# --- a clean drawing at both default widths ---------------------------------------------------
+run clean --out "$work/o-clean" "$work/clean.html"
+if expect_rc clean 0; then
+  pngs=()
+  while IFS= read -r p; do pngs+=("$p"); done < <(find "$work/o-clean" -name '*.png' | sort)
+  if [[ ${#pngs[@]} -ne 2 ]]; then
+    fail "clean: wanted 2 PNGs, found ${#pngs[@]}: ${pngs[*]-}"
+  else
+    all_png=1
+    for p in "${pngs[@]}"; do
+      if ! is_png "$p"; then all_png=0; fail "clean: $p is not a PNG"; fi
+      if [[ "$out" != *"$p"* ]]; then all_png=0; fail "clean: the report does not name $p: $out"; fi
+    done
+    if [[ $all_png -eq 1 ]]; then ok "a clean drawing gives a PNG per width, each named in the report"; fi
+  fi
+  if grep -q '@1280 .* ok$' <<<"$out" && grep -q '@390 .* ok$' <<<"$out"; then
+    ok "a clean drawing reports ok at 1280 and at 390"
+  else
+    fail "clean: wanted an ok line at each width: $out"
+  fi
+fi
+
+# --- overflow at the phone width only --------------------------------------------------------
+run wide --out "$work/o-wide" "$work/wide.html"
+if expect_rc wide 3; then
+  if grep -q '@1280 .* ok$' <<<"$out" && grep -A3 '@390 ' <<<"$out" | grep -q 'overflow:.*div#table'; then
+    ok "a 700px element overflows at 390, named, and not at 1280"
+  else
+    fail "wide: wanted ok at 1280 and an overflow naming div#table at 390: $out"
+  fi
+fi
+
+# --- a broken image --------------------------------------------------------------------------
+run broken --widths 1280 --out "$work/o-broken" "$work/broken.html"
+if expect_rc broken 3; then
+  if grep -q 'broken image:.*missing.png' <<<"$out" && grep -q '@1280 .* 1 finding(s)$' <<<"$out"; then
+    ok "a missing image is reported once, not again as a console error"
+  else
+    fail "broken: wanted exactly one finding, a broken image line: $out"
+  fi
+fi
+
+# --- console errors --------------------------------------------------------------------------
+run noisy --widths 1280 --out "$work/o-noisy" "$work/noisy.html"
+if expect_rc noisy 3; then
+  if grep -q 'console error:.*drawing says no' <<<"$out" && grep -q 'console error:.*drawing threw' <<<"$out"; then
+    ok "console.error and an uncaught exception are both reported"
+  else
+    fail "noisy: wanted both console errors: $out"
+  fi
+fi
+
+# --- a URL target, and the summary -----------------------------------------------------------
+run url --widths 390 --out "$work/o-url" "file://$work/clean.html" "$work/wide.html"
+if expect_rc url 3; then
+  if grep -q "^file://$work/clean.html @390 .* ok$" <<<"$out" &&
+    grep -q '^ux-snap: 2 render(s), 1 finding(s)' <<<"$out"; then
+    ok "a URL is rendered as given, and the summary counts renders and findings"
+  else
+    fail "url: wanted the URL's ok line and a 2-render 1-finding summary: $out"
+  fi
+fi
+
+# --- a name with characters a URL reserves ---------------------------------------------------
+run odd --widths 390 --out "$work/o-odd" "$work/50%#odd.html" "$work/clean.html"
+if expect_rc odd 0; then
+  if [[ $(grep -c ' ok$' <<<"$out") -eq 2 ]]; then
+    ok "a file named with % and # renders, and so does the target after it"
+  else
+    fail "odd: wanted two ok lines: $out"
+  fi
+fi
+
+# --- a target that does not load -------------------------------------------------------------
+run absent --widths 390 --out "$work/o-absent" "file://$work/absent.html"
+if expect_rc absent 3; then
+  if grep -q '@390  no PNG  1 finding(s)$' <<<"$out" && grep -q 'load failed:' <<<"$out" &&
+    [[ -z "$(find "$work/o-absent" -name '*.png')" ]]; then
+    ok "a target that does not load says no PNG and load failed, and writes none"
+  else
+    fail "absent: wanted a no PNG line and load failed: $out"
+  fi
+fi
+
+# --- a phone lays out a page with no viewport meta wide --------------------------------------
+run nometa --out "$work/o-nometa" "$work/nometa.html"
+if expect_rc nometa 3; then
+  if grep -q '@1280 .* ok$' <<<"$out" && grep -A3 '@390 ' <<<"$out" | grep -q 'overflow: page lays out 980px wide on a 390px screen'; then
+    ok "a page with no viewport meta overflows a phone, and not a desktop"
+  else
+    fail "nometa: wanted ok at 1280 and a 980px overflow at 390: $out"
+  fi
+fi
+
+# --- a relative CEREBRO_UX_SNAP_MODULES ------------------------------------------------------
+rc=0
+(cd "$(dirname "$CEREBRO_UX_SNAP_MODULES")" &&
+  CEREBRO_UX_SNAP_MODULES="$(basename "$CEREBRO_UX_SNAP_MODULES")" \
+    "$snap" --widths 390 --out "$work/o-rel" "$work/clean.html") >"$work/rel.out" 2>"$work/rel.err" || rc=$?
+if [[ $rc -eq 0 ]]; then
+  ok "a relative CEREBRO_UX_SNAP_MODULES resolves"
+else
+  fail "relative modules: exit $rc; stderr: $(cat "$work/rel.err")"
+fi
+
+if [[ $failures -ne 0 ]]; then
+  echo "ux-snap-render: $failures failure(s)" >&2
+  exit 1
+fi
+echo "ux-snap-render: green"

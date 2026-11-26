@@ -164,6 +164,20 @@ test("says a failed first read without a time and draws nothing", async ({ page 
   await expect(map(page).getByRole("button")).toHaveCount(0);
 });
 
+// A service started before the Time tab existed has no /api/time: an older build answers with the
+// page itself, a newer one with a 404. Either way retrying cannot help, so the page says what will.
+for (const [how, answer] of [
+  ["answers with the page", (route: Route) => route.fulfill({ contentType: "text/html", body: "<!doctype html><html></html>" })],
+  ["has no such endpoint", (route: Route) => route.fulfill({ status: 404, json: { error: "this service has no such endpoint" } })],
+] as const) {
+  test(`says the service needs a restart when it ${how}`, async ({ page }) => {
+    await page.route(/\/api\/time(\?|$)/, answer);
+    await openTime(page);
+    await expect(page.getByRole("alert")).toHaveText("The console's service is older than this page and has no time report. Restart cerebro-web; this tab reads it within a minute.");
+    await expect(map(page).getByRole("button")).toHaveCount(0);
+  });
+}
+
 test("gathers small tiles into Other", async ({ page }) => {
   const small = (name: string) => agent(name, 1, [phase("build", 0.2)]);
   const crowd = role("producer", [agent("Cyclops", 5, [phase("build", 26)]), agent("Storm", 4, [phase("build", 18)]), small("Iceman"), small("Gambit"), small("Bishop")]);

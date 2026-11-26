@@ -15,7 +15,7 @@ use axum::{
     extract::{DefaultBodyLimit, Path, Query, State},
     http::{header, HeaderMap, StatusCode},
     response::sse::{Event, KeepAlive, Sse},
-    routing::{get, post},
+    routing::{any, get, post},
     Json, Router,
 };
 use cerebro_tui::{
@@ -196,6 +196,10 @@ impl ReadOnlyService {
                 "/api/sessions/{name}/input",
                 post(session_input).layer(DefaultBodyLimit::max(INPUT_LIMIT)),
             )
+            // An endpoint this service does not have is a 404, never the application shell: a
+            // page newer than its service would read the shell as a failed read and retry forever.
+            .route("/api", any(api_not_found))
+            .route("/api/{*rest}", any(api_not_found))
             .fallback_service(
                 ServeDir::new(self.assets_dir.clone()).fallback(ServeFile::new(index)),
             )
@@ -275,6 +279,10 @@ struct TimeQuery {
 /// Where the fleet's time went in the period asked for (`24h`, `7d` - the default - `30d` or
 /// `all`), read afresh each time from what the fleet records; unchanged files come from the cache.
 /// A read that fails is a 502 carrying why, never an empty report.
+async fn api_not_found() -> (StatusCode, Json<serde_json::Value>) {
+    (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "this service has no such endpoint"})))
+}
+
 async fn time_report(
     State(state): State<SnapshotState>,
     Query(query): Query<TimeQuery>,

@@ -286,11 +286,42 @@ fn root_needle(root: &Path) -> String {
 /// of writing a fourth copy of it.
 #[cfg(test)]
 pub(crate) fn marker_sentence(name: &str, root: &Path) -> String {
+    fixture_marker_sentence(name, root)
+}
+
+/// The same sentence for fixtures outside this crate (the web console's tests), so they compose
+/// it from these needles rather than typing another copy of it.
+pub fn fixture_marker_sentence(name: &str, root: &Path) -> String {
     format!(
         "{}{}/.",
         name_needle(name),
         root.to_string_lossy().trim_end_matches('/')
     )
+}
+
+/// The agent whose marker sentence TEXT carries, rooted at ROOT: the name between the name
+/// needle's two halves, accepted only where that same sentence goes on to root it at ROOT. A transcript names its
+/// session this way and no other, so this is how a reader learns whose transcript it holds.
+pub fn marker_agent(text: &str, root: &Path) -> Option<String> {
+    let normalized = normalize_marker_spelling(text);
+    let needle = name_needle("\0");
+    let (opening, closing) = needle.split_once('\0')?;
+    let mut rest = normalized.as_str();
+    while let Some(at) = rest.find(opening) {
+        let after = &rest[at + opening.len()..];
+        if let Some(end) = after.find(closing) {
+            let name = &after[..end];
+            // The name's own sentence must carry the root: one needle here and the other in some
+            // other sentence of the same text is not a session of this fleet.
+            let rooted = format!("{}{}/", name_needle(name), root.to_string_lossy().trim_end_matches('/'));
+            if !name.is_empty() && !name.contains(char::is_whitespace) && rest[at..].starts_with(&rooted)
+            {
+                return Some(name.to_string());
+            }
+        }
+        rest = after;
+    }
+    None
 }
 
 /// Tri-state liveness for one process's command-line field as NAME's session of the fleet at
@@ -1636,6 +1667,23 @@ mod tests {
             session_liveness(escaped, "Rogue", Path::new("/Users/x/repos/cerebro-hud")),
             SessionLiveness::Proven
         );
+    }
+
+    #[test]
+    fn marker_agent_needs_this_root() {
+        let root = Path::new("/Users/x/repos/cerebro");
+        let text = format!("hello\n{} This sentence is how it proves it.", marker_sentence("Storm", root));
+        assert_eq!(marker_agent(&text, root).as_deref(), Some("Storm"));
+        assert_eq!(marker_agent(&text, Path::new("/Users/x/repos/cerebro-hud")), None);
+        assert_eq!(marker_agent("no marker here", root), None);
+        let spaced = marker_sentence("Storm", root).replace(' ', "\\ ");
+        assert_eq!(marker_agent(&spaced, root).as_deref(), Some("Storm"));
+        let split = format!(
+            "{} and elsewhere {}",
+            marker_sentence("Storm", Path::new("/Users/x/repos/other")),
+            marker_sentence("Beast", root)
+        );
+        assert_eq!(marker_agent(&split, root).as_deref(), Some("Beast"), "a name is rooted by its own sentence");
     }
 
     #[test]

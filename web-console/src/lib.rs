@@ -1,3 +1,5 @@
+pub mod time;
+
 use std::{
     collections::{BTreeSet, VecDeque},
     convert::Infallible,
@@ -57,6 +59,9 @@ pub struct ReadOnlyService {
     supervision: SupervisionMode,
     assets_dir: PathBuf,
     snapshots: Arc<SnapshotCache>,
+    /// Where the Time tab reads transcripts from; the consumer's kept copies by default.
+    transcript_dirs: Arc<Vec<PathBuf>>,
+    time_caches: Arc<time::TimeCaches>,
 }
 
 #[derive(Clone)]
@@ -65,6 +70,8 @@ struct SnapshotState {
     programs: Programs,
     commands: Commands,
     snapshots: Arc<SnapshotCache>,
+    transcript_dirs: Arc<Vec<PathBuf>>,
+    time_caches: Arc<time::TimeCaches>,
 }
 
 #[derive(Default)]
@@ -116,6 +123,7 @@ impl ReadOnlyService {
         supervision: SupervisionMode,
         assets_dir: PathBuf,
     ) -> Self {
+        let transcript_dirs = Arc::new(vec![reader_paths.shared_root.join(".cerebro/state/transcripts")]);
         Self {
             reader_paths,
             programs,
@@ -123,7 +131,16 @@ impl ReadOnlyService {
             supervision,
             assets_dir,
             snapshots: Arc::new(SnapshotCache::default()),
+            transcript_dirs,
+            time_caches: Arc::new(time::TimeCaches::default()),
         }
+    }
+
+    /// Read transcripts from DIRS instead: Claude Code's own project directory beside the
+    /// consumer's kept copies, say. A session in more than one is read once.
+    pub fn with_transcript_dirs(mut self, dirs: Vec<PathBuf>) -> Self {
+        self.transcript_dirs = Arc::new(dirs);
+        self
     }
 
     pub fn reader_paths(&self) -> &ReaderPaths {
@@ -161,6 +178,8 @@ impl ReadOnlyService {
             programs: self.programs.clone(),
             commands: self.commands.clone(),
             snapshots: Arc::clone(&self.snapshots),
+            transcript_dirs: Arc::clone(&self.transcript_dirs),
+            time_caches: Arc::clone(&self.time_caches),
         };
         Router::new()
             .route("/api/fleet", get(fleet_snapshot))
@@ -168,6 +187,7 @@ impl ReadOnlyService {
             .route("/api/health", get(health_snapshot))
             .route("/api/events", get(event_stream))
             .route("/api/control", get(control_snapshot))
+            .route("/api/time", get(time_report))
             .route("/api/beads/{id}", get(bead_record))
             .route("/api/beads/{id}/priority", post(bead_priority))
             .route("/api/agents/{name}/{action}", post(agent_action))
@@ -244,6 +264,34 @@ impl SnapshotState {
             )
         })
         .await
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct TimeQuery {
+    period: Option<String>,
+}
+
+/// Where the fleet's time went in the period asked for (`24h`, `7d` - the default - `30d` or
+/// `all`), read afresh each time from what the fleet records; unchanged files come from the cache.
+/// A read that fails is a 502 carrying why, never an empty report.
+async fn time_report(
+    State(state): State<SnapshotState>,
+    Query(query): Query<TimeQuery>,
+) -> Result<Json<time::TimeReport>, (StatusCode, Json<serde_json::Value>)> {
+    let Some(period) = time::Period::parse(query.period.as_deref().unwrap_or("7d")) else {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "a period is 24h, 7d, 30d or all"}))));
+    };
+    let read = tokio::task::spawn_blocking(move || {
+        let records = time::read_records(&state.reader_paths.shared_root, &state.transcript_dirs, &state.time_caches)?;
+        let now = Utc::now();
+        Ok::<_, String>(time::account(&records, period.start(now), now))
+    })
+    .await;
+    match read {
+        Ok(Ok(report)) => Ok(Json(report)),
+        Ok(Err(error)) => Err((StatusCode::BAD_GATEWAY, Json(serde_json::json!({"error": error})))),
+        Err(panic) => Err((StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": panic.to_string()})))),
     }
 }
 

@@ -14,7 +14,9 @@ these readings: the *State file* and its phases (`design` while you read the bea
 test, then `build`, `gate`, `review`, `ci`, `rebase`, `merge`); *Workspace* and its ports;
 *Building*, whose fast gate you run before the PR; *Waiting, without ending your run*; *The review
 loop*, where the reviewer reads the diff against **the bead's bug claim and your reproduction
-test**, since a bug bead has no plan, and your posted review says so in place of "the plan";
+test**, since a bug bead has no plan, and your posted review says so in place of "the plan"
+(the review packet carries the claim as the bead's description and your bug log in its notes, so
+log the bug before you make the packet);
 *Red CI*; *Merging*; *The retrospective*; *Finishing*, the parent walk included; and *The
 navigator's gates*, where your `plan` gate puts the reproduction test and the fix you intend to the
 navigator before you touch the implementation, and `review` and `merge` read as written. You write

@@ -1622,8 +1622,8 @@ out="$(run_launcher launch "$planning_name" --bead cb-x 2>/dev/null)" \
 read -r b_name b_bead b_flag b_pid < "$brief_log" || fail "launch --bead: a ux launch calls ux-brief"
 [[ "$b_name $b_bead $b_flag" == "$planning_name cb-x --pid" && "$b_pid" =~ ^[0-9]+$ ]] \
   || fail "launch --bead: ux-brief is called with the name, the bead and a pid, got: $(cat "$brief_log")"
-sentence_line="$(grep -n "Your bead is cb-x" <<<"$out" | head -1 | cut -d: -f1)"
-brief_line="$(grep -n "## Startup brief (stub)" <<<"$out" | head -1 | cut -d: -f1)"
+sentence_line="$(grep -m1 -n "Your bead is cb-x" <<<"$out" | cut -d: -f1)"
+brief_line="$(grep -m1 -n "## Startup brief (stub)" <<<"$out" | cut -d: -f1)"
 [[ -n "$sentence_line" && -n "$brief_line" && $sentence_line -lt $brief_line ]] \
   || fail "launch --bead: the brief follows the bead sentence in the prompt, got: $out"
 pass "a ux launch with --bead carries ux-brief's output in the prompt after the bead sentence"

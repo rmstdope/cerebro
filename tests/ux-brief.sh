@@ -98,8 +98,8 @@ pass "the agent's own bead prints the bead, its family, the project keys, the dr
 state_json="$(cat "$state/Beast.state.json")" || fail "ux-brief: the state file is written"
 [[ "$(jq -r '"\(.state) \(.bead) \(.phase) \(.pid)"' <<<"$state_json")" == "working cb-a ux 4242" ]] \
   || fail "ux-brief: the state is working on the bead in phase ux with the given pid, got: $state_json"
-pull_line="$(grep -n "dolt pull" "$stub/bd.log" | head -1 | cut -d: -f1)"
-show_line="$(grep -n "show cb-a" "$stub/bd.log" | head -1 | cut -d: -f1)"
+pull_line="$(grep -m1 -n "dolt pull" "$stub/bd.log" | cut -d: -f1)"
+show_line="$(grep -m1 -n "show cb-a" "$stub/bd.log" | cut -d: -f1)"
 [[ -n "$pull_line" && -n "$show_line" && $pull_line -lt $show_line ]] \
   || fail "ux-brief: the board is pulled before the bead is read, got: $(cat "$stub/bd.log")"
 pass "the agent's own bead writes working, phase ux, after pulling the board"

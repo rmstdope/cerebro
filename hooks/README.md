@@ -80,6 +80,23 @@ session has nothing to do with. `begin` removes any sidecar it finds when the fi
 no-sidecar restore (`asking` → `working`, bead and phase read from the file itself), never a restore
 of somebody else's bead.
 
+### The transcript hook (cb-koio.1)
+
+`Stop` carries a second command, and `SessionEnd` a first, both running `scripts/transcript-keep
+hook`. Claude Code deletes a project's transcripts after about 30 days, and any session on the
+machine runs that cleanup, so a setting passed to the fleet's own sessions could not stop it. The
+hook copies the session's transcript and its `<session_id>/` directory (sub-agent transcripts,
+tool results) into `.cerebro/state/transcripts/` at every turn end. Nothing ever cleans that
+directory. The copy happens only when the source has changed, through a temp file and a `mv`. It
+follows `agent-turn`'s two rules: it never prints, and it never exits non-zero. Without
+`CEREBRO_AGENT_NAME` it does nothing, so only fleet sessions are kept.
+
+The first turn end after the upgrade also runs `transcript-keep --backfill`, once: every
+transcript Claude Code still holds for this root that carries this root's marker. That is why the
+timeout is 60 rather than 10. A backfill killed at the timeout picks up at the next turn end, and
+`.backfilled` is written only when it completes. A person can run `--backfill` by hand at any
+time. Copilot sessions are not kept, because Copilot has no turn-end hook (above).
+
 ## `copilot/cerebro-question-state.json`
 
 The same behaviour for GitHub Copilot, in Copilot's own hook schema — `preToolUse`, `postToolUse`

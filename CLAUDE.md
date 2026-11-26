@@ -235,6 +235,9 @@ Each of these answers one question in one place. Add a caller, never a second co
   `agents.conf`, passes `hooks/` through `agent-hooks-env` and `--settings`. For a UX agent with
   `--bead` it puts `scripts/ux-brief`'s startup brief in the prompt, which `agree-experience` reads
   instead of its startup reads.
+- `scripts/ux-sheet` — the frame of a detailed drawing: a short spec becomes one tabbed page from
+  `templates/ux-sheet.html`. Its tests are `tests/ux-sheet.sh` and, in a browser,
+  `tests/ux-sheet-render`.
 - `scripts/ux-snap` — a headless look at a drawing or a URL at desktop and phone width: PNGs plus
   overflow, broken-image and console-error findings (`scripts/ux-snap.cjs` renders). Its test is
   `tests/ux-snap-render`, run by `tests/web-console-ui`, the leg with a browser.

@@ -93,29 +93,27 @@ or another's.
   **inside** the question text and each option's description, or in the same message as a prose
   question; never in an earlier message (`bd recall planner-mockup-links`: the navigator has
   flagged this twice). A question can then be answered on a phone without scrolling back.
-- **Every drawing is a link pair**: one block per drawing, its name, then a phone line and a
-  computer line, always, at the desk too. Never try to tell whether the navigator is on a phone:
-  they may move from desk to phone partway through. A sketch sheet is one pair under its own
-  name, "Sketches, round <n>". The terminal shows the same lines:
+- **Every drawing is one page and one link pair**: its name, then a phone line and a computer
+  line, always, at the desk too. Never try to tell whether the navigator is on a phone: they may
+  move from desk to phone partway through. A detailed page holds all the options of one question
+  (*Drawing the details*) and its name is its heading; a sketch sheet is named "Sketches, round
+  <n>". The terminal shows the same lines:
 
   ```
-  Option A — sidebar
+  Which layout do we build on?
     On your phone:   https://claude.ai/…   (private)
-    On the computer: file:///Users/…/scratchpad/<bead-id>-sidebar-a.html
-  Option B — panel
-    On your phone:   https://claude.ai/…   (private)
-    On the computer: file:///Users/…/scratchpad/<bead-id>-sidebar-b.html
+    On the computer: file:///Users/…/scratchpad/<bead-id>-layout.html
   ```
 
   The computer line is the full `file://` URL, never a bare path, exactly as it would be without
-  the phone line. The phone line is a private claude.ai page of the same file: before showing the
-  drawing, set its `<title>` to the drawing's name as the chat shows it, then ` · `, then the
-  piece of work in the product's words (`Option A — sidebar · Opening drawings from a phone`,
-  `Sketches, round 1 · Opening drawings from a phone`), and publish the file with your `Artifact`
-  tool, with the icon word `sketch` and no `url`. Pages start private; publish nothing else about
-  them. Publish the drawing as it is, straight from its `file_path`: no `quickstart`, no type and
-  no design pass, since its look is what is being agreed, and its `<title>` stays exactly as
-  agreed whatever the tool's page guidance says about titles.
+  the phone line. The phone line is a private claude.ai page of the same file: its `<title>` is the
+  drawing's name as the chat shows it, then ` · `, then the piece of work in the product's words
+  (`ux-sheet` writes that; on a sketch sheet you set it: `Sketches, round 1 · Opening drawings
+  from a phone`). Publish the file with your `Artifact` tool, with the icon word `sketch` and no
+  `url`. Pages start private; publish nothing else about them. Publish the drawing as it is,
+  straight from its `file_path`: no `quickstart`, no type and no design pass, since its look is
+  what is being agreed, and its `<title>` stays exactly as it is whatever the tool's page guidance
+  says about titles.
 - **When no phone link can be made** (the CLI has no `Artifact` tool, nothing is connected, the
   publish failed or was refused), that drawing's phone line reads, in place of the link:
 
@@ -126,7 +124,7 @@ or another's.
   The computer line is unchanged, the drawing is still offered, the other drawings show their own
   links, and the session carries on: never stop, ask or retry in front of the navigator.
 - **A revised drawing is a new file and a new page.** Name each revision afresh
-  (`<bead-id>-sidebar-a-r2.html`; a sheet already carries its round) and publish it without `url`:
+  (`<bead-id>-layout-r2.sheet`, which makes `…-r2.html`; a sketch sheet already carries its round) and publish it without `url`:
   publishing the same path again would change the page an earlier message links to, and every old
   link keeps showing what was being compared. A drawing shown again after the work came back or
   was resumed gets a pair the same way. **Pages are never deleted**, when the work is filed or
@@ -138,8 +136,8 @@ or another's.
   .cerebro/cerebro/scripts/ux-snap --out <scratchpad>/snap <drawing>.html [<drawing>.html ...]
   ```
 
-  It renders each at desktop and phone width (`--widths` to change them) and prints one line per
-  render with the PNG's path, `ok` or its findings (`overflow:`, `broken image:`, `console
+  It renders each at desktop and phone width (`--widths` to change them), a tabbed page once per
+  tab, and prints one line per render with the PNG's path, `ok` or its findings (`overflow:`, `broken image:`, `console
   error:`, `load failed:`, whose line says `no PNG`); exit 3 means a finding. Read every PNG it names in one call, and fix each finding
   before the drawing goes to the designer. It takes a URL too, for the app as it stands. Use
   Chrome only for what it cannot reach: a click, a login, a typed value.
@@ -322,8 +320,9 @@ layout, and never asks about the layout again.
 **What is kept**: the final sheet, every idea of the last round, is committed to `docs/ui/` as
 `<id>-sketches.html` beside the chosen detailed drawing, in the same pull request (*Recording
 it*), with the agreed idea circled in red and marked `agreed` in handwriting (set `AGREED` in
-the sheet). *The mockup* in the record names both paths. That mark is the one difference from
-what the designer saw that the drawing's pull request may carry.
+the sheet). *The mockup* in the record names both paths. That mark and the `Agreed` tag on a
+detailed page (*Recording it*) are the only differences from what the designer saw that the
+drawing's pull request may carry.
 
 **Work that came back** (*A piece of work that came back*): when the note says the idea itself is
 wrong, the layout or the flow, open on a new sheet before any detailed drawing changes; when only
@@ -333,6 +332,44 @@ a detail is wrong, go straight to the drawings, as today.
 on it and the open question, and the resumed session reopens on that sheet, not on the opening.
 Parked after an idea was agreed, the note records the agreed idea, and the resumed session draws
 no sketches.
+
+## Drawing the details
+
+A detailed drawing is **one page per question**, in the house frame: write a short spec to your
+scratchpad as `<bead-id>-<name>.sheet` and let the script make the page. **Never write the page's
+header, tabs or house style yourself, and never read an earlier drawing to copy them.** What you
+write is only what is drawn inside each tab, in the product's own look.
+
+```text
+work: <the piece of work, in the product's words>
+heading: <the question being asked, e.g. Which layout do we build on?>
+
+<style>…what every tab shares…</style>
+=== option: <short name>
+cost: <what it costs, one line>
+recommended: <the reason, one line; on exactly one option>
+<the drawing: HTML>
+=== option: <short name>
+cost: <…>
+<the drawing>
+```
+
+```bash
+.cerebro/cerebro/scripts/ux-sheet <scratchpad>/<bead-id>-<name>.sheet
+```
+
+It writes the `.html` beside the spec and prints the pair's name and computer line; the phone line
+is yours. Exit 1 says what the spec lacks. Two to four options, lettered A to D in order, one
+shown at a time; the page opens on A. Every tab is in one document, so give each option's ids and
+class names their own prefix, and have no script that measures a drawing as it loads: only the
+first tab is on screen then.
+
+- **States** are tabs too: `=== state: <name>` sections (`Normal`, `Empty`, `Loading`, `Couldn't
+  read`, …), each with an optional `note:` line, under `heading: The states — <option name>`.
+- **Nothing to choose** (the words, exactly): no `===` line, so no tabs; everything after the keys
+  is the drawing, and `subheading:` may name it.
+
+Rough sketch sheets are not made this way (*Sketching the idea first*): they stay stacked.
 
 ## The interview
 
@@ -379,14 +416,24 @@ were skipped names the drawing alone (*Sketching the idea first*).
 **Show nothing and ask nothing.** Then deliver it, in one call from the consumer root, with a
 Bash timeout of ten minutes:
 
+The detailed page you hand over for an options question is its kept copy: every option stays, the
+chosen one is tagged `Agreed` and the page opens on it. Make it from the same spec, and pass that
+file; a states or tabless page is handed over as it was shown.
+
+```bash
+.cerebro/cerebro/scripts/ux-sheet <scratchpad>/<bead-id>-<name>.sheet \
+  --agreed <letter> --out <scratchpad>/<bead-id>-<name>-agreed.html
+```
+
 ```bash
 bd dolt pull
 .cerebro/cerebro/scripts/ux-deliver <your-name> --bead <id> --acceptance /tmp/ux-<id>.md \
-  --mockup <scratchpad>/<chosen drawing>.html=<id>-<name>.html \
+  --mockup <scratchpad>/<bead-id>-<name>-agreed.html=<id>-<name>.html \
   --mockup <scratchpad>/<id>-sketches-<round>.html=<id>-sketches.html
 ```
 
-The second `--mockup` only with sketches on and an idea agreed. It commits the drawings from its
+Another `--mockup` for each further page worth keeping (the states); the sketches one only with
+sketches on and an idea agreed. It commits the drawings from its
 own worktree (never `cd` into it), merges their `docs/`-only pull request once its checks are
 green, with no review, and **only after that merge** records the acceptance and marks it agreed
 (which also clears `needs-ui-decision` and `plan:revise`). Read its exit status:

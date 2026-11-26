@@ -1,0 +1,80 @@
+<!doctype html>
+<!--
+  The house frame of a detailed drawing (cb-buko; the agreed look is docs/ui/cb-buko-tabs.html and
+  cb-buko-states.html). scripts/ux-sheet fills the two marker lines below; nothing else writes here.
+  Every class starts with `ux-' and only `body' is styled by element, so what is drawn inside a tab
+  keeps the product's own look.
+-->
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+@@TITLE@@
+<style>
+  body{margin:0;padding:1px 8px;background:#f4f4f5}
+  .ux-page{max-width:980px;margin:14px auto 30px;background:#fff;border:1px solid #e4e4e7;border-radius:10px}
+  .ux-head,.ux-tabs,.ux-intro{font-family:system-ui,-apple-system,sans-serif;line-height:normal;text-align:left;color:#18181b}
+  .ux-head{padding:14px 16px 0}
+  .ux-work{font-size:12px;color:#71717a;text-transform:uppercase;letter-spacing:.04em}
+  .ux-heading{margin:2px 0 10px;font-size:19px}
+  .ux-tabrow{position:relative}
+  .ux-tabrow::before,.ux-tabrow::after{content:"";position:absolute;top:0;bottom:1px;width:44px;pointer-events:none;opacity:0}
+  .ux-tabrow::before{left:0;background:linear-gradient(to left,rgba(255,255,255,0),#fff)}
+  .ux-tabrow::after{right:0;background:linear-gradient(to right,rgba(255,255,255,0),#fff)}
+  .ux-tabrow.ux-more-left::before,.ux-tabrow.ux-more-right::after{opacity:1}
+  .ux-tabs{display:flex;gap:4px;border-bottom:1px solid #e4e4e7;padding:0 16px;overflow-x:auto}
+  .ux-tab{flex:none;border:0;border-radius:0;background:none;margin:0;font:inherit;font-size:14px;padding:8px 12px;color:#52525b;border-bottom:2px solid transparent;cursor:pointer;white-space:nowrap}
+  .ux-tab[aria-selected="true"]{color:#18181b;border-bottom-color:#7c3aed;font-weight:600}
+  .ux-tag{display:inline-block;font-size:11px;border-radius:999px;padding:1px 7px;margin-left:6px;font-weight:600}
+  .ux-rec{background:#ede9fe;color:#5b21b6}
+  .ux-agreed{background:#dcfce7;color:#166534}
+  .ux-panel[hidden]{display:none!important}
+  .ux-intro{padding:12px 16px 4px}
+  .ux-name{margin:0;font-size:16px}
+  .ux-cost{margin:3px 0 0;font-size:13px;color:#52525b}
+  .ux-why{margin:3px 0 0;font-size:13px;color:#5b21b6}
+  .ux-draw{padding:12px 16px 16px}
+</style></head><body>
+@@PAGE@@
+<script>
+// Tabs: one panel on screen, the left and right arrow keys move between them, nothing persists.
+(function(){
+  var tabs = Array.prototype.slice.call(document.querySelectorAll('.ux-tabs > .ux-tab'));
+  if (!tabs.length) return;
+  var row = tabs[0].parentNode, wrap = row.parentNode;
+  function selected(){ return tabs.findIndex(function(t){ return t.getAttribute('aria-selected') === 'true'; }); }
+  // A faded edge on whichever side has tabs out of view.
+  function fade(){
+    wrap.classList.toggle('ux-more-left', row.scrollLeft > 1);
+    wrap.classList.toggle('ux-more-right', row.scrollLeft + row.clientWidth < row.scrollWidth - 1);
+  }
+  // Scrolls the row alone: scrollIntoView would move the page too.
+  function reveal(tab){
+    var t = tab.getBoundingClientRect(), r = row.getBoundingClientRect();
+    if (t.left < r.left) row.scrollLeft -= r.left - t.left + 16;
+    else if (t.right > r.right) row.scrollLeft += t.right - r.right + 16;
+    fade();
+  }
+  function select(i){
+    tabs.forEach(function(t, n){
+      t.setAttribute('aria-selected', n === i ? 'true' : 'false');
+      t.tabIndex = n === i ? 0 : -1;
+      document.getElementById(t.getAttribute('aria-controls')).hidden = n !== i;
+    });
+    reveal(tabs[i]);
+  }
+  tabs.forEach(function(t, i){ t.addEventListener('click', function(){ select(i); }); });
+  document.addEventListener('keydown', function(e){
+    var step = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
+    if (!step || e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    // A text field a drawing carries keeps its own arrows.
+    if (e.target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
+    e.preventDefault();
+    var focused = tabs.indexOf(document.activeElement) >= 0;
+    var i = (selected() + step + tabs.length) % tabs.length;
+    select(i);
+    if (focused) tabs[i].focus({preventScroll: true});
+  });
+  row.addEventListener('scroll', fade);
+  window.addEventListener('resize', fade);
+  window.addEventListener('load', function(){ reveal(tabs[selected()]); });
+  reveal(tabs[selected()]);
+})();
+</script></body></html>

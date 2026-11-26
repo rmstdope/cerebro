@@ -1,0 +1,273 @@
+#!/usr/bin/env bash
+#
+# One detailed drawing, from a short spec to a page in the house frame (cb-buko):
+#
+#     .cerebro/cerebro/scripts/ux-sheet <spec> [--agreed <letter>] [--out <file>]
+#
+#   --agreed <letter>  the copy kept once the choice is made: that option's tab and heading are
+#                      tagged Agreed and the page opens on it (an options page only)
+#   --out <file>       where to write; by default the spec's own path with `.html' for its extension
+#
+#   exit 0  written; stdout is the page's heading and its computer line, `  On the computer: file://…',
+#           ready for the link block (the phone link is the agent's own publish, which no script can do)
+#   exit 1  the spec is refused, `ux-sheet: <why>' on stderr, and nothing is written
+#   exit 2  usage
+#
+# THE SPEC is text. Keys come first, one a line, ending at the first blank line or line that is no key;
+# what follows is HTML, passed through untouched.
+#
+#     work: <the piece of work, in the product's words>
+#     heading: <the question being asked>
+#
+#     <style>…shared by every tab…</style>
+#     === option: <short name>
+#     cost: <what it costs, one line>
+#     recommended: <why, one line; on exactly one option>
+#     <the drawing's HTML>
+#     === option: <short name>
+#     …
+#
+# Two to four `=== option:' sections, lettered A to D in order. A drawing of states uses
+# `=== state: <name>' sections instead, as many as there are, each with an optional `note:' line. A
+# page with nothing to choose has no section: everything after the keys is the drawing, and an
+# optional `subheading:' key names it. Every tab is in one document, so ids and class names a
+# drawing declares are shared between them.
+#
+# The frame (templates/ux-sheet.html) shows one tab at a time and opens on the first, or on the
+# agreed one; the page persists nothing.
+set -euo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+template="$here/../templates/ux-sheet.html"
+
+usage() {
+  echo "usage: ux-sheet <spec> [--agreed <letter>] [--out <file>]" >&2
+  exit 2
+}
+
+refuse() {
+  echo "ux-sheet: $*" >&2
+  exit 1
+}
+
+spec=""
+agreed=""
+out=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --agreed) [[ $# -ge 2 && -n "$2" ]] || usage; agreed="$2"; shift 2 ;;
+    --out) [[ $# -ge 2 && -n "$2" ]] || usage; out="$2"; shift 2 ;;
+    -*) usage ;;
+    *) [[ -z "$spec" ]] || usage; spec="$1"; shift ;;
+  esac
+done
+[[ -n "$spec" ]] || usage
+[[ -f "$spec" ]] || refuse "no such file: $spec"
+[[ -f "$template" ]] || refuse "the frame is missing: $template"
+
+if [[ -z "$out" ]]; then
+  base="$(basename "$spec")"
+  out="$(dirname "$spec")/${base%.*}.html"
+fi
+if [[ "$out" == "$spec" || "$out" -ef "$spec" ]]; then
+  refuse "$out would overwrite the spec; name the spec something else, or pass --out"
+fi
+
+# --- read the spec -------------------------------------------------------------------------------
+
+lines=()
+while IFS= read -r line || [[ -n "$line" ]]; do
+  lines+=("${line%$'\r'}")
+done <"$spec"
+total=${#lines[@]}
+
+work=""
+heading=""
+subheading=""
+i=0
+header_re='^(work|heading|subheading):[[:space:]]*(.*)$'
+while [[ $i -lt $total && "${lines[$i]}" =~ $header_re ]]; do
+  case "${BASH_REMATCH[1]}" in
+    work) work="${BASH_REMATCH[2]}" ;;
+    heading) heading="${BASH_REMATCH[2]}" ;;
+    subheading) subheading="${BASH_REMATCH[2]}" ;;
+  esac
+  i=$((i + 1))
+done
+[[ -n "$work" ]] || refuse "the spec needs a 'work:' line before its first blank line"
+[[ -n "$heading" ]] || refuse "the spec needs a 'heading:' line before its first blank line"
+
+blank() { [[ ! "$1" =~ [^[:space:]] ]]; }
+
+shared=""
+kind=""
+n=0
+names=()
+costs=()
+reasons=()
+bodies=()
+section_re='^=== (option|state):[[:space:]]*(.*)$'
+near_re='^===[[:space:]]*([Oo][Pp][Tt][Ii][Oo][Nn]|[Ss][Tt][Aa][Tt][Ee])'
+key_re='^(cost|recommended|note):[[:space:]]*(.*)$'
+while [[ $i -lt $total ]]; do
+  line="${lines[$i]}"
+  i=$((i + 1))
+  if [[ "$line" =~ $section_re ]]; then
+    this="${BASH_REMATCH[1]}"
+    name="${BASH_REMATCH[2]}"
+    [[ -z "$kind" || "$kind" == "$this" ]] || refuse "a page holds options or states, not both"
+    kind="$this"
+    ! blank "$name" || refuse "line $i: the $this needs a name"
+    names[n]="$name"
+    costs[n]=""
+    reasons[n]=""
+    bodies[n]=""
+    while [[ $i -lt $total && "${lines[$i]}" =~ $key_re ]]; do
+      case "$kind:${BASH_REMATCH[1]}" in
+        option:cost | state:note) costs[n]="${BASH_REMATCH[2]}" ;;
+        option:recommended) reasons[n]="${BASH_REMATCH[2]}" ;;
+        *) refuse "line $((i + 1)): '${BASH_REMATCH[1]}:' does not belong to a $kind" ;;
+      esac
+      i=$((i + 1))
+    done
+    n=$((n + 1))
+  elif [[ "$line" =~ $near_re ]]; then
+    refuse "line $i: a section line is '=== option: <name>' or '=== state: <name>', got: $line"
+  elif [[ $n -eq 0 ]]; then
+    shared+="$line"$'\n'
+  else
+    bodies[n - 1]+="$line"$'\n'
+  fi
+done
+
+if [[ $n -eq 0 ]]; then
+  ! blank "$shared" || refuse "the page has no drawing"
+else
+  [[ -z "$subheading" ]] || refuse "'subheading:' belongs to a page with no sections"
+  for ((s = 0; s < n; s++)); do
+    ! blank "${bodies[$s]}" || refuse "'${names[$s]}' has no drawing"
+  done
+fi
+
+letters=(A B C D)
+if [[ "$kind" == option ]]; then
+  [[ $n -ge 2 && $n -le 4 ]] || refuse "an options page holds two to four options, this one has $n"
+  recommended=0
+  for ((s = 0; s < n; s++)); do
+    [[ -n "${costs[$s]}" ]] || refuse "option '${names[$s]}' needs a 'cost:' line"
+    if [[ -n "${reasons[$s]}" ]]; then recommended=$((recommended + 1)); fi
+  done
+  [[ $recommended -eq 1 ]] || refuse "exactly one option carries 'recommended:', this page has $recommended"
+fi
+
+chosen=0
+if [[ -n "$agreed" ]]; then
+  [[ "$kind" == option ]] || refuse "--agreed is for an options page"
+  chosen=-1
+  for ((s = 0; s < n; s++)); do
+    if [[ "${letters[$s]}" == "$agreed" ]]; then chosen=$s; fi
+  done
+  [[ $chosen -ge 0 ]] || refuse "there is no option $agreed on this page"
+fi
+
+# --- write the page ------------------------------------------------------------------------------
+
+escape() {
+  printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&#39;/g"
+}
+
+# label <section>: its name as a tab and a heading carry it - lettered and tagged for an option.
+label() {
+  local s="$1"
+  if [[ "$kind" != option ]]; then
+    escape "${names[$s]}"
+    return 0
+  fi
+  printf '%s — %s' "${letters[$s]}" "$(escape "${names[$s]}")"
+  if [[ -n "${reasons[$s]}" ]]; then printf '<span class="ux-tag ux-rec">Recommended</span>'; fi
+  if [[ -n "$agreed" && $s -eq $chosen ]]; then printf '<span class="ux-tag ux-agreed">Agreed</span>'; fi
+}
+
+key() { if [[ "$kind" == option ]]; then echo "${letters[$1]}"; else echo "$(($1 + 1))"; fi; }
+
+intro() {
+  local s="$1"
+  echo '<div class="ux-intro">'
+  printf '<h2 class="ux-name">%s</h2>\n' "$(label "$s")"
+  if [[ -n "${costs[$s]}" ]]; then printf '<p class="ux-cost">%s</p>\n' "$(escape "${costs[$s]}")"; fi
+  if [[ -n "${reasons[$s]}" ]]; then
+    local why="${reasons[$s]}"
+    why="${why#Recommended:}"
+    why="${why#"${why%%[![:space:]]*}"}"
+    printf '<p class="ux-why">Recommended: %s</p>\n' "$(escape "$why")"
+  fi
+  echo '</div>'
+}
+
+page() {
+  local s k hidden selected tabindex
+  if [[ $n -gt 0 ]] && ! blank "$shared"; then printf '%s' "$shared"; fi
+  echo '<div class="ux-page">'
+  echo '<header class="ux-head">'
+  printf '<div class="ux-work">%s</div>\n' "$(escape "$work")"
+  printf '<h1 class="ux-heading">%s</h1>\n' "$(escape "$heading")"
+  echo '</header>'
+  if [[ $n -gt 1 ]]; then
+    echo '<div class="ux-tabrow"><div class="ux-tabs" role="tablist">'
+    for ((s = 0; s < n; s++)); do
+      k="$(key "$s")"
+      selected=false
+      tabindex=-1
+      if [[ $s -eq $chosen ]]; then selected=true; tabindex=0; fi
+      printf '<button type="button" class="ux-tab" role="tab" data-ux-tab="%s" id="ux-tab-%s" aria-controls="ux-panel-%s" aria-selected="%s" tabindex="%s">%s</button>\n' \
+        "$k" "$k" "$k" "$selected" "$tabindex" "$(label "$s")"
+    done
+    echo '</div></div>'
+    for ((s = 0; s < n; s++)); do
+      k="$(key "$s")"
+      hidden=" hidden"
+      if [[ $s -eq $chosen ]]; then hidden=""; fi
+      printf '<section class="ux-panel" role="tabpanel" id="ux-panel-%s" aria-labelledby="ux-tab-%s"%s>\n' "$k" "$k" "$hidden"
+      intro "$s"
+      printf '<div class="ux-draw">\n%s</div>\n</section>\n' "${bodies[$s]}"
+    done
+  elif [[ $n -eq 1 ]]; then
+    intro 0
+    printf '<div class="ux-draw">\n%s</div>\n' "${bodies[0]}"
+  else
+    if [[ -n "$subheading" ]]; then
+      printf '<div class="ux-intro">\n<h2 class="ux-name">%s</h2>\n</div>\n' "$(escape "$subheading")"
+    fi
+    printf '<div class="ux-draw">\n%s</div>\n' "$shared"
+  fi
+  echo '</div>'
+}
+
+# Built whole in a temporary file beside the target, so a failure leaves no half page.
+tmp="$(mktemp "$(dirname "$out")/.ux-sheet.XXXXXX")" || refuse "cannot write into $(dirname "$out")"
+trap 'rm -f "$tmp"' EXIT
+while IFS= read -r line; do
+  case "$line" in
+    @@TITLE@@) printf '<title>%s · %s</title>\n' "$(escape "$heading")" "$(escape "$work")" ;;
+    @@PAGE@@) page ;;
+    *) printf '%s\n' "$line" ;;
+  esac
+done <"$template" >"$tmp"
+chmod 644 "$tmp"
+mv "$tmp" "$out" || refuse "cannot write $out"
+
+# file_url <absolute path>: percent-encoded, byte by byte.
+file_url() {
+  local LC_ALL=C path="$1" encoded="" c j
+  for ((j = 0; j < ${#path}; j++)); do
+    c="${path:j:1}"
+    case "$c" in
+      [a-zA-Z0-9/._~-]) encoded+="$c" ;;
+      *) encoded+="$(printf '%%%02X' "$(($(printf '%d' "'$c") & 255))")" ;;
+    esac
+  done
+  printf 'file://%s' "$encoded"
+}
+
+dir="$(cd "$(dirname "$out")" && pwd -P)"
+printf '%s\n  On the computer: %s\n' "$heading" "$(file_url "$dir/$(basename "$out")")"

@@ -277,8 +277,14 @@ fresh
 printf '%s' '[{"number":3,"state":"MERGED","createdAt":"2020-01-01T00:00:00Z","url":"u","headRefName":"cb-x-mockup","headRefOid":"0000000000000000000000000000000000000001"},
              {"number":4,"state":"CLOSED","createdAt":"2020-01-02T00:00:00Z","url":"u","headRefName":"cb-x-mockup","headRefOid":"0000000000000000000000000000000000000002"}]' \
   > "$stub/prs.json"
+# A closed pull request's head branch survives on GitHub: round one's commit is still there.
+up="$work_dir/c$case_n-up"
+git_q -C "$up" checkout -q -b cb-x-mockup
+mkdir -p "$up/docs/ui" && echo old > "$up/docs/ui/cb-x-old.html"
+git_q -C "$up" add docs && git_q -C "$up" commit -q -m "docs(cb-x): mockup" && git_q -C "$up" push -q origin cb-x-mockup
 with_mockups
 [[ $status -eq 0 ]] || fail "a second round delivers, got $status: $err"
+! grep -qx "docs/ui/cb-x-old.html" "$stub/merged-files" || fail "round one's leftover commit is not carried into round two"
 grep -q "^pr create" "$stub/gh.log" || fail "a second round opens its own pull request: $(cat "$stub/gh.log")"
 grep -q "^pr merge 9 " "$stub/gh.log" || fail "it merges its own pull request, not an earlier round's: $(cat "$stub/gh.log")"
 grep -qx "docs/ui/cb-x-list.html" "$stub/merged-files" || fail "the new drawing is what merges"

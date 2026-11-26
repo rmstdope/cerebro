@@ -28,7 +28,10 @@
 #
 # Exit status: 0 delivered; 1 refused at a step; 2 a malformed call; 3 checks still pending when the
 # wait ran out. 3 is not a failure: run the same command again, and it continues from where it
-# stopped (the tree, the commit and the pull request are all reused; a merged one skips to record).
+# stopped: the tree, the commit and an open pull request are reused; drawings already on the default
+# branch byte for byte skip to record; a bead already carrying exactly this record is only pushed
+# and cleaned up. An earlier round's merged or closed pull request, from a bead that came back to UX,
+# is never reused, and its leftover branch is overwritten.
 #
 # `end-pass` is not here: it takes the agent's own pid, which a script cannot see.
 
@@ -173,8 +176,11 @@ if ((${#sources[@]})) && [[ $already_recorded -eq 0 ]]; then
     [[ -n "$(git -C "$tree" diff --name-only "origin/$default...HEAD")" ]] \
       || refuse commit "the branch carries no change against origin/$default"
 
-    # push
-    git -C "$tree" push -q -u origin HEAD 2>&1 >/dev/null | sed 's/^/  /' >&2 || true
+    # push. With no open pull request, whatever `origin/<id>-mockup` still holds is an earlier
+    # round's (a closed pull request keeps its branch) and this script's own branch name: overwritten.
+    push_flags=(-q -u)
+    [[ -n "$pr" ]] || push_flags+=(--force)
+    git -C "$tree" push "${push_flags[@]}" origin HEAD 2>&1 >/dev/null | sed 's/^/  /' >&2 || true
     [[ "$(git -C "$tree" rev-parse HEAD)" == "$(git -C "$tree" rev-parse "origin/$branch" 2>/dev/null || true)" ]] \
       || refuse push "git push did not reach origin/$branch"
 

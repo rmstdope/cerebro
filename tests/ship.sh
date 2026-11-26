@@ -27,6 +27,7 @@ cat > "$stub/gh" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >> "$STUB_DIR/gh.log"
+[[ ! -e "$STUB_DIR/drain-fails" ]] || cat >/dev/null
 pr="$STUB_DIR/pr.json"
 edit() { jq "$@" "$pr" > "$pr.tmp" && mv "$pr.tmp" "$pr"; }
 case "$1 $2" in
@@ -328,10 +329,24 @@ fresh; overdue; : > "$stub/view-fails"; forever "an unreadable pull request" "gh
 fresh; overdue; checks BROKEN; forever "unreadable checks" "gh pr checks"
 fresh; overdue; git -C "$origin" update-ref -d refs/pull/7/head; forever "a head git cannot fetch" "git fetch"
 fresh; overdue; pr_set '.mergeStateStatus = "BEHIND"'; : > "$stub/update-branch-fails"; forever "a catch-up refused" "behind"
-fresh; overdue; pr_set '.state = "MERGED"'; : > "$stub/close-fails"; forever "a close refused" "bd close"
 fresh; board_set 'del(.[0].metadata.ship_pr)'; sweep
 [[ "$(bead '.labels | index("human") != null')" == true && "$(bead .assignee)" == "" ]] || fail "a bead naming no pull request: $out"
+[[ "$(bead .notes)" == *"left no usable ship_pr and ship_at"* && "$(bead .notes)" != *"was not merged"* ]] \
+  || fail "the note for a bead naming no pull request: $(bead .notes)"
 pass "six hours of the same fault, or a bead naming no pull request, goes to the navigator"
+
+# Merged and not closed: counted from the first refused close, however old the hand-over, and the
+# note never calls the pull request unmerged.
+fresh; overdue; pr_set '.state = "MERGED"'; : > "$stub/close-fails"; sweep
+[[ "$out" == "failed cb-x #7 merged, but bd close refused"* && "$(bead .assignee)" == ship ]] \
+  || fail "the first refused close should only be retried: $out"
+[[ "$(bead .metadata.ship_close_failed_at)" =~ ^[0-9]+$ ]] || fail "the first refused close is not dated"
+board_set '.[0].metadata.ship_close_failed_at = "1600000000"'; sweep
+[[ "$out" == "parked cb-x #7 "*"bd close"* && "$(bead '.labels | index("human") != null')" == true ]] \
+  || fail "a close refused for six hours: $out"
+[[ "$(bead .notes)" == *"#7"*"was merged and its bead is not closed"* && "$(bead .notes)" != *"not merged"* ]] \
+  || fail "the note for a merged bead: $(bead .notes)"
+pass "a merged pull request whose bead will not close is retried for six hours, then parked as merged"
 
 # --- one bead's trouble leaves the others to be swept ----------------------------------------------
 
@@ -339,6 +354,9 @@ fresh
 board_set '(.[0] | .id = "cb-a" | .metadata.ship_pr = "9" | .metadata.ship_at = "soon") as $bad | [$bad] + .'
 sweep
 [[ "$out" == *"cb-a #9"*$'\n'"merged cb-x #7"* ]] || fail "the second bead was not swept after the first failed: $out"
+fresh; board_set '(.[0] | .id = "cb-a" | .metadata.ship_pr = "9") as $first | [$first] + .'
+: > "$stub/drain-fails"; : > "$stub/view-fails"; sweep
+[[ "$out" == "failed cb-a #9 "*$'\n'"failed cb-x #7 "* ]] || fail "a child reading stdin swallowed the next bead: $out"
 pass "every held bead is swept, whatever became of the one before it"
 
 # --- catching up, and the covered head ------------------------------------------------------------

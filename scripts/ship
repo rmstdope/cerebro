@@ -25,9 +25,9 @@
 #   behind main             `update-branch`, at the head just read
 #   green, or no checks     squash-merged, held to that head; then closed, tidied and pushed
 # The head the review covers is `ship_head`, or one reaching it through merge commits that bring in
-# the default branch and change nothing else. Anything that has waited six hours since the hand-over,
-# (waiting or failing alike), a bead naming no pull request and a fourth return of one bead since
-# its last park go to the navigator instead.
+# the default branch and change nothing else. These go to the navigator instead: a bead that has
+# waited or kept failing for six hours since the hand-over, a merged one whose close has been refused
+# for six hours, one naming no pull request, and a fourth return of one bead since its last park.
 #
 # `returned` gives the bead back to the board with a dated note, for a producer to resume or the
 # bugfixer to take (`return_from_ship`); `parked` puts it in the navigator's queue
@@ -120,7 +120,7 @@ if [[ "$mode" == hand ]]; then
   route_flags_for hand_to_ship || refuse "the hand_to_ship hand-off is not in the label policy"
   bd --actor "$name" -C "$root" update "$id" "${route_flags[@]}" \
     --set-metadata "ship_pr=$number" --set-metadata "ship_head=$head" \
-    --set-metadata "ship_at=$(date +%s)" --unset-metadata ship_rerun_at \
+    --set-metadata "ship_at=$(date +%s)" --unset-metadata ship_rerun_at --unset-metadata ship_close_failed_at \
     --assignee "$holder" --if-assignee "$name" >/dev/null || refuse "bd update $id refused; nothing handed over"
   push_board || refuse "bd dolt push failed; run the same command again to push it"
   echo "ship: $id handed over; #$number merges when its checks are green"
@@ -145,9 +145,10 @@ say() { printf '%s %s #%s%s\n' "$1" "$id" "$number" "${2:+ $2}"; }
 failed() { say failed "$(printf '%s' "$1" | tr '\n' ' ')"; }
 meta() { jq -r --arg key "$1" '.metadata[$key] // "" | tostring' <<<"$bead"; }
 
-# hand_back <return_from_ship|park_from_ship> <why> - the note, the route and the claim given back.
+# hand_back <return_from_ship|park_from_ship> <why> [<what happened>] - the note, the route and the
+# claim given back. The note says the pull request was not merged unless <what happened> says else.
 hand_back() {
-  local transition="$1" why="$2" on="" word=returned heading="## Sent back from shipping" extra=() now
+  local transition="$1" why="$2" what="${3:-}" on="" word=returned heading="## Sent back from shipping" extra=() now
   now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   if [[ "$transition" == return_from_ship ]]; then
     local returns
@@ -165,11 +166,12 @@ hand_back() {
     extra=(--set-metadata "paused_at=$now")
   fi
   [[ -z "$branch" ]] || on=", branch \`$branch\`,"
+  [[ -n "$what" ]] || what="pull request #$number$on was not merged"
   route_flags_for "$transition" || { failed "no $transition hand-off in the label policy"; return 0; }
   if ! bd --actor "$holder" -C "$root" update "$id" "${route_flags[@]}" ${extra[@]+"${extra[@]}"} \
        --append-notes "$heading
 
-$now: pull request #$number$on was not merged: $why." \
+$now: $what: $why." \
        --if-assignee "$holder" >/dev/null; then
     failed "bd update refused the hand-back"
     return 0
@@ -249,9 +251,27 @@ tidy() {
   return 0
 }
 
+# A merge whose close is refused. Nothing is lost by trying again, so the six hours run from the
+# first refusal, not from the hand-over, and the note says it merged: nobody must build it again.
+close_refused() {
+  local since why="merged, but bd close refused"
+  since="$(meta ship_close_failed_at)"
+  if ! [[ "$since" =~ ^[0-9]+$ ]]; then
+    if bd --actor "$holder" -C "$root" update "$id" --set-metadata "ship_close_failed_at=$(date +%s)" \
+         --if-assignee "$holder" >/dev/null; then
+      wrote=true
+    fi
+  elif (( $(date +%s) - since >= ceiling_seconds )); then
+    hand_back park_from_ship "$why for six hours; close it by hand" \
+      "pull request #$number was merged and its bead is not closed"
+    return 0
+  fi
+  failed "$why; the next sweep closes it"
+}
+
 finish() {
   if ! close_with_parents; then
-    retry_later "merged, but bd close refused"
+    close_refused
     return 0
   fi
   say merged
@@ -403,7 +423,8 @@ while IFS= read -r bead; do
   fi
   if ! [[ "$number" =~ ^[0-9]+$ && "$(meta ship_at)" =~ ^[0-9]+$ ]]; then
     # No later sweep could do better.
-    hand_back park_from_ship "the bead names no pull request to ship" </dev/null
+    hand_back park_from_ship "the hand-over left no usable ship_pr and ship_at" \
+      "this bead could not be shipped" </dev/null
     continue
   fi
   # No command run for one bead may read the list of the others.

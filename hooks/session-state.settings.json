@@ -27,7 +27,15 @@
     "Stop": [
       {
         "hooks": [
-          { "type": "command", "command": "[ -n \"$CEREBRO_SCRIPTS\" ] && \"$CEREBRO_SCRIPTS/agent-turn\" ended || true", "timeout": 10 }
+          { "type": "command", "command": "[ -n \"$CEREBRO_SCRIPTS\" ] && \"$CEREBRO_SCRIPTS/agent-turn\" ended || true", "timeout": 10 },
+          { "type": "command", "command": "[ -n \"$CEREBRO_SCRIPTS\" ] && \"$CEREBRO_SCRIPTS/transcript-keep\" hook || true", "timeout": 60 }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          { "type": "command", "command": "[ -n \"$CEREBRO_SCRIPTS\" ] && \"$CEREBRO_SCRIPTS/transcript-keep\" hook || true", "timeout": 60 }
         ]
       }
     ],

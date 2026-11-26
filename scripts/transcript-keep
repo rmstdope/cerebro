@@ -1,0 +1,172 @@
+#!/usr/bin/env bash
+#
+# Keeps a fleet session's Claude Code transcript inside the consumer, beyond Claude Code's own
+# retention (cb-koio.1):
+#
+#     .cerebro/cerebro/scripts/transcript-keep hook         # Stop / SessionEnd hook; JSON on stdin
+#     .cerebro/cerebro/scripts/transcript-keep --backfill   # everything Claude Code still holds here
+#
+# WHY THIS EXISTS. Claude Code deletes a project's transcripts after ~30 days (`cleanupPeriodDays'),
+# and every session on the machine runs that cleanup, fleet or not, so raising the setting for the
+# fleet's own sessions would keep nothing. Measured on this repository: 1,060 session starts, 127
+# transcripts left. The analysis of where the fleet's time went needs them all, so each fleet
+# session copies its own transcript into the consumer, where nothing cleans it.
+#
+# WHAT IT WRITES. Under <consumer root>/.cerebro/state/transcripts/, which the consumer already
+# ignores and nothing ever removes:
+#
+#   <session_id>.jsonl   the session's transcript, mtime preserved
+#   <session_id>/        the session's own directory: sub-agent transcripts, tool results
+#   .backfilled          written once `--backfill' has run; the hook backfills while it is absent
+#
+# A file is copied only when its source is newer than the copy, through a temp file beside it and a
+# `mv' (the copy carries the source's mtime), so an unchanged transcript costs nothing and no reader - nor a hook killed at its timeout -
+# ever leaves a torn copy. A source Claude Code has deleted leaves its copy exactly as it was. A temp
+# file a killed copy left behind is swept on the next hook call once it is an hour old.
+#
+# EVERY HOOK CALL REFRESHES EVERY KEPT SESSION whose source Claude Code still holds, not only its
+# own. A session ended mid-turn - the fleet view's `k', the stuck clock, a crash - gets no `Stop',
+# and the fleet view's SIGHUP-then-SIGKILL leaves `SessionEnd' no time; the next turn end of any
+# fleet session in this consumer brings its copy up to date. The newer-than test makes an unchanged
+# one cost a stat.
+#
+# WHICH SESSIONS. The hook keeps only a session `scripts/launch' started: without
+# `CEREBRO_AGENT_NAME' (exported by `agent-hooks-env') it does nothing. The backfill keeps every
+# transcript in this root's Claude Code project directory whose FIRST PROMPT carries this root's
+# marker needle (`scripts/session-marker.sh'), which is where `scripts/launch' puts it; a navigator's
+# own session that merely quotes the sentence later is not the fleet's. The project directory is the root with every
+# non-alphanumeric character replaced by `-', which is Claude Code's spelling of it.
+#
+# WHY `hook' NEVER FAILS AND NEVER PRINTS: the same two reasons as `scripts/agent-turn' beside it.
+# Exit 2 on `Stop' refuses to let the session stop, and nothing a transcript copy can hit is worth
+# that. The ERR trap, inherited into the functions by `errtrace', is what makes every failure an
+# `exit 0'. A file the backfill cannot copy is counted and skipped, never a loop that dies at the same
+# file on every turn end; `--backfill' run by a person prints the counts and exits 1 if any failed.
+
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$script_dir/session-marker.sh"
+
+mode="${1:-}"
+
+if [[ "$mode" == "hook" ]]; then
+  exit_quietly() { exit 0; }
+  set -o errtrace
+  trap exit_quietly ERR
+  exec >/dev/null 2>&1
+fi
+
+root="$("$script_dir/consumer-root" --shared)"
+kept_dir="$root/.cerebro/state/transcripts"
+project_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/$(printf '%s' "$root" | sed 's/[^A-Za-z0-9]/-/g')"
+needle="$(cerebro_marker_root_needle "$root")"
+
+# keep_file <src> <dst>: copy when <src> is newer than <dst> (or <dst> is missing).
+keep_file() {
+  local src="$1" dst="$2" tmp
+  if [[ -e "$dst" && ! "$src" -nt "$dst" ]]; then
+    return 0
+  fi
+  mkdir -p "${dst%/*}"
+  tmp="$(mktemp "${dst%/*}/.keep.XXXXXX")"
+  # Plain `cp', then the source's mtime set just before the `mv' rather than by `cp -p': see
+  # `sweep_temps'.
+  if cp "$src" "$tmp" && touch -r "$src" "$tmp" && mv -f "$tmp" "$dst"; then
+    return 0
+  fi
+  rm -f "$tmp"
+  return 1
+}
+
+# keep_session <transcript.jsonl>: the transcript and the `<id>/' directory beside it.
+keep_session() {
+  local src="$1" id dir f
+  id="${src##*/}"; id="${id%.jsonl}"
+  dir="${src%/*}/$id"
+  keep_file "$src" "$kept_dir/$id.jsonl" || return 1
+  if [[ -d "$dir" ]]; then
+    while IFS= read -r -d '' f; do
+      keep_file "$f" "$kept_dir/$id/${f#"$dir"/}" || return 1
+    done < <(find "$dir" -type f -print0)
+  fi
+}
+
+# is_fleet_session <transcript.jsonl>: its first real prompt carries this root's marker. `first'
+# stops jq at that line, so a long transcript is not read to its end.
+is_fleet_session() {
+  local prompt
+  prompt="$(jq -nr 'first(inputs | select(.type == "user" and (.isMeta | not))) | .message.content | tostring' \
+    < "$1" 2>/dev/null)" || return 1
+  [[ "$prompt" == *"$needle"* ]]
+}
+
+# Every kept session whose transcript has grown since its copy, brought up to date. It runs on every
+# turn end, so it forks nothing per file: a session whose transcript has not moved is one stat, and
+# only one that has (its sub-agents write into it as they finish) walks its directory.
+refresh_kept() {
+  local f id
+  [[ -d "$project_dir" ]] || return 0
+  for f in "$project_dir"/*.jsonl; do
+    id="${f##*/}"; id="${id%.jsonl}"
+    if [[ -e "$kept_dir/$id.jsonl" && "$f" -nt "$kept_dir/$id.jsonl" ]]; then
+      keep_session "$f" || true
+    fi
+  done
+}
+
+# By mtime. `keep_file' gives a temp the source's (possibly old) mtime only in the instant before its
+# `mv', so a temp another session is still copying always looks new here.
+sweep_temps() {
+  find "$kept_dir" -name '.keep.*' -type f -mmin +60 -exec rm -f {} + 2>/dev/null || true
+}
+
+backfill() {
+  local f count=0 failed=0
+  mkdir -p "$kept_dir"
+  sweep_temps
+  if [[ -d "$project_dir" ]]; then
+    for f in "$project_dir"/*.jsonl; do
+      [[ -f "$f" ]] || continue
+      if is_fleet_session "$f"; then
+        if keep_session "$f"; then
+          count=$((count + 1))
+        else
+          failed=$((failed + 1))
+        fi
+      fi
+    done
+  fi
+  : > "$kept_dir/.backfilled"
+  echo "transcript-keep: $count fleet transcripts kept in $kept_dir, $failed could not be copied"
+  [[ $failed -eq 0 ]]
+}
+
+case "$mode" in
+  hook)
+    [[ -n "${CEREBRO_AGENT_NAME:-}" ]] || exit 0
+    command -v jq >/dev/null || exit 0
+    payload="$(cat)"
+    id="$(jq -r '.session_id // empty' <<<"$payload")"
+    src="$(jq -r '.transcript_path // empty' <<<"$payload")"
+    # The id names a file under kept_dir, so it may not carry a path; the transcript must be the
+    # file Claude Code names after that id.
+    if [[ "$id" =~ ^[A-Za-z0-9_-]+$ && -f "$src" && "$(basename "$src")" == "$id.jsonl" ]]; then
+      keep_session "$src" || true
+    fi
+    if [[ -e "$kept_dir/.backfilled" ]]; then
+      refresh_kept
+      sweep_temps
+    else
+      backfill || true
+    fi
+    exit 0
+    ;;
+  --backfill)
+    backfill
+    ;;
+  *)
+    echo "usage: transcript-keep <hook|--backfill>" >&2
+    exit 2
+    ;;
+esac

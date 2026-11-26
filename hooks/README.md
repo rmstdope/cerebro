@@ -80,6 +80,31 @@ session has nothing to do with. `begin` removes any sidecar it finds when the fi
 no-sidecar restore (`asking` → `working`, bead and phase read from the file itself), never a restore
 of somebody else's bead.
 
+### The transcript hook (cb-koio.1)
+
+`Stop` carries a second command, and `SessionEnd` a first, both running `scripts/transcript-keep
+hook`. Claude Code deletes a project's transcripts after about 30 days, and any session on the
+machine runs that cleanup, so a setting passed to the fleet's own sessions could not stop it. The
+hook copies the session's transcript and its `<session_id>/` directory (sub-agent transcripts,
+tool results) into `.cerebro/state/transcripts/`. Nothing ever cleans that directory. A file is
+copied only when its source has changed, through a temp file and a `mv`, so a copy is never torn.
+It follows `agent-turn`'s two rules: it never prints, and it never exits non-zero. Without
+`CEREBRO_AGENT_NAME` it does nothing, so only fleet sessions are kept.
+
+**Every turn end refreshes every kept session, not only its own.** A session ended mid-turn (the
+`k` key, the stuck clock, a crash) gets no `Stop`, and the fleet view's SIGHUP-then-SIGKILL leaves
+`SessionEnd` no time to run. Its copy is caught up at the next turn end of any fleet session in
+the consumer. An unchanged transcript costs one stat, and nothing forks per file. Temp files left
+by a killed copy are swept on the same call once they are an hour old.
+
+The first turn end after the upgrade also runs `transcript-keep --backfill`, once. It keeps every
+transcript Claude Code still holds for this root whose **first prompt** carries this root's marker,
+which is where `launch` puts it. A navigator's session that only quotes the sentence later is not
+kept. A file it cannot copy is counted and skipped, and `.backfilled` is written regardless; run by
+hand, it then exits 1. That is why the timeout is 60 rather than 10. A backfill killed at the
+timeout resumes at the next turn end. Copilot sessions are not kept, because Copilot has no
+turn-end hook (above).
+
 ## `copilot/cerebro-question-state.json`
 
 The same behaviour for GitHub Copilot, in Copilot's own hook schema — `preToolUse`, `postToolUse`

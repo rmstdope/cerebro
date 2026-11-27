@@ -633,12 +633,12 @@ It holds the project to two lists it agrees with you, tracked in the project:
 requirement numbered in its area — `FLV-1`, `FLV-2` — each with a `Proven by:` line) and
 `.cerebro/test-architecture.md` (one section per level: where the tests live, `Belongs here:`,
 `Not here:`, `Enough is:`). Both are plain files you may edit by hand; the next pass reads them as
-written. One line changes without you: a producer or the bugfixer that adds a system test for a
-requirement marked `Proven by: nothing yet` names the test there itself, and notes in the pull
-request and the bead any part it does not cover. Until they exist it files only what needs
-neither (CI speed, too much or too little at a level), then asks *Shall we agree them now?* — a walk of one tick-list question per area, then one
+written. Until they exist it files only what needs neither (CI speed, too much or too little at a
+level), then asks *Shall we agree them now?* — a walk of one tick-list question per area, then one
 per level. Later, something merged that a person can now do and the list does not name is asked
-about at the end of a pass (*Add these to the requirements?*).
+about at the end of a pass (*Add these to the requirements?*). One line changes without you: a
+producer or the bugfixer that adds a system test for a requirement marked `Proven by: nothing yet`
+names the test there itself, and notes in the pull request and the bead any part it does not cover.
 
 **Its questions expire.** Every other role's question waits until you answer it; Sage's ends its
 pass after an hour unanswered (`triggers::question_expiry`), the header says *Sage's question went

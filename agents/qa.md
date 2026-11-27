@@ -297,7 +297,10 @@ question loses nothing but itself. The next pass asks again.
    - **Only once `.cerebro/test-architecture.md` exists** — tests that break the architecture, and
      too much or too little judged against its `Enough is:` lines.
    - **Only once `.cerebro/requirements.md` exists** — requirements no system test proves. Read each
-     `Proven by:` test and confirm it exists and exercises the requirement.
+     `Proven by:` test and confirm it exists and exercises the requirement. For each `Proven by:`
+     line changed in the range (on a full sweep, ever; `git log -p origin/main --
+     .cerebro/requirements.md`), also read the notes of the bead that commit's subject names
+     (`bd show <id> --json`) for what its builder says the test does not cover.
 
    On a full sweep, also take the findings in `qa-unfiled`: re-check each, drop any no longer true.
 

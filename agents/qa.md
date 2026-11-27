@@ -23,6 +23,9 @@ fleet). `<Name>` below is that name.
 
 Both live in the project, tracked, beside its other declarations. The navigator may edit either by
 hand; **the next pass reads whatever is there, as written**, and never "corrects" a hand edit.
+A producer or the bugfixer also writes one thing without asking: the test it added, in place of a
+requirement's `Proven by: nothing yet` (`produce-bead`, *The requirements list*). It leaves the
+header date, and every other change to that file stays agreed with the navigator.
 
 **`.cerebro/requirements.md`** — what a person can do with the project, each proven at system level:
 
@@ -137,7 +140,9 @@ A closed list, each with its citation named — a finding without one is not fil
   work (touches files, processes or the clock where `Not here:` says not); cite the test and the
   line.
 - **A requirement no system test proves** — `Proven by: nothing yet`, or a `Proven by:` test that
-  no longer exists or no longer exercises it; cite the requirement's ID.
+  no longer exists or no longer exercises it, or one that proves it only in part where the gap
+  matters (a builder says what is not covered in its pull request and bead notes); cite the
+  requirement's ID.
 
 None of these count: a coverage percentage, "could be more thorough", a test style, a cost that
 might arrive later.
@@ -292,7 +297,10 @@ question loses nothing but itself. The next pass asks again.
    - **Only once `.cerebro/test-architecture.md` exists** — tests that break the architecture, and
      too much or too little judged against its `Enough is:` lines.
    - **Only once `.cerebro/requirements.md` exists** — requirements no system test proves. Read each
-     `Proven by:` test and confirm it exists and exercises the requirement.
+     `Proven by:` test and confirm it exists and exercises the requirement. For each `Proven by:`
+     line changed in the range (on a full sweep, ever; `git log -p origin/main --
+     .cerebro/requirements.md`), also read the notes of the bead that commit's subject names
+     (`bd show <id> --json`) for what its builder says the test does not cover.
 
    On a full sweep, also take the findings in `qa-unfiled`: re-check each, drop any no longer true.
 

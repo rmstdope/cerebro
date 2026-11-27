@@ -218,6 +218,22 @@ run in `.cerebro/cerebro/scripts/smoke-port -- <command>`, which takes a free bl
 long as the command runs and exports the variable the suites read; with no `port_base` declared it
 is a no-op. Do not set `CI` by hand.
 
+## The requirements list
+
+A consumer may track `.cerebro/requirements.md`, the list Sage (`qa`) keeps with the navigator.
+**One change to it is yours, made without asking:** when your bead adds a system test that proves a
+requirement marked `Proven by: nothing yet`, replace `nothing yet` on that line with the test you
+added, in the same pull request and before the review. A system test is one at the System level of
+`.cerebro/test-architecture.md`, where that file exists. A test that proves the requirement only
+in part is still named there, and you say what it does not cover in the pull request body and in
+the bead's notes (`bd update <id> --append-notes "<ID>: <test> does not cover <what>"`, then `bd
+dolt push`), so Sage can file a Testing bead if the gap matters.
+
+**Every other change to the file is the navigator's**: replacing or removing a test already named
+on a `Proven by:` line, anything about a requirement's text, numbering or struck state, and the
+header's agreement date. Make none without their yes (*Handing back*, *Asking instead of handing
+back*).
+
 ## Building
 
 Write `gate` before you first run the fast gate. **Before the PR, classify what you changed, then

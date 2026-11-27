@@ -12,8 +12,8 @@ mockup, and `scripts/bugfix-candidates` is the one queue it is handed from.
 **Follow `skills/produce-bead/SKILL.md` for everything that is not the contract below**, with
 these readings: the *State file* and its phases (`design` while you read the bead and decide the
 test, then `build`, `gate`, `review`, `ci`, `rebase`, `merge`); *Workspace* and its ports;
-*Building*, whose fast gate you run before the PR; *Waiting, without ending your run*; *The review
-loop*, where the reviewer reads the diff against **the bead's bug claim and your reproduction
+*The requirements list*; *Building*, whose fast gate you run before the PR; *Waiting, without
+ending your run*; *The review loop*, where the reviewer reads the diff against **the bead's bug claim and your reproduction
 test**, since a bug bead has no plan, and your posted review says so in place of "the plan"
 (the review packet carries the claim as the bead's description and your bug log in its notes, so
 log the bug before you make the packet);

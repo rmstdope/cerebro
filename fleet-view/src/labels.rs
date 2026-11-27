@@ -35,7 +35,7 @@ pub const SHIP_LABEL: &str = "shipping";
 pub const DRAWING_LABEL: &str = "mockup:shipping";
 
 /// Each policy variable and the const that twins it, for the contract test.
-pub const POLICY: [(&str, &str); 11] = [
+pub const POLICY: [(&str, &str); 12] = [
     ("stage_label", STAGE_LABEL),
     ("skip_label", SKIP_LABEL),
     ("plan_label", PLAN_LABEL),

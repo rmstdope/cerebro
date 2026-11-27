@@ -37,8 +37,12 @@ case "$1 $2" in
     if [[ "$*" == *"--jq .state"* ]]; then
       jq -r --argjson n "$3" '.[] | select(.number == $n) | .state' "$prs"
     else
-      # An open pull request's head is whatever its branch holds on origin.
-      jq -c --argjson n "$3" --arg sha "$(git ls-remote origin refs/heads/cb-x-mockup | cut -f1)" \
+      # An open pull request's head is whatever its branch holds on origin, except for as many
+      # reads as `lag` counts, as GitHub is a moment behind a push.
+      sha="$(git ls-remote origin refs/heads/cb-x-mockup | cut -f1)"
+      lag="$(cat "$STUB_DIR/lag" 2>/dev/null || echo 0)"
+      if [[ "$lag" -gt 0 ]]; then echo $((lag - 1)) > "$STUB_DIR/lag"; sha=0000000000000000000000000000000000000009; fi
+      jq -c --argjson n "$3" --arg sha "$sha" \
         '.[] | select(.number == $n) | .headRefOid = $sha' "$prs"
     fi ;;
   "pr create")
@@ -123,7 +127,7 @@ case_n=0
 fresh() {
   case_n=$((case_n + 1))
   rm -f "$stub"/*.log "$stub/prs.json" "$stub/push-fails" "$stub/pushed" "$stub/acceptance" "$stub/create-fails" \
-        "$stub/update-fails" "$stub/checks" "$stub/flip-at-merge" "$stub/merged-files" "$stub/merged-subject"
+        "$stub/update-fails" "$stub/checks" "$stub/flip-at-merge" "$stub/lag" "$stub/merged-files" "$stub/merged-subject"
   consumer="$(consumer_new "c$case_n" --origin --copy)"
   printf '%s' '{"id":"cb-x","status":"open","assignee":"Xavier","labels":["needs-ui-decision"]}' > "$stub/bead.json"
   printf '## The agreed experience\n\nA list beside the fleet.\n\n## The mockup\n\ndocs/ui/cb-x-list.html\n' \
@@ -397,7 +401,7 @@ checks '[{"name":"Bash suites","bucket":"pending"}]'
 with_mockups
 [[ $status -eq 0 ]] || fail "a hand-over exits 0, got $status: $err"
 ! grep -qE "^pr (checks|merge)" "$stub/gh.log" || fail "a handed-over drawing is neither waited on nor merged: $(cat "$stub/gh.log")"
-[[ "$(jq -r .assignee "$stub/bead.json")" == ship && "$(labels)" == '["needs-ui-decision","mockup:shipping"]' ]] \
+[[ "$(jq -r .assignee "$stub/bead.json")" == ship && "$(labels)" == '["mockup:shipping"]' ]] \
   || fail "the bead is ship's, carrying mockup:shipping and no ux:agreed: $(cat "$stub/bead.json")"
 recorded || fail "the acceptance is written at the hand-over"
 [[ "$(meta ship_pr)" == 7 && "$(meta ship_head)" == "$(branch_head)" ]] || fail "the pull request and its head are recorded: $(cat "$stub/bead.json")"
@@ -417,8 +421,12 @@ pass "a re-run on a handed-over bead only pushes the board"
 jq '.assignee = "Xavier"' "$stub/bead.json" > "$stub/bead.tmp" && mv "$stub/bead.tmp" "$stub/bead.json"
 first_head="$(branch_head)"
 printf '<!doctype html><title>Option A, again</title>\n' > "$work_dir/cb-x-list-a.html"
-with_mockups
+# The new round keeps one drawing, and GitHub is slow to show the pull request's new head.
+echo 2 > "$stub/lag"
+run_deliver Xavier --bead cb-x --acceptance "$work_dir/acceptance-$case_n.md" --mockup "$work_dir/cb-x-list-a.html=cb-x-list.html"
 [[ $status -eq 0 ]] || fail "a second delivery on an open pull request exits 0, got $status: $err"
+[[ "$(git -C "$work_dir/c$case_n-origin.git" ls-tree -r --name-only cb-x-mockup -- docs/ui)" == docs/ui/cb-x-list.html ]] \
+  || fail "a drawing this delivery no longer names stays on the branch"
 [[ "$(grep -c "^pr create" "$stub/gh.log" || true)" -eq 0 ]] || fail "the open pull request is reused"
 git -C "$work_dir/c$case_n-origin.git" merge-base --is-ancestor "$first_head" "$(branch_head)" \
   || fail "the new drawing builds on the branch already pushed"

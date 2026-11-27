@@ -33,7 +33,7 @@ plan_label="planned"
 past_ux_labels=("$stage_label" "$skip_label" "$plan_label")
 
 # The experience is missing something only a designer may decide: the UX queue admits a failed bead
-# carrying it.
+# carrying it, `plan:revise` or `mockup:shipping`.
 ui_question_label="needs-ui-decision"
 # A failed verification found the agreed experience at fault: the UX queue admits it too.
 plan_revise_label="plan:revise"
@@ -82,8 +82,9 @@ drawing_label="mockup:shipping"
 #                         `needs-ui-decision`, `plan:revise` and `mockup:shipping` off, so a bead that
 #                         came back to UX leaves the UX queue for good. `ux-deliver`; `ship --sweep`
 #                         once a drawing is merged.
-#   hand_drawing_to_ship  from a UX agent to `scripts/ship`: `mockup:shipping` on, every past-UX label
-#                         off; the caller reassigns the bead to `ship`. `ship --drawing`.
+#   hand_drawing_to_ship  from a UX agent to `scripts/ship`: `mockup:shipping` on; every past-UX label,
+#                         `needs-ui-decision` and `plan:revise` off; the caller reassigns the bead to
+#                         `ship`. `ship --drawing`.
 #   park_drawing          from `ship` to the navigator: `human` on, `mockup:shipping` kept, so merging
 #                         the pull request still records the bead; unparked unmerged it goes back to
 #                         the UX queue. `ship --sweep`.
@@ -133,7 +134,9 @@ route_flags_for() {
         for label in "${past_ux_labels[@]}"; do
           route_flags+=(--remove-label "$label")
         done
-        route_flags+=(--add-label "$drawing_label") ;;
+        # The agreement answers any open question, so nothing re-asks it if the drawing is parked.
+        route_flags+=(--remove-label "$ui_question_label" --remove-label "$plan_revise_label"
+                      --add-label "$drawing_label") ;;
       park_drawing)
         route_flags+=(--add-label "$human_label") ;;
       hand_to_ship)

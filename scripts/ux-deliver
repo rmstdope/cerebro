@@ -189,7 +189,17 @@ if ((${#sources[@]})) && [[ $already_recorded -eq 0 ]]; then
          --from "$from" >/dev/null) || refuse worktree "prepare-worktree failed"
     fi
 
-    # commit
+    # commit. A drawing an earlier delivery added to this branch and this one no longer names is
+    # dropped: it is not part of what was agreed now.
+    while IFS= read -r -d '' added; do
+      keep=0
+      for target in "${targets[@]}"; do
+        [[ "$added" != "docs/ui/$target" ]] || keep=1
+      done
+      if [[ $keep -eq 0 ]]; then
+        git -C "$tree" rm -q -- "$added" || refuse commit "git rm $added failed"
+      fi
+    done < <(git -C "$tree" diff -z --name-only --diff-filter=A "origin/$default...HEAD" -- docs/ui)
     mkdir -p "$tree/docs/ui"
     for i in "${!sources[@]}"; do
       cp "${sources[$i]}" "$tree/docs/ui/${targets[$i]}"
@@ -224,9 +234,15 @@ if ((${#sources[@]})) && [[ $already_recorded -eq 0 ]]; then
 
     # handover
     pushed_head="$(git -C "$tree" rev-parse HEAD)"
-    handover=0
-    "$script_dir/ship" --drawing "$name" "$id" "$number" "$pushed_head" "$scratch/record" \
-      >/dev/null 2>"$scratch/ship.err" || handover=$?
+    # GitHub shows a pull request's new head a moment after a push to it; only that refusal is
+    # tried again.
+    for attempt in 1 2 3 4 5 6; do
+      handover=0
+      "$script_dir/ship" --drawing "$name" "$id" "$number" "$pushed_head" "$scratch/record" \
+        >/dev/null 2>"$scratch/ship.err" || handover=$?
+      [[ $handover -eq 1 && $attempt -lt 6 ]] && grep -q "not the reviewed" "$scratch/ship.err" || break
+      sleep "$(( poll < 5 ? poll : 5 ))"
+    done
     case $handover in
       0) handed_over=1; say "handed #$number to ship; it merges when its checks are green" ;;
       3) say "no fleet view is shipping; waiting on the checks here" ;;

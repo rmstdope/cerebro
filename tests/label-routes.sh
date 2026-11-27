@@ -342,6 +342,8 @@ for labels in '[]' '["ux:agreed","planned"]' '["plan:revise","verification:faile
   got="$(offered_by cb-x)"
   [[ -z "$got" ]] || fail "a $labels bead whose drawing is shipping is offered by [$got]; it is ship's"
   has_label "$drawing_label" || fail "hand_drawing_to_ship added no $drawing_label"
+  ! has_label needs-ui-decision && ! has_label plan:revise \
+    || fail "hand_drawing_to_ship left an answered question's label on a $labels bead"
   apply_route cb-x "unpark agree_experience" --assignee "" --if-assignee ship
   got="$(offered_by cb-x)"
   [[ "$got" == "producer" ]] || fail "a $labels bead whose drawing merged is offered by [$got], not by the producer queue alone"

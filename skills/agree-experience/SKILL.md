@@ -215,7 +215,8 @@ that names an open sheet of sketches reopens on that sheet (*Sketching the idea 
 
 It carries `mockup:shipping`, the recorded experience and a `## Parked by shipping` notes heading,
 and no agreed label: the drawing's pull request could not be merged, and somebody unmarked the work
-without merging it. **Nothing is re-asked and nothing is shown**: the agreement stands. Write the
+without merging it. **Nothing is re-asked and nothing is shown**: the agreement stands, and this
+section wins over any older note on the work. Write the
 bead's acceptance, unchanged, to the record file, fetch each drawing *The mockup* names from the
 branch (`git show origin/<id>-mockup:docs/ui/<name>` into the scratchpad, after
 `git fetch origin <id>-mockup`), and run *Recording it*'s `ux-deliver` call again with them. If the

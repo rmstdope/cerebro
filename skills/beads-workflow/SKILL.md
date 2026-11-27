@@ -82,6 +82,8 @@ its header lists.
 | **waiting for UX** | ranked, neither `ux:agreed` nor `ux:none`, unassigned | ranking | a `ux` agent, through `scripts/stage-candidates ux`; the fleet view assigns without claiming |
 | **invisible by declaration** | `ux:none` | the navigator's *no* to "does it touch anything a person sees or presses?", asked by whoever files or first understands the bead: `write-bead`, Moira's triage, Cerebro's understand step; Forge on every refactoring; Sage (`qa`) on every testing finding. Never on a `bugfix` bead, whose route skips UX anyway | a producer, exactly as a UX-agreed bead. Removed only on the way back to UX: `producer-park … ux`, Cerebro's *Send it back to UX*, or `reopen-failed --fault plan`; a *yes* is recorded in the description as `A person sees this: yes`, so nobody asks again |
 | **being designed** | open, assigned to a `ux` agent, not `in_progress` | `scripts/assign-bead` | that agent only; it clears the assignee when its pass ends, or the fleet view does when the session dies |
+| **drawing being shipped** | open, assignee `ship` (no agent), `mockup:shipping`, no stage label, the experience in `acceptance`, metadata `ship_pr`, `ship_head` | `scripts/ship --drawing`, called by `ux-deliver` as the UX pass ends | nobody: the supervising fleet view's `ship --sweep` merges the drawing, then adds `ux:agreed` and clears the assignee |
+| **drawing that could not be merged** | open, unassigned, `mockup:shipping`, `human`, a `## Parked by shipping` note | `ship --sweep` (never sent back by itself: there is no builder, and CI is not a designer's to fix) | the navigator: merge the pull request, and the next sweep marks it agreed; or unpark it unmerged and a `ux` agent delivers the drawing again. A newer UX decision removes `mockup:shipping`; the pull request stays open, and merging it then records nothing |
 | **UX-agreed** | `ux:agreed`, unassigned | the `ux` agent (`agree-experience`) | a producer, through `scripts/assignable-beads`, claimed for it by the fleet view. An unclaimed bead that already has a `design` (with or without `planned`: every park removes the label, a crash does not) is a producer's returned plan and is resumed from that design |
 | **being produced** | `in_progress`, assignee is the producer | `scripts/assign-bead` | that producer only. It writes `design`, adds `planned` while keeping its claim, builds, and hands the pull request to `ship` |
 | **being shipped** | `in_progress`, assignee `ship` (no agent), `shipping`, metadata `ship_pr`, `ship_head` | `scripts/ship <Name> <id> <pr> <head>`, by the builder as its pass ends | nobody: the supervising fleet view's `ship --sweep` merges it and closes it. Its claim holds no lease and is not stale |
@@ -105,7 +107,8 @@ its header lists.
 Three rules that the table depends on:
 
 - **Only `assign-bead` claims, and only for a producer or bugfixer.** An assignee on an open bead
-  means a `ux` agent holds it; `in_progress` means a builder does.
+  means a `ux` agent holds it, or `ship` while it merges that agent's drawing; `in_progress` means a
+  builder does.
 - **`human` is the one queue the navigator reads.** A bead parked for any reason carries it, or it
   waits for ever unseen. `needs-ui-decision` alone is not a queue.
 - **P4 stops everything.** No candidate script ever offers an unranked bead, so a bead nobody ranks

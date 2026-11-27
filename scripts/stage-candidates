@@ -95,7 +95,7 @@ if ! out="$(printf '%s' "$raw" | jq -L "$script_dir" --arg mode "$mode" \
     --arg human "$human_label" \
     --arg stale "$stale_verdict_label" --arg verifier_only_label "$verifier_only_label" \
     --arg bugfix "$bugfix_label" --arg ui_question "$ui_question_label" \
-    --arg plan_revise "$plan_revise_label" '
+    --arg plan_revise "$plan_revise_label" --arg drawing "$drawing_label" '
     include "candidate-label-policy";
     $ARGS.positional as $past
     | . as $all
@@ -114,7 +114,8 @@ if ! out="$(printf '%s' "$raw" | jq -L "$script_dir" --arg mode "$mode" \
         | select(held | not)
         | select(((.labels // []) | index("verification:failed") | not)
                  or ((.labels // []) | index($plan_revise))
-                 or ((.labels // []) | index($ui_question)))
+                 or ((.labels // []) | index($ui_question))
+                 or ((.labels // []) | index($drawing)))
         | select((($by_id[.parent // ""] // {}).assignee // "") == "")
         | select([ (.dependencies // [])[]
                    | select(.type == "blocks")

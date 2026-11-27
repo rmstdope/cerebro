@@ -33,7 +33,7 @@ plan_label="planned"
 past_ux_labels=("$stage_label" "$skip_label" "$plan_label")
 
 # The experience is missing something only a designer may decide: the UX queue admits a failed bead
-# carrying it.
+# carrying it, `plan:revise` or `mockup:shipping`.
 ui_question_label="needs-ui-decision"
 # A failed verification found the agreed experience at fault: the UX queue admits it too.
 plan_revise_label="plan:revise"
@@ -49,6 +49,9 @@ verifier_only_label="second-look"
 bugfix_label="bugfix"
 # A reviewed pull request `scripts/ship` is merging: in progress, held by `ship`, nobody's queue.
 ship_label="shipping"
+# A UX agent's agreed drawing on its way to the default branch (cb-8pdv): open, held by `ship`, or
+# parked with the navigator. No stage label until it is merged, so no producer is offered it.
+drawing_label="mockup:shipping"
 
 # route_flags_for <transition>... - sets the array `route_flags` to the `bd update` flags of one or
 # more named hand-offs, in order (`route_flags_for unpark send_to_ux`). The flags are the whole label
@@ -56,7 +59,9 @@ ship_label="shipping"
 # status 2 and `route_flags` empty, so a typo writes nothing rather than half a change.
 #
 #   send_to_ux            to the UX queue: a question only a designer may answer. Every past-UX label
-#                         off, `needs-ui-decision` on. `producer-park … ux`; Cerebro's send-back.
+#                         off, `needs-ui-decision` on, a pending drawing cancelled
+#                         (`mockup:shipping` off, as every newer UX decision does).
+#                         `producer-park … ux`; Cerebro's send-back.
 #   revise_plan           to the UX queue: a failed verification found the agreed experience at
 #                         fault. Every past-UX label off, `plan:revise` on. `reopen-failed --fault plan`.
 #   fresh_verdict         a verdict has just been given: `verdict:stale` and `second-look` off. With
@@ -74,8 +79,15 @@ ship_label="shipping"
 #   park_for_ui_decision  to the navigator, from the UX stage, when nobody answered: `needs-ui-decision`
 #                         and `human` on; unparked it goes back to the UX queue. `agree-experience`.
 #   agree_experience      from the UX stage to a producer: the experience is recorded. `ux:agreed` on,
-#                         `needs-ui-decision` and `plan:revise` off, so a bead that came back to UX
-#                         leaves the UX queue for good. `ux-deliver`.
+#                         `needs-ui-decision`, `plan:revise` and `mockup:shipping` off, so a bead that
+#                         came back to UX leaves the UX queue for good. `ux-deliver`; `ship --sweep`
+#                         once a drawing is merged.
+#   hand_drawing_to_ship  from a UX agent to `scripts/ship`: `mockup:shipping` on; every past-UX label,
+#                         `needs-ui-decision` and `plan:revise` off; the caller reassigns the bead to
+#                         `ship`. `ship --drawing`.
+#   park_drawing          from `ship` to the navigator: `human` on, `mockup:shipping` kept, so merging
+#                         the pull request still records the bead; unparked unmerged it goes back to
+#                         the UX queue. `ship --sweep`.
 #   hand_to_ship          from a builder to `scripts/ship`: `shipping` on and nothing else; the
 #                         caller reassigns the claim to `ship`. `ship <Name> <id> …`.
 #   return_from_ship      from `ship` back to a builder: `shipping` off, so the labels under it send
@@ -102,7 +114,8 @@ route_flags_for() {
           route_flags+=(--add-label "$ui_question_label")
         else
           route_flags+=(--add-label "$plan_revise_label")
-        fi ;;
+        fi
+        route_flags+=(--remove-label "$drawing_label") ;;
       fresh_verdict)
         route_flags+=(--remove-label "$stale_verdict_label" --remove-label "$verifier_only_label") ;;
       park_for_navigator)
@@ -112,10 +125,20 @@ route_flags_for() {
       hand_to_verifier)
         route_flags+=(--remove-label "$plan_label" --add-label "$verifier_only_label") ;;
       park_for_ui_decision)
-        route_flags+=(--add-label "$ui_question_label" --add-label "$human_label") ;;
+        route_flags+=(--add-label "$ui_question_label" --add-label "$human_label"
+                      --remove-label "$drawing_label") ;;
       agree_experience)
         route_flags+=(--add-label "$stage_label" --remove-label "$ui_question_label"
-                      --remove-label "$plan_revise_label") ;;
+                      --remove-label "$plan_revise_label" --remove-label "$drawing_label") ;;
+      hand_drawing_to_ship)
+        for label in "${past_ux_labels[@]}"; do
+          route_flags+=(--remove-label "$label")
+        done
+        # The agreement answers any open question, so nothing re-asks it if the drawing is parked.
+        route_flags+=(--remove-label "$ui_question_label" --remove-label "$plan_revise_label"
+                      --add-label "$drawing_label") ;;
+      park_drawing)
+        route_flags+=(--add-label "$human_label") ;;
       hand_to_ship)
         route_flags+=(--add-label "$ship_label") ;;
       return_from_ship)

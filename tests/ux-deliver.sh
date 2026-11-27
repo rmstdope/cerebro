@@ -34,7 +34,17 @@ case "$1 $2" in
     state="$(sed -n 's/.*--state \([a-z]*\).*/\1/p' <<<"$*")"
     jq -c --arg s "$state" 'reverse | map(select($s == "all" or (.state | ascii_downcase) == $s))' "$prs" ;;
   "pr view")
-    jq -r --argjson n "$3" '.[] | select(.number == $n) | .state' "$prs" ;;
+    if [[ "$*" == *"--jq .state"* ]]; then
+      jq -r --argjson n "$3" '.[] | select(.number == $n) | .state' "$prs"
+    else
+      # An open pull request's head is whatever its branch holds on origin, except for as many
+      # reads as `lag` counts, as GitHub is a moment behind a push.
+      sha="$(git ls-remote origin refs/heads/cb-x-mockup | cut -f1)"
+      lag="$(cat "$STUB_DIR/lag" 2>/dev/null || echo 0)"
+      if [[ "$lag" -gt 0 ]]; then echo $((lag - 1)) > "$STUB_DIR/lag"; sha=0000000000000000000000000000000000000009; fi
+      jq -c --argjson n "$3" --arg sha "$sha" \
+        '.[] | select(.number == $n) | .headRefOid = $sha' "$prs"
+    fi ;;
   "pr create")
     [[ -e "$STUB_DIR/create-fails" ]] && { echo "gh: pull request create failed" >&2; exit 1; }
     n=$(( 7 + $(jq length "$prs") ))
@@ -54,6 +64,9 @@ case "$1 $2" in
     if jq -e 'any(.[]; .bucket == "pending")' <<<"$answer" >/dev/null; then exit 8; fi
     if jq -e 'any(.[]; .bucket == "fail")' <<<"$answer" >/dev/null; then exit 1; fi ;;
   "pr merge")
+    if [[ -e "$STUB_DIR/flip-at-merge" ]]; then
+      jq '.assignee = "Rogue"' "$STUB_DIR/bead.json" > "$STUB_DIR/bead.tmp" && mv "$STUB_DIR/bead.tmp" "$STUB_DIR/bead.json"
+    fi
     # What the merge would land: the branch as pushed, read from the remote-tracking ref.
     git ls-tree -r --name-only origin/cb-x-mockup > "$STUB_DIR/merged-files"
     git log -1 --format=%s origin/cb-x-mockup > "$STUB_DIR/merged-subject"
@@ -82,11 +95,7 @@ done
 sub="$1"; shift
 case "$sub" in
   show)
-    jq -c '[.]' "$bead"
-    if [[ -e "$STUB_DIR/flip-after-show" ]]; then
-      rm "$STUB_DIR/flip-after-show"
-      jq '.assignee = "Rogue"' "$bead" > "$bead.tmp" && mv "$bead.tmp" "$bead"
-    fi ;;
+    jq -c '[.]' "$bead" ;;
   update)
     [[ -e "$STUB_DIR/update-fails" ]] && { echo "bd: update refused" >&2; exit 1; }
     shift
@@ -97,6 +106,7 @@ case "$sub" in
         --add-label) filter="$filter | .labels = (((.labels // []) - [\"$2\"]) + [\"$2\"])"; shift 2 ;;
         --remove-label) filter="$filter | .labels = ((.labels // []) - [\"$2\"])"; shift 2 ;;
         --assignee) filter="$filter | .assignee = \"$2\""; shift 2 ;;
+        --set-metadata) filter="$filter | .metadata[\"${2%%=*}\"] = \"${2#*=}\""; shift 2 ;;
         --if-assignee) if_assignee="$2"; guarded=true; shift 2 ;;
         *) shift ;;
       esac
@@ -117,7 +127,7 @@ case_n=0
 fresh() {
   case_n=$((case_n + 1))
   rm -f "$stub"/*.log "$stub/prs.json" "$stub/push-fails" "$stub/pushed" "$stub/acceptance" "$stub/create-fails" \
-        "$stub/update-fails" "$stub/checks" "$stub/flip-after-show" "$stub/merged-files" "$stub/merged-subject"
+        "$stub/update-fails" "$stub/checks" "$stub/flip-at-merge" "$stub/lag" "$stub/merged-files" "$stub/merged-subject"
   consumer="$(consumer_new "c$case_n" --origin --copy)"
   printf '%s' '{"id":"cb-x","status":"open","assignee":"Xavier","labels":["needs-ui-decision"]}' > "$stub/bead.json"
   printf '## The agreed experience\n\nA list beside the fleet.\n\n## The mockup\n\ndocs/ui/cb-x-list.html\n' \
@@ -350,10 +360,10 @@ pass "refuses at merge when GitHub did not merge, recording nothing"
 
 # --- a lost assignment between the merge and the record ---------------------------------------------
 #
-# The stub hands the bead to Rogue after the first read, so the record's own read finds it gone.
+# The stub hands the bead to Rogue as it merges, so the record's own read finds it gone.
 
 fresh
-touch "$stub/flip-after-show"
+touch "$stub/flip-at-merge"
 with_mockups
 [[ $status -eq 1 && "$err" == *"ux-deliver: record:"* ]] || fail "a bead lost before the record is refused at record, got $status: $err"
 [[ "$(jq -r .assignee "$stub/bead.json")" == Rogue ]] || fail "the other agent's assignment stands"
@@ -379,5 +389,64 @@ git_q -C "$consumer" worktree add -q -b other "$consumer/.cerebro/worktrees/cb-x
 with_mockups
 [[ $status -eq 1 && "$err" == *"ux-deliver: worktree:"* ]] || fail "a mockup tree on another branch is refused at worktree, got $status: $err"
 pass "refuses a mockup worktree that is on another branch"
+
+# --- a fleet view is shipping: the pull request is handed over and nothing is waited on (cb-8pdv) ----
+
+swept_now() { mkdir -p "$consumer/.cerebro/state"; date +%s > "$consumer/.cerebro/state/ship-swept"; }
+meta() { jq -r --arg k "$1" '.metadata[$k] // ""' "$stub/bead.json"; }
+branch_head() { git -C "$work_dir/c$case_n-origin.git" rev-parse refs/heads/cb-x-mockup; }
+
+fresh; swept_now
+checks '[{"name":"Bash suites","bucket":"pending"}]'
+with_mockups
+[[ $status -eq 0 ]] || fail "a hand-over exits 0, got $status: $err"
+! grep -qE "^pr (checks|merge)" "$stub/gh.log" || fail "a handed-over drawing is neither waited on nor merged: $(cat "$stub/gh.log")"
+[[ "$(jq -r .assignee "$stub/bead.json")" == ship && "$(labels)" == '["mockup:shipping"]' ]] \
+  || fail "the bead is ship's, carrying mockup:shipping and no ux:agreed: $(cat "$stub/bead.json")"
+recorded || fail "the acceptance is written at the hand-over"
+[[ "$(meta ship_pr)" == 7 && "$(meta ship_head)" == "$(branch_head)" ]] || fail "the pull request and its head are recorded: $(cat "$stub/bead.json")"
+[[ -e "$stub/pushed" ]] || fail "the board is pushed"
+tree_of
+[[ ! -e "$tree" ]] || fail "the worktree is removed"
+! git -C "$consumer" rev-parse --verify -q refs/heads/cb-x-mockup >/dev/null || fail "the local branch is deleted"
+pass "with a fleet view shipping, the pull request is handed over without waiting, unagreed until it merges"
+
+rm "$stub/pushed" "$stub/gh.log"
+with_mockups
+[[ $status -eq 0 && -e "$stub/pushed" ]] || fail "a re-run after the hand-over pushes and exits 0, got $status: $err"
+[[ ! -e "$stub/gh.log" ]] || fail "a re-run after the hand-over asks GitHub nothing: $(cat "$stub/gh.log")"
+pass "a re-run on a handed-over bead only pushes the board"
+
+# Parked, unparked and taken by a UX agent again: the pull request is open and the tree is gone.
+jq '.assignee = "Xavier"' "$stub/bead.json" > "$stub/bead.tmp" && mv "$stub/bead.tmp" "$stub/bead.json"
+first_head="$(branch_head)"
+printf '<!doctype html><title>Option A, again</title>\n' > "$work_dir/cb-x-list-a.html"
+# The new round keeps one drawing, and GitHub is slow to show the pull request's new head.
+echo 2 > "$stub/lag"
+run_deliver Xavier --bead cb-x --acceptance "$work_dir/acceptance-$case_n.md" --mockup "$work_dir/cb-x-list-a.html=cb-x-list.html"
+[[ $status -eq 0 ]] || fail "a second delivery on an open pull request exits 0, got $status: $err"
+[[ "$(git -C "$work_dir/c$case_n-origin.git" ls-tree -r --name-only cb-x-mockup -- docs/ui)" == docs/ui/cb-x-list.html ]] \
+  || fail "a drawing this delivery no longer names stays on the branch"
+[[ "$(grep -c "^pr create" "$stub/gh.log" || true)" -eq 0 ]] || fail "the open pull request is reused"
+git -C "$work_dir/c$case_n-origin.git" merge-base --is-ancestor "$first_head" "$(branch_head)" \
+  || fail "the new drawing builds on the branch already pushed"
+[[ "$(meta ship_head)" == "$(branch_head)" && "$(branch_head)" != "$first_head" ]] || fail "the new head is handed over"
+pass "an open pull request with no tree is continued from its branch and handed over again"
+
+fresh; swept_now; touch "$stub/push-fails"
+with_mockups
+[[ $status -eq 1 && "$err" == *"ux-deliver: handover:"* ]] || fail "a failed push at the hand-over refuses at handover, got $status: $err"
+rm "$stub/push-fails"
+with_mockups
+[[ $status -eq 0 && -e "$stub/pushed" ]] || fail "the re-run pushes the hand-over, got $status: $err"
+pass "a failed board push at the hand-over is finished by the same command"
+
+fresh; swept_now; touch "$stub/update-fails"
+with_mockups
+[[ $status -eq 1 && "$err" == *"ux-deliver: handover:"* ]] || fail "a refused hand-over refuses at handover, got $status: $err"
+! grep -qE "^pr merge" "$stub/gh.log" || fail "a refused hand-over merges nothing"
+tree_of
+[[ -d "$tree" ]] || fail "the worktree stays after a refused hand-over"
+pass "a refused hand-over is refused at handover, merging nothing"
 
 suite_passed

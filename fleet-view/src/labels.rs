@@ -31,9 +31,11 @@ pub const VERIFIER_ONLY_LABEL: &str = "second-look";
 pub const BUGFIX_LABEL: &str = "bugfix";
 /// A reviewed pull request `scripts/ship` is merging (`ship_label`).
 pub const SHIP_LABEL: &str = "shipping";
+/// A UX agent's agreed drawing on its way to the default branch (`drawing_label`).
+pub const DRAWING_LABEL: &str = "mockup:shipping";
 
 /// Each policy variable and the const that twins it, for the contract test.
-pub const POLICY: [(&str, &str); 11] = [
+pub const POLICY: [(&str, &str); 12] = [
     ("stage_label", STAGE_LABEL),
     ("skip_label", SKIP_LABEL),
     ("plan_label", PLAN_LABEL),
@@ -45,4 +47,5 @@ pub const POLICY: [(&str, &str); 11] = [
     ("verifier_only_label", VERIFIER_ONLY_LABEL),
     ("bugfix_label", BUGFIX_LABEL),
     ("ship_label", SHIP_LABEL),
+    ("drawing_label", DRAWING_LABEL),
 ];

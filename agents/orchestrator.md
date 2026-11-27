@@ -775,7 +775,8 @@ already told the navigator.
   expired"); an expired lease with nobody live in `ListAgents` or `agent-alive` is a stale claim worth
   surfacing, whoever the assignee but `ship`: that one is `scripts/ship`'s, holds no lease, and is
   merged by the fleet view's sweep. Surface it only when `.cerebro/state/ship-swept` is more than
-  ten minutes old, which means no view is shipping.
+  ten minutes old, which means no view is shipping. The same holds for an open bead `ship` holds
+  (`mockup:shipping`, a UX agent's drawing on its way in): never clear that assignee.
 - `.cerebro/cerebro/scripts/sweep-paused.sh --json` for the parked count and oldest wait — not the
   question pass.
 - The two queue numbers (*Where the work is*).

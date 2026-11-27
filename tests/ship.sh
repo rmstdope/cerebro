@@ -101,13 +101,14 @@ case "$sub" in
     edit --arg id "$1" 'map(if .id == $id then .status = "closed" else . end)' ;;
   update)
     id="$1"; shift
-    filter='.'; if_assignee=""; guarded=false
+    filter='.'; if_assignee=""; guarded=false; acceptance=""
     args=()
     while [[ $# -gt 0 ]]; do
       case "$1" in
         --add-label) filter="$filter | .labels = (((.labels // []) - [\"$2\"]) + [\"$2\"])"; shift 2 ;;
         --remove-label) filter="$filter | .labels = ((.labels // []) - [\"$2\"])"; shift 2 ;;
         --assignee) filter="$filter | .assignee = \"$2\""; shift 2 ;;
+        --acceptance) acceptance="$2"; filter="$filter | .acceptance_criteria = \$acc"; shift 2 ;;
         --set-metadata) filter="$filter | .metadata[\"${2%%=*}\"] = \"${2#*=}\""; shift 2 ;;
         --unset-metadata) filter="$filter | del(.metadata[\"$2\"])"; shift 2 ;;
         --append-notes) args=("$2"); filter="$filter | .notes = ((.notes // \"\") + \"\n\" + \$note)"; shift 2 ;;
@@ -116,7 +117,7 @@ case "$sub" in
       esac
     done
     if $guarded && [[ "$(field "$id" '.assignee // ""')" != "$if_assignee" ]]; then exit 13; fi
-    edit --arg id "$id" --arg note "${args[0]:-}" "map(if .id == \$id then ($filter) else . end)" ;;
+    edit --arg id "$id" --arg note "${args[0]:-}" --arg acc "$acceptance" "map(if .id == \$id then ($filter) else . end)" ;;
   unclaim)
     [[ -e "$STUB_DIR/unclaim-fails" ]] && { echo "bd: unclaim refused" >&2; exit 1; }
     id="$1"; shift
@@ -470,5 +471,125 @@ fresh; board_set '.[0] |= (.assignee = "Storm" | del(.labels[2]))'; : > "$stub/u
 [[ -z "$out" && "$(bead .assignee)" == Storm ]] || fail "a listing that ignored the filter moved a builder's bead: $out"
 ! grep -q '^-C .* unclaim\|unclaim' "$stub/bd.log" || fail "it tried to unclaim another's bead"
 pass "only beads held by ship are swept, whatever the listing returns"
+
+# --- a drawing from the UX stage (cb-8pdv) ----------------------------------------------------------
+
+record="$work_dir/record.md"
+printf '## The agreed experience\n\nA list.\n' > "$record"
+ux_board() {
+  board_is '[{"id":"cb-x","status":"open","assignee":"Xavier","issue_type":"task","labels":["needs-ui-decision"],"metadata":{"ship_rerun_at":"x"}}]'
+}
+hand_drawing() { run_ship --drawing Xavier cb-x 7 "$head" "$record"; }
+has() { [[ "$(bead ".labels | index(\"$1\") != null")" == true ]]; }
+
+fresh
+for args in "--drawing" "--drawing Xavier cb-x 7 $head" "--drawing Xavier cb-x seven $head $record" "--drawing ship cb-x 7 $head $record"; do
+  # shellcheck disable=SC2086 # the arguments are word-split on purpose
+  run_ship $args
+  [[ $status -eq 2 ]] || fail "ship $args exited $status, not 2"
+done
+pass "a malformed drawing hand-over exits 2"
+
+fresh; ux_board; swept_now; hand_drawing
+[[ $status -eq 0 ]] || fail "the drawing hand-over exited $status: $err"
+[[ "$(bead .assignee)" == ship && "$(bead .status)" == open ]] || fail "the bead is not open and held by ship: $(cat "$stub/board.json")"
+has mockup:shipping || fail "no mockup:shipping label"
+! has ux:agreed || fail "marked agreed before the drawing merged"
+[[ "$(bead .acceptance_criteria)" == *"A list."* ]] || fail "the record is not written"
+[[ "$(bead .metadata.ship_pr)" == 7 && "$(bead .metadata.ship_head)" == "$head" ]] || fail "the pull request and head are not recorded"
+[[ "$(bead .metadata.ship_at)" =~ ^[0-9]+$ && "$(bead '.metadata.ship_rerun_at // "gone"')" == gone ]] || fail "ship_at unset, or an old re-run kept"
+[[ -e "$stub/pushed" ]] || fail "the board was not pushed"
+rm "$stub/pushed"; hand_drawing
+[[ $status -eq 0 && -e "$stub/pushed" ]] || fail "a repeated drawing hand-over did not just push: $status $err"
+pass "a drawing hand-over writes the record, gives the bead to ship without ux:agreed, and pushes; again, it only pushes"
+
+fresh; ux_board; hand_drawing
+[[ $status -eq 3 && "$(bead .assignee)" == Xavier && "$(bead '.acceptance_criteria // ""')" == "" ]] || fail "with no sweep the drawing hand-over exited $status"
+pass "the drawing hand-over exits 3, writing nothing, when no sweep has run lately"
+
+drawing_refused() {
+  hand_drawing
+  [[ $status -eq 1 ]] || fail "$1: exited $status, $err"
+  ! has mockup:shipping || fail "$1: written anyway"
+  [[ "$err" == *"$2"* ]] || fail "$1: the refusal does not say '$2': $err"
+}
+fresh; ux_board; swept_now; board_set '.[0].assignee = "Beast"'; drawing_refused "somebody else's bead" "not open and assigned to Xavier"
+fresh; ux_board; swept_now; board_set '.[0].status = "in_progress"'; drawing_refused "a claimed bead" "not open and assigned to Xavier"
+fresh; ux_board; swept_now; pr_set '.headRefOid = "0000000000000000000000000000000000000000"'; drawing_refused "another head" "head is"
+fresh; ux_board; swept_now; pr_set '.state = "CLOSED"'; drawing_refused "a closed pull request" "CLOSED"
+fresh; ux_board; swept_now; pr_set '.isDraft = true'; drawing_refused "a draft pull request" "draft"
+run_ship --drawing Xavier cb-x 7 "$head" "$work_dir/no-record"
+[[ $status -eq 1 ]] || fail "a missing record exited $status"
+pass "the drawing hand-over refuses another's bead, another head, a closed or draft pull request and a missing record"
+
+drawing_bead() {
+  printf '{"id":"cb-x","status":"open","assignee":"ship","issue_type":"task","labels":["mockup:shipping"],"acceptance_criteria":"the record","metadata":{"ship_pr":7,"ship_head":"%s","ship_at":%s}}' "$head" "$((now_epoch - 600))"
+}
+drawing() { fresh; board_is "[$(drawing_bead)]"; }
+agreed() {
+  [[ "$(bead .status)" == open && "$(bead .assignee)" == "" ]] || fail "$1: not open and unassigned: $(cat "$stub/board.json")"
+  has ux:agreed || fail "$1: not agreed"
+  ! has mockup:shipping && ! has human || fail "$1: labels $(bead .labels)"
+}
+
+drawing; sweep
+[[ "$out" == "merged cb-x #7" ]] || fail "a green drawing: $out / $err"
+agreed "a green drawing"
+gh_called "pr merge 7 --squash --match-head-commit $head" || fail "the drawing merge was not held to its head"
+[[ -z "$(git -C "$origin" branch --list cb-x-thing)" ]] || fail "the drawing's remote branch was left"
+[[ -e "$stub/pushed" ]] || fail "the record was not pushed"
+pass "a green drawing is merged, and only then marked agreed for a producer"
+
+drawing; echo "navigator_gates merge" >> "$consumer/.cerebro/project.conf"; sweep
+[[ "$out" == "merged cb-x #7" ]] || fail "the merge gate is for builders' merges, not drawings: $out"
+pass "the merge gate does not hold a drawing"
+
+drawing; checks '[{"name":"Bash","bucket":"pending","link":"","completedAt":""}]'; sweep
+[[ -z "$out" && "$(bead .assignee)" == ship ]] || fail "a pending drawing: $out"
+! has ux:agreed || fail "a pending drawing was marked agreed"
+drawing; pr_set '.mergeStateStatus = "BEHIND"'; sweep
+[[ "$out" == "updated cb-x #7" ]] || fail "a drawing behind main: $out"
+drawing; checks "$failing"; sweep
+[[ "$out" == "reran cb-x #7 "* ]] || fail "a red drawing is re-run once: $out"
+pass "a drawing waits, catches up and re-runs like a builder's pull request"
+
+drawing_parked() {
+  sweep
+  [[ "$out" == "parked cb-x #7 "*"$2"* ]] || fail "$1: said $out / $err"
+  [[ "$(bead .status)" == open && "$(bead .assignee)" == "" ]] || fail "$1: still held"
+  has human && has mockup:shipping && ! has ux:agreed || fail "$1: labels $(bead .labels)"
+  [[ "$(bead .metadata.paused_at)" == 20*Z ]] || fail "$1: no pause date"
+  [[ "$(bead .notes)" == *"## Parked by shipping"*"#7"*"$2"* ]] || fail "$1: the note is $(bead .notes)"
+  if gh_called "pr merge"; then fail "$1: merged"; fi
+}
+drawing; checks "$failing"; board_set '.[0].metadata.ship_rerun_at = "2000-01-01T00:00:00Z"'; drawing_parked "red again" "red after a re-run"
+drawing; pr_set '.mergeable = "CONFLICTING"'; drawing_parked "a conflicting drawing" "conflicts"
+drawing; pr_set '.reviewDecision = "CHANGES_REQUESTED"'; drawing_parked "changes requested" "changes requested"
+drawing; pr_set '.state = "CLOSED"'; drawing_parked "a closed drawing" "closed without merging"
+drawing; board_set '.[0].metadata.ship_head = "0000000000000000000000000000000000000000"'; drawing_parked "an unreviewed head" "not covered"
+drawing; overdue; checks '[{"name":"Bash","bucket":"pending","link":"","completedAt":""}]'; drawing_parked "six hours pending" "6 hours"
+pass "a drawing that cannot be merged goes to the navigator, still waiting to be recorded"
+
+drawing; board_set 'del(.[0].metadata.ship_pr)'; sweep
+[[ "$out" == "parked cb-x"* ]] && has human && [[ "$(bead .assignee)" == "" ]] || fail "a drawing naming no pull request: $out"
+pass "a drawing naming no pull request is parked"
+
+parked_board() { drawing; board_set ".[0].assignee = \"\" | .[0].labels += $1"; }
+parked_board '["human","pause:kept"]'; sweep
+[[ -z "$out" ]] && has human || fail "an unmerged parked drawing should be left: $out"
+gh_called "pr merge" && fail "a parked drawing was merged by the sweep"
+pr_set '.state = "MERGED"'; sweep
+[[ "$out" == "merged cb-x #7" ]] || fail "a parked drawing the navigator merged: $out / $err"
+agreed "a parked drawing the navigator merged"
+! has pause:kept || fail "pause:kept was left"
+parked_board '[]'; pr_set '.state = "MERGED"'; sweep
+agreed "an unparked drawing merged afterwards"
+parked_board '["human"]'; : > "$stub/view-fails"; sweep
+[[ "$out" == "failed cb-x #7 "* ]] && has human || fail "an unreadable parked drawing: $out"
+pass "a parked or unparked drawing is recorded once its pull request is merged, and otherwise left"
+
+drawing; board_set '.[0].assignee = "Beast"'; pr_set '.state = "MERGED"'; sweep
+[[ -z "$out" && "$(bead .assignee)" == Beast ]] && ! has ux:agreed || fail "a drawing a UX agent holds was touched: $out"
+pass "a bead a UX agent holds is left to it"
 
 suite_passed

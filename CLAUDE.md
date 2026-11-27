@@ -160,6 +160,9 @@ Load-bearing across files: a change to one must keep the others consistent with 
 - **A builder's pass ends at the hand-over** (cb-tbrh): `scripts/ship` merges, with no model, only
   the head the review covers, and the supervising view runs its sweep. A builder merges itself only
   when `ship` exits 3 (nobody is sweeping) or the pull request is the cerebro submodule's.
+- **A bead is not `ux:agreed` before its drawings are on the default branch** (cb-8pdv): the UX pass
+  ends once `ux-deliver` has handed the drawing's pull request to `ship`, which adds the label after
+  the merge.
 - **Agents never decide the shape of what a user sees**; `ux` settles the detail inside a shape
   the navigator has agreed, and what its record leaves open a producer decides and writes into
   the plan's *Decided by me*, where the navigator can overrule it. The build and its tests are the
@@ -260,7 +263,8 @@ Each of these answers one question in one place. Add a caller, never a second co
   writers of a bead's route are `scripts/producer-park` (a producer's return to UX or the
   navigator), `scripts/reopen-failed` (a failed verification),
   `scripts/verifier-pass-epic-family` (a passed family) and `scripts/ux-deliver` (the UX stage's
-  record, after its drawing's pull request merged). These queues and writers take their
+  record, after its drawing's pull request merged, or its hand-over of that pull request to
+  `scripts/ship`). These queues and writers take their
   labels from `scripts/candidate-label-policy.sh`, where each hand-off between roles is a named
   transition (`route_flags_for`) the writers apply; `tests/label-routes.sh` runs every transition
   and proves the bead lands in exactly the queue meant to take it. `sweep-paused.sh` and
@@ -273,8 +277,9 @@ Each of these answers one question in one place. Add a caller, never a second co
   the fleet view's Sweeps section finds, each held to `tests/lib/sweep-findings.json`;
   `scripts/verifier-epic-candidates` — when an epic family is Psylocke's to sweep.
 - `scripts/ship` — a reviewed pull request from a builder's hand-over to merged and closed, or back
-  on the board; `scripts/pr-ship.sh` — what a pull request's checks say, and a merge believed only
-  when GitHub says MERGED, shared with `ux-deliver`.
+  on the board, and a UX agent's drawing from `ux-deliver`'s hand-over to merged and `ux:agreed`;
+  `scripts/pr-ship.sh` — what a pull request's checks say, and a merge believed only when GitHub
+  says MERGED, shared with `ux-deliver`.
 - `scripts/bead-delivery.sh` — whether a bead's work reached the default branch.
 - `scripts/dependabot-sweep` — what happens to an open Dependabot pull request: merged when green
   (or, under `dependabot_merge review`, awaiting review, then `--merge` or `--hand-back`), one
